@@ -36,9 +36,6 @@
       "Bash(gh pr status *)",
       "Bash(gh pr checks *)",
       "Bash(gh run list *)",
-      "Bash(gh run view *)"
-    ],
-    "ask": [
       "Bash(npm install *)",
       "Bash(npm i *)",
       "Bash(npm uninstall *)",
@@ -54,16 +51,20 @@
       "Bash(git rebase *)",
       "Bash(git merge *)",
       "Bash(gh pr create *)",
-      "Bash(gh pr merge *)"
+      "Bash(gh pr merge *)",
+      "Bash(gh run view *)"
     ],
-    "deny": [
+    "ask": [
+      "Bash(gh pr merge *)",
       "Bash(git push --force *)",
       "Bash(git push -f *)",
       "Bash(git push --delete *)",
       "Bash(git push --mirror *)",
       "Bash(git reset --hard *)",
       "Bash(git clean *)",
-      "Bash(git branch -D *)",
+      "Bash(git branch -D *)"
+    ],
+    "deny": [
       "Bash(rm -rf *)",
       "Bash(rm -fr *)",
       "Bash(sudo *)",

@@ -20,8 +20,9 @@ B='(^|[;&|([:space:]`])'
 # `git`, then any flags (with or without an argument, e.g. -C <dir>, -c k=v, --no-pager), then space.
 GIT="${B}git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+"
 
-# Plain `git push` (main included) passes through to the permission layer, where an ask rule
-# prompts the human on every push. Destructive push variants stay hard-blocked here.
+# Plain `git push` (main included) passes through: settings.json allows it and nothing prompts,
+# so CLAUDE.md hard rule 5 — push only when the human asks — is the only thing holding it back.
+# Destructive push variants stay hard-blocked here regardless of what the permission layer says.
 has "${GIT}push[^;&|]*(--delete|--mirror|--prune|[[:space:]]\+|[[:space:]]:[^[:space:]])" \
   && block "deleting or force-updating remote refs is not allowed"
 has "${GIT}(reset[[:space:]]+--(hard|merge)|clean([[:space:]]|$)|branch[[:space:]]+-[dD]|filter-branch|filter-repo|update-ref[[:space:]]+-d|reflog[[:space:]]+expire)" \

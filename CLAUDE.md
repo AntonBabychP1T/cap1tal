@@ -47,8 +47,8 @@ screens. `npm run verify` stays Node-only — it never runs JSX.
 3. `/opsx:apply` → implement task by task; after each task run the relevant tests, then `npm run verify`.
 4. When all tasks are done: `npm run verify` green, then run the `diff-reviewer` subagent.
    Fix its CRITICAL findings and re-run until `PASS`.
-5. Commit (the commit hook refuses an unverified tree). Push when asked — every `git push`
-   (main included) goes through a per-run permission prompt; PR merging stays with the human.
+5. Commit (the commit hook refuses an unverified tree). Push only when the human asks for it —
+   `git push` no longer prompts, so the restraint is the agent's; PR merging stays with the human.
 6. `/opsx:archive` only after step 4 passes.
 
 ## Hard rules
@@ -59,9 +59,11 @@ screens. `npm run verify` stays Node-only — it never runs JSX.
 3. Money is integers in minor units with a currency code; never floats, never cross-currency sums.
    Every transaction is an expense unless explicitly typed otherwise. (Details: `rules/domain.md`.)
 4. Committed migrations are immutable; schema change = new migration + test. (`rules/database.md`)
-5. Every `git push` needs the human's per-run approval (ask rule). Never force-push, delete
-   remote refs, or rewrite history; never recursive `rm`; never read or write secrets
-   (`.env*`, keystores, `google-services.json`). Hooks and deny rules enforce this.
+5. `git push` happens only when the human asks for it. The permission layer allows it without a
+   prompt, so nothing but this rule stops an unasked-for push — do not push on your own initiative.
+   Never force-push, delete remote refs, or rewrite history; never recursive `rm`; never read or
+   write secrets (`.env*`, keystores, `google-services.json`). `guard-bash.sh` hard-blocks all of
+   those — it, not the settings.json deny list, is what enforces them for git.
 6. Never skip, weaken or delete a failing test to get green.
 7. Use glossary terms verbatim in code and specs; do not invent synonyms.
 8. Stop and ask when a task is ambiguous, contradicts the vision, or needs a hand edit under
@@ -77,7 +79,7 @@ screens. `npm run verify` stays Node-only — it never runs JSX.
 - `guard-bash.sh` (PreToolUse Bash) — blocks force/destructive git and destructive pushes
   (delete/mirror/force), recursive rm, sudo, drizzle push/drop, release commands; blocks
   `git commit` unless the tree matches the last green `verify`. Plain `git push` falls through
-  to the ask rule.
+  un-prompted — hard rule 5, not the permission layer, is what keeps it to what the human asked for.
 - `guard-migrations.sh` (PreToolUse Edit|Write) — blocks edits to committed files under `drizzle/`.
 - `verify-gate.sh` (SessionStart + Stop) — refuses to end a turn while watched files changed this
   session and `verify` has not passed for the current tree (max 3 blocks, then warns).
