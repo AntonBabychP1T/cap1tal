@@ -20,9 +20,10 @@ B='(^|[;&|([:space:]`])'
 # `git`, then any flags (with or without an argument, e.g. -C <dir>, -c k=v, --no-pager), then space.
 GIT="${B}git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+"
 
-# Never leaves the machine, never rewrites history, never discards the whole worktree.
-has "${GIT}push([[:space:]]|$)" \
-  && block "git push is reserved for the human; leave the branch ready and say so"
+# Plain `git push` (main included) passes through to the permission layer, where an ask rule
+# prompts the human on every push. Destructive push variants stay hard-blocked here.
+has "${GIT}push[^;&|]*(--delete|--mirror|--prune|[[:space:]]\+|[[:space:]]:[^[:space:]])" \
+  && block "deleting or force-updating remote refs is not allowed"
 has "${GIT}(reset[[:space:]]+--(hard|merge)|clean([[:space:]]|$)|branch[[:space:]]+-[dD]|filter-branch|filter-repo|update-ref[[:space:]]+-d|reflog[[:space:]]+expire)" \
   && block "history- or worktree-destroying git command; make a new commit or ask the human"
 has "${GIT}[^;&|]*(--force|--force-with-lease|[[:space:]]-f([[:space:]]|$))" \
