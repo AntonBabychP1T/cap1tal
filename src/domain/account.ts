@@ -1,4 +1,5 @@
-import { money, type CurrencyCode, type Money } from './money';
+import { add, money, subtract, type CurrencyCode, type Money } from './money';
+import type { Transaction } from './transaction';
 
 /**
  * The kind — never the name — decides how a transfer touching the account is
@@ -11,6 +12,35 @@ export interface Account {
   readonly name: string;
   readonly kind: AccountKind;
   readonly currency: CurrencyCode;
+  /** Where the account stood before the first recorded transaction, in its own currency. */
+  readonly openingBalance: Money;
+}
+
+/**
+ * The one place an Account is built: the opening balance defaults to zero in the account's own
+ * currency, and an opening balance in any other currency is rejected — amounts of different
+ * currencies never combine.
+ */
+export function account(input: {
+  id: string;
+  name: string;
+  kind: AccountKind;
+  currency: CurrencyCode;
+  openingBalance?: Money;
+}): Account {
+  const openingBalance = input.openingBalance ?? money(0, input.currency);
+  if (openingBalance.currency !== input.currency) {
+    throw new Error(
+      `opening balance of ${input.currency} account "${input.id}" cannot be ${openingBalance.currency}`,
+    );
+  }
+  return {
+    id: input.id,
+    name: input.name,
+    kind: input.kind,
+    currency: input.currency,
+    openingBalance,
+  };
 }
 
 /** The monthly numbers a transfer can move. Spent is never one of them. */
@@ -62,4 +92,41 @@ export function classifyTransfer(input: {
   }
 
   return contributions;
+}
+
+/**
+ * The computed balance (розрахунковий баланс): the opening balance plus the effect of every
+ * transaction touching the account. Nothing is stored — a balance transactions cannot explain
+ * does not exist. An amount in any currency other than the account's is rejected; amounts of
+ * different currencies never combine.
+ */
+export function computeBalance(
+  account: Account,
+  transactions: readonly Transaction[],
+): Money {
+  let balance = account.openingBalance;
+  for (const t of transactions) {
+    switch (t.type) {
+      case 'expense':
+        if (t.accountId !== account.id) break;
+        balance = subtract(balance, t.amount);
+        break;
+      case 'income':
+      case 'refund':
+      case 'correction':
+        // A correction's amount is signed, so adding it moves the balance either way.
+        if (t.accountId !== account.id) break;
+        balance = add(balance, t.amount);
+        break;
+      case 'transfer':
+        if (t.fromAccountId === account.id) {
+          balance = subtract(balance, t.left);
+        }
+        if (t.toAccountId === account.id) {
+          balance = add(balance, t.arrived);
+        }
+        break;
+    }
+  }
+  return balance;
 }

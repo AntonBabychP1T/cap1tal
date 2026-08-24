@@ -1,7 +1,7 @@
 import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
-import { type Account, type AccountKind } from './account';
+import { account, type Account, type AccountKind } from './account';
 import { money, type CurrencyCode, type Money } from './money';
 import { monthlyPicture, type MonthlyNumbers } from './monthly-picture';
 import {
@@ -15,12 +15,8 @@ import {
   type Transaction,
 } from './transaction';
 
-const acc = (id: string, kind: AccountKind, currency: CurrencyCode): Account => ({
-  id,
-  name: id,
-  kind,
-  currency,
-});
+const acc = (id: string, kind: AccountKind, currency: CurrencyCode): Account =>
+  account({ id, name: id, kind, currency });
 
 const card = acc('card', 'spending', 'UAH');
 const usdCard = acc('usd-card', 'spending', 'USD');

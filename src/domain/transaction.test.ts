@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { type Account } from './account';
+import { account } from './account';
 import { money } from './money';
 import { monthlyPicture } from './monthly-picture';
 import {
@@ -66,8 +66,8 @@ describe('transaction', () => {
     expect(t.fromAccountId).toBe('card');
     expect(t.toAccountId).toBe('jar');
 
-    const card: Account = { id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' };
-    const jar: Account = { id: 'jar', name: 'банка', kind: 'savings', currency: 'UAH' };
+    const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
+    const jar = account({ id: 'jar', name: 'банка', kind: 'savings', currency: 'UAH' });
     const picture = monthlyPicture({ month: '2026-03', accounts: [card, jar], transactions: [t] });
     expect(picture.get('UAH')?.spent).toEqual(money(0, 'UAH'));
 
