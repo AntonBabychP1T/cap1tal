@@ -1,0 +1,26 @@
+{
+  "name": "cap1tal",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Personal money tracker. Product: docs/product-vision.md. Agent setup: CLAUDE.md.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "verify": "bash scripts/verify.sh",
+    "spec:validate": "openspec validate --all --no-interactive",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "1.7.0",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "^57.0.1",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.11"
+  }
+}

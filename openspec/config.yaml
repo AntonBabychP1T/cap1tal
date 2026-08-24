@@ -1,32 +1,44 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+# Shown to the AI when creating every artifact (proposal, specs, design, tasks).
+context: |
+  cap1tal — personal money tracker for one person on one phone (others may install it locally).
+  Product truth: docs/product-vision.md (problem, entities, money rules, monthly model, non-goals)
+  and docs/glossary.md (every domain term with its exact meaning). Read both before writing any
+  artifact; use glossary terms verbatim; anything in vision §13 "Explicitly not in v1" is out of
+  scope unless the owner says otherwise in the proposal.
+  Stack (decided): Expo / React Native, TypeScript, SQLite + Drizzle ORM, npm, Android first, iOS
+  must stay possible. Money is integers in minor units + currency code; monthly numbers are per
+  currency; every transaction is an expense unless typed otherwise.
+  Verification: `npm run verify` (openspec validate → lint → typecheck → vitest) is the only
+  definition of green; it must stay under a minute and never need an emulator or native build.
+  Agent rules live in CLAUDE.md and .claude/rules/*.md.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+# Rules injected only for the matching artifact.
+rules:
+  proposal:
+    - State scope AND non-goals for this change; name any vision §13 item it deliberately touches
+    - Intent must map to one of the two problems in the vision (where money went / how much is left) or say why not
+  specs:
+    - Every requirement is one testable SHALL/MUST statement with at least one Given/When/Then scenario that exercises it
+    - Use glossary terms only; no implementation detail (no class names, libraries, screens)
+    - Cover the glossary distinctions the change touches (transfer vs expense, investment vs expense, refund vs income, correction, fee, lending/interest, per-currency)
+  design:
+    - Must comply with .claude/rules/domain.md and database.md (integer money, pure domain, append-only migrations)
+    - Name every new native module, permission or Expo config change explicitly
+  tasks:
+    - Every task traces to a requirement; split anything larger than ~2 hours
+    - Each task that adds behaviour names the test file and the scenario the test proves
+    - 'Last two tasks of every change, verbatim: "Run `npm run verify` and paste the final lines" and "Run the diff-reviewer subagent; fix CRITICAL findings until PASS"'
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+# Advisory guidance for apply and archive.
+operations:
+  apply:
+    guidance:
+      - Before starting, run the spec-reviewer subagent on the change and fix CRITICAL findings
+      - Do not tick a task box until its tests pass and `npm run verify` is green on the current tree; quote verify's last lines when marking a task done
+      - If implementation reveals the spec is wrong or incomplete, stop, update the artifacts, and say so — do not silently diverge
+  archive:
+    guidance:
+      - Archive only after `npm run verify` is green and the diff-reviewer returned PASS for this change
+      - Summarise which main specs were updated and which glossary terms gained or changed meaning

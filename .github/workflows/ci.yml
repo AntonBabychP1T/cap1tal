@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Same gate as locally: `npm run verify` (openspec validate → lint → typecheck → tests). < 1 min.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+
+  # Slow job: native Android build. Runs only when native-affecting files change, or on demand.
+  # Skips itself until the Expo app exists (no app.json yet). Not run on every PR.
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Detect Expo app
+        id: app
+        run: |
+          if [ -f app.json ] || ls app.config.* >/dev/null 2>&1; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Detect native-affecting changes
+        id: native
+        if: steps.app.outputs.present == 'true' && github.event_name == 'push'
+        run: |
+          base="${{ github.event.before }}"
+          if git cat-file -e "$base" 2>/dev/null; then
+            changed=$(git diff --name-only "$base" "${{ github.sha }}" -- android app.json 'app.config.*' plugins package.json package-lock.json eas.json || true)
+          else
+            changed="first-push"
+          fi
+          if [ -n "$changed" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Skip reason
+        if: steps.app.outputs.present != 'true' || (github.event_name == 'push' && steps.native.outputs.run != 'true')
+        run: echo "Android build skipped (no Expo app yet, or no native-affecting changes)."
+      - uses: actions/setup-node@v7
+        if: steps.app.outputs.present == 'true' && (github.event_name == 'workflow_dispatch' || steps.native.outputs.run == 'true')
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v5
+        if: steps.app.outputs.present == 'true' && (github.event_name == 'workflow_dispatch' || steps.native.outputs.run == 'true')
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        if: steps.app.outputs.present == 'true' && (github.event_name == 'workflow_dispatch' || steps.native.outputs.run == 'true')
+      - name: Prebuild and assembleDebug
+        if: steps.app.outputs.present == 'true' && (github.event_name == 'workflow_dispatch' || steps.native.outputs.run == 'true')
+        run: |
+          npm ci
+          npx expo prebuild --platform android --no-install
+          cd android && ./gradlew assembleDebug --no-daemon
