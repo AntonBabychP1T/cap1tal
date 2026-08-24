@@ -23,17 +23,19 @@ Android first (iOS must stay possible).
 ```
 docs/            product-vision.md, glossary.md, tech-task.md — why, vocabulary, build plan
 openspec/        specs/<capability>/spec.md (truth), changes/<name>/ (work in flight), config.yaml
+src/app/         expo-router screens (scaffold demo until replaced by real screens)
 src/domain/      pure TypeScript: entities, money rules, monthly picture   → .claude/rules/domain.md
 src/db/          Drizzle schema, queries; drizzle/ = migrations          → .claude/rules/database.md
 **/*.test.ts     Vitest, next to the source                               → .claude/rules/testing.md
-android/, app.json, plugins/   Expo native config                         → .claude/rules/android.md
+app.json, plugins/   Expo config; android/ & ios/ are generated, never committed → .claude/rules/android.md
+types/           committed ambient types (expo.d.ts replaces gitignored expo-env.d.ts for CI tsc)
 scripts/         verify.sh, fingerprint.sh (used by hooks)
 .claude/         settings.json (permissions + hooks), hooks/, rules/, agents/, skills/
 ```
 
-The Expo app itself is not scaffolded yet. When you run `create-expo-app`, keep this repo's
-`package.json` scripts, `eslint.config.js`, `tsconfig.json` (switch `extends` to
-`expo/tsconfig.base`), `vitest.config.mts` and `drizzle.config.ts`; merge, don't overwrite.
+The app is scaffolded from the Expo SDK 57 default template (expo-router, code under `src/`).
+`src/app`, `src/components`, `src/constants`, `src/hooks` still hold template demo content;
+tech-task.md steps replace it screen by screen. `npm run verify` stays Node-only.
 
 ## Workflow for any change
 
