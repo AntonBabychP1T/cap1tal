@@ -16,6 +16,8 @@ export const accounts = sqliteTable('accounts', {
   currency: text('currency').notNull(),
   /** The opening balance, always in the account's own currency — hence no second column. */
   openingAmount: integer('opening_amount').notNull().default(0),
+  /** Archived accounts keep history and balance; they are offered for no new transaction. */
+  archived: integer('archived', { mode: 'boolean' }).notNull().default(sql`0`),
 });
 
 /**
@@ -32,6 +34,13 @@ export const transactions = sqliteTable(
     id: text('id').primaryKey(),
     type: text('type').notNull(),
     date: text('date').notNull(),
+
+    /**
+     * Storage metadata, not domain: when the row was first inserted. It breaks ties between
+     * transactions of the same calendar date in the latest listing, and is deliberately left out
+     * of the update set so replacing a transaction keeps its place.
+     */
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(sql`0`),
 
     /** expense | income | refund | correction — the single account touched. */
     accountId: text('account_id').references(() => accounts.id, { onDelete: 'restrict' }),

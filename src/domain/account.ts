@@ -14,12 +14,14 @@ export interface Account {
   readonly currency: CurrencyCode;
   /** Where the account stood before the first recorded transaction, in its own currency. */
   readonly openingBalance: Money;
+  /** An archived account keeps its history and balance but is offered for no new transaction. */
+  readonly archived: boolean;
 }
 
 /**
  * The one place an Account is built: the opening balance defaults to zero in the account's own
  * currency, and an opening balance in any other currency is rejected — amounts of different
- * currencies never combine.
+ * currencies never combine. A new account is unarchived.
  */
 export function account(input: {
   id: string;
@@ -27,6 +29,7 @@ export function account(input: {
   kind: AccountKind;
   currency: CurrencyCode;
   openingBalance?: Money;
+  archived?: boolean;
 }): Account {
   const openingBalance = input.openingBalance ?? money(0, input.currency);
   if (openingBalance.currency !== input.currency) {
@@ -40,7 +43,17 @@ export function account(input: {
     kind: input.kind,
     currency: input.currency,
     openingBalance,
+    archived: input.archived ?? false,
   };
+}
+
+/**
+ * The accounts offered as a choice when a transaction is recorded, edited or retyped — the one
+ * list every picker uses. An archived account is absent from it, yet keeps being shown on the
+ * transactions it already has.
+ */
+export function activeAccounts(accounts: readonly Account[]): Account[] {
+  return accounts.filter((a) => !a.archived);
 }
 
 /** The monthly numbers a transfer can move. Spent is never one of them. */

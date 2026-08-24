@@ -14,7 +14,25 @@ import type { Storage } from './storage';
  */
 export function accountsRepo(db: Storage) {
   return {
+    /**
+     * Insert or replace under the same id — the one write path, so renaming, editing the opening
+     * balance and archiving all go through it. The kind and the currency are fixed at creation:
+     * changing the currency would leave every stored amount in a currency the account no longer
+     * has, and changing the kind would silently reclassify its whole history in the monthly
+     * picture. Both are rejected rather than applied.
+     */
     save(a: Account): void {
+      const existing = db.select().from(accounts).where(eq(accounts.id, a.id)).get();
+      if (existing && existing.kind !== a.kind) {
+        throw new Error(
+          `account "${a.id}" is ${existing.kind}; the kind cannot be changed after creation`,
+        );
+      }
+      if (existing && existing.currency !== a.currency) {
+        throw new Error(
+          `account "${a.id}" is in ${existing.currency}; the currency cannot be changed after creation`,
+        );
+      }
       const row = toAccountRow(a);
       db.insert(accounts)
         .values(row)
@@ -22,9 +40,8 @@ export function accountsRepo(db: Storage) {
           target: accounts.id,
           set: {
             name: row.name,
-            kind: row.kind,
-            currency: row.currency,
             openingAmount: row.openingAmount,
+            archived: row.archived,
           },
         })
         .run();

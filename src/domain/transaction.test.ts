@@ -83,6 +83,45 @@ describe('transaction', () => {
     ).toThrow();
   });
 
+  it('Scenario: The same account on both legs is rejected', () => {
+    // The rejection the quick-add form surfaces: nothing is stored, because nothing is built.
+    expect(() =>
+      transfer({
+        id: 't-same',
+        date: '2026-03-10',
+        fromAccountId: 'card',
+        toAccountId: 'card',
+        left: money(100000, 'UAH'),
+        arrived: money(100000, 'UAH'),
+      }),
+    ).toThrow();
+  });
+
+  it('Scenario: A cross-currency переказ proposes no комісія', () => {
+    // 10000 USD is a smaller number than 410000 UAH and means far more money. Comparing the raw
+    // numbers across currencies would invent a fee out of the exchange rate.
+    const crossCurrency = transfer({
+      id: 't-cross',
+      date: '2026-03-10',
+      fromAccountId: 'card',
+      toAccountId: 'usd',
+      left: money(410000, 'UAH'),
+      arrived: money(10000, 'USD'),
+    });
+    expect(proposeFee(crossCurrency)).toBeNull();
+
+    // Also the other way round, where the arrived number is the larger one.
+    const backwards = transfer({
+      id: 't-cross-back',
+      date: '2026-03-11',
+      fromAccountId: 'usd',
+      toAccountId: 'card',
+      left: money(10000, 'USD'),
+      arrived: money(400000, 'UAH'),
+    });
+    expect(proposeFee(backwards)).toBeNull();
+  });
+
   it('Transfer amounts are positive', () => {
     const legs = {
       id: 't13',

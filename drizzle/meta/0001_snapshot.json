@@ -1,0 +1,288 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "e6a0f0b3-2088-4343-83b2-0a3128c36376",
+  "prevId": "9c92dc32-f342-4fc5-8ee3-d4586ae22c9f",
+  "tables": {
+    "accounts": {
+      "name": "accounts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "opening_amount": {
+          "name": "opening_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "archived": {
+          "name": "archived",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "transactions": {
+      "name": "transactions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "amount": {
+          "name": "amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_id": {
+          "name": "category_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "original_amount": {
+          "name": "original_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "original_currency": {
+          "name": "original_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "from_account_id": {
+          "name": "from_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "to_account_id": {
+          "name": "to_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "left_amount": {
+          "name": "left_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "left_currency": {
+          "name": "left_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "arrived_amount": {
+          "name": "arrived_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "arrived_currency": {
+          "name": "arrived_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "transactions_date_idx": {
+          "name": "transactions_date_idx",
+          "columns": [
+            "date"
+          ],
+          "isUnique": false
+        },
+        "transactions_account_idx": {
+          "name": "transactions_account_idx",
+          "columns": [
+            "account_id"
+          ],
+          "isUnique": false
+        },
+        "transactions_from_account_idx": {
+          "name": "transactions_from_account_idx",
+          "columns": [
+            "from_account_id"
+          ],
+          "isUnique": false
+        },
+        "transactions_to_account_idx": {
+          "name": "transactions_to_account_idx",
+          "columns": [
+            "to_account_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "transactions_account_id_accounts_id_fk": {
+          "name": "transactions_account_id_accounts_id_fk",
+          "tableFrom": "transactions",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "transactions_from_account_id_accounts_id_fk": {
+          "name": "transactions_from_account_id_accounts_id_fk",
+          "tableFrom": "transactions",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "from_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "transactions_to_account_id_accounts_id_fk": {
+          "name": "transactions_to_account_id_accounts_id_fk",
+          "tableFrom": "transactions",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "to_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "transactions_type_known": {
+          "name": "transactions_type_known",
+          "value": "\"transactions\".\"type\" IN ('expense', 'income', 'transfer', 'refund', 'correction')"
+        },
+        "transactions_date_iso": {
+          "name": "transactions_date_iso",
+          "value": "\"transactions\".\"date\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
+        },
+        "transactions_original_amount_paired": {
+          "name": "transactions_original_amount_paired",
+          "value": "(\"transactions\".\"original_amount\" IS NULL) = (\"transactions\".\"original_currency\" IS NULL)"
+        },
+        "transactions_shape": {
+          "name": "transactions_shape",
+          "value": "CASE \"transactions\".\"type\"\n        WHEN 'transfer' THEN\n          \"transactions\".\"from_account_id\" IS NOT NULL AND \"transactions\".\"to_account_id\" IS NOT NULL\n          AND \"transactions\".\"from_account_id\" <> \"transactions\".\"to_account_id\"\n          AND \"transactions\".\"left_amount\" IS NOT NULL AND \"transactions\".\"left_currency\" IS NOT NULL\n          AND \"transactions\".\"arrived_amount\" IS NOT NULL AND \"transactions\".\"arrived_currency\" IS NOT NULL\n          AND \"transactions\".\"account_id\" IS NULL AND \"transactions\".\"amount\" IS NULL AND \"transactions\".\"currency\" IS NULL\n          AND \"transactions\".\"category_id\" IS NULL AND \"transactions\".\"source_id\" IS NULL\n          AND \"transactions\".\"original_amount\" IS NULL\n        ELSE\n          \"transactions\".\"account_id\" IS NOT NULL AND \"transactions\".\"amount\" IS NOT NULL AND \"transactions\".\"currency\" IS NOT NULL\n          AND \"transactions\".\"from_account_id\" IS NULL AND \"transactions\".\"to_account_id\" IS NULL\n          AND \"transactions\".\"left_amount\" IS NULL AND \"transactions\".\"left_currency\" IS NULL\n          AND \"transactions\".\"arrived_amount\" IS NULL AND \"transactions\".\"arrived_currency\" IS NULL\n          AND (CASE \"transactions\".\"type\"\n            WHEN 'income' THEN \"transactions\".\"source_id\" IS NOT NULL AND \"transactions\".\"category_id\" IS NULL\n                                AND \"transactions\".\"original_amount\" IS NULL\n            WHEN 'correction' THEN \"transactions\".\"source_id\" IS NULL AND \"transactions\".\"category_id\" IS NULL\n                                AND \"transactions\".\"original_amount\" IS NULL\n            WHEN 'refund' THEN \"transactions\".\"category_id\" IS NOT NULL AND \"transactions\".\"source_id\" IS NULL\n                                AND \"transactions\".\"original_amount\" IS NULL\n            ELSE \"transactions\".\"category_id\" IS NOT NULL AND \"transactions\".\"source_id\" IS NULL\n          END)\n      END"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

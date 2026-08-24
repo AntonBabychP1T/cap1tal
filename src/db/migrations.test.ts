@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { account } from '../domain/account';
 import { money } from '../domain/money';
 import { expenseByDefault, refund, transfer, type Transaction } from '../domain/transaction';
-import { toAccountRow, toTransaction, toTransactionRow } from './mappers';
+import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
 import { accounts, transactions } from './schema';
-import { openTestDb, type TestStorage } from './test-db';
+import { openTestDb, openTestDbMigratedTo, type TestStorage } from './test-db';
 
 const card = account({
   id: 'card',
@@ -156,6 +156,48 @@ describe('migrations', () => {
     ).toThrow();
   });
 
+  it('Scenario: A fresh database from migrations alone stores the flag', () => {
+    const { db } = storage;
+    const archivedJar = account({ ...jar, id: 'old-jar', archived: true });
+    db.insert(accounts).values([toAccountRow(card), toAccountRow(archivedJar)]).run();
+
+    expect(toAccount(db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(
+      card,
+    );
+    expect(toAccount(db.select().from(accounts).where(eq(accounts.id, 'old-jar')).get()!)).toEqual(
+      archivedJar,
+    );
+    expect(card.archived).toBe(false);
+    expect(archivedJar.archived).toBe(true);
+  });
+
+  it('Scenario: A pre-migration account loads unarchived', () => {
+    // A row written when only the first migration existed: no archived column to write to.
+    const staged = openTestDbMigratedTo(1);
+    try {
+      staged.db.run(
+        sql`INSERT INTO accounts (id, name, kind, currency, opening_amount)
+            VALUES ('card', 'mono black', 'spending', 'UAH', 100000)`,
+      );
+
+      staged.migrateToLatest();
+
+      const row = staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get();
+      expect(toAccount(row!)).toEqual(
+        account({
+          id: 'card',
+          name: 'mono black',
+          kind: 'spending',
+          currency: 'UAH',
+          openingBalance: money(100000, 'UAH'),
+        }),
+      );
+      expect(toAccount(row!).archived).toBe(false);
+    } finally {
+      staged.close();
+    }
+  });
+
   it('No balance is stored: an account keeps only its opening balance', () => {
     // Read from the migrated database, not from the schema object: a migration carrying a column
     // the schema no longer declares would slip past the latter.
@@ -165,6 +207,7 @@ describe('migrations', () => {
       'kind',
       'currency',
       'opening_amount',
+      'archived',
     ]);
   });
 

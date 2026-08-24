@@ -15,6 +15,7 @@ Android first (iOS must stay possible).
 | `npm run lint` / `npm run typecheck` / `npm run test` | The pieces of `verify` |
 | `npx vitest run <path>` | One test file while iterating |
 | `npm run db:generate` | Generate a migration from `src/db/schema.ts` |
+| `scripts/android.sh up` | Run the app on the local emulator: build → install → Metro → launch. `shot`/`reset`/`logs` for smoke tests (`.claude/rules/android.md`). Never part of `verify`. |
 | `openspec list`, `openspec status --change <n>`, `openspec validate --all` | OpenSpec state |
 | `/opsx:propose`, `/opsx:apply`, `/opsx:archive` | OpenSpec workflow (skills in `.claude/skills/`) |
 
@@ -23,8 +24,9 @@ Android first (iOS must stay possible).
 ```
 docs/            product-vision.md, glossary.md, tech-task.md — why, vocabulary, build plan
 openspec/        specs/<capability>/spec.md (truth), changes/<name>/ (work in flight), config.yaml
-src/app/         expo-router screens (scaffold demo until replaced by real screens)
+src/app/         expo-router screens: Головний, Рахунки, transaction/[id] (editing)
 src/domain/      pure TypeScript: entities, money rules, monthly picture   → .claude/rules/domain.md
+src/ui/          pure TypeScript screen logic, no React imports: amount parsing, labels, grouping
 src/db/          Drizzle schema, queries; drizzle/ = migrations          → .claude/rules/database.md
 **/*.test.ts     Vitest, next to the source                               → .claude/rules/testing.md
 app.json, plugins/   Expo config; android/ & ios/ are generated, never committed → .claude/rules/android.md
@@ -34,8 +36,9 @@ scripts/         verify.sh, fingerprint.sh (used by hooks)
 ```
 
 The app is scaffolded from the Expo SDK 57 default template (expo-router, code under `src/`).
-`src/app`, `src/components`, `src/constants`, `src/hooks` still hold template demo content;
-tech-task.md steps replace it screen by screen. `npm run verify` stays Node-only.
+The template's demo screens and components are gone; `src/components`, `src/constants` and
+`src/hooks` keep only what the real screens use. Later tech-task.md steps add the remaining
+screens. `npm run verify` stays Node-only — it never runs JSX.
 
 ## Workflow for any change
 

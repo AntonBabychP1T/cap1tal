@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { account, classifyTransfer, computeBalance } from './account';
+import { account, activeAccounts, classifyTransfer, computeBalance } from './account';
 import { money } from './money';
 import {
   CORRECTION_CATEGORY_ID,
@@ -30,6 +30,11 @@ describe('account', () => {
     const fresh = account({ id: 'fresh', name: 'нова картка', kind: 'spending', currency: 'UAH' });
     expect(fresh.openingBalance).toEqual(money(0, 'UAH'));
     expect(computeBalance(fresh, [])).toEqual(money(0, 'UAH'));
+  });
+
+  it('A new account is unarchived', () => {
+    const fresh = account({ id: 'fresh', name: 'нова картка', kind: 'spending', currency: 'UAH' });
+    expect(fresh.archived).toBe(false);
   });
 
   it('Scenario: A mismatched opening-balance currency is rejected', () => {
@@ -216,5 +221,40 @@ describe('computeBalance', () => {
       arrived: money(5000, 'UAH'),
     });
     expect(computeBalance(uahCard, [elsewhere, between])).toEqual(money(100000, 'UAH'));
+  });
+});
+
+describe('activeAccounts', () => {
+  const archivedJar = account({
+    id: 'old-jar',
+    name: 'стара банка',
+    kind: 'savings',
+    currency: 'UAH',
+    archived: true,
+  });
+
+  it('Scenario: An archived account is not offered for new transactions', () => {
+    expect(activeAccounts([card, archivedJar])).toEqual([card]);
+  });
+
+  it('Scenario: Editing pickers also offer only unarchived accounts', () => {
+    // One list serves recording, editing and retyping, so an archived account is offered as a
+    // destination nowhere; the transactions it already carries are unaffected.
+    const offered = activeAccounts([card, archivedJar, jar]);
+    expect(offered.map((a) => a.id)).toEqual(['card', 'jar']);
+    const itsOwnTransfer = transfer({
+      id: 't-old',
+      date: '2026-03-15',
+      fromAccountId: 'card',
+      toAccountId: 'old-jar',
+      ...legs,
+    });
+    expect(itsOwnTransfer.toAccountId).toBe('old-jar');
+    expect(computeBalance(archivedJar, [itsOwnTransfer])).toEqual(money(100000, 'UAH'));
+  });
+
+  it('Scenario: Unarchiving restores the account', () => {
+    const restored = account({ ...archivedJar, archived: false });
+    expect(activeAccounts([card, restored]).map((a) => a.id)).toEqual(['card', 'old-jar']);
   });
 });

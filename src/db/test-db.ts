@@ -1,3 +1,13 @@
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import Database from 'better-sqlite3';
@@ -37,6 +47,50 @@ function open(filename: string): TestStorage {
 /** A fresh in-memory database with all committed migrations applied. */
 export function openTestDb(): TestStorage {
   return open(':memory:');
+}
+
+interface Journal {
+  readonly entries: readonly { readonly idx: number; readonly tag: string }[];
+}
+
+export interface StagedStorage extends TestStorage {
+  /** Applies the migrations the staged history left out, bringing the database up to date. */
+  migrateToLatest(): void;
+}
+
+/**
+ * A database with only the first `count` committed migrations applied, and the means to bring it
+ * to the current shape afterwards — the only honest way to prove what a migration does to rows
+ * that predate it. The partial history is staged in a temporary folder; the committed one is
+ * never touched.
+ */
+export function openTestDbMigratedTo(count: number): StagedStorage {
+  const journal = JSON.parse(
+    readFileSync(join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'),
+  ) as Journal;
+  const staged = mkdtempSync(join(tmpdir(), 'cap1tal-migrations-'));
+  mkdirSync(join(staged, 'meta'));
+  const entries = journal.entries.slice(0, count);
+  for (const entry of entries) {
+    copyFileSync(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(staged, `${entry.tag}.sql`));
+  }
+  writeFileSync(
+    join(staged, 'meta', '_journal.json'),
+    JSON.stringify({ ...journal, entries }),
+    'utf8',
+  );
+
+  const sqlite = new Database(':memory:');
+  sqlite.pragma('foreign_keys = ON');
+  const db = drizzle(sqlite, { schema });
+  migrate(db, { migrationsFolder: staged });
+  rmSync(staged, { recursive: true, force: true });
+
+  return {
+    db,
+    migrateToLatest: () => migrate(db, { migrationsFolder: MIGRATIONS_FOLDER }),
+    close: () => sqlite.close(),
+  };
 }
 
 /**
