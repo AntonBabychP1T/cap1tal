@@ -23,7 +23,7 @@ export default function AppTabs() {
       <NativeTabs.Trigger name="accounts">
         <NativeTabs.Trigger.Label>Рахунки</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
-          src={require('@/assets/images/tabIcons/explore.png')}
+          src={require('@/assets/images/tabIcons/accounts.png')}
           renderingMode="template"
         />
       </NativeTabs.Trigger>

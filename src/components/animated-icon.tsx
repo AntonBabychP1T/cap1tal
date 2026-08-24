@@ -1,13 +1,17 @@
-import { Image } from 'expo-image';
 import * as SplashScreen from 'expo-splash-screen';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, { Easing, Keyframe } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import { ThemedText } from './themed-text';
+
+import { useTheme } from '@/hooks/use-theme';
+
 const DURATION = 600;
 
 export function AnimatedSplashOverlay() {
+  const theme = useTheme();
   const [animate, setAnimate] = useState(false);
   const [visible, setVisible] = useState(true);
 
@@ -32,7 +36,13 @@ export function AnimatedSplashOverlay() {
     },
   });
 
-  const image = <Image style={styles.image} source={require('@/assets/images/expo-logo.png')} />;
+  // The app's own name, drawn as live text: the launch view carries no other product's mark, and a
+  // wordmark the platform draws needs no image asset to ship, license or keep in sync.
+  const wordmark = <ThemedText type="subtitle">cap1tal</ThemedText>;
+
+  // Must match the native splash background configured for expo-splash-screen in app.json, which is
+  // plain JSON and cannot import this palette. If the two drift, the handover flashes.
+  const overlay = [styles.splashOverlay, { backgroundColor: theme.background }];
 
   return animate ? (
     <Animated.View
@@ -42,8 +52,8 @@ export function AnimatedSplashOverlay() {
           scheduleOnRN(setVisible, false);
         }
       })}
-      style={styles.splashOverlay}>
-      {image}
+      style={overlay}>
+      {wordmark}
     </Animated.View>
   ) : (
     <View
@@ -52,20 +62,15 @@ export function AnimatedSplashOverlay() {
           setAnimate(true);
         });
       }}
-      style={styles.splashOverlay}>
-      {image}
+      style={overlay}>
+      {wordmark}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  image: {
-    width: 76,
-    height: 71,
-  },
   splashOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#208AEF',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 1000,
