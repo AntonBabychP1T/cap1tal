@@ -30,6 +30,34 @@ paths:
   `.env*`. They are denied to the agent; if a task seems to need one, stop and ask.
 - The agent does not run `eas build`, `eas submit` or `eas update`; the owner does.
 
+## Running it locally on an emulator
+
+`npm run verify` never launches the app; anything about how a screen behaves needs a real device.
+The whole loop is one script — `scripts/android.sh` (see its header for every subcommand):
+
+```
+scripts/android.sh up      # boot AVD if needed → prebuild if needed → build → install → Metro → launch
+scripts/android.sh reset   # wipe app data: the "no рахунок yet" first-run state
+scripts/android.sh shot f  # PNG screenshot, so a smoke test can be looked at and attached
+scripts/android.sh tap X Y # tap at device pixels — screenshot pixels are the same pixels
+scripts/android.sh text S  # type into the focused field;  key back|enter|del  for key events
+scripts/android.sh logs    # ReactNativeJS + AndroidRuntime logcat
+scripts/android.sh stop    # stop Metro and the Gradle daemon
+```
+
+A smoke test is therefore `shot` → read the PNG → `tap` the thing → `shot` again: the coordinates
+come straight off the previous screenshot, no ratio to convert.
+
+- The AVD is `Pixel_10_Pro` by default; override with `CAP1TAL_AVD=<name>`. `emulator -list-avds`
+  lists what exists. Creating an AVD is the owner's job (Android Studio → Device Manager).
+- The build is a **debug** APK, so the JS comes from Metro over `adb reverse tcp:8081`: JS edits
+  reload without a rebuild, and only a native/config change needs `scripts/android.sh build` again.
+- Gradle needs JDK 21 (the machine default may be newer); the script pins `JAVA_HOME` itself.
+  It also builds only the device's own ABI — a four-ABI build is ~4× the work for nothing.
+- `.cache/android/` holds Metro and emulator logs and screenshots; it is gitignored.
+- A screenshot from this loop is the evidence a manual-smoke task needs. Attach or describe what
+  was seen; a build that merely compiles is not a smoke test.
+
 ## Verification
 - `npm run verify` does not cover native code. When a change touches these paths, say so
   explicitly in the task and change summary, and point at the CI `android` job (Gradle

@@ -15,6 +15,8 @@ module.exports = defineConfig([
       'drizzle/*',
       'coverage/*',
       '.cache/*',
+      // nested git worktrees (`.claude/worktrees/<name>`) are separate checkouts, not this tree
+      '.claude/worktrees/*',
     ],
   },
 ]);

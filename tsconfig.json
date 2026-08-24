@@ -17,5 +17,5 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ],
-  "exclude": ["node_modules", "android", "ios", ".expo", "dist", "drizzle", "coverage"]
+  "exclude": ["node_modules", "android", "ios", ".expo", "dist", "drizzle", "coverage", ".claude/worktrees"]
 }
