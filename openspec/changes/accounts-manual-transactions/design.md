@@ -109,7 +109,11 @@ Expo-router files, replacing the template demo:
   only "видалити": a screen must render something, and half-editing a type whose джерело and
   категорія do not exist yet would invent behaviour no spec asks for. They become editable with
   the steps that can record them.
-- `_layout.tsx` keeps migrations + splash; tabs become Головний and Рахунки. Template demo files
+- `_layout.tsx` keeps migrations + splash and renders a **Stack**, not the tabs themselves: the
+  tabs are a `(tabs)` group under it and editing one transaction is pushed on top of whichever tab
+  opened it. Making `NativeTabs` the root layout leaves a route with no trigger — like
+  `transaction/[id]` — unreachable, with nothing to push it onto; `verify` cannot see this and the
+  bundle still builds, so it surfaced only in the manual smoke (task 4.5). Template demo files
   (`explore.tsx`, hint-row, external-link, web-badge, collapsible, app-tabs demo content) are
   deleted or rewritten; whatever nothing references is removed. `AnimatedSplashOverlay`,
   themed-text/view and the theme hooks stay.

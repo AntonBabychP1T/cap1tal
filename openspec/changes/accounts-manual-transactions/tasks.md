@@ -142,7 +142,7 @@ testing.md's every-scenario-has-a-test rule: they are pure UI wiring that Vitest
 - [x] 4.4 `_layout.tsx` tabs → Головний + Рахунки; delete template demo files (`explore.tsx`,
       hint-row, external-link, web-badge, collapsible, demo tab content) leaf-first, keeping
       `AnimatedSplashOverlay`, themed components and theme hooks; `verify` after removals.
-- [ ] 4.5 Manual smoke on Android (емулятор або пристрій) of the UI-only scenarios — the stated
+- [x] 4.5 Manual smoke on Android (емулятор або пристрій) of the UI-only scenarios — the stated
       exception to testing.md, since Vitest never runs JSX: "The first screen is entry plus the
       feed", "A recorded transaction appears at the top of the feed" (visually), "With no
       рахунок nothing can be recorded yet", "Same-currency transfer needs one amount", "A short
@@ -150,6 +150,45 @@ testing.md's every-scenario-has-a-test rule: they are pure UI wiring that Vitest
       accepted/declined fee dialogs, "A deletion is confirmed first", "Renaming is immediately
       visible" and "The screen invites the first рахунок". Note the result in the change before
       archive; the CI android job covers compilation.
+
+      **Run on the `Pixel_10_Pro` emulator (API 37) via `scripts/android.sh`; screenshots in
+      `.cache/android/`.** Proven on the device:
+
+      - *With no рахунок nothing can be recorded yet* — after `reset`, Головний offers no рахунок,
+        says "Спершу створіть рахунок" and points at Рахунки; the feed says nothing is recorded.
+      - *The screen invites the first рахунок* — Рахунки shows no вид groups, only the invitation.
+      - *The first screen is entry plus the feed* — тип (витрата by default), рахунок, сума, дата
+        prefilled with today, "Категорія: Без категорії", then the стрічка.
+      - *A created account is usable immediately* / *An account shows its computed balance* /
+        *Accounts group by kind* — a UAH `spending` account opened at 1000,00 appears under
+        Витратні with its balance and is offered on Головний at once; a `savings` one lands under
+        Накопичувальні.
+      - *A recorded transaction appears at the top of the feed* — "125.50" stored as **125,50 UAH**,
+        top of the стрічка, "витрата · Без категорії".
+      - *Same-currency transfer needs one amount* — «скільки прийшло» left untouched records equal
+        legs and proposes no комісія.
+      - *A short arrival proposes the комісія* — 100,00 out / 99,50 in raises "Схоже на комісію —
+        Дійшло на 0,50 UAH менше".
+      - *Accepted fee proposal* + *Accepting the комісія keeps the source balance exact* — the
+        stored переказ carries 99,50 on both legs, the "Комісія" витрата is 0,50, and the source
+        balance is **774,50 UAH**, not 774,00. This is design §8 proven on a device: the shape the
+        archived monthly-picture scenario names would have counted the комісія twice.
+      - *A deletion is confirmed first* — "Видалити транзакцію?" with Скасувати/Видалити; after
+        confirming, the transaction is gone from the стрічка and the balance returns to 775,00.
+      - *Renaming is immediately visible* — the row shows the new назва with its balance unchanged,
+        still under its вид; вид and валюта are disabled while editing, with the reason shown.
+
+      **A defect the smoke found, and only the smoke could:** tapping a transaction did nothing.
+      `src/app/_layout.tsx` made `NativeTabs` the root layout, so `transaction/[id]` had no tab
+      trigger and no stack to be pushed onto — the editing screen was unreachable, while `verify`
+      stayed green and the bundle built cleanly. Fixed by making the root a `Stack` over a `(tabs)`
+      group (`src/app/(tabs)/`), with editing pushed on top; re-checked on the device afterwards.
+
+      Not covered on the device, and stated rather than implied: *Cross-currency transfer asks both
+      legs* and the *declined* fee dialog (both have repo-level tests), and every editing scenario
+      beyond opening and deleting. `adb shell input text` cannot type Cyrillic, so account names in
+      the run are ASCII.
+
 - [x] 4.6 Docs: bring `docs/tech-task.md` in line with this change's scope — step 3 claims
       `FR-S1 (частково: витрата і переказ)`, step 5 gains `FR-S1 (решта)`, and the milestone
       line "після кроку 3 можна вести облік вручну" becomes "після кроку 3 можна вручну вести

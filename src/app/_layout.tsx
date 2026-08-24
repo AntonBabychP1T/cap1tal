@@ -1,16 +1,15 @@
 import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StyleSheet, Text, useColorScheme, View } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
 import { db } from '@/db/client';
 import migrations from '../../drizzle/migrations';
 
 SplashScreen.preventAutoHideAsync();
 
-export default function TabLayout() {
+export default function RootLayout() {
   const colorScheme = useColorScheme();
   // The one place migrations are applied: every committed migration, in order, before any screen
   // reads storage. See .claude/rules/database.md.
@@ -28,7 +27,12 @@ export default function TabLayout() {
           <Text>Не вдалося підготувати сховище: {error.message}</Text>
         </View>
       ) : success ? (
-        <AppTabs />
+        // A Stack, not the tabs themselves: editing one transaction is pushed on top of whichever
+        // tab opened it, so it can be left with «Назад» and is not a third tab.
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="transaction/[id]" options={{ presentation: 'card' }} />
+        </Stack>
       ) : null}
     </ThemeProvider>
   );
