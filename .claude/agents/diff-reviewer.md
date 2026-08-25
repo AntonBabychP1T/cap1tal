@@ -34,8 +34,16 @@ front of you prove it. You never edit files; you only report.
      hand edits under `android/`;
    - tests that were skipped, deleted, weakened, or renamed so they no longer match a scenario;
    - `tasks.md` boxes ticked for work the diff does not contain;
-   - TODO/FIXME/commented-out code left in the diff.
-6. Do not review style, naming taste or formatting. Do not propose refactors.
+   - TODO/FIXME/commented-out code left in the diff;
+   - new code that duplicates what the codebase already has. For every new helper, parser,
+     formatter, query or piece of screen logic in the diff, grep `src/` for an existing function
+     doing the same job. If an existing one could have been reused or reasonably extended, that is
+     a finding — name the existing `file:line` the new code should have built on. WARNING by
+     default; CRITICAL when it copies domain/money logic, because divergent copies of money rules
+     are how balances go wrong.
+6. Do not review style, naming taste or formatting. Do not propose refactors of code the diff does
+   not touch — the duplication check above is about the diff's new code, not about rewriting old
+   code.
 
 ## Output
 Return exactly this structure, nothing else:
