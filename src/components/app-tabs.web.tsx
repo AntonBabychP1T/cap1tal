@@ -22,6 +22,9 @@ export default function AppTabs() {
           <TabTrigger name="home" href="/" asChild>
             <TabButton>Головний</TabButton>
           </TabTrigger>
+          <TabTrigger name="month" href="/month" asChild>
+            <TabButton>Місяць</TabButton>
+          </TabTrigger>
           <TabTrigger name="accounts" href="/accounts" asChild>
             <TabButton>Рахунки</TabButton>
           </TabTrigger>

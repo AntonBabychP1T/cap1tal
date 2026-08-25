@@ -27,11 +27,13 @@ export default function RootLayout() {
           <Text>Не вдалося підготувати сховище: {error.message}</Text>
         </View>
       ) : success ? (
-        // A Stack, not the tabs themselves: editing one transaction is pushed on top of whichever
-        // tab opened it, so it can be left with «Назад» and is not a third tab.
+        // A Stack, not the tabs themselves: editing one transaction, and a category's month list,
+        // are pushed on top of whichever tab opened them, so each can be left with «Назад» and
+        // neither becomes a tab of its own.
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="transaction/[id]" options={{ presentation: 'card' }} />
+          <Stack.Screen name="category/[month]/[categoryId]" options={{ presentation: 'card' }} />
         </Stack>
       ) : null}
     </ThemeProvider>

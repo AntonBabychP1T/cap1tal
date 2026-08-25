@@ -1,14 +1,23 @@
 import type { Account, AccountKind } from '../domain/account';
-import { FEES_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
+import {
+  CORRECTION_CATEGORY_ID,
+  FEES_CATEGORY_ID,
+  UNCATEGORISED_CATEGORY_ID,
+} from '../domain/transaction';
 
 /**
  * The Ukrainian the owner reads. Reserved category ids are domain constants; these are their
- * display labels, named by the specs verbatim ("Без категорії", "Комісія"). The editable category
- * list arrives with categories-rules; until then these two are all there is to show.
+ * display labels, named by the specs verbatim ("Без категорії", "Комісія", "Коригування"). The
+ * editable category list arrives with categories-rules; until then these three are all there is
+ * to show, and `categoryLabel` falling back to the raw id is what lets the breakdown ship before
+ * that list exists.
  */
 const CATEGORY_LABELS: Readonly<Record<string, string>> = {
   [UNCATEGORISED_CATEGORY_ID]: 'Без категорії',
   [FEES_CATEGORY_ID]: 'Комісія',
+  // A коригування has no category of its own to carry, so the domain fixes one for it. It reaches
+  // the breakdown only when it is negative — a positive one is дохід.
+  [CORRECTION_CATEGORY_ID]: 'Коригування',
 };
 
 export function categoryLabel(categoryId: string): string {

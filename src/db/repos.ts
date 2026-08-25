@@ -1,5 +1,6 @@
 import { accountsRepo } from './accounts-repo';
 import { db } from './client';
+import { ratesRepo } from './rates-repo';
 import { transactionsRepo } from './transactions-repo';
 
 /**
@@ -9,3 +10,5 @@ import { transactionsRepo } from './transactions-repo';
  */
 export const accounts = accountsRepo(db);
 export const transactions = transactionsRepo(db);
+/** The monobank rate cache — read for the approximate UAH figure, written when it is refreshed. */
+export const rates = ratesRepo(db);

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { FEES_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
+import {
+  CORRECTION_CATEGORY_ID,
+  FEES_CATEGORY_ID,
+  UNCATEGORISED_CATEGORY_ID,
+} from '../domain/transaction';
 import { categoryLabel, kindLabel, OFFERED_CURRENCIES } from './labels';
 
 describe('categoryLabel', () => {
@@ -28,5 +32,17 @@ describe('kindLabel', () => {
 describe('OFFERED_CURRENCIES', () => {
   it('An account can be opened in UAH, EUR or USD', () => {
     expect([...OFFERED_CURRENCIES]).toEqual(['UAH', 'EUR', 'USD']);
+  });
+});
+
+describe('categoryLabel — the correction category', () => {
+  it('"Коригування" is the label of the reserved correction category', () => {
+    expect(categoryLabel(CORRECTION_CATEGORY_ID)).toBe('Коригування');
+  });
+
+  it('The three reserved categories are the ones the breakdown can show today', () => {
+    expect(
+      [UNCATEGORISED_CATEGORY_ID, FEES_CATEGORY_ID, CORRECTION_CATEGORY_ID].map(categoryLabel),
+    ).toEqual(['Без категорії', 'Комісія', 'Коригування']);
   });
 });

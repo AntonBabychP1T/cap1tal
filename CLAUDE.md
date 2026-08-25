@@ -28,6 +28,7 @@ src/app/         expo-router screens: Головний, Рахунки, transact
 src/domain/      pure TypeScript: entities, money rules, monthly picture   → .claude/rules/domain.md
 src/ui/          pure TypeScript screen logic, no React imports: amount parsing, labels, grouping
 src/db/          Drizzle schema, queries; drizzle/ = migrations          → .claude/rules/database.md
+src/monobank/    the public, tokenless currency endpoint: fetch + parse, no token anywhere near it
 **/*.test.ts     Vitest, next to the source                               → .claude/rules/testing.md
 app.json, plugins/   Expo config; android/ & ios/ are generated, never committed → .claude/rules/android.md
 types/           committed ambient types (expo.d.ts replaces gitignored expo-env.d.ts for CI tsc)

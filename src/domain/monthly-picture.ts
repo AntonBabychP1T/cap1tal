@@ -1,6 +1,6 @@
 import { classifyTransfer, type Account } from './account';
 import { money, type CurrencyCode, type Money } from './money';
-import { monthOf, type Month, type Transaction } from './transaction';
+import { CORRECTION_CATEGORY_ID, monthOf, type Month, type Transaction } from './transaction';
 
 /** The per-currency numbers of one calendar month. */
 export interface MonthlyNumbers {
@@ -100,4 +100,70 @@ export function monthlyPicture(input: {
     });
   }
   return picture;
+}
+
+/**
+ * Spent, broken down by category: per currency, category id → the signed amount that category
+ * accounts for. An expense adds to its category, a refund subtracts from it, and a negative
+ * correction adds to `CORRECTION_CATEGORY_ID`. Nothing else appears — a transfer never enters
+ * spent, an income is not spent, and a positive correction is income.
+ *
+ * Per currency the amounts sum exactly to `monthlyPicture().spent`; that identity is what makes
+ * this a breakdown rather than a second opinion, and it is held as a property test. A category
+ * may be negative when its refunds outran its expenses, and a category whose expenses and refunds
+ * cancel stays in the map at zero — money did move there this month.
+ *
+ * Unlike `monthlyPicture` this needs no accounts: only transfers need classifying, and transfers
+ * are not spent.
+ */
+export function categoryBreakdown(input: {
+  month: Month;
+  transactions: readonly Transaction[];
+}): Map<CurrencyCode, Map<string, Money>> {
+  const totals = new Map<CurrencyCode, Map<string, number>>();
+  const add = (currency: CurrencyCode, categoryId: string, amount: number): void => {
+    let byCategory = totals.get(currency);
+    if (!byCategory) {
+      byCategory = new Map<string, number>();
+      totals.set(currency, byCategory);
+    }
+    byCategory.set(categoryId, (byCategory.get(categoryId) ?? 0) + amount);
+  };
+
+  for (const t of input.transactions) {
+    if (monthOf(t.date) !== input.month) {
+      continue;
+    }
+    switch (t.type) {
+      case 'expense':
+        add(t.amount.currency, t.categoryId, t.amount.amount);
+        break;
+      case 'refund':
+        add(t.amount.currency, t.categoryId, -t.amount.amount);
+        break;
+      case 'correction':
+        // The sign decides: below zero it is spent, and its category is fixed by the domain.
+        // A positive коригування is income and has no place in a breakdown of spent.
+        if (t.amount.amount < 0) {
+          add(t.amount.currency, CORRECTION_CATEGORY_ID, -t.amount.amount);
+        }
+        break;
+      case 'income':
+      case 'transfer':
+        break;
+      default:
+        assertNever(t);
+    }
+  }
+
+  const breakdown = new Map<CurrencyCode, Map<string, Money>>();
+  for (const [currency, byCategory] of totals) {
+    const row = new Map<string, Money>();
+    for (const [categoryId, amount] of byCategory) {
+      // Paired with its currency here, so no caller ever holds a bare amount (rules/domain.md).
+      row.set(categoryId, money(amount, currency));
+    }
+    breakdown.set(currency, row);
+  }
+  return breakdown;
 }

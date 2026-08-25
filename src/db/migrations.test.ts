@@ -5,7 +5,7 @@ import { account } from '../domain/account';
 import { money } from '../domain/money';
 import { expenseByDefault, refund, transfer, type Transaction } from '../domain/transaction';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
-import { accounts, transactions } from './schema';
+import { accounts, monobankRates, transactions } from './schema';
 import { openTestDb, openTestDbMigratedTo, type TestStorage } from './test-db';
 
 const card = account({
@@ -55,14 +55,17 @@ describe('migrations', () => {
   let storage: TestStorage;
 
   /** The columns the committed migrations actually produced, straight from SQLite. */
-  const migratedColumnsOf = (table: 'accounts' | 'transactions'): string[] =>
-    storage.db
-      .all<{ name: string }>(
-        table === 'accounts'
-          ? sql`PRAGMA table_info(accounts)`
-          : sql`PRAGMA table_info(transactions)`,
-      )
-      .map((column) => column.name);
+  const migratedColumnsOf = (table: 'accounts' | 'transactions' | 'monobank_rates'): string[] => {
+    // Drizzle's `sql` interpolates values, not identifiers, and PRAGMA takes a table name — so
+    // the three statements are written out rather than built from the argument.
+    const pragma =
+      table === 'accounts'
+        ? sql`PRAGMA table_info(accounts)`
+        : table === 'transactions'
+          ? sql`PRAGMA table_info(transactions)`
+          : sql`PRAGMA table_info(monobank_rates)`;
+    return storage.db.all<{ name: string }>(pragma).map((column) => column.name);
+  };
 
   beforeEach(() => {
     storage = openTestDb();
@@ -231,5 +234,85 @@ describe('migrations', () => {
         })
         .run(),
     ).toThrow();
+  });
+});
+
+describe('migrations — the monobank rate cache', () => {
+  let storage: TestStorage;
+
+  /** The rate cache's columns as the committed migrations actually produced them. */
+  const rateColumns = (): { name: string; type: string; notnull: number; pk: number }[] =>
+    storage.db.all<{ name: string; type: string; notnull: number; pk: number }>(
+      sql`PRAGMA table_info(monobank_rates)`,
+    );
+
+  beforeEach(() => {
+    storage = openTestDb();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('A fresh install has the rate cache, with the shape the design pins', () => {
+    const columns = rateColumns();
+    expect(columns.map((c) => c.name)).toEqual(['currency', 'rate_millionths', 'obtained_at']);
+    // The currency is the key: one row per currency, so a newer rate replaces the older one.
+    expect(columns.find((c) => c.name === 'currency')?.pk).toBe(1);
+    expect(columns.find((c) => c.name === 'rate_millionths')?.notnull).toBe(1);
+    expect(columns.find((c) => c.name === 'obtained_at')?.notnull).toBe(1);
+  });
+
+  it('The rate is an integer, never a float column', () => {
+    const types = rateColumns().map((c) => c.type.toUpperCase());
+    expect(types).toEqual(['TEXT', 'INTEGER', 'INTEGER']);
+    expect(types).not.toContain('REAL');
+  });
+
+  it('The migrated shape keeps a rate that is not above zero out', () => {
+    const { db } = storage;
+    db.insert(monobankRates)
+      .values({ currency: 'USD', rateMillionths: 41_253_450, obtainedAt: new Date(1) })
+      .run();
+
+    for (const bad of [0, -1]) {
+      expect(() =>
+        db
+          .insert(monobankRates)
+          .values({ currency: 'EUR', rateMillionths: bad, obtainedAt: new Date(1) })
+          .run(),
+      ).toThrow();
+    }
+  });
+
+  it('The rate cache is its own table: no rate column reaches a transaction or an account', () => {
+    const columns = [
+      ...storage.db.all<{ name: string }>(sql`PRAGMA table_info(accounts)`),
+      ...storage.db.all<{ name: string }>(sql`PRAGMA table_info(transactions)`),
+    ].map((c) => c.name);
+    expect(columns.filter((name) => name.includes('rate'))).toEqual([]);
+  });
+
+  it('A database from before the rate cache gains the table empty, disturbing nothing', () => {
+    // The two migrations that predate this change. An older install has no rate cache at all;
+    // migrating forward must add it without disturbing the rows already there.
+    const staged = openTestDbMigratedTo(2);
+    try {
+      staged.db.insert(accounts).values(toAccountRow(card)).run();
+      staged.db.insert(transactions).values(toTransactionRow(oneOfEachType[0]!)).run();
+      expect(() => staged.db.select().from(monobankRates).all()).toThrow();
+
+      staged.migrateToLatest();
+
+      expect(staged.db.select().from(monobankRates).all()).toEqual([]);
+      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
+      expect(
+        toTransaction(
+          staged.db.select().from(transactions).where(eq(transactions.id, 'e1')).get()!,
+        ),
+      ).toEqual(oneOfEachType[0]);
+    } finally {
+      staged.close();
+    }
   });
 });

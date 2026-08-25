@@ -20,6 +20,14 @@ export default function AppTabs() {
         />
       </NativeTabs.Trigger>
 
+      <NativeTabs.Trigger name="month">
+        <NativeTabs.Trigger.Label>Місяць</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon
+          src={require('@/assets/images/tabIcons/month.png')}
+          renderingMode="template"
+        />
+      </NativeTabs.Trigger>
+
       <NativeTabs.Trigger name="accounts">
         <NativeTabs.Trigger.Label>Рахунки</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon

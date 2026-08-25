@@ -109,3 +109,26 @@ export type AccountRow = typeof accounts.$inferSelect;
 export type NewAccountRow = typeof accounts.$inferInsert;
 export type TransactionRow = typeof transactions.$inferSelect;
 export type NewTransactionRow = typeof transactions.$inferInsert;
+
+/**
+ * The cached monobank rate, one row per currency — a cache, not a record of anything the owner
+ * did. Losing it loses only the approximate UAH figure until a rate is obtained again.
+ *
+ * A rate is a ratio, not money, so the amount-plus-currency pairing rule does not apply — but
+ * `real` stays banned all the same: the rate is stored as integer millionths, exactly as
+ * `src/monobank/currency.ts` produces it, so nothing downstream ever sees a float.
+ */
+export const monobankRates = sqliteTable(
+  'monobank_rates',
+  {
+    /** ISO-4217 letters, the same vocabulary as every other currency column. */
+    currency: text('currency').primaryKey(),
+    /** UAH per one unit of `currency`, ×1e6. */
+    rateMillionths: integer('rate_millionths').notNull(),
+    obtainedAt: integer('obtained_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [check('monobank_rates_rate_positive', sql`${t.rateMillionths} > 0`)],
+);
+
+export type MonobankRateRow = typeof monobankRates.$inferSelect;
+export type NewMonobankRateRow = typeof monobankRates.$inferInsert;

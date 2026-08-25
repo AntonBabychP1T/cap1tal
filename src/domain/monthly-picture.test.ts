@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 
 import { account, type Account, type AccountKind } from './account';
 import { money, type CurrencyCode, type Money } from './money';
-import { monthlyPicture, type MonthlyNumbers } from './monthly-picture';
+import { categoryBreakdown, monthlyPicture, type MonthlyNumbers } from './monthly-picture';
 import {
+  CORRECTION_CATEGORY_ID,
   FEES_CATEGORY_ID,
   transfer,
   UNCATEGORISED_CATEGORY_ID,
@@ -382,6 +383,149 @@ describe('monthly picture properties', () => {
             numbers.left,
           ]) {
             expect(field.currency).toBe(currency);
+          }
+        }
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The category breakdown (task 2.1). Same fixtures as above; `categoryBreakdown`
+// takes no accounts, so the transfers here exist only to prove they stay out.
+// ---------------------------------------------------------------------------
+
+const breakdownOf = (transactions: Transaction[], month = '2026-03') =>
+  categoryBreakdown({ month, transactions });
+
+/** The categories of one currency, as a plain object of minor units — easier to assert on. */
+const minorUnitsOf = (
+  breakdown: Map<CurrencyCode, Map<string, Money>>,
+  currency: CurrencyCode,
+): Record<string, number> => {
+  const row = breakdown.get(currency);
+  if (!row) {
+    throw new Error(`no ${currency} categories in the breakdown`);
+  }
+  return Object.fromEntries([...row].map(([categoryId, m]) => [categoryId, m.amount]));
+};
+
+describe('category breakdown', () => {
+  it('Scenario: The breakdown sums to spent', () => {
+    const transactions = [
+      expenseTx(300000, 'UAH', '2026-03-05', 'food'),
+      expenseTx(200000, 'UAH', '2026-03-06', 'clothes'),
+      refundTx(50000, 'UAH', '2026-03-20', 'food'),
+    ];
+    expect(minorUnitsOf(breakdownOf(transactions), 'UAH')).toEqual({
+      food: 250000,
+      clothes: 200000,
+    });
+    expect(row(pictureOf(transactions), 'UAH').spent).toEqual(money(450000, 'UAH'));
+  });
+
+  it('Scenario: A refund can push its category negative', () => {
+    const transactions = [
+      expenseTx(40000, 'UAH', '2026-03-10', 'clothes'),
+      refundTx(100000, 'UAH', '2026-03-20', 'clothes'),
+    ];
+    expect(minorUnitsOf(breakdownOf(transactions), 'UAH')).toEqual({ clothes: -60000 });
+  });
+
+  it('Scenario: A negative correction lands in the correction category', () => {
+    const breakdown = breakdownOf([correctionTx(-3000, 'UAH')]);
+    expect(minorUnitsOf(breakdown, 'UAH')).toEqual({ [CORRECTION_CATEGORY_ID]: 3000 });
+    expect(breakdown.get('UAH')?.get(CORRECTION_CATEGORY_ID)).toEqual(money(3000, 'UAH'));
+  });
+
+  it('Scenario: A positive correction stays out of the breakdown', () => {
+    const breakdown = breakdownOf([correctionTx(3000, 'UAH')]);
+    expect(breakdown.get('UAH')).toBeUndefined();
+  });
+
+  it('Scenario: One category keeps its currencies apart', () => {
+    const breakdown = breakdownOf([
+      expenseTx(100000, 'UAH', '2026-03-10', 'travel'),
+      expenseTx(10000, 'USD', '2026-03-11', 'travel'),
+    ]);
+    expect(minorUnitsOf(breakdown, 'UAH')).toEqual({ travel: 100000 });
+    expect(minorUnitsOf(breakdown, 'USD')).toEqual({ travel: 10000 });
+    expect(breakdown.get('UAH')?.get('travel')).toEqual(money(100000, 'UAH'));
+    expect(breakdown.get('USD')?.get('travel')).toEqual(money(10000, 'USD'));
+  });
+
+  it('Only the shown month is broken down', () => {
+    const transactions = [
+      expenseTx(100, 'UAH', '2026-03-31', 'food'),
+      expenseTx(200, 'UAH', '2026-04-01', 'food'),
+    ];
+    expect(minorUnitsOf(breakdownOf(transactions, '2026-03'), 'UAH')).toEqual({ food: 100 });
+    expect(minorUnitsOf(breakdownOf(transactions, '2026-04'), 'UAH')).toEqual({ food: 200 });
+  });
+
+  it('Scenario: A transfer gets no row, whatever it reached', () => {
+    const transactions = [
+      incomeTx(5000000, 'UAH'),
+      transferTx('card', 'jar', money(200000, 'UAH'), money(200000, 'UAH')),
+      transferTx('card', 'bonds', money(100000, 'UAH'), money(100000, 'UAH')),
+      transferTx('card', 'borrower', money(300000, 'UAH'), money(300000, 'UAH')),
+    ];
+
+    // Not one row: no expense happened, so nothing was spent on anything.
+    expect(breakdownOf(transactions).size).toBe(0);
+
+    // …and yet the money moved, which is exactly what the monthly numbers beside the breakdown
+    // are for. This is the distinction the Місяць screen exists to make visible.
+    const picture = pictureOf(transactions);
+    expect(row(picture, 'UAH').saved).toEqual(money(200000, 'UAH'));
+    expect(row(picture, 'UAH').invested).toEqual(money(100000, 'UAH'));
+    expect(row(picture, 'UAH').lent).toEqual(money(300000, 'UAH'));
+    expect(row(picture, 'UAH').spent).toEqual(money(0, 'UAH'));
+  });
+
+  it('Scenario: A category that nets to zero keeps its place', () => {
+    const breakdown = breakdownOf([
+      expenseTx(80000, 'UAH', '2026-03-10', 'clothes'),
+      refundTx(80000, 'UAH', '2026-03-20', 'clothes'),
+    ]);
+    expect(minorUnitsOf(breakdown, 'UAH')).toEqual({ clothes: 0 });
+  });
+});
+
+describe('category breakdown properties', () => {
+  it('The breakdown sums to spent, per currency, for any transactions', () => {
+    fc.assert(
+      fc.property(arbTransactions, (transactions) => {
+        const picture = monthlyPicture({ month: '2026-03', accounts: pool, transactions });
+        const breakdown = categoryBreakdown({ month: '2026-03', transactions });
+        const currencies = new Set([...picture.keys(), ...breakdown.keys()]);
+        for (const currency of currencies) {
+          let sum = 0;
+          for (const m of breakdown.get(currency)?.values() ?? []) {
+            expect(m.currency).toBe(currency);
+            sum += m.amount;
+          }
+          expect(sum).toBe(picture.get(currency)?.spent.amount ?? 0);
+        }
+      }),
+    );
+  });
+
+  it('No category of one currency ever carries another currency', () => {
+    fc.assert(
+      fc.property(arbTransactions, (transactions) => {
+        const breakdown = categoryBreakdown({ month: '2026-03', transactions });
+        const spentCurrencies = new Set(
+          transactions.flatMap((t) =>
+            t.type === 'expense' || t.type === 'refund' || t.type === 'correction'
+              ? [t.amount.currency]
+              : [],
+          ),
+        );
+        for (const [currency, row] of breakdown) {
+          expect(spentCurrencies.has(currency)).toBe(true);
+          for (const m of row.values()) {
+            expect(m.currency).toBe(currency);
           }
         }
       }),
