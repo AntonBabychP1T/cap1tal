@@ -107,8 +107,9 @@ EXPENSES names SHALL never become categories: "Fees" SHALL map to the reserved �
 become коригування, and «Борг» legs SHALL become перекази on рахунки-борги. The INCOME name
 "Balance correction" SHALL likewise never become a джерело — its legs become коригування too.
 The INCOME name "Uncategorised income" SHALL be proposed as an ordinary джерело like any other:
-the domain reserves three categories and no джерело at all, so there is no «Без джерела» row to
-map it onto, and inventing one would add a reserved row this change has no requirement for.
+the one джерело the domain reserves is «Відсотки», the interest row, which means something else
+entirely — there is no «Без джерела» row to map "Uncategorised income" onto, and inventing one
+would add a reserved row nothing has a requirement for.
 
 #### Scenario: A flattened income child matches the starter source
 
