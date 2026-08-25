@@ -14,13 +14,16 @@ import {
   transfer,
   CORRECTION_CATEGORY_ID,
   FEES_CATEGORY_ID,
+  INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
   type Correction,
   type Expense,
+  type Income,
 } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
 import { categories, sources } from './schema';
 import { seedStarterSet } from './seed';
+import { proposeForTransfer } from '../ui/entry-form';
 import { openFileDb, openTestDb, type TestStorage } from './test-db';
 import { transactionsRepo } from './transactions-repo';
 
@@ -73,6 +76,7 @@ const SPEC_SOURCE_NAMES = [
   'Gifts',
   'інвестиції',
   'Other income',
+  'Відсотки',
 ];
 
 describe('seedStarterSet', () => {
@@ -102,6 +106,8 @@ describe('seedStarterSet', () => {
     ] as const) {
       expect(storedCategories.find((c) => c.id === id)?.name).toBe(name);
     }
+    // The reserved джерело carries the id the відсотки proposal stores.
+    expect(storedSources.find((row) => row.id === INTEREST_SOURCE_ID)?.name).toBe('Відсотки');
     // Lending is a переказ onto a рахунок-борг, so «Борг» is a category the app never has.
     expect(storedCategories.map((c) => c.name)).not.toContain('Борг');
     // Nothing arrives archived.
@@ -175,6 +181,74 @@ describe('seedStarterSet — across a restart', () => {
 });
 
 /**
+ * The seed's one repair: until this change «Відсотки» was a row the owner was told to create by
+ * hand, so a device may hold one under a generated id. Seeding the reserved row beside it would
+ * leave two unarchived джерела of one name, which the list rules forbid.
+ */
+describe('seedStarterSet — adopting a hand-created «Відсотки»', () => {
+  let storage: TestStorage;
+  const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
+  const storedAt = new Date('2026-08-10T09:00:00.000Z');
+
+  beforeEach(() => {
+    storage = openTestDb();
+    accountsRepo(storage.db).save(card);
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  const interestRows = () =>
+    storage.db.select().from(sources).all().filter((row) => row.name === 'Відсотки');
+
+  it('Scenario: A hand-created «Відсотки» is not duplicated', () => {
+    // The state the previous spec invited: a джерело of that name under an id of the owner's own.
+    storage.db.insert(sources).values({ id: 'src-7f3a', name: 'Відсотки' }).run();
+    const interest: Income = {
+      type: 'income',
+      id: 'i1',
+      date: '2026-08-05',
+      accountId: 'card',
+      amount: money(10000, 'UAH'),
+      sourceId: 'src-7f3a',
+    };
+    transactionsRepo(storage.db).save(interest, storedAt);
+
+    seedStarterSet(storage.db);
+
+    // Exactly one row, and it is the reserved one.
+    const rows = interestRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: INTEREST_SOURCE_ID, archived: false });
+    // The дохід still resolves to it — the history moved with the row, it did not lose its джерело.
+    const loaded = transactionsRepo(storage.db).get('i1') as Income;
+    expect(loaded.sourceId).toBe(INTEREST_SOURCE_ID);
+  });
+
+  it('An archived hand-created «Відсотки» comes back unarchived, still once', () => {
+    storage.db.insert(sources).values({ id: 'src-7f3a', name: 'Відсотки', archived: true }).run();
+
+    seedStarterSet(storage.db);
+
+    expect(interestRows()).toEqual([
+      expect.objectContaining({ id: INTEREST_SOURCE_ID, archived: false }),
+    ]);
+  });
+
+  it('On a device with no such row the adoption changes nothing', () => {
+    seedStarterSet(storage.db);
+    const before = storage.db.select().from(sources).all();
+
+    seedStarterSet(storage.db);
+
+    // Idempotent from the second opening on: same rows, same ids, none doubled.
+    expect(storage.db.select().from(sources).all()).toEqual(before);
+    expect(interestRows()).toHaveLength(1);
+  });
+});
+
+/**
  * The obligation domain-core recorded when it fixed the three reserved ids without a list to put
  * them in: every stored transaction that carries one resolves to a real row of the editable list.
  */
@@ -193,6 +267,15 @@ describe('The reserved category ids resolve to seeded rows', () => {
   /** The name the seeded list gives a category id — the resolution the screens perform. */
   const nameOf = (categoryId: string): string | undefined =>
     storage.db.select().from(categories).where(eq(categories.id, categoryId)).get()?.name;
+
+  /** The same resolution on the other list, for the one джерело the domain names itself. */
+  const sourceNameOf = (sourceId: string): string | undefined =>
+    storage.db.select().from(sources).where(eq(sources.id, sourceId)).get()?.name;
+
+  /** Unreachable: `proposeForTransfer` returned an interest proposal or the test already failed. */
+  const never = (): never => {
+    throw new Error('expected an interest proposal');
+  };
 
   beforeEach(() => {
     storage = openTestDb();
@@ -243,6 +326,41 @@ describe('The reserved category ids resolve to seeded rows', () => {
 
     expect(stored).toMatchObject({ type: 'expense', categoryId: FEES_CATEGORY_ID });
     expect(nameOf(FEES_CATEGORY_ID)).toBe('Комісія');
+  });
+
+  it('Scenario: An accepted відсотки proposal lands in the seeded row', () => {
+    // A рахунок-борг owed 1000, repaid 1100: the excess is the дохід the app proposes.
+    const yaroslav = account({ id: 'debt-y', name: 'Ярослав', kind: 'debt', currency: 'UAH' });
+    accountsRepo(storage.db).save(yaroslav);
+    const lent = transfer({
+      id: 'lend',
+      date: '2026-07-01',
+      fromAccountId: 'card',
+      toAccountId: 'debt-y',
+      left: money(100000, 'UAH'),
+      arrived: money(100000, 'UAH'),
+    });
+    const repayment = transfer({
+      id: 'repay',
+      date: '2026-08-20',
+      fromAccountId: 'debt-y',
+      toAccountId: 'card',
+      left: money(110000, 'UAH'),
+      arrived: money(110000, 'UAH'),
+    });
+    const proposal = proposeForTransfer(repayment, {
+      accounts: [card, yaroslav],
+      sourceTransactions: [lent],
+    })!;
+    const interest: Income = { ...(proposal.kind === 'interest' ? proposal.income : never()), id: 'int-1' };
+    transactionsRepo(storage.db).save(lent, storedAt);
+    transactionsRepo(storage.db).save(proposal.transfer, storedAt);
+    transactionsRepo(storage.db).save(interest, storedAt);
+
+    const stored = transactionsRepo(storage.db).get('int-1');
+
+    expect(stored).toMatchObject({ type: 'income', sourceId: INTEREST_SOURCE_ID });
+    expect(sourceNameOf(INTEREST_SOURCE_ID)).toBe('Відсотки');
   });
 
   it('Scenario: A default expense lands in the seeded uncategorised row', () => {

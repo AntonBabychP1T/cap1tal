@@ -5,22 +5,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 
+import { SETTINGS_SECTIONS } from '@/ui/settings-sections';
+
 import { Spacing } from '@/constants/theme';
 
 /**
- * Налаштування — the one place the owner configures the app. Today it is a menu of three
- * management lists; monobank-токен, ліміти, цілі and бекап join them in later steps, which is
- * why it is a menu rather than the lists themselves.
+ * Налаштування — the one place the owner configures the app. Today it is a menu of the three
+ * management lists and the one-time Saldo import; monobank-токен, ліміти, цілі and бекап join
+ * them in later steps, which is why it is a menu rather than the lists themselves.
  *
- * The sections live at `/manage/…` rather than `/settings/…`: this tab already owns `/settings`,
- * the same reason the category drill-down lives at `/category/…` and not under `/month`.
+ * The sections themselves are `src/ui/settings-sections.ts`, where `verify` can reach them.
  */
-
-const SECTIONS = [
-  { href: '/manage/categories', title: 'Категорії', hint: 'Куди пішли гроші' },
-  { href: '/manage/sources', title: 'Джерела', hint: 'Звідки прийшли гроші' },
-  { href: '/manage/rules', title: 'Правила', hint: 'Автокатегоризація імпорту' },
-] as const;
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -31,7 +26,7 @@ export default function SettingsScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           <ThemedText type="subtitle">Налаштування</ThemedText>
 
-          {SECTIONS.map((section) => (
+          {SETTINGS_SECTIONS.map((section) => (
             <Pressable key={section.href} onPress={() => router.push(section.href)}>
               <ThemedView type="backgroundElement" style={styles.row}>
                 <ThemedText type="smallBold">{section.title}</ThemedText>

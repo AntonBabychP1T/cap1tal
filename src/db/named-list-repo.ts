@@ -49,6 +49,20 @@ export interface ListWords {
 }
 
 /**
+ * Names are stored trimmed, so the uniqueness rule and every display read the same string. It is
+ * exported because the Saldo import writes категорії and джерела straight into its own database
+ * transaction (`import-repo.ts`) and has to obey the same rule this list has always had — a name
+ * only this module trimmed would be a name only this module could find again.
+ */
+export function listName(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed === '') {
+    throw new Error('назва не може бути порожньою');
+  }
+  return trimmed;
+}
+
+/**
  * `Row` is the domain name of what this list holds — `Category` or `Source`. The two are
  * `NamedRow` under different names, which is what lets one implementation serve both while each
  * repository still speaks its own domain type outward.
@@ -71,14 +85,7 @@ export function namedListRepo<Row extends NamedRow>(
     return toRow(row);
   }
 
-  /** Names are stored trimmed, so the uniqueness rule and every display read the same string. */
-  function cleanName(name: string): string {
-    const trimmed = name.trim();
-    if (trimmed === '') {
-      throw new Error('назва не може бути порожньою');
-    }
-    return trimmed;
-  }
+  const cleanName = listName;
 
   /**
    * The name is free unless an unarchived row already carries it, exactly — the owner curates

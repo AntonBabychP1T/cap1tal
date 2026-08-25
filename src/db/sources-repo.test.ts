@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { account } from '../domain/account';
 import { activeSources } from '../domain/category';
 import { money } from '../domain/money';
-import type { Income } from '../domain/transaction';
+import { INTEREST_SOURCE_ID, type Income } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
 import { sourcesRepo, type SourcesRepo } from './sources-repo';
 import { openTestDb, type TestStorage } from './test-db';
@@ -168,6 +168,16 @@ describe('sourcesRepo — the rename rules the sibling repo already pins', () =>
     ]) {
       expect(write).toThrow(/не існує/);
     }
+  });
+
+  it('Scenario: The reserved джерело may be neither renamed nor archived', () => {
+    repo.create({ id: INTEREST_SOURCE_ID, name: 'Відсотки' });
+
+    // «його», not «її» — the refusal is a sentence, and a джерело is not a категорія.
+    expect(() => repo.rename(INTEREST_SOURCE_ID, 'Проценти')).toThrow(/службове джерело, його/);
+    expect(() => repo.archive(INTEREST_SOURCE_ID)).toThrow(/службове джерело, його/);
+    // Still offered as a джерело, which is the half that separates it from «Коригування».
+    expect(activeSources(repo.list()).map((row) => row.id)).toContain(INTEREST_SOURCE_ID);
   });
 
   it('Two rows sharing a name come back in a fixed order, not SQLite\'s', () => {

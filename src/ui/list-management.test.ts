@@ -5,6 +5,7 @@ import type { Rule } from '../domain/rules';
 import {
   CORRECTION_CATEGORY_ID,
   FEES_CATEGORY_ID,
+  INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
 } from '../domain/transaction';
 import {
@@ -90,7 +91,7 @@ describe('manageCategories', () => {
 });
 
 describe('manageSources', () => {
-  it('A джерело is never reserved, so every unarchived row can be renamed and archived', () => {
+  it('Every ordinary джерело can be renamed and archived', () => {
     const rows = manageSources([
       source('freelance', 'Freelance', true),
       source('salary', 'Salary'),
@@ -102,6 +103,24 @@ describe('manageSources', () => {
     expect(rows.every((r) => !r.reserved && r.canRename)).toBe(true);
     expect(rowFor(rows, 'freelance')).toMatchObject({ canArchive: false, canUnarchive: true });
     expect(rowFor(rows, 'salary')).toMatchObject({ canArchive: true, canUnarchive: false });
+  });
+
+  it('Scenario: The reserved джерело may be neither renamed nor archived', () => {
+    const rows = manageSources([
+      source('salary', 'Salary'),
+      source(INTEREST_SOURCE_ID, 'Відсотки'),
+    ]);
+
+    // Shown like any other row — the owner records interest by hand too — and editable by none.
+    expect(rowFor(rows, INTEREST_SOURCE_ID)).toMatchObject({
+      name: 'Відсотки',
+      archived: false,
+      reserved: true,
+      canRename: false,
+      canArchive: false,
+      canUnarchive: false,
+    });
+    expect(rowFor(rows, 'salary')).toMatchObject({ reserved: false, canRename: true });
   });
 });
 

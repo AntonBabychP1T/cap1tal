@@ -8,6 +8,12 @@ import { money, type Money } from './money';
 export const FEES_CATEGORY_ID = 'fees';
 export const CORRECTION_CATEGORY_ID = 'correction';
 export const UNCATEGORISED_CATEGORY_ID = 'uncategorised';
+/**
+ * The one джерело the domain names itself: what a borrower repays above the principal is
+ * «Відсотки» (glossary, "Interest"), and the app — not the owner — picks that row when it
+ * proposes the split, so it has to exist under its name like «Комісія» does.
+ */
+export const INTEREST_SOURCE_ID = 'interest';
 
 /** A calendar date as 'YYYY-MM-DD'. No Date objects in the domain. */
 export type IsoDate = string;

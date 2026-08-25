@@ -6,6 +6,7 @@ import { sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account, classifyTransfer, computeBalance } from '../domain/account';
+import { proposeForTransfer } from '../ui/entry-form';
 import { money } from '../domain/money';
 import {
   expenseByDefault,
@@ -13,6 +14,7 @@ import {
   refund,
   transfer,
   FEES_CATEGORY_ID,
+  INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
   type Correction,
   type Income,
@@ -405,6 +407,29 @@ describe('transactionsRepo latest listing', () => {
     repo.save(second, at('2026-08-24T10:05:00.000Z'));
 
     expect(repo.listLatest(10).map((t) => t.id)).toEqual(['e-second', 'e-first']);
+  });
+
+  it('listAll returns every stored транзакція in the latest order', () => {
+    const older = expenseByDefault({
+      id: 'e-older',
+      date: '2026-08-20',
+      accountId: 'card',
+      amount: money(1000, 'UAH'),
+      categoryId: 'food',
+    });
+    const newer = expenseByDefault({
+      id: 'e-newer',
+      date: '2026-08-24',
+      accountId: 'card',
+      amount: money(2000, 'UAH'),
+      categoryId: 'food',
+    });
+    repo.save(older, storedAt);
+    repo.save(newer, storedAt);
+
+    // No limit to pass and nothing left out — the same order the feed shows.
+    expect(repo.listAll().map((t) => t.id)).toEqual(['e-newer', 'e-older']);
+    expect(repo.listAll()).toHaveLength(repo.listLatest(50).length);
   });
 
   it('Scenario: The requested count is respected', () => {
@@ -895,6 +920,47 @@ describe('transactionsRepo reverse retype', () => {
     // The USD leg is gone and nothing was converted: no USD amount survives anywhere on it.
     expect(JSON.stringify(repo.get('t1'))).not.toContain('USD');
     expect(repo.listByAccount('usd')).toEqual([]);
+  });
+
+  it('Scenario: An accepted дохід «Відсотки» survives editing its переказ', () => {
+    // Ярослав owed 1000 and repaid 1100; the accepted proposal stored the principal переказ and
+    // the 100 as a дохід «Відсотки» of its own.
+    const debtAccount = account({ id: 'debt-y', name: 'Ярослав', kind: 'debt', currency: 'UAH' });
+    accountsRepo(storage.db).save(debtAccount);
+    // The reserved джерело the proposal picks; on a device the seed puts it there.
+    seedReferences(storage.db, { categories: [], sources: [INTEREST_SOURCE_ID] });
+    const lent = transfer({
+      id: 'lend',
+      date: '2026-07-01',
+      fromAccountId: 'card',
+      toAccountId: 'debt-y',
+      left: money(100000, 'UAH'),
+      arrived: money(100000, 'UAH'),
+    });
+    const repayment = transfer({
+      id: 't1',
+      date: '2026-08-24',
+      fromAccountId: 'debt-y',
+      toAccountId: 'card',
+      left: money(110000, 'UAH'),
+      arrived: money(110000, 'UAH'),
+    });
+    const proposal = proposeForTransfer(repayment, {
+      accounts: [card, debtAccount],
+      sourceTransactions: [lent],
+    })!;
+    const interest = { ...(proposal.kind === 'interest' ? proposal.income : proposal.expense), id: 'int-1' };
+    repo.save(lent, storedAt);
+    repo.save(proposal.transfer, storedAt);
+    repo.save(interest as Transaction, storedAt);
+
+    // The owner edits the переказ afterwards; the дохід is a transaction of its own and is theirs
+    // to edit or delete in the feed, not something the edit rewrites.
+    repo.save(transfer({ ...repayment, left: money(90000, 'UAH'), arrived: money(90000, 'UAH') }), storedAt);
+
+    expect(repo.get('int-1')).toEqual(interest);
+    expect(repo.get('int-1')).toMatchObject({ type: 'income', sourceId: INTEREST_SOURCE_ID });
+    expect(repo.listLatest(50).map((t) => t.id).sort()).toEqual(['int-1', 'lend', 't1']);
   });
 
   it('Scenario: An accepted комісія survives the retype as its own transaction', () => {

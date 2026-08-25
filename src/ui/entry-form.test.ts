@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { account } from '../domain/account';
+import { account, computeBalance } from '../domain/account';
 import { money } from '../domain/money';
 import {
   monthOf,
   proposeFee,
+  transfer,
+  INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
   type Transaction,
   type Transfer,
 } from '../domain/transaction';
-import { buildEntry, type EntryDraft } from './entry-form';
+import { buildEntry, proposeForTransfer, type EntryDraft } from './entry-form';
 
 const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
 const jar = account({ id: 'jar', name: 'банка', kind: 'savings', currency: 'UAH' });
@@ -288,5 +290,161 @@ describe('editing a stored transaction', () => {
     expect(() => edit(draft({ type: 'refund', amount: '800', categoryId: '' }), 'r1')).toThrow(
       'оберіть категорію',
     );
+  });
+});
+
+/**
+ * FR-T9. A рахунок-борг's розрахунковий баланс is what that person still owes, so a переказ back
+ * that exceeds it is a repayment plus interest — the one place «Відсотки» comes from by hand.
+ */
+describe('proposeForTransfer — a repayment above the principal', () => {
+  const yaroslav = account({ id: 'debt-y', name: 'Ярослав', kind: 'debt', currency: 'UAH' });
+  const olya = account({ id: 'debt-o', name: 'Оля', kind: 'debt', currency: 'UAH' });
+  const debtAccounts = [card, jar, dollars, yaroslav, olya];
+
+  /** What put 100000 minor units onto Ярослав's рахунок-борг: the owner lent it. */
+  const lent: Transfer = transfer({
+    id: 'lend',
+    date: '2026-07-01',
+    fromAccountId: 'card',
+    toAccountId: 'debt-y',
+    left: money(100000, 'UAH'),
+    arrived: money(100000, 'UAH'),
+  });
+
+  const repayment = (input: {
+    id?: string;
+    left: number;
+    arrived?: number;
+    to?: string;
+    from?: string;
+  }): Transfer =>
+    transfer({
+      id: input.id ?? 'repay',
+      date: '2026-08-24',
+      fromAccountId: input.from ?? 'debt-y',
+      toAccountId: input.to ?? 'card',
+      left: money(input.left, 'UAH'),
+      arrived: money(input.arrived ?? input.left, 'UAH'),
+    });
+
+  const propose = (candidate: Transfer, stored: readonly Transaction[] = [lent]) =>
+    proposeForTransfer(candidate, { accounts: debtAccounts, sourceTransactions: stored });
+
+  it('Scenario: Repaying more than owed proposes the interest', () => {
+    const proposal = propose(repayment({ left: 110000 }));
+
+    expect(proposal?.kind).toBe('interest');
+    expect(proposal!.kind === 'interest' && proposal!.income).toEqual({
+      type: 'income',
+      date: '2026-08-24',
+      accountId: 'card',
+      amount: money(10000, 'UAH'),
+      sourceId: INTEREST_SOURCE_ID,
+    });
+  });
+
+  it('Scenario: Accepting leaves the debt at nothing and the excess as income', () => {
+    const proposal = propose(repayment({ left: 110000 }))!;
+
+    // What the screen stores on «Так»: the переказ carries only the principal on both legs…
+    expect(proposal.transfer.left).toEqual(money(100000, 'UAH'));
+    expect(proposal.transfer.arrived).toEqual(money(100000, 'UAH'));
+    // …so the person owes exactly nothing afterwards…
+    expect(computeBalance(yaroslav, [lent, proposal.transfer])).toEqual(money(0, 'UAH'));
+    // …and the excess is a дохід, never a повернення and never a коригування.
+    const income = proposal.kind === 'interest' ? proposal.income : undefined;
+    expect(income?.type).toBe('income');
+    expect(income?.amount).toEqual(money(10000, 'UAH'));
+    expect(computeBalance(card, [lent, proposal.transfer, { ...income!, id: 'int' }])).toEqual(
+      money(10000, 'UAH'),
+    );
+  });
+
+  it('Scenario: Declining stores the repayment as entered', () => {
+    const typed = repayment({ left: 110000 });
+
+    // Declining is the screen storing the candidate untouched — the рахунок-борг goes below zero.
+    expect(computeBalance(yaroslav, [lent, typed])).toEqual(money(-10000, 'UAH'));
+  });
+
+  it('Scenario: Repaying exactly the principal proposes nothing', () => {
+    expect(propose(repayment({ left: 100000 }))).toBeNull();
+  });
+
+  it('Scenario: A переказ into a рахунок-борг proposes nothing', () => {
+    const lending = transfer({
+      id: 'lend-2',
+      date: '2026-08-24',
+      fromAccountId: 'card',
+      toAccountId: 'debt-y',
+      left: money(500000, 'UAH'),
+      arrived: money(500000, 'UAH'),
+    });
+
+    expect(proposeForTransfer(lending, { accounts: debtAccounts, sourceTransactions: [] })).toBeNull();
+  });
+
+  it('Scenario: A repayment onto another рахунок-борг proposes nothing', () => {
+    expect(propose(repayment({ left: 110000, to: 'debt-o' }))).toBeNull();
+  });
+
+  it('Scenario: A cross-currency repayment proposes nothing', () => {
+    const crossCurrency = transfer({
+      id: 'repay',
+      date: '2026-08-24',
+      fromAccountId: 'debt-y',
+      toAccountId: 'usd',
+      left: money(110000, 'UAH'),
+      arrived: money(2600, 'USD'),
+    });
+
+    expect(propose(crossCurrency)).toBeNull();
+  });
+
+  it('Scenario: A repayment arriving short proposes no комісія', () => {
+    // Both proposals would otherwise fire on this one: 110000 out of a рахунок-борг owed 100000,
+    // arriving 109500. A person is not a bank, and the legs are unequal, so neither does.
+    expect(propose(repayment({ left: 110000, arrived: 109500 }))).toBeNull();
+  });
+
+  it('A short arrival out of an ordinary рахунок still proposes the комісія', () => {
+    const short = transfer({
+      id: 'move',
+      date: '2026-08-24',
+      fromAccountId: 'card',
+      toAccountId: 'jar',
+      left: money(100000, 'UAH'),
+      arrived: money(99500, 'UAH'),
+    });
+
+    const proposal = proposeForTransfer(short, { accounts: debtAccounts, sourceTransactions: [] });
+
+    expect(proposal?.kind).toBe('fee');
+    expect(proposal!.kind === 'fee' && proposal!.expense.amount).toEqual(money(500, 'UAH'));
+  });
+
+  it('Scenario: Editing a repayment up proposes the interest', () => {
+    // The stored repayment of the whole principal, now edited to 110000 on both legs. The balance
+    // it is compared against is the one before it — its own effect is excluded.
+    const stored = repayment({ left: 100000 });
+    const edited = repayment({ left: 110000 });
+
+    const proposal = propose(edited, [lent, stored]);
+
+    expect(proposal?.kind).toBe('interest');
+    expect(proposal!.kind === 'interest' && proposal!.income.amount).toEqual(money(10000, 'UAH'));
+  });
+
+  it('Scenario: Reopening an unchanged repayment proposes nothing', () => {
+    const stored = repayment({ left: 100000 });
+
+    expect(propose(stored, [lent, stored])).toBeNull();
+  });
+
+  it('A рахунок-борг already at nothing proposes nothing, whatever comes off it', () => {
+    // Nothing was lent, so there is no principal to exceed — the owner means something else, and
+    // the app does not guess what.
+    expect(propose(repayment({ left: 110000 }), [])).toBeNull();
   });
 });

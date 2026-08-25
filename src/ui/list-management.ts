@@ -1,4 +1,9 @@
-import { isReservedCategory, type Category, type Source } from '../domain/category';
+import {
+  isReservedCategory,
+  isReservedSource,
+  type Category,
+  type Source,
+} from '../domain/category';
 import type { Rule } from '../domain/rules';
 import { byName, categoryLabel } from './labels';
 
@@ -57,9 +62,13 @@ export function manageCategories(all: readonly Category[]): ManagedRow[] {
   return manage(all, isReservedCategory);
 }
 
-/** The «Джерела» section. No джерело is reserved — nothing in the domain refers to one by id. */
+/**
+ * The «Джерела» section. One джерело is reserved: «Відсотки», which the відсотки proposal picks
+ * by id when a repayment exceeds the principal — so it is shown and offered like any other row,
+ * and offers neither rename nor archive.
+ */
 export function manageSources(all: readonly Source[]): ManagedRow[] {
-  return manage(all, () => false);
+  return manage(all, isReservedSource);
 }
 
 export interface RuleDraft {

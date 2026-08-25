@@ -12,7 +12,7 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
-import { accounts, categories, monobankRates, rules, sources, transactions } from './schema';
+import { accounts, categories, monobankRates, rules, saldoImport, sources, transactions } from './schema';
 import {
   openTestDb,
   openTestDbMigratedTo,
@@ -547,6 +547,78 @@ describe('migrations — the editable lists', () => {
       expect(
         staged.db.select().from(categories).where(eq(categories.id, FEES_CATEGORY_ID)).get()?.name,
       ).toBe('Комісія');
+    } finally {
+      staged.close();
+    }
+  });
+});
+
+/**
+ * The marker that says the one-time Saldo import has been committed. Its own describe, because it
+ * is the only thing migration 0004 adds — and because "a device that already holds a history
+ * gains it empty" is the half that matters on the owner's phone.
+ */
+describe('migrations — the import marker', () => {
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    storage.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: A fresh database from migrations alone holds the marker', () => {
+    storage.db
+      .insert(saldoImport)
+      .values({ id: 'saldo', committedAt: new Date('2026-08-25T12:00:00.000Z') })
+      .run();
+
+    expect(storage.db.select().from(saldoImport).all()).toEqual([
+      { id: 'saldo', committedAt: new Date('2026-08-25T12:00:00.000Z') },
+    ]);
+    // And every transaction type still stores, so the new table disturbed none of them.
+    storage.db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
+    expect(storage.db.select().from(transactions).all()).toHaveLength(oneOfEachType.length);
+  });
+
+  it('The table holds one row: a second id is refused', () => {
+    storage.db.insert(saldoImport).values({ id: 'saldo', committedAt: new Date(1) }).run();
+
+    expect(() =>
+      storage.db.insert(saldoImport).values({ id: 'other', committedAt: new Date(2) }).run(),
+    ).toThrow(/CHECK constraint failed/);
+  });
+
+  it('Scenario: Rows stored before the migration survive it', () => {
+    // The migrations committed before this change: a database as the owner's device holds it.
+    const staged = openTestDbMigratedTo(4);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      staged.db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
+      staged.db.insert(rules).values({
+        id: 'rule-1',
+        merchant: 'сільпо',
+        categoryId: 'food',
+        createdAt: new Date('2026-08-24T09:00:00.000Z'),
+      }).run();
+
+      staged.migrateToLatest();
+
+      for (const original of oneOfEachType) {
+        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
+        expect(toTransaction(row!)).toEqual(original);
+      }
+      expect(staged.db.select().from(rules).all()).toHaveLength(1);
+      expect(staged.db.select().from(sources).all().map((row) => row.id)).toContain('salary');
+      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+      // The device has imported nothing, so the marker arrives empty.
+      expect(staged.db.select().from(saldoImport).all()).toEqual([]);
     } finally {
       staged.close();
     }

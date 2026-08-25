@@ -12,7 +12,7 @@ import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { groupAccountsByKind } from '@/ui/account-groups';
 import { formatMinorUnits, formatMoney, parseOpeningBalance } from '@/ui/amount-input';
 import { newId } from '@/ui/id';
-import { failureMessage, kindLabel, OFFERED_CURRENCIES } from '@/ui/labels';
+import { failureMessage, kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/ui/labels';
 
 import { Spacing } from '@/constants/theme';
 
@@ -21,14 +21,6 @@ import { Spacing } from '@/constants/theme';
  * created, renamed and archived. No delete action exists: an account is archived, never deleted,
  * so its history keeps explaining the balances it took part in.
  */
-
-const KIND_CHOICES: readonly { value: AccountKind; label: string }[] = [
-  'spending',
-  'savings',
-  'investment',
-  'cash',
-  'debt',
-].map((kind) => ({ value: kind as AccountKind, label: kindLabel(kind as AccountKind) }));
 
 const CURRENCY_CHOICES = OFFERED_CURRENCIES.map((c) => ({ value: c, label: c }));
 

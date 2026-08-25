@@ -29,6 +29,13 @@
       "when": 1787602265825,
       "tag": "0003_sharp_arachne",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787663098032,
+      "tag": "0004_clumsy_cable",
+      "breakpoints": true
     }
   ]
 }

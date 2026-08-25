@@ -4,14 +4,17 @@ import {
   activeCategories,
   activeSources,
   isReservedCategory,
+  isReservedSource,
   namesById,
   RESERVED_CATEGORY_IDS,
+  RESERVED_SOURCE_IDS,
   type Category,
   type Source,
 } from './category';
 import {
   CORRECTION_CATEGORY_ID,
   FEES_CATEGORY_ID,
+  INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
 } from './transaction';
 
@@ -29,6 +32,14 @@ describe('the editable lists', () => {
       expect(isReservedCategory(id)).toBe(true);
     }
     expect(isReservedCategory('groceries')).toBe(false);
+  });
+
+  it('The one reserved джерело is «Відсотки»', () => {
+    expect([...RESERVED_SOURCE_IDS]).toEqual([INTEREST_SOURCE_ID]);
+    expect(isReservedSource(INTEREST_SOURCE_ID)).toBe(true);
+    expect(isReservedSource('salary')).toBe(false);
+    // The two lists are separate namespaces: an id reserved in one is ordinary in the other.
+    expect(isReservedCategory(INTEREST_SOURCE_ID)).toBe(false);
   });
 
   it('Scenario: An archived category leaves the picker', () => {

@@ -75,6 +75,20 @@ export function transactionsRepo(db: Storage) {
         .map(toTransaction);
     },
 
+    /**
+     * Every stored транзакція, in the latest listing's order. The Saldo import needs them whole:
+     * the verification report compares the plan against what the owner already recorded by hand,
+     * and "the latest a very large number of them" is not the same question.
+     */
+    listAll(): Transaction[] {
+      return db
+        .select()
+        .from(transactions)
+        .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
+        .all()
+        .map(toTransaction);
+    },
+
     /** Everything touching the account, transfers included on either leg. */
     listByAccount(accountId: string): Transaction[] {
       return db

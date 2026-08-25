@@ -186,3 +186,26 @@ export const monobankRates = sqliteTable(
 
 export type MonobankRateRow = typeof monobankRates.$inferSelect;
 export type NewMonobankRateRow = typeof monobankRates.$inferInsert;
+
+/**
+ * That the one-time Saldo import has been committed, and when. Exactly one row, under a fixed id,
+ * because the fact is about the device and not about any particular import.
+ *
+ * It exists to make committing a second plan a deliberate act: a second commit silently doubles
+ * the whole history, and nothing else on the device could tell the difference — the owner
+ * legitimately records транзакції by hand before importing, so "storage is not empty" says
+ * nothing. It is written inside the import's own transaction, so a commit that fails leaves no
+ * marker behind.
+ */
+export const saldoImport = sqliteTable(
+  'saldo_import',
+  {
+    /** Always `'saldo'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    committedAt: integer('committed_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [check('saldo_import_single_row', sql`${t.id} = 'saldo'`)],
+);
+
+export type SaldoImportRow = typeof saldoImport.$inferSelect;
+export type NewSaldoImportRow = typeof saldoImport.$inferInsert;

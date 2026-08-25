@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { askAboutFee } from '@/components/fee-dialog';
+import { askAboutTransfer } from '@/components/transfer-dialog';
 import { Action, Choices, Field } from '@/components/form';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -157,9 +157,18 @@ export default function MainScreen() {
         },
         { id: newId(), accounts: offered },
       );
-      // Only a переказ can arrive short, and only the owner decides whether that was a комісія.
+      // Only a переказ can propose anything on top of itself, and the owner decides whether it is.
       if (built.type === 'transfer') {
-        askAboutFee(built, store);
+        // The рахунок the money left decides what may be proposed, and its stored транзакції are
+        // what says how much that person still owed before this переказ.
+        askAboutTransfer(
+          built,
+          {
+            accounts: offered,
+            sourceTransactions: transactionsRepo.listByAccount(built.fromAccountId),
+          },
+          store,
+        );
         return;
       }
       store(built);

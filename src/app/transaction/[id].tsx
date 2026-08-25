@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { askAboutFee } from '@/components/fee-dialog';
+import { askAboutTransfer } from '@/components/transfer-dialog';
 import { Action, Choices, Field } from '@/components/form';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -160,7 +160,16 @@ export default function EditTransactionScreen() {
         { id: original.id, accounts: stored.accounts },
       );
       if (built.type === 'transfer') {
-        askAboutFee(built, store);
+        // The рахунок the money left decides what may be proposed, and its stored транзакції are
+        // what says how much that person still owed before this переказ.
+        askAboutTransfer(
+          built,
+          {
+            accounts: stored.accounts,
+            sourceTransactions: transactionsRepo.listByAccount(built.fromAccountId),
+          },
+          store,
+        );
         return;
       }
       store(built);

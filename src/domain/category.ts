@@ -1,6 +1,7 @@
 import {
   CORRECTION_CATEGORY_ID,
   FEES_CATEGORY_ID,
+  INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
 } from './transaction';
 
@@ -38,6 +39,17 @@ export const RESERVED_CATEGORY_IDS: readonly string[] = [
 
 export function isReservedCategory(categoryId: string): boolean {
   return RESERVED_CATEGORY_IDS.includes(categoryId);
+}
+
+/**
+ * The джерело half of the same idea, and for the same reason: the відсотки proposal picks
+ * «Відсотки» by id, so it may be neither renamed nor archived. Unlike «Коригування» it is an
+ * ordinary pickable row — the owner records interest by hand too.
+ */
+export const RESERVED_SOURCE_IDS: readonly string[] = [INTEREST_SOURCE_ID];
+
+export function isReservedSource(sourceId: string): boolean {
+  return RESERVED_SOURCE_IDS.includes(sourceId);
 }
 
 /** The categories a picker may offer at all — archived ones are not among them. */

@@ -1,6 +1,7 @@
 import {
   CORRECTION_CATEGORY_ID,
   FEES_CATEGORY_ID,
+  INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
 } from '../domain/transaction';
 
@@ -69,6 +70,18 @@ export const STARTER_CATEGORIES: readonly StarterRow[] = [
 ];
 
 /**
+ * «Відсотки» is the one starter row Saldo never held: the glossary makes what a borrower repays
+ * above the principal income, and the відсотки proposal picks this row by id, so it is reserved
+ * like «Комісія». The id comes from the domain constant rather than a literal — one slug, so the
+ * seeded row and the id the proposal stores can never drift apart.
+ */
+export const INTEREST_SOURCE_NAME = 'Відсотки';
+
+export const RESERVED_SOURCES: readonly StarterRow[] = [
+  { id: INTEREST_SOURCE_ID, name: INTEREST_SOURCE_NAME },
+];
+
+/**
  * «батьки → Андрій, Лена» is flattened into three top-level sources, not merged into one: «батьки»
  * carries direct history in Saldo, and the owner tracked the two people apart on purpose. Merging
  * would be irreversible at import time; renaming is one tap.
@@ -86,4 +99,5 @@ export const STARTER_SOURCES: readonly StarterRow[] = [
   { id: 'gifts', name: 'Gifts' },
   { id: 'investytsiyi', name: 'інвестиції' },
   { id: 'other-income', name: 'Other income' },
+  ...RESERVED_SOURCES,
 ];

@@ -1,6 +1,7 @@
 import { accountsRepo } from './accounts-repo';
 import { categoriesRepo } from './categories-repo';
 import { db } from './client';
+import { importRepo } from './import-repo';
 import { ratesRepo } from './rates-repo';
 import { rulesRepo } from './rules-repo';
 import { sourcesRepo } from './sources-repo';
@@ -19,3 +20,5 @@ export const rates = ratesRepo(db);
 export const categories = categoriesRepo(db);
 export const sources = sourcesRepo(db);
 export const rules = rulesRepo(db);
+/** The one-time Saldo import: the marker, and the atomic commit of a plan. */
+export const imports = importRepo(db);

@@ -5,7 +5,11 @@ import { sources as sourcesRepo } from '@/db/repos';
 import { newId } from '@/ui/id';
 import { manageSources } from '@/ui/list-management';
 
-/** The «Джерела» section — the same list, the same verbs; no джерело is reserved. */
+/**
+ * The «Джерела» section — the same list and the same verbs as «Категорії». One джерело is
+ * reserved: «Відсотки», which the відсотки proposal picks by id, so it offers no rename and no
+ * archive. `manageSources` decides that; this screen only renders what it says.
+ */
 export default function SourcesScreen() {
   return (
     <ManageListScreen

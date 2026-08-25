@@ -61,6 +61,15 @@ export function kindLabel(kind: AccountKind | 'archived'): string {
   return kind === 'archived' ? 'Архів' : KIND_LABELS[kind];
 }
 
+/**
+ * Every вид as a pickable choice, in the order the glossary lists them. One list, because two
+ * screens ask the same question — creating a рахунок, and saying what a Saldo account becomes —
+ * and a вид that existed on one and not the other would be a вид the owner could not choose.
+ */
+export const KIND_CHOICES: readonly { readonly value: AccountKind; readonly label: string }[] = (
+  ['spending', 'savings', 'investment', 'cash', 'debt'] as const
+).map((kind) => ({ value: kind, label: kindLabel(kind) }));
+
 /** An account in a picker: its назва plus the currency, since two accounts may share a name. */
 export function accountChoiceLabel(a: Account): string {
   return `${a.name} · ${a.currency}`;
