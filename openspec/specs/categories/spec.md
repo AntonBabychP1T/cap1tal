@@ -21,8 +21,8 @@ Saldo lists, verbatim, hierarchy flattened:
 The Saldo category «Борг» SHALL NOT be seeded — lending is a переказ onto a рахунок-борг, not an
 expense. No «Відсотки» source is seeded either, although the glossary makes interest income: the
 lists above are the owner's Saldo lists verbatim and Saldo held no such row, and nothing can
-record interest until saldo-import (FR-T9) arrives — that change seeds or asks for it, and until
-then the owner can create it in Налаштування like any other source.
+record interest until the Saldo import's confirm screen (FR-T9) arrives — that change seeds or
+asks for it, and until then the owner can create it in Налаштування like any other source.
 
 Seeding SHALL create only what is missing and SHALL NOT change, restore or duplicate a row that
 already exists, however the owner has renamed or archived it — so repeating it changes nothing.
