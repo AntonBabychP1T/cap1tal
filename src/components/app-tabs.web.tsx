@@ -28,6 +28,9 @@ export default function AppTabs() {
           <TabTrigger name="accounts" href="/accounts" asChild>
             <TabButton>Рахунки</TabButton>
           </TabTrigger>
+          <TabTrigger name="settings" href="/settings" asChild>
+            <TabButton>Налаштування</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>

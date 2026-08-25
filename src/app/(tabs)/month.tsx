@@ -7,9 +7,11 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import {
   accounts as accountsRepo,
+  categories as categoriesRepo,
   rates as ratesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
+import { namesById } from '@/domain/category';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { fetchMonobankRates } from '@/monobank/currency';
 import { shouldRefreshRates } from '@/ui/approx-uah';
@@ -37,6 +39,9 @@ export default function MonthScreen() {
         accounts: accountsRepo.list(),
         transactions: transactionsRepo.listMonth(shown),
         rates: ratesRepo.all(),
+        // Every category, archived included: a month keeps showing the categories its витрати
+        // already carry, and an archived one appears there like any other.
+        categories: categoriesRepo.list(),
       }),
       [shown],
     ),
@@ -94,6 +99,7 @@ export default function MonthScreen() {
         accounts: stored.accounts,
         transactions: stored.transactions,
         rates: stored.rates,
+        categoryNames: namesById(stored.categories),
         now: new Date(),
       }),
     [shown, stored],

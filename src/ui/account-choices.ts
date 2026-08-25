@@ -14,12 +14,25 @@ export function accountChoicesFor(
   all: readonly Account[],
   currentAccountId: string | undefined,
 ): Account[] {
-  const offered = activeAccounts(all);
-  if (currentAccountId === undefined) {
+  return withCurrent(activeAccounts(all), all, currentAccountId);
+}
+
+/**
+ * The row a stored transaction already sits on, appended when the offered list does not hold it.
+ * The rule above, stated once for every picker that has it — accounts here, категорії and джерела
+ * in `category-choices.ts`. It goes last rather than into its place in the order because it is
+ * not an offer; it is what is already there.
+ */
+export function withCurrent<Row extends { readonly id: string }>(
+  offered: Row[],
+  all: readonly Row[],
+  currentId: string | undefined,
+): Row[] {
+  if (currentId === undefined || offered.some((row) => row.id === currentId)) {
     return offered;
   }
-  const current = all.find((a) => a.id === currentAccountId);
-  return current && current.archived ? [...offered, current] : offered;
+  const current = all.find((row) => row.id === currentId);
+  return current ? [...offered, current] : offered;
 }
 
 /** The account each leg of a stored transaction sits on; `undefined` where it has no such leg. */

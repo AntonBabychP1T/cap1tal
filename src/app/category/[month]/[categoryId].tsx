@@ -6,7 +6,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Action } from '@/components/form';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { accounts as accountsRepo, transactions as transactionsRepo } from '@/db/repos';
+import {
+  accounts as accountsRepo,
+  categories as categoriesRepo,
+  transactions as transactionsRepo,
+} from '@/db/repos';
+import { namesById } from '@/domain/category';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { categoryTransactions } from '@/ui/category-transactions';
 import { categoryLabel } from '@/ui/labels';
@@ -31,12 +36,16 @@ export default function CategoryMonthScreen() {
       () => ({
         accounts: accountsRepo.list(),
         transactions: transactionsRepo.listMonth(month),
+        // Archived ones included: this list exists to show a category's history, and archiving
+        // takes a category out of pickers, never out of the months it already has.
+        categories: categoriesRepo.list(),
       }),
       [month],
     ),
   );
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
+  const names = useMemo(() => namesById(stored.categories), [stored.categories]);
   const listed = useMemo(
     () => categoryTransactions({ month, categoryId, transactions: stored.transactions }),
     [categoryId, month, stored.transactions],
@@ -46,7 +55,7 @@ export default function CategoryMonthScreen() {
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <ScrollView contentContainerStyle={styles.content}>
-          <ThemedText type="subtitle">{categoryLabel(categoryId)}</ThemedText>
+          <ThemedText type="subtitle">{categoryLabel(categoryId, names)}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             {monthLabel(month)}
           </ThemedText>
@@ -57,7 +66,7 @@ export default function CategoryMonthScreen() {
             </ThemedText>
           ) : (
             listed.map((t) => {
-              const line = transactionLine(t, byId);
+              const line = transactionLine(t, byId, names);
               return (
                 <Pressable key={line.id} onPress={() => router.push(`/transaction/${line.id}`)}>
                   <ThemedView type="backgroundElement" style={styles.row}>

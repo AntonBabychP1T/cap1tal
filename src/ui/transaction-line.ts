@@ -1,7 +1,11 @@
 import type { Account } from '../domain/account';
-import type { IsoDate, Transaction } from '../domain/transaction';
+import {
+  UNCATEGORISED_CATEGORY_ID,
+  type IsoDate,
+  type Transaction,
+} from '../domain/transaction';
 import { formatMoney } from './amount-input';
-import { categoryLabel } from './labels';
+import { categoryLabel, transactionTypeLabel } from './labels';
 
 /**
  * One row of the стрічка: what the feed requirement asks it to show — the amount with its
@@ -17,15 +21,13 @@ export interface TransactionLine {
   readonly date: IsoDate;
   /** The category label where the type has one; absent otherwise. */
   readonly category?: string;
+  /**
+   * The line carries «Без категорії», so the feed marks it and offers the one-tap categorisation
+   * (main-screen: "«Без категорії» is highlighted and categorised in one tap"). Deciding it here
+   * rather than in the feed keeps the reserved id out of JSX and puts the rule under `verify`.
+   */
+  readonly uncategorised: boolean;
 }
-
-const TYPE_LABELS: Readonly<Record<Transaction['type'], string>> = {
-  expense: 'витрата',
-  income: 'дохід',
-  transfer: 'переказ',
-  refund: 'повернення',
-  correction: 'коригування',
-};
 
 /** An account whose row is gone shows its id rather than an empty gap. */
 function nameOf(accountId: string, accountsById: ReadonlyMap<string, Account>): string {
@@ -35,8 +37,10 @@ function nameOf(accountId: string, accountsById: ReadonlyMap<string, Account>): 
 export function transactionLine(
   t: Transaction,
   accountsById: ReadonlyMap<string, Account>,
+  /** The categories list as the screen loaded it — see `categoryLabel` in ./labels. */
+  categoryNames: ReadonlyMap<string, string>,
 ): TransactionLine {
-  const common = { id: t.id, type: TYPE_LABELS[t.type], date: t.date };
+  const common = { id: t.id, type: transactionTypeLabel(t.type), date: t.date, uncategorised: false };
   if (t.type === 'transfer') {
     const legs =
       t.left.currency === t.arrived.currency
@@ -53,7 +57,11 @@ export function transactionLine(
     amount: formatMoney(t.amount),
     accounts: nameOf(t.accountId, accountsById),
     ...(t.type === 'expense' || t.type === 'refund'
-      ? { category: categoryLabel(t.categoryId) }
+      ? {
+          category: categoryLabel(t.categoryId, categoryNames),
+          // A повернення can carry it too, and it is as uncategorised as a витрата is.
+          uncategorised: t.categoryId === UNCATEGORISED_CATEGORY_ID,
+        }
       : {}),
   };
 }

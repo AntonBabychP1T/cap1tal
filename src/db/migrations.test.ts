@@ -3,10 +3,22 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
 import { money } from '../domain/money';
-import { expenseByDefault, refund, transfer, type Transaction } from '../domain/transaction';
+import {
+  expenseByDefault,
+  refund,
+  transfer,
+  FEES_CATEGORY_ID,
+  UNCATEGORISED_CATEGORY_ID,
+  type Transaction,
+} from '../domain/transaction';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
-import { accounts, monobankRates, transactions } from './schema';
-import { openTestDb, openTestDbMigratedTo, type TestStorage } from './test-db';
+import { accounts, categories, monobankRates, rules, sources, transactions } from './schema';
+import {
+  openTestDb,
+  openTestDbMigratedTo,
+  seedReferences,
+  type TestStorage,
+} from './test-db';
 
 const card = account({
   id: 'card',
@@ -16,6 +28,9 @@ const card = account({
   openingBalance: money(100000, 'UAH'),
 });
 const jar = account({ id: 'jar', name: 'банка', kind: 'savings', currency: 'UAH' });
+
+/** What the fixtures below point at; the reserved rows migration 0003 inserts are already there. */
+const VOCABULARY = { categories: ['food', 'clothes'], sources: ['salary'] } as const;
 
 const oneOfEachType: readonly Transaction[] = [
   expenseByDefault({
@@ -51,6 +66,36 @@ const oneOfEachType: readonly Transaction[] = [
   { type: 'correction', id: 'c1', date: '2026-03-31', accountId: 'card', amount: money(-3000, 'UAH') },
 ];
 
+/**
+ * What a device from before categories-rules can actually hold. Manual entry offered no category
+ * picker, so a stored витрата carries the reserved uncategorised id and an accepted комісія the
+ * reserved fees id — nothing else. Migration 0003 turns `category_id` into a foreign key, so
+ * these are exactly the rows that have to come through it.
+ */
+const preCategoriesRows: readonly Transaction[] = [
+  expenseByDefault({
+    id: 'old-e1',
+    date: '2026-03-10',
+    accountId: 'card',
+    amount: money(12550, 'UAH'),
+  }),
+  expenseByDefault({
+    id: 'old-fee',
+    date: '2026-03-15',
+    accountId: 'card',
+    amount: money(500, 'UAH'),
+    categoryId: FEES_CATEGORY_ID,
+  }),
+  transfer({
+    id: 'old-t1',
+    date: '2026-03-15',
+    fromAccountId: 'card',
+    toAccountId: 'jar',
+    left: money(200000, 'UAH'),
+    arrived: money(199500, 'UAH'),
+  }),
+];
+
 describe('migrations', () => {
   let storage: TestStorage;
 
@@ -69,6 +114,7 @@ describe('migrations', () => {
 
   beforeEach(() => {
     storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
   });
 
   afterEach(() => {
@@ -299,7 +345,9 @@ describe('migrations — the monobank rate cache', () => {
     const staged = openTestDbMigratedTo(2);
     try {
       staged.db.insert(accounts).values(toAccountRow(card)).run();
-      staged.db.insert(transactions).values(toTransactionRow(oneOfEachType[0]!)).run();
+      // A витрата in the reserved uncategorised category — the only kind a database this old can
+      // hold, and the kind migration 0003's foreign key has to accept.
+      staged.db.insert(transactions).values(toTransactionRow(preCategoriesRows[0]!)).run();
       expect(() => staged.db.select().from(monobankRates).all()).toThrow();
 
       staged.migrateToLatest();
@@ -308,9 +356,197 @@ describe('migrations — the monobank rate cache', () => {
       expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
       expect(
         toTransaction(
-          staged.db.select().from(transactions).where(eq(transactions.id, 'e1')).get()!,
+          staged.db.select().from(transactions).where(eq(transactions.id, 'old-e1')).get()!,
         ),
-      ).toEqual(oneOfEachType[0]);
+      ).toEqual(preCategoriesRows[0]);
+    } finally {
+      staged.close();
+    }
+  });
+});
+
+describe('migrations — the editable lists', () => {
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: A fresh database from migrations alone stores every list', () => {
+    const { db } = storage;
+    // No `seedReferences` here on purpose: the scenario is about what the committed migrations
+    // alone can hold, so every row this test needs it stores itself.
+    db.insert(categories).values({ id: 'groceries', name: 'Groceries' }).run();
+    db.insert(sources).values({ id: 'salary', name: 'Salary' }).run();
+    db.insert(rules)
+      .values({
+        id: 'rule-1',
+        merchant: 'сільпо',
+        mcc: 5411,
+        categoryId: 'groceries',
+        createdAt: new Date(1_700_000_000_000),
+      })
+      .run();
+    db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+
+    const everyType: readonly Transaction[] = [
+      expenseByDefault({
+        id: 'e1',
+        date: '2026-03-10',
+        accountId: 'card',
+        amount: money(12550, 'UAH'),
+        categoryId: 'groceries',
+      }),
+      {
+        type: 'income',
+        id: 'i1',
+        date: '2026-03-01',
+        accountId: 'card',
+        amount: money(5000000, 'UAH'),
+        sourceId: 'salary',
+      },
+      transfer({
+        id: 't1',
+        date: '2026-03-15',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(200000, 'UAH'),
+        arrived: money(200000, 'UAH'),
+      }),
+      refund({
+        id: 'r1',
+        date: '2026-03-18',
+        accountId: 'card',
+        amount: money(80000, 'UAH'),
+        categoryId: 'groceries',
+      }),
+      {
+        type: 'correction',
+        id: 'c1',
+        date: '2026-03-31',
+        accountId: 'card',
+        amount: money(-3000, 'UAH'),
+      },
+    ];
+    db.insert(transactions).values(everyType.map(toTransactionRow)).run();
+
+    expect(db.select().from(categories).where(eq(categories.id, 'groceries')).get()).toEqual({
+      id: 'groceries',
+      name: 'Groceries',
+      archived: false,
+    });
+    expect(db.select().from(sources).where(eq(sources.id, 'salary')).get()).toEqual({
+      id: 'salary',
+      name: 'Salary',
+      archived: false,
+    });
+    expect(db.select().from(rules).where(eq(rules.id, 'rule-1')).get()).toEqual({
+      id: 'rule-1',
+      merchant: 'сільпо',
+      mcc: 5411,
+      categoryId: 'groceries',
+      createdAt: new Date(1_700_000_000_000),
+    });
+    for (const original of everyType) {
+      const row = db.select().from(transactions).where(eq(transactions.id, original.id)).get();
+      expect(toTransaction(row!)).toEqual(original);
+    }
+    expect(new Set(everyType.map((t) => t.type))).toEqual(
+      new Set(['expense', 'income', 'transfer', 'refund', 'correction']),
+    );
+  });
+
+  it('The migrated shape keeps a transaction referencing an unknown category or source out', () => {
+    const { db } = storage;
+    db.insert(accounts).values(toAccountRow(card)).run();
+    db.insert(sources).values({ id: 'salary', name: 'Salary' }).run();
+    db.insert(categories).values({ id: 'groceries', name: 'Groceries' }).run();
+    const expense = toTransactionRow(
+      expenseByDefault({
+        id: 'e1',
+        date: '2026-03-10',
+        accountId: 'card',
+        amount: money(12550, 'UAH'),
+        categoryId: 'groceries',
+      }),
+    );
+
+    expect(() =>
+      db.insert(transactions).values({ ...expense, id: 'ghost', categoryId: 'nope' }).run(),
+    ).toThrow();
+    expect(() =>
+      db
+        .insert(transactions)
+        .values({
+          ...expense,
+          id: 'ghost-income',
+          type: 'income',
+          categoryId: null,
+          sourceId: 'nope',
+        })
+        .run(),
+    ).toThrow();
+  });
+
+  it('A rule cannot exist without a criterion, with a blank merchant, or without its category', () => {
+    const { db } = storage;
+    db.insert(categories).values({ id: 'groceries', name: 'Groceries' }).run();
+    const base = {
+      id: 'rule-1',
+      merchant: 'сільпо' as string | null,
+      mcc: 5411 as number | null,
+      categoryId: 'groceries',
+      createdAt: new Date(1),
+    };
+
+    expect(() =>
+      db.insert(rules).values({ ...base, id: 'no-criterion', merchant: null, mcc: null }).run(),
+    ).toThrow();
+    expect(() =>
+      db.insert(rules).values({ ...base, id: 'blank', merchant: '   ', mcc: null }).run(),
+    ).toThrow();
+    expect(() =>
+      db.insert(rules).values({ ...base, id: 'ghost-target', categoryId: 'nope' }).run(),
+    ).toThrow();
+  });
+
+  it('Scenario: Pre-migration transactions survive the migration unchanged', () => {
+    // The migrations committed before this change: a database as the owner's device holds it.
+    const staged = openTestDbMigratedTo(3);
+    try {
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      staged.db.insert(transactions).values(preCategoriesRows.map(toTransactionRow)).run();
+
+      staged.migrateToLatest();
+
+      for (const original of preCategoriesRows) {
+        const row = staged.db
+          .select()
+          .from(transactions)
+          .where(eq(transactions.id, original.id))
+          .get();
+        expect(row, `transaction ${original.id} did not survive`).toBeDefined();
+        expect(toTransaction(row!)).toEqual(original);
+      }
+      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(
+        card,
+      );
+      // The reserved ids they carry now point at real rows, so nothing is left dangling.
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+      expect(
+        staged.db
+          .select()
+          .from(categories)
+          .where(eq(categories.id, UNCATEGORISED_CATEGORY_ID))
+          .get()?.name,
+      ).toBe('Без категорії');
+      expect(
+        staged.db.select().from(categories).where(eq(categories.id, FEES_CATEGORY_ID)).get()?.name,
+      ).toBe('Комісія');
     } finally {
       staged.close();
     }

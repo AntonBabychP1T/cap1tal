@@ -7,14 +7,22 @@ import { askAboutFee } from '@/components/fee-dialog';
 import { Action, Choices, Field } from '@/components/form';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { accounts as accountsRepo, transactions as transactionsRepo } from '@/db/repos';
+import {
+  accounts as accountsRepo,
+  categories as categoriesRepo,
+  sources as sourcesRepo,
+  transactions as transactionsRepo,
+} from '@/db/repos';
 import { activeAccounts } from '@/domain/account';
-import { expenseByDefault, transfer, type Transaction } from '@/domain/transaction';
+import { namesById } from '@/domain/category';
+import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { parseAmount } from '@/ui/amount-input';
+import { expenseCategoryChoices, sourceChoices } from '@/ui/category-choices';
 import { todayIso } from '@/ui/dates';
+import { buildEntry, type EntryType } from '@/ui/entry-form';
 import { newId } from '@/ui/id';
-import { accountChoiceLabel, failureMessage } from '@/ui/labels';
+import { accountChoiceLabel, failureMessage, transactionTypeLabel } from '@/ui/labels';
+import { recategorise } from '@/ui/retype';
 import { accountsById, transactionLine } from '@/ui/transaction-line';
 
 import { Spacing } from '@/constants/theme';
@@ -22,12 +30,17 @@ import { Spacing } from '@/constants/theme';
 /**
  * Головний — the screen the app opens on: record a transaction, and the стрічка of the latest
  * ones with editing one tap away. Everything that can be decided without JSX lives in
- * `src/domain` and `src/ui` and is under `verify`; this file is the wiring. See design.md §6.
+ * `src/domain` and `src/ui` and is under `verify` — `buildEntry` decides what a filled form
+ * stores, `expenseCategoryChoices` what a picker offers, `transactionLine` what a row reads and
+ * whether it is «Без категорії»; this file is the wiring. See design.md §6.
  */
 
 const FEED_SIZE = 50;
 
-type Entry = 'expense' | 'transfer';
+/** The order the vision names them in; the words themselves are the glossary's, via `labels`. */
+const ENTRY_CHOICES: readonly { value: EntryType; label: string }[] = (
+  ['expense', 'transfer', 'income', 'refund'] as const
+).map((value) => ({ value, label: transactionTypeLabel(value) }));
 
 export default function MainScreen() {
   const router = useRouter();
@@ -36,6 +49,10 @@ export default function MainScreen() {
       () => ({
         accounts: accountsRepo.list(),
         feed: transactionsRepo.listLatest(FEED_SIZE),
+        // Every row, archived included: pickers filter, but a feed line still shows the name of a
+        // category that has since been archived.
+        categories: categoriesRepo.list(),
+        sources: sourcesRepo.list(),
       }),
       [],
     ),
@@ -43,13 +60,26 @@ export default function MainScreen() {
 
   const offered = useMemo(() => activeAccounts(stored.accounts), [stored.accounts]);
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
+  const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const categoryPicks = useMemo(
+    () => expenseCategoryChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
+    [stored.categories],
+  );
+  const sourcePicks = useMemo(
+    () => sourceChoices(stored.sources).map((s) => ({ value: s.id, label: s.name })),
+    [stored.sources],
+  );
 
-  const [entry, setEntry] = useState<Entry>('expense');
+  const [entry, setEntry] = useState<EntryType>('expense');
   const [fromId, setFromId] = useState<string>();
   const [toId, setToId] = useState<string>();
   const [amount, setAmount] = useState('');
   const [arrived, setArrived] = useState('');
   const [date, setDate] = useState(() => todayIso(new Date()));
+  const [categoryId, setCategoryId] = useState<string>();
+  const [sourceId, setSourceId] = useState<string>();
+  /** The «Без категорії» line whose one-tap picker is open, if any. */
+  const [categorising, setCategorising] = useState<string>();
 
   const from = offered.find((a) => a.id === fromId);
   const to = offered.find((a) => a.id === toId);
@@ -81,10 +111,23 @@ export default function MainScreen() {
     [offered, to],
   );
 
+  /**
+   * Switching the type drops the label picked for the previous one. A повернення and a дохід take
+   * no default, so carrying a category picked while recording a витрата over into a повернення
+   * would be exactly the default the spec forbids.
+   */
+  const chooseEntry = useCallback((next: EntryType) => {
+    setEntry(next);
+    setCategoryId(undefined);
+    setSourceId(undefined);
+  }, []);
+
   const clear = useCallback(() => {
     setAmount('');
     setArrived('');
     setDate(todayIso(new Date()));
+    setCategoryId(undefined);
+    setSourceId(undefined);
     reload();
   }, [reload]);
 
@@ -101,45 +144,43 @@ export default function MainScreen() {
 
   const record = useCallback(() => {
     try {
-      if (!from) {
-        throw new Error('оберіть рахунок');
-      }
-      if (entry === 'expense') {
-        store(
-          expenseByDefault({
-            id: newId(),
-            date,
-            accountId: from.id,
-            amount: parseAmount(amount, from.currency),
-          }),
-        );
+      const built = buildEntry(
+        {
+          type: entry,
+          accountId: fromId,
+          toAccountId: toId,
+          amount,
+          arrived,
+          date,
+          categoryId,
+          sourceId,
+        },
+        { id: newId(), accounts: offered },
+      );
+      // Only a переказ can arrive short, and only the owner decides whether that was a комісія.
+      if (built.type === 'transfer') {
+        askAboutFee(built, store);
         return;
       }
-      if (!to) {
-        throw new Error('оберіть рахунок, куди прийшли гроші');
-      }
-      const left = parseAmount(amount, from.currency);
-      // Same currency: «скільки прийшло» is optional and defaults to the сума that left, so an
-      // untouched field records the same amount on both legs and proposes no комісія.
-      const arrivedMoney = crossCurrency
-        ? parseAmount(arrived, to.currency)
-        : arrived.trim() === ''
-          ? left
-          : parseAmount(arrived, to.currency);
-      // `transfer` rejects the same account on both legs; the error surfaces below.
-      const candidate = transfer({
-        id: newId(),
-        date,
-        fromAccountId: from.id,
-        toAccountId: to.id,
-        left,
-        arrived: arrivedMoney,
-      });
-      askAboutFee(candidate, store);
+      store(built);
     } catch (error) {
       Alert.alert('Не записано', failureMessage(error));
     }
-  }, [amount, arrived, crossCurrency, date, entry, from, store, to]);
+  }, [amount, arrived, categoryId, date, entry, fromId, offered, sourceId, store, toId]);
+
+  /** One tap from the feed: the same transaction under the same id, now carrying the pick. */
+  const categorise = useCallback(
+    (t: Transaction, picked: string) => {
+      try {
+        transactionsRepo.save(recategorise(t, picked), new Date());
+        setCategorising(undefined);
+        reload();
+      } catch (error) {
+        Alert.alert('Не збережено', failureMessage(error));
+      }
+    },
+    [reload],
+  );
 
   const accountChoices = offered.map((a) => ({ value: a.id, label: accountChoiceLabel(a) }));
 
@@ -158,12 +199,9 @@ export default function MainScreen() {
             <ThemedView type="backgroundElement" style={styles.card}>
               <Choices
                 label="Тип"
-                choices={[
-                  { value: 'expense' as const, label: 'витрата' },
-                  { value: 'transfer' as const, label: 'переказ' },
-                ]}
+                choices={ENTRY_CHOICES}
                 selected={entry}
-                onSelect={setEntry}
+                onSelect={chooseEntry}
               />
               <Choices
                 label={entry === 'transfer' ? 'Звідки' : 'Рахунок'}
@@ -208,10 +246,25 @@ export default function MainScreen() {
                 autoCapitalize="none"
                 placeholder="РРРР-ММ-ДД"
               />
-              {entry === 'expense' ? (
-                <ThemedText type="small" themeColor="textSecondary">
-                  Категорія: Без категорії
-                </ThemedText>
+              {/* A витрата arrives carrying «Без категорії» and the owner may pick another; a
+                  повернення has no default and is not stored until one is picked. */}
+              {entry === 'expense' || entry === 'refund' ? (
+                <Choices
+                  label={entry === 'refund' ? 'До якої категорії' : 'Категорія'}
+                  choices={categoryPicks}
+                  selected={
+                    entry === 'expense' ? (categoryId ?? UNCATEGORISED_CATEGORY_ID) : categoryId
+                  }
+                  onSelect={setCategoryId}
+                />
+              ) : null}
+              {entry === 'income' ? (
+                <Choices
+                  label="Джерело"
+                  choices={sourcePicks}
+                  selected={sourceId}
+                  onSelect={setSourceId}
+                />
               ) : null}
               <Action title="Записати" onPress={record} />
             </ThemedView>
@@ -224,10 +277,10 @@ export default function MainScreen() {
             </ThemedText>
           ) : (
             stored.feed.map((t) => {
-              const line = transactionLine(t, byId);
+              const line = transactionLine(t, byId, categoryNames);
               return (
-                <Pressable key={line.id} onPress={() => router.push(`/transaction/${line.id}`)}>
-                  <ThemedView type="backgroundElement" style={styles.row}>
+                <ThemedView key={line.id} type="backgroundElement" style={styles.row}>
+                  <Pressable onPress={() => router.push(`/transaction/${line.id}`)}>
                     <View style={styles.rowTop}>
                       <ThemedText type="smallBold">{line.amount}</ThemedText>
                       <ThemedText type="small" themeColor="textSecondary">
@@ -238,8 +291,29 @@ export default function MainScreen() {
                       {line.type} · {line.accounts}
                       {line.category ? ` · ${line.category}` : ''}
                     </ThemedText>
-                  </ThemedView>
-                </Pressable>
+                  </Pressable>
+
+                  {/* The mark, and the one tap behind it: picking here stores the category on the
+                      transaction without the editing screen ever opening. */}
+                  {line.uncategorised ? (
+                    <Pressable
+                      onPress={() =>
+                        setCategorising(categorising === line.id ? undefined : line.id)
+                      }>
+                      <ThemedText type="smallBold">
+                        {categorising === line.id ? 'Згорнути' : '● Обрати категорію'}
+                      </ThemedText>
+                    </Pressable>
+                  ) : null}
+                  {categorising === line.id ? (
+                    <Choices
+                      label="Категорія"
+                      choices={categoryPicks.filter((c) => c.value !== UNCATEGORISED_CATEGORY_ID)}
+                      selected={undefined}
+                      onSelect={(picked: string) => categorise(t, picked)}
+                    />
+                  ) : null}
+                </ThemedView>
               );
             })
           )}

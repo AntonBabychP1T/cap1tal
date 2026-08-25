@@ -20,8 +20,18 @@ import {
   type Transfer,
 } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
-import { openFileDb, openTestDb, type TestStorage } from './test-db';
+import { openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
+
+/**
+ * The categories and sources these transactions point at. A stored витрата, повернення or дохід
+ * references a real row since categories-rules, and none of the tests below is about that rule —
+ * they declare the vocabulary and get on with their subject.
+ */
+const VOCABULARY = {
+  categories: ['food', 'clothes', 'electronics', UNCATEGORISED_CATEGORY_ID, FEES_CATEGORY_ID],
+  sources: ['salary'],
+} as const;
 
 const card = account({
   id: 'card',
@@ -76,6 +86,7 @@ describe('transactionsRepo', () => {
 
   beforeEach(() => {
     storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
     seedAccounts(storage);
     repo = transactionsRepo(storage.db);
   });
@@ -207,6 +218,7 @@ describe('transactionsRepo on a file database', () => {
     });
 
     const first = openFileDb(path);
+    seedReferences(first.db, VOCABULARY);
     accountsRepo(first.db).save(card);
     transactionsRepo(first.db).save(expense, storedAt);
     first.close();
@@ -242,6 +254,7 @@ describe('transactionsRepo listings', () => {
 
   beforeEach(() => {
     storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
     seedAccounts(storage);
     repo = transactionsRepo(storage.db);
   });
@@ -349,6 +362,7 @@ describe('transactionsRepo latest listing', () => {
 
   beforeEach(() => {
     storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
     seedAccounts(storage);
     repo = transactionsRepo(storage.db);
   });
@@ -472,6 +486,7 @@ describe('transactionsRepo editing flows', () => {
 
   beforeEach(() => {
     storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
     seedAccounts(storage);
     repo = transactionsRepo(storage.db);
   });
@@ -715,6 +730,7 @@ describe('transactionsRepo re-dating', () => {
 
   beforeEach(() => {
     storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
     seedAccounts(storage);
     repo = transactionsRepo(storage.db);
   });
@@ -810,6 +826,7 @@ describe('transactionsRepo reverse retype', () => {
 
   beforeEach(() => {
     storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
     seedAccounts(storage);
     repo = transactionsRepo(storage.db);
   });
@@ -908,5 +925,68 @@ describe('transactionsRepo reverse retype', () => {
     expect(repo.get('fee-1')).toEqual(fee);
     expect(repo.get('fee-1')).toMatchObject({ accountId: 'card', categoryId: FEES_CATEGORY_ID });
     expect(repo.listLatest(50).map((t) => t.id).sort()).toEqual(['fee-1', 't1']);
+  });
+});
+
+/**
+ * Task 4.4 / persistence: "A transaction references stored categories and sources". Since
+ * categories-rules the two columns are real foreign keys, so an id with no row behind it is
+ * refused by storage itself rather than by a screen remembering to check.
+ */
+describe('transactionsRepo references', () => {
+  let storage: TestStorage;
+  let repo: TransactionsRepo;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    accountsRepo(storage.db).save(card);
+    repo = transactionsRepo(storage.db);
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: An unknown category id is rejected', () => {
+    const ghost = expenseByDefault({
+      id: 'ghost',
+      date: '2026-08-10',
+      accountId: 'card',
+      amount: money(12550, 'UAH'),
+      categoryId: 'no-such-category',
+    });
+
+    expect(() => repo.save(ghost, storedAt)).toThrow();
+    expect(repo.get('ghost')).toBeUndefined();
+    expect(repo.listLatest(50)).toEqual([]);
+  });
+
+  it('Scenario: An unknown source id is rejected', () => {
+    const ghost: Income = {
+      type: 'income',
+      id: 'ghost-income',
+      date: '2026-08-10',
+      accountId: 'card',
+      amount: money(5000000, 'UAH'),
+      sourceId: 'no-such-source',
+    };
+
+    expect(() => repo.save(ghost, storedAt)).toThrow();
+    expect(repo.get('ghost-income')).toBeUndefined();
+    expect(repo.listLatest(50)).toEqual([]);
+  });
+
+  it('A повернення referencing an unknown category is rejected too', () => {
+    const ghost = refund({
+      id: 'ghost-refund',
+      date: '2026-08-10',
+      accountId: 'card',
+      amount: money(80000, 'UAH'),
+      categoryId: 'no-such-category',
+    });
+
+    expect(() => repo.save(ghost, storedAt)).toThrow();
+    expect(repo.get('ghost-refund')).toBeUndefined();
   });
 });

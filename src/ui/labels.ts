@@ -1,27 +1,51 @@
 import type { Account, AccountKind } from '../domain/account';
-import {
-  CORRECTION_CATEGORY_ID,
-  FEES_CATEGORY_ID,
-  UNCATEGORISED_CATEGORY_ID,
-} from '../domain/transaction';
+import type { TransactionType } from '../domain/transaction';
 
 /**
- * The Ukrainian the owner reads. Reserved category ids are domain constants; these are their
- * display labels, named by the specs verbatim ("Без категорії", "Комісія", "Коригування"). The
- * editable category list arrives with categories-rules; until then these three are all there is
- * to show, and `categoryLabel` falling back to the raw id is what lets the breakdown ship before
- * that list exists.
+ * The Ukrainian the owner reads. A category's or a source's name is no longer knowledge this
+ * module holds — it is a row of the owner's own editable list, loaded by the screen and passed
+ * in as an id→name map (`namesById` in src/domain/category.ts). The three reserved rows are in
+ * that map like any other, seeded under the ids the domain fixes.
+ *
+ * A stored id the map misses shows itself rather than disappearing. That can only be transient —
+ * every stored id has a row — but the fallback is what keeps a half-loaded screen honest instead
+ * of blank.
+ *
+ * There is no `sourceLabel` twin: nothing displays a джерело by id. The feed line names the type
+ * and the рахунок, the pickers show the rows themselves, and no requirement asks for more. When
+ * the importers of steps 6–8 need one, it is this function with the sources map — the two lists
+ * are separate namespaces (`gifts` names a category *and* a source), so it will want its own name
+ * then, and not before.
  */
-const CATEGORY_LABELS: Readonly<Record<string, string>> = {
-  [UNCATEGORISED_CATEGORY_ID]: 'Без категорії',
-  [FEES_CATEGORY_ID]: 'Комісія',
-  // A коригування has no category of its own to carry, so the domain fixes one for it. It reaches
-  // the breakdown only when it is negative — a positive one is дохід.
-  [CORRECTION_CATEGORY_ID]: 'Коригування',
+export function categoryLabel(categoryId: string, names: ReadonlyMap<string, string>): string {
+  return names.get(categoryId) ?? categoryId;
+}
+
+/**
+ * How the owner's own lists are ordered wherever they are shown: by name, the way Ukrainian
+ * orders names, then by id so the order is total. The id matters because two rows may legally
+ * share a name — the uniqueness rule is "another *unarchived* row", so an archived «Pets» can sit
+ * beside a live one — and without it SQLite's sorter decides which comes first.
+ */
+export function byName(a: { name: string; id: string }, b: { name: string; id: string }): number {
+  return a.name.localeCompare(b.name, 'uk') || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+/**
+ * The five transaction types in the owner's words — the glossary's own, verbatim. One list,
+ * because a feed row, the recording form and the retype menu all name the same five things and
+ * three lists would drift.
+ */
+const TYPE_LABELS: Readonly<Record<TransactionType, string>> = {
+  expense: 'витрата',
+  income: 'дохід',
+  transfer: 'переказ',
+  refund: 'повернення',
+  correction: 'коригування',
 };
 
-export function categoryLabel(categoryId: string): string {
-  return CATEGORY_LABELS[categoryId] ?? categoryId;
+export function transactionTypeLabel(type: TransactionType): string {
+  return TYPE_LABELS[type];
 }
 
 /** The вид of an account, as the Рахунки headings show it. */

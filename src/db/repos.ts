@@ -1,6 +1,9 @@
 import { accountsRepo } from './accounts-repo';
+import { categoriesRepo } from './categories-repo';
 import { db } from './client';
 import { ratesRepo } from './rates-repo';
+import { rulesRepo } from './rules-repo';
+import { sourcesRepo } from './sources-repo';
 import { transactionsRepo } from './transactions-repo';
 
 /**
@@ -12,3 +15,7 @@ export const accounts = accountsRepo(db);
 export const transactions = transactionsRepo(db);
 /** The monobank rate cache — read for the approximate UAH figure, written when it is refreshed. */
 export const rates = ratesRepo(db);
+/** The owner's editable lists and the правила автокатегоризації — seeded on open, see ./seed.ts. */
+export const categories = categoriesRepo(db);
+export const sources = sourcesRepo(db);
+export const rules = rulesRepo(db);

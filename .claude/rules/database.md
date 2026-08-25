@@ -10,7 +10,8 @@ paths:
 ## Where things live
 - Schema: `src/db/schema.ts` (one file; split into `src/db/schema/*.ts` only when it exceeds
   ~300 lines, re-exported from `schema.ts`). Queries and repositories: `src/db/**`.
-- Migrations: `drizzle/` (SQL files + `drizzle/meta/`), produced only by `npm run db:generate`.
+- Migrations: `drizzle/` (SQL files + `drizzle/meta/`), produced by `npm run db:generate` — see
+  the one hand-editing clause below.
   The app applies them at startup with Drizzle's expo-sqlite migrator (`useMigrations` in the
   root layout, over the generated `drizzle/migrations.js`); nothing else applies migrations.
 
@@ -18,6 +19,13 @@ paths:
 - Never edit, rename, reorder or delete a migration or `drizzle/meta/*` entry that is already
   committed. A hook blocks it. Fix the schema and generate a new migration instead.
 - Never run `drizzle-kit push`, `drop` or `migrate` here; they bypass the migration history.
+- DDL is generated, never hand-written. **Data** statements may be added by hand to a migration
+  that is not committed yet, and only when the schema change cannot land without them — the case
+  that earned this clause: turning a column into a foreign key needs the rows it points at to
+  exist before the table is recreated, and the migrator's own `BEGIN` makes the generated
+  `PRAGMA foreign_keys=OFF` a no-op, so nothing outside the migration can put them there in time.
+  Such a statement needs a comment saying why it is there and a test that fails without it. Once
+  the migration is committed it is immutable like any other. (Owner's decision, 2026-08-24.)
 - Every schema change = schema edit + generated migration + a test that runs all migrations on an
   empty in-memory database and asserts the resulting shape (or the behaviour that needs it).
 - A migration that moves data needs a test with representative rows before and after.

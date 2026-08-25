@@ -21,6 +21,55 @@ export const accounts = sqliteTable('accounts', {
 });
 
 /**
+ * The owner's flat vocabulary for "where did the money go": one editable row per expense
+ * category. No hierarchy and no tags — the vision keeps the list flat.
+ *
+ * There is deliberately no `reserved` column: reservedness is "the id is one of the domain's
+ * three constants", decided in `src/domain/transaction.ts`, and a column could drift from them.
+ * Names are unique among unarchived rows, which is enforced in the repository — a partial unique
+ * index cannot express "unarchived only" and the repository is the only writer.
+ */
+export const categories = sqliteTable('categories', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  /** Archived rows keep their history; they are offered in no picker. */
+  archived: integer('archived', { mode: 'boolean' }).notNull().default(sql`0`),
+});
+
+/** The other half of the vocabulary: where money came from. Same shape as `categories`. */
+export const sources = sqliteTable('sources', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  archived: integer('archived', { mode: 'boolean' }).notNull().default(sql`0`),
+});
+
+/**
+ * A правило автокатегоризації: "merchant and/or MCC → one category". Nothing applies these yet —
+ * the importers of steps 6–8 do; this change stores and edits them.
+ *
+ * `createdAt` is domain data here, not storage metadata: the matching order uses it as the
+ * tie-break between two rules that are equally specific.
+ */
+export const rules = sqliteTable(
+  'rules',
+  {
+    id: text('id').primaryKey(),
+    /** A substring of the merchant description; NULL when the rule matches on MCC alone. */
+    merchant: text('merchant'),
+    /** ISO-18245 merchant category code; NULL when the rule matches on the merchant alone. */
+    mcc: integer('mcc'),
+    categoryId: text('category_id')
+      .notNull()
+      .references(() => categories.id, { onDelete: 'restrict' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    check('rules_criterion_present', sql`${t.merchant} IS NOT NULL OR ${t.mcc} IS NOT NULL`),
+    check('rules_merchant_not_blank', sql`${t.merchant} IS NULL OR length(trim(${t.merchant})) > 0`),
+  ],
+);
+
+/**
  * One row per transaction, all five types in one table with a `type` discriminator: month and
  * account listings read every type together, and the id space is shared (retyping an expense
  * into a transfer keeps the id). CHECK constraints keep each row to exactly one valid shape.
@@ -47,10 +96,10 @@ export const transactions = sqliteTable(
     amount: integer('amount'),
     currency: text('currency'),
 
-    /** expense | refund. Plain TEXT: the categories table arrives with categories-rules. */
-    categoryId: text('category_id'),
-    /** income. Plain TEXT: the sources table arrives with categories-rules. */
-    sourceId: text('source_id'),
+    /** expense | refund. */
+    categoryId: text('category_id').references(() => categories.id, { onDelete: 'restrict' }),
+    /** income. */
+    sourceId: text('source_id').references(() => sources.id, { onDelete: 'restrict' }),
 
     /** expense only, informational: what the merchant charged in its own currency. */
     originalAmount: integer('original_amount'),
@@ -104,6 +153,11 @@ export const transactions = sqliteTable(
     index('transactions_to_account_idx').on(t.toAccountId),
   ],
 );
+
+// No `CategoryRow` / `SourceRow` aliases: `named-list-repo.ts` is the only reader of those two
+// tables and it takes the table itself, so an alias would be a name nothing says.
+export type RuleRow = typeof rules.$inferSelect;
+export type NewRuleRow = typeof rules.$inferInsert;
 
 export type AccountRow = typeof accounts.$inferSelect;
 export type NewAccountRow = typeof accounts.$inferInsert;

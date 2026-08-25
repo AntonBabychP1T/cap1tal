@@ -15,6 +15,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 
 import * as schema from './schema';
+import { categories, sources } from './schema';
 
 /**
  * Test-only storage: real SQLite through `better-sqlite3` with the committed migrations applied
@@ -47,6 +48,25 @@ function open(filename: string): TestStorage {
 /** A fresh in-memory database with all committed migrations applied. */
 export function openTestDb(): TestStorage {
   return open(':memory:');
+}
+
+/**
+ * The category and source rows a test's transactions point at. Since categories-rules a stored
+ * витрата, повернення or дохід references a real row (persistence: "A transaction references
+ * stored categories and sources"), so a test whose subject is something else declares the
+ * vocabulary it needs in one line instead of building it by hand. The name is the id — these are
+ * fixtures, not the owner's list; `seedStarterSet` is what puts the real names in.
+ */
+export function seedReferences(
+  db: TestDb,
+  ids: { categories?: readonly string[]; sources?: readonly string[] },
+): void {
+  for (const id of ids.categories ?? []) {
+    db.insert(categories).values({ id, name: id }).onConflictDoNothing().run();
+  }
+  for (const id of ids.sources ?? []) {
+    db.insert(sources).values({ id, name: id }).onConflictDoNothing().run();
+  }
 }
 
 interface Journal {

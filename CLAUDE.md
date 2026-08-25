@@ -24,7 +24,8 @@ Android first (iOS must stay possible).
 ```
 docs/            product-vision.md, glossary.md, tech-task.md — why, vocabulary, build plan
 openspec/        specs/<capability>/spec.md (truth), changes/<name>/ (work in flight), config.yaml
-src/app/         expo-router screens: Головний, Рахунки, transaction/[id] (editing)
+src/app/         expo-router screens: (tabs)/ = Головний, Місяць, Рахунки, Налаштування;
+                 pushed over them: transaction/[id] (editing), category/…, manage/ (the lists)
 src/domain/      pure TypeScript: entities, money rules, monthly picture   → .claude/rules/domain.md
 src/ui/          pure TypeScript screen logic, no React imports: amount parsing, labels, grouping
 src/db/          Drizzle schema, queries; drizzle/ = migrations          → .claude/rules/database.md

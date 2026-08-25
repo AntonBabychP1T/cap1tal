@@ -7,29 +7,36 @@ import { askAboutFee } from '@/components/fee-dialog';
 import { Action, Choices, Field } from '@/components/form';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { accounts as accountsRepo, transactions as transactionsRepo } from '@/db/repos';
-import type { Account } from '@/domain/account';
 import {
-  expenseByDefault,
-  transfer,
-  UNCATEGORISED_CATEGORY_ID,
-  type Transaction,
-} from '@/domain/transaction';
+  accounts as accountsRepo,
+  categories as categoriesRepo,
+  sources as sourcesRepo,
+  transactions as transactionsRepo,
+} from '@/db/repos';
+import type { Account } from '@/domain/account';
+import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountChoicesFor, legsOf } from '@/ui/account-choices';
-import { formatMinorUnits, parseAmount } from '@/ui/amount-input';
-import { accountChoiceLabel, failureMessage } from '@/ui/labels';
+import { formatMinorUnits } from '@/ui/amount-input';
+import { categoryChoicesFor, sourceChoicesFor } from '@/ui/category-choices';
+import { buildEntry, type EntryType } from '@/ui/entry-form';
+import { accountChoiceLabel, failureMessage, transactionTypeLabel } from '@/ui/labels';
+import { labelsAfterRetype, shapesFor } from '@/ui/retype';
 
 import { Spacing } from '@/constants/theme';
 
 /**
- * Editing one transaction: its сума, дата and рахунок(и), retyping витрата ↔ переказ under the
- * same id, and deleting it after a confirmation. Only витрата and переказ can be edited here —
- * дохід, повернення and коригування arrive with the capabilities that can record them, and are
- * shown read-only rather than half-editable.
+ * Editing one transaction: its сума, дата, рахунок(и), its category or джерело, retyping under
+ * the same id, and deleting it after a confirmation.
+ *
+ * What a filled form stores is `buildEntry` — the same function the Головний entry form uses, so
+ * recording and editing cannot drift apart, and giving it the original's id is all that makes
+ * this an edit rather than a new transaction. What a retype carries over is `labelsAfterRetype`.
+ * Both are pure and under `verify`; this file is the wiring.
+ *
+ * A коригування is still shown read-only: nothing can record one until «звірити» arrives, so
+ * there is no form for it to open into.
  */
-
-type Shape = 'expense' | 'transfer';
 
 export default function EditTransactionScreen() {
   const router = useRouter();
@@ -37,7 +44,12 @@ export default function EditTransactionScreen() {
 
   const [stored] = useReloadOnFocus(
     useCallback(
-      () => ({ accounts: accountsRepo.list(), transaction: transactionsRepo.get(id) }),
+      () => ({
+        accounts: accountsRepo.list(),
+        transaction: transactionsRepo.get(id),
+        categories: categoriesRepo.list(),
+        sources: sourcesRepo.list(),
+      }),
       [id],
     ),
   );
@@ -51,7 +63,7 @@ export default function EditTransactionScreen() {
    * stays saveable.
    */
   const legs = useMemo(() => (original ? legsOf(original) : {}), [original]);
-  const sourceChoices = useMemo(
+  const sourceChoicesList = useMemo(
     () => accountChoicesFor(stored.accounts, legs.source),
     [legs.source, stored.accounts],
   );
@@ -62,9 +74,27 @@ export default function EditTransactionScreen() {
 
   const [form, setForm] = useState(() => initialForm(original));
 
-  const from = sourceChoices.find((a) => a.id === form?.fromId);
+  const from = sourceChoicesList.find((a) => a.id === form?.fromId);
   const to = destinationChoices.find((a) => a.id === form?.toId);
   const crossCurrency = Boolean(from && to && from.currency !== to.currency);
+
+  /** The same reasoning as the account pickers: an archived label the transaction carries stays. */
+  const categoryPicks = useMemo(
+    () =>
+      categoryChoicesFor(stored.categories, form?.categoryId).map((c) => ({
+        value: c.id,
+        label: c.name,
+      })),
+    [form?.categoryId, stored.categories],
+  );
+  const sourcePicks = useMemo(
+    () =>
+      sourceChoicesFor(stored.sources, form?.sourceId).map((s) => ({
+        value: s.id,
+        label: s.name,
+      })),
+    [form?.sourceId, stored.sources],
+  );
 
   /**
    * Choosing an account of another currency clears the сума touching it: the spec says it is
@@ -74,11 +104,11 @@ export default function EditTransactionScreen() {
   const chooseFrom = useCallback(
     (fromId: string) => {
       if (!form) return;
-      const next = sourceChoices.find((a) => a.id === fromId);
+      const next = sourceChoicesList.find((a) => a.id === fromId);
       const currencyChanged = Boolean(next && from && next.currency !== from.currency);
       setForm({ ...form, fromId, ...(currencyChanged ? { amount: '' } : {}) });
     },
-    [form, from, sourceChoices],
+    [form, from, sourceChoicesList],
   );
 
   const chooseTo = useCallback(
@@ -89,6 +119,16 @@ export default function EditTransactionScreen() {
       setForm({ ...form, toId, ...(currencyChanged ? { arrived: '' } : {}) });
     },
     [destinationChoices, form, to],
+  );
+
+  /** Flipping the type: `labelsAfterRetype` decides what the pickers keep showing. */
+  const chooseShape = useCallback(
+    (shape: EntryType) => {
+      if (!form || !original) return;
+      const carried = labelsAfterRetype(original, shape);
+      setForm({ ...form, shape, categoryId: carried.categoryId, sourceId: carried.sourceId });
+    },
+    [form, original],
   );
 
   const store = useCallback(
@@ -105,47 +145,29 @@ export default function EditTransactionScreen() {
   const apply = useCallback(() => {
     if (!form || !original) return;
     try {
-      if (!from) {
-        throw new Error('оберіть рахунок');
-      }
-      if (form.shape === 'expense') {
-        // A different-currency рахунок means the сума is entered anew in that currency; nothing
-        // is converted, so no amount can land on an account in a foreign currency.
-        store(
-          expenseByDefault({
-            id: original.id,
-            date: form.date,
-            accountId: from.id,
-            amount: parseAmount(form.amount, from.currency),
-            categoryId: categoryOf(original),
-          }),
-        );
+      // The original's id is what makes this an edit: same transaction, whatever shape it takes.
+      const built = buildEntry(
+        {
+          type: form.shape,
+          accountId: form.fromId,
+          toAccountId: form.toId,
+          amount: form.amount,
+          arrived: form.arrived,
+          date: form.date,
+          categoryId: form.categoryId,
+          sourceId: form.sourceId,
+        },
+        { id: original.id, accounts: stored.accounts },
+      );
+      if (built.type === 'transfer') {
+        askAboutFee(built, store);
         return;
       }
-      if (!to) {
-        throw new Error('оберіть рахунок, куди прийшли гроші');
-      }
-      const left = parseAmount(form.amount, from.currency);
-      const arrived = crossCurrency
-        ? parseAmount(form.arrived, to.currency)
-        : form.arrived.trim() === ''
-          ? left
-          : parseAmount(form.arrived, to.currency);
-      askAboutFee(
-        transfer({
-          id: original.id,
-          date: form.date,
-          fromAccountId: from.id,
-          toAccountId: to.id,
-          left,
-          arrived,
-        }),
-        store,
-      );
+      store(built);
     } catch (error) {
       Alert.alert('Не збережено', failureMessage(error));
     }
-  }, [crossCurrency, form, from, original, store, to]);
+  }, [form, original, store, stored.accounts]);
 
   const remove = useCallback(() => {
     if (!original) return;
@@ -174,9 +196,9 @@ export default function EditTransactionScreen() {
   if (!form) {
     return (
       <Screen>
-        <ThemedText type="smallBold">Ця транзакція поки не редагується</ThemedText>
+        <ThemedText type="smallBold">Коригування поки не редагується</ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          Дохід, повернення і коригування зʼявляться разом із кроками, що вміють їх записувати.
+          Воно зʼявиться разом зі «звірити», що вміє його записати.
         </ThemedText>
         <Action title="Видалити" onPress={remove} />
         <Action title="Назад" onPress={() => router.back()} />
@@ -193,16 +215,16 @@ export default function EditTransactionScreen() {
       <ThemedView type="backgroundElement" style={styles.card}>
         <Choices
           label="Тип"
-          choices={[
-            { value: 'expense' as const, label: 'витрата' },
-            { value: 'transfer' as const, label: 'переказ' },
-          ]}
+          choices={shapesFor(original).map((shape) => ({
+            value: shape,
+            label: transactionTypeLabel(shape),
+          }))}
           selected={form.shape}
-          onSelect={(shape: Shape) => setForm({ ...form, shape })}
+          onSelect={chooseShape}
         />
         <Choices
           label={form.shape === 'transfer' ? 'Звідки' : 'Рахунок'}
-          choices={asChoices(sourceChoices)}
+          choices={asChoices(sourceChoicesList)}
           selected={form.fromId}
           onSelect={chooseFrom}
         />
@@ -238,6 +260,29 @@ export default function EditTransactionScreen() {
           autoCapitalize="none"
           placeholder="РРРР-ММ-ДД"
         />
+        {/* A витрата shows «Без категорії» selected when it carries nothing, because that is what
+            saving would store — the same default the Головний form shows. A повернення shows
+            nothing selected, because nothing is what saving it would refuse. */}
+        {form.shape === 'expense' || form.shape === 'refund' ? (
+          <Choices
+            label={form.shape === 'refund' ? 'До якої категорії' : 'Категорія'}
+            choices={categoryPicks}
+            selected={
+              form.shape === 'expense'
+                ? (form.categoryId ?? UNCATEGORISED_CATEGORY_ID)
+                : form.categoryId
+            }
+            onSelect={(categoryId: string) => setForm({ ...form, categoryId })}
+          />
+        ) : null}
+        {form.shape === 'income' ? (
+          <Choices
+            label="Джерело"
+            choices={sourcePicks}
+            selected={form.sourceId}
+            onSelect={(sourceId: string) => setForm({ ...form, sourceId })}
+          />
+        ) : null}
         <Action title="Зберегти" onPress={apply} />
         <Action title="Видалити" onPress={remove} />
         <Action title="Назад" onPress={() => router.back()} />
@@ -259,33 +304,27 @@ function Screen({ children }: { children: React.ReactNode }) {
 }
 
 interface Form {
-  shape: Shape;
+  shape: EntryType;
   fromId: string;
   toId: string;
   amount: string;
   arrived: string;
   date: string;
+  categoryId?: string;
+  sourceId?: string;
 }
 
 /**
  * A переказ opens on the сума that left and the account it left; retyping it into a витрата
- * therefore keeps exactly those, and drops the arrived leg. `undefined` means the type is one
- * this screen does not edit yet.
+ * therefore keeps exactly those, and drops the arrived leg. `undefined` means a коригування,
+ * which this screen shows rather than edits.
  */
 function initialForm(t: Transaction | undefined): Form | undefined {
   if (!t) return undefined;
-  if (t.type === 'expense') {
-    return {
-      shape: 'expense',
-      fromId: t.accountId,
-      toId: '',
-      amount: formatMinorUnits(t.amount.amount),
-      arrived: '',
-      date: t.date,
-    };
-  }
+  const common = { toId: '', arrived: '', date: t.date };
   if (t.type === 'transfer') {
     return {
+      ...common,
       shape: 'transfer',
       fromId: t.fromAccountId,
       toId: t.toAccountId,
@@ -294,15 +333,18 @@ function initialForm(t: Transaction | undefined): Form | undefined {
         t.left.currency === t.arrived.currency && t.left.amount === t.arrived.amount
           ? ''
           : formatMinorUnits(t.arrived.amount),
-      date: t.date,
     };
   }
-  return undefined;
-}
-
-/** An expense keeps the category it had; a переказ becoming a витрата lands in "Без категорії". */
-function categoryOf(t: Transaction): string {
-  return t.type === 'expense' ? t.categoryId : UNCATEGORISED_CATEGORY_ID;
+  if (t.type === 'correction') {
+    return undefined;
+  }
+  return {
+    ...common,
+    shape: t.type,
+    fromId: t.accountId,
+    amount: formatMinorUnits(t.amount.amount),
+    ...(t.type === 'income' ? { sourceId: t.sourceId } : { categoryId: t.categoryId }),
+  };
 }
 
 const styles = StyleSheet.create({

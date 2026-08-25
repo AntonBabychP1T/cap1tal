@@ -10,7 +10,10 @@ import { expenseByDefault, refund } from '../domain/transaction';
 import { accountsRepo, type AccountsRepo } from './accounts-repo';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
 import { groupAccountsByKind } from '../ui/account-groups';
-import { openFileDb, openTestDb, type TestStorage } from './test-db';
+import { openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
+
+/** The categories and sources these transactions point at — see transactions-repo.test.ts. */
+const VOCABULARY = { categories: ['food', 'clothes'], sources: ['salary'] } as const;
 
 const card = account({
   id: 'card',
@@ -38,6 +41,7 @@ describe('accountsRepo', () => {
 
   beforeEach(() => {
     storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
     repo = accountsRepo(storage.db);
     txs = transactionsRepo(storage.db);
   });

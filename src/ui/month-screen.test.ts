@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { account, type Account, type AccountKind } from '../domain/account';
+import { namesById } from '../domain/category';
 import { money, type CurrencyCode } from '../domain/money';
 import {
   CORRECTION_CATEGORY_ID,
@@ -55,8 +56,16 @@ const correction = (amount: number, date = '2026-08-12'): Correction => ({
   amount: money(amount, 'UAH'),
 });
 
+/** The categories list a screen loads: the seeded reserved rows, plus the ones these tests name. */
+const categoryNames = namesById([
+  { id: UNCATEGORISED_CATEGORY_ID, name: 'Без категорії' },
+  { id: FEES_CATEGORY_ID, name: 'Комісія' },
+  { id: CORRECTION_CATEGORY_ID, name: 'Коригування' },
+  { id: 'groceries', name: 'Groceries' },
+]);
+
 const view = (transactions: Transaction[], rates: MonobankRate[] = [], month = '2026-08') =>
-  monthViewModel({ month, accounts, transactions, rates, now: august });
+  monthViewModel({ month, accounts, transactions, rates, categoryNames, now: august });
 
 const groupOf = (model: ReturnType<typeof view>, currency: CurrencyCode) => {
   const group = model.groups.find((g) => g.currency === currency);
@@ -246,5 +255,44 @@ describe('monthViewModel', () => {
       'Дохід',
       'Залишилось',
     ]);
+  });
+});
+
+describe('the breakdown reads the editable category list', () => {
+  it('Scenario: A renamed category shows its new name', () => {
+    const spent = [expense(80000, 'UAH', 'groceries')];
+    const renamed = namesById([{ id: 'groceries', name: 'Продукти' }]);
+
+    const before = view(spent).groups[0]!.breakdown;
+    const after = monthViewModel({
+      month: '2026-08',
+      accounts,
+      transactions: spent,
+      rates: [],
+      categoryNames: renamed,
+      now: august,
+    }).groups[0]!.breakdown;
+
+    expect(before.map((row) => row.label)).toEqual(['Groceries']);
+    // The same stored id, the same amount — only the name the owner gave the row moved.
+    expect(after.map((row) => row.label)).toEqual(['Продукти']);
+    expect(after.map((row) => row.categoryId)).toEqual(['groceries']);
+  });
+
+  it('Scenario: An archived category still shows its months', () => {
+    // Archiving takes a category out of pickers, never out of the months it already has: the
+    // breakdown is computed from the transactions, and the name map holds every row, archived
+    // ones included.
+    const model = view([expense(80000, 'UAH', 'groceries')]);
+
+    expect(model.groups[0]!.breakdown).toEqual([
+      { categoryId: 'groceries', label: 'Groceries', currency: 'UAH', amount: '800,00 UAH' },
+    ]);
+  });
+
+  it('A category id with no row in the loaded list shows itself rather than disappearing', () => {
+    const model = view([expense(80000, 'UAH', 'not-loaded-yet')]);
+
+    expect(model.groups[0]!.breakdown.map((row) => row.label)).toEqual(['not-loaded-yet']);
   });
 });

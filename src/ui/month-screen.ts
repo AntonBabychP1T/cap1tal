@@ -115,6 +115,9 @@ export function monthViewModel(input: {
   accounts: readonly Account[];
   transactions: readonly Transaction[];
   rates: readonly MonobankRate[];
+  /** The categories list as the screen loaded it, so a breakdown row reads the owner's own name
+   * for the category — a renamed one included. See `categoryLabel` in ./labels. */
+  categoryNames: ReadonlyMap<string, string>;
   now: Date;
 }): MonthViewModel {
   const picture = monthlyPicture({
@@ -133,7 +136,7 @@ export function monthViewModel(input: {
       const rows: MonthBreakdownRow[] = [...(breakdown.get(currency) ?? [])]
         .map(([categoryId, money]) => ({
           categoryId,
-          label: categoryLabel(categoryId),
+          label: categoryLabel(categoryId, input.categoryNames),
           amount: money.amount,
           formatted: formatMoney(money),
         }))
