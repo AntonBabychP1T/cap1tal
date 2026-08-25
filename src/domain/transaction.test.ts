@@ -40,7 +40,7 @@ describe('transaction', () => {
     expect(t.categoryId).toBe(UNCATEGORISED_CATEGORY_ID);
   });
 
-  it('Income with a source', () => {
+  it('Scenario: Income with a source', () => {
     const t: Income = {
       type: 'income',
       id: 't3',
