@@ -279,9 +279,11 @@ included, which is why ours is 0003). Task 1.1 records what that costs.
       The same three passes also took out `retypeSingleAccount` (a second copy of `buildEntry`'s
       construction rules), a second `withCurrent`, a third list of the type vocabulary, and a
       `sourceLabel` nothing called.
-- [ ] 9.3 Commit. The owner's ordering (2026-08-24: two separate commits, `monthly-picture`
-      first) is already satisfied — it landed as 22cd09c and 2d61446 while this change was being
-      implemented, and the working tree now holds only this change's work.
+- [x] 9.3 Commit. The owner's ordering (2026-08-24: two separate commits, `monthly-picture`
+      first) was satisfied — it landed as 22cd09c and 2d61446 while this change was being
+      implemented. Committed as 9a70db7, 67 files, scoped by pathspec: `BACKLOG.md`,
+      `.claude/skills/auto-work/` and `.claude/agents/diff-reviewer.md` were in the tree
+      throughout but belong to no task here, so they stayed uncommitted for the owner.
 - [x] 9.4 ~~Do not archive before `monthly-picture` is archived~~ — it is (2d61446), so
       `openspec/specs/month-screen/spec.md` exists and this change's MODIFIED block has a target
       to attach to. Re-diffed after that landed: no drift (see task 1.1). `settings-screen`'s
