@@ -100,7 +100,14 @@ export function recategorise(t: Transaction, categoryId: string): Expense | Refu
     throw new Error('оберіть категорію');
   }
   return t.type === 'refund'
-    ? refund({ id: t.id, date: t.date, accountId: t.accountId, amount: t.amount, categoryId })
+    ? refund({
+        id: t.id,
+        date: t.date,
+        accountId: t.accountId,
+        amount: t.amount,
+        categoryId,
+        ...(t.description ? { description: t.description } : {}),
+      })
     : expenseByDefault({
         id: t.id,
         date: t.date,
@@ -110,5 +117,7 @@ export function recategorise(t: Transaction, categoryId: string): Expense | Refu
         // The original-currency сума describes the витрата the bank charged; recategorising says
         // nothing about it, so it stays.
         ...(t.originalAmount ? { originalAmount: t.originalAmount } : {}),
+        // The bank's text describes the money, not the category the owner just chose for it.
+        ...(t.description ? { description: t.description } : {}),
       });
 }

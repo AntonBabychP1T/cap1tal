@@ -160,6 +160,22 @@ describe('transaction', () => {
     expect(t.originalAmount).toEqual(money(10000, 'USD'));
   });
 
+  it('Scenario: A purchase whose original currency the source does not name', () => {
+    // A monobank statement names the merchant's сума but never the currency it is in, and an
+    // amount without a currency is not money this app holds. The UAH the bank charged is
+    // unaffected — it is what every total uses either way.
+    const t: Expense = expenseByDefault({
+      id: 't7b',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(420000, 'UAH'),
+      categoryId: 'travel',
+    });
+    expect(t.amount).toEqual(money(420000, 'UAH'));
+    expect(t.originalAmount).toBeUndefined();
+    expect('originalAmount' in t).toBe(false);
+  });
+
   it('Transfer with a shortfall', () => {
     const t = transfer({
       id: 't10',
@@ -218,6 +234,67 @@ describe('transaction', () => {
         categoryId: 'clothes',
       }),
     ).toThrow();
+  });
+
+  it("Scenario: An imported витрата keeps the bank's text", () => {
+    const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
+    const imported = expenseByDefault({
+      id: 't10',
+      date: '2026-08-26',
+      accountId: 'card',
+      amount: money(12550, 'UAH'),
+      categoryId: 'food',
+      description: 'СІЛЬПО Київ',
+    });
+    expect(imported.description).toBe('СІЛЬПО Київ');
+    // The опис changes no number: the month counts exactly the сума, as it would without one.
+    const picture = monthlyPicture({
+      month: '2026-08',
+      accounts: [card],
+      transactions: [imported],
+    });
+    expect(picture.get('UAH')?.spent).toEqual(money(12550, 'UAH'));
+    const { description: _description, ...withoutOpis } = imported;
+    expect(
+      monthlyPicture({ month: '2026-08', accounts: [card], transactions: [withoutOpis] }).get('UAH'),
+    ).toEqual(picture.get('UAH'));
+  });
+
+  it('Scenario: A manual транзакція needs no опис', () => {
+    const byHand = expenseByDefault({
+      id: 't11',
+      date: '2026-08-26',
+      accountId: 'card',
+      amount: money(12550, 'UAH'),
+      categoryId: 'food',
+    });
+    expect(byHand.description).toBeUndefined();
+    expect('description' in byHand).toBe(false);
+  });
+
+  it('An опис survives every type that can carry one', () => {
+    const opis = 'Переказ на банку';
+    expect(
+      transfer({
+        id: 't12',
+        date: '2026-08-26',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(100000, 'UAH'),
+        arrived: money(100000, 'UAH'),
+        description: opis,
+      }).description,
+    ).toBe(opis);
+    expect(
+      refund({
+        id: 't13',
+        date: '2026-08-26',
+        accountId: 'card',
+        amount: money(80000, 'UAH'),
+        categoryId: 'clothes',
+        description: opis,
+      }).description,
+    ).toBe(opis);
   });
 
   it('Dates are calendar dates and months are their prefixes (design D4)', () => {

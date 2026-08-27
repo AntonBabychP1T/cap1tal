@@ -45,6 +45,12 @@ export interface EntryDraft {
   readonly categoryId?: string;
   /** дохід only, required, no default. */
   readonly sourceId?: string;
+  /**
+   * The опис the транзакція already carries — imports put it there, the form never asks for one.
+   * Editing and retyping rebuild the транзакція through here, so this is what keeps the bank's
+   * text on it whatever shape it takes.
+   */
+  readonly description?: string;
 }
 
 /**
@@ -74,6 +80,7 @@ export function buildEntry(
         amount: parseAmount(draft.amount, from.currency),
         // Nothing picked means «Без категорії» — the default is the domain's, not the form's.
         ...(draft.categoryId ? { categoryId: draft.categoryId } : {}),
+        ...(draft.description ? { description: draft.description } : {}),
       });
 
     case 'income': {
@@ -89,6 +96,7 @@ export function buildEntry(
         accountId: from.id,
         amount: parseAmount(draft.amount, from.currency),
         sourceId: draft.sourceId,
+        ...(draft.description ? { description: draft.description } : {}),
       };
       return income;
     }
@@ -104,6 +112,7 @@ export function buildEntry(
         accountId: from.id,
         amount: parseAmount(draft.amount, from.currency),
         categoryId: draft.categoryId,
+        ...(draft.description ? { description: draft.description } : {}),
       });
 
     case 'transfer': {
@@ -131,6 +140,7 @@ export function buildEntry(
         toAccountId: to.id,
         left,
         arrived,
+        ...(draft.description ? { description: draft.description } : {}),
       });
     }
   }

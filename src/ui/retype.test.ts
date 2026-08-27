@@ -79,6 +79,8 @@ function retypedTo(
       date: t.date,
       categoryId: picked.categoryId ?? carried.categoryId,
       sourceId: picked.sourceId ?? carried.sourceId,
+      // Exactly what the editing screen hands over: the опис it already holds, untouched.
+      description: t.description,
     },
     { id: t.id, accounts },
   );
@@ -167,6 +169,44 @@ describe('a retype keeps the transaction and moves only what the shape allows', 
       accountId: 'card',
       amount: money(500000, 'UAH'),
       categoryId: UNCATEGORISED_CATEGORY_ID,
+    });
+  });
+
+  it('Scenario: A retype keeps the опис', () => {
+    const withOpis = expenseByDefault({
+      id: 't7',
+      date: '2026-08-24',
+      accountId: 'card',
+      amount: money(100000, 'UAH'),
+      categoryId: 'clothing',
+      description: 'Переказ на банку',
+    });
+
+    // The everyday mono case: a витрата the bank described, retyped into the переказ it was.
+    expect(retypedTo(withOpis, 'transfer')).toMatchObject({
+      type: 'transfer',
+      id: 't7',
+      description: 'Переказ на банку',
+    });
+    // And every other move the hub offers keeps it too, in both directions.
+    expect(retypedTo(withOpis, 'income', { sourceId: 'salary' })).toMatchObject({
+      type: 'income',
+      description: 'Переказ на банку',
+    });
+    expect(retypedTo(withOpis, 'refund')).toMatchObject({
+      type: 'refund',
+      description: 'Переказ на банку',
+    });
+    const asIncome = retypedTo(withOpis, 'income', { sourceId: 'salary' });
+    expect(retypedTo(asIncome, 'expense')).toMatchObject({
+      type: 'expense',
+      description: 'Переказ на банку',
+    });
+    // Recategorising from the feed is not a retype, and it keeps the опис just the same.
+    expect(recategorise(withOpis, 'food')).toMatchObject({
+      type: 'expense',
+      categoryId: 'food',
+      description: 'Переказ на банку',
     });
   });
 

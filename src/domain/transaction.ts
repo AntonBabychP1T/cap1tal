@@ -14,6 +14,13 @@ export const UNCATEGORISED_CATEGORY_ID = 'uncategorised';
  * proposes the split, so it has to exist under its name like «Комісія» does.
  */
 export const INTEREST_SOURCE_ID = 'interest';
+/**
+ * The джерело an imported дохід lands on when the bank says only that money arrived: «Без
+ * джерела», the income side of «Без категорії». Like the reserved category ids above it is named
+ * here before the row exists — the seeded row, its label and its picker rules arrive with the
+ * screen change that first stores such a дохід.
+ */
+export const UNSOURCED_SOURCE_ID = 'unsourced';
 
 /** A calendar date as 'YYYY-MM-DD'. No Date objects in the domain. */
 export type IsoDate = string;
@@ -64,6 +71,13 @@ export interface Expense {
   readonly amount: Money;
   readonly categoryId: string;
   readonly originalAmount?: Money;
+  /**
+   * The опис: the text the bank sent with an imported транзакція («СІЛЬПО», «Uklon»). Purely
+   * informational — no total, balance or classification reads it — and it survives every edit and
+   * retype, so a витрата retyped into a переказ still says where it came from. Manual entry never
+   * asks for one.
+   */
+  readonly description?: string;
 }
 
 export interface Income {
@@ -73,6 +87,8 @@ export interface Income {
   readonly accountId: string;
   readonly amount: Money;
   readonly sourceId: string;
+  /** The bank's text; see `Expense.description`. */
+  readonly description?: string;
 }
 
 /**
@@ -88,6 +104,8 @@ export interface Transfer {
   readonly toAccountId: string;
   readonly left: Money;
   readonly arrived: Money;
+  /** The bank's text; see `Expense.description`. */
+  readonly description?: string;
 }
 
 /** A negative expense in the original category; amount stays positive here. */
@@ -98,6 +116,8 @@ export interface Refund {
   readonly accountId: string;
   readonly amount: Money;
   readonly categoryId: string;
+  /** The bank's text; see `Expense.description`. */
+  readonly description?: string;
 }
 
 /**
@@ -110,6 +130,8 @@ export interface Correction {
   readonly date: IsoDate;
   readonly accountId: string;
   readonly amount: Money;
+  /** The bank's text; see `Expense.description`. */
+  readonly description?: string;
 }
 
 export type Transaction = Expense | Income | Transfer | Refund | Correction;
@@ -126,6 +148,7 @@ export function expenseByDefault(input: {
   amount: Money;
   categoryId?: string;
   originalAmount?: Money;
+  description?: string;
 }): Expense {
   return {
     type: 'expense',
@@ -135,6 +158,7 @@ export function expenseByDefault(input: {
     amount: input.amount,
     categoryId: input.categoryId ?? UNCATEGORISED_CATEGORY_ID,
     ...(input.originalAmount ? { originalAmount: input.originalAmount } : {}),
+    ...(input.description ? { description: input.description } : {}),
   };
 }
 
@@ -145,6 +169,7 @@ export function transfer(input: {
   toAccountId: string;
   left: Money;
   arrived: Money;
+  description?: string;
 }): Transfer {
   if (input.fromAccountId === input.toAccountId) {
     throw new Error('a transfer connects two distinct accounts');
@@ -160,6 +185,7 @@ export function transfer(input: {
     toAccountId: input.toAccountId,
     left: input.left,
     arrived: input.arrived,
+    ...(input.description ? { description: input.description } : {}),
   };
 }
 
@@ -192,6 +218,7 @@ export function refund(input: {
   accountId: string;
   amount: Money;
   categoryId: string;
+  description?: string;
 }): Refund {
   if (input.amount.amount <= 0) {
     throw new Error('a refund amount is positive; it reduces spent by itself');
@@ -203,5 +230,6 @@ export function refund(input: {
     accountId: input.accountId,
     amount: input.amount,
     categoryId: input.categoryId,
+    ...(input.description ? { description: input.description } : {}),
   };
 }

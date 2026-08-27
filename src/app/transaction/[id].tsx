@@ -156,6 +156,9 @@ export default function EditTransactionScreen() {
           date: form.date,
           categoryId: form.categoryId,
           sourceId: form.sourceId,
+          // The опис is the bank's, not the form's: nothing here edits it, and every shape the
+          // транзакція is retyped into keeps it.
+          description: original.description,
         },
         { id: original.id, accounts: stored.accounts },
       );

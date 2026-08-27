@@ -1,5 +1,5 @@
 import { add, money, subtract, type CurrencyCode, type Money } from './money';
-import type { Transaction } from './transaction';
+import { isoDate, type Correction, type IsoDate, type Transaction } from './transaction';
 
 /**
  * The kind — never the name — decides how a transfer touching the account is
@@ -142,4 +142,41 @@ export function computeBalance(
     }
   }
   return balance;
+}
+
+/**
+ * Звірити: the коригування that makes a рахунок's розрахунковий баланс agree with what is
+ * actually there — the баланс банку of a linked рахунок, or the notes the owner just counted.
+ *
+ * The signed amount is `actual − computed`, so applying it makes `computeBalance` return the
+ * actual balance exactly; the month then counts a shortfall as spent and a surplus as дохід,
+ * which is what a коригування means. Balances that already agree create nothing — a коригування
+ * of zero would be a transaction that says nothing happened.
+ *
+ * An actual balance in another currency is rejected the way every other cross-currency amount in
+ * this module is: amounts of different currencies never combine, and no rate exists here.
+ */
+export function reconcile(input: {
+  accountId: string;
+  computed: Money;
+  actual: Money;
+  date: IsoDate;
+  newId: () => string;
+}): Correction | undefined {
+  if (input.actual.currency !== input.computed.currency) {
+    throw new Error(
+      `actual balance of ${input.computed.currency} account "${input.accountId}" cannot be ${input.actual.currency}`,
+    );
+  }
+  const difference = subtract(input.actual, input.computed);
+  if (difference.amount === 0) {
+    return undefined;
+  }
+  return {
+    type: 'correction',
+    id: input.newId(),
+    date: isoDate(input.date),
+    accountId: input.accountId,
+    amount: difference,
+  };
 }

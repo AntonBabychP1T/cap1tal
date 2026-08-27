@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { account, activeAccounts, classifyTransfer, computeBalance } from './account';
+import { account, activeAccounts, classifyTransfer, computeBalance, reconcile } from './account';
 import { money } from './money';
+import { categoryBreakdown, monthlyPicture } from './monthly-picture';
 import {
   CORRECTION_CATEGORY_ID,
   expenseByDefault,
@@ -256,5 +257,101 @@ describe('activeAccounts', () => {
   it('Scenario: Unarchiving restores the account', () => {
     const restored = account({ ...archivedJar, archived: false });
     expect(activeAccounts([card, restored]).map((a) => a.id)).toEqual(['card', 'old-jar']);
+  });
+});
+
+describe('звірити', () => {
+  /** The рахунок stands at 47000 minor units UAH, and every scenario звірить against that. */
+  const spent = expenseByDefault({
+    id: 't1',
+    date: '2026-08-10',
+    accountId: 'card',
+    amount: money(53000, 'UAH'),
+    categoryId: 'food',
+  });
+  const opened = account({ ...card, openingBalance: money(100000, 'UAH') });
+  const computed = computeBalance(opened, [spent]);
+  const newId = () => 'c1';
+
+  it('The рахунок these scenarios звірять stands where they say it does', () => {
+    expect(computed).toEqual(money(47000, 'UAH'));
+  });
+
+  it('Scenario: A shortfall becomes a negative коригування', () => {
+    const correction = reconcile({
+      accountId: opened.id,
+      computed,
+      actual: money(45000, 'UAH'),
+      date: '2026-08-27',
+      newId,
+    });
+
+    expect(correction).toEqual({
+      type: 'correction',
+      id: 'c1',
+      date: '2026-08-27',
+      accountId: 'card',
+      amount: money(-2000, 'UAH'),
+    });
+    // Afterwards the розрахунковий баланс is the actual balance — that is the whole point.
+    expect(computeBalance(opened, [spent, correction!])).toEqual(money(45000, 'UAH'));
+    // And the month counts the missing 2000 as spent, in «Коригування».
+    const august = monthlyPicture({
+      month: '2026-08',
+      accounts: [opened],
+      transactions: [correction!],
+    });
+    expect(august.get('UAH')?.spent).toEqual(money(2000, 'UAH'));
+    expect(august.get('UAH')?.income).toEqual(money(0, 'UAH'));
+    // …and it is «Коригування» the 2000 lands in: the category is fixed by the type, not picked.
+    expect(
+      categoryBreakdown({ month: '2026-08', transactions: [correction!] })
+        .get('UAH')
+        ?.get(CORRECTION_CATEGORY_ID),
+    ).toEqual(money(2000, 'UAH'));
+  });
+
+  it('Scenario: A surplus becomes a positive коригування', () => {
+    const correction = reconcile({
+      accountId: opened.id,
+      computed,
+      actual: money(50000, 'UAH'),
+      date: '2026-08-27',
+      newId,
+    });
+
+    expect(correction?.amount).toEqual(money(3000, 'UAH'));
+    expect(computeBalance(opened, [spent, correction!])).toEqual(money(50000, 'UAH'));
+    const august = monthlyPicture({
+      month: '2026-08',
+      accounts: [opened],
+      transactions: [correction!],
+    });
+    expect(august.get('UAH')?.income).toEqual(money(3000, 'UAH'));
+    expect(august.get('UAH')?.spent).toEqual(money(0, 'UAH'));
+  });
+
+  it('Scenario: Equal balances create nothing', () => {
+    expect(
+      reconcile({
+        accountId: opened.id,
+        computed,
+        actual: money(47000, 'UAH'),
+        date: '2026-08-27',
+        newId,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A foreign-currency actual balance is rejected', () => {
+    expect(() =>
+      reconcile({
+        accountId: opened.id,
+        computed,
+        actual: money(47000, 'USD'),
+        date: '2026-08-27',
+        newId,
+      }),
+    ).toThrow();
   });
 });
