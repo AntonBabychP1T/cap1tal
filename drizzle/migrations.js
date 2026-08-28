@@ -6,6 +6,7 @@ import m0001 from './0001_square_lady_mastermind.sql';
 import m0002 from './0002_mysterious_hardball.sql';
 import m0003 from './0003_sharp_arachne.sql';
 import m0004 from './0004_clumsy_cable.sql';
+import m0005 from './0005_graceful_zaladane.sql';
 
   export default {
     journal,
@@ -14,7 +15,8 @@ import m0004 from './0004_clumsy_cable.sql';
 m0001,
 m0002,
 m0003,
-m0004
+m0004,
+m0005
     }
   }
   

@@ -3,6 +3,7 @@ import {
   FEES_CATEGORY_ID,
   INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
 } from './transaction';
 
 /**
@@ -43,10 +44,13 @@ export function isReservedCategory(categoryId: string): boolean {
 
 /**
  * The джерело half of the same idea, and for the same reason: the відсотки proposal picks
- * «Відсотки» by id, so it may be neither renamed nor archived. Unlike «Коригування» it is an
- * ordinary pickable row — the owner records interest by hand too.
+ * «Відсотки» by id and a monobank import picks «Без джерела» by id, so neither may be renamed or
+ * archived. The two differ in what a picker does with them, not in why they are reserved:
+ * «Відсотки» is an ordinary pickable row — the owner records interest by hand too — while «Без
+ * джерела» is app-only like «Коригування», carried by an arrival the app itself imported and
+ * never offered for the owner to choose (`category-choices.ts` is where that is done).
  */
-export const RESERVED_SOURCE_IDS: readonly string[] = [INTEREST_SOURCE_ID];
+export const RESERVED_SOURCE_IDS: readonly string[] = [INTEREST_SOURCE_ID, UNSOURCED_SOURCE_ID];
 
 export function isReservedSource(sourceId: string): boolean {
   return RESERVED_SOURCE_IDS.includes(sourceId);

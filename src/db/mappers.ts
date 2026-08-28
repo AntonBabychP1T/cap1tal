@@ -63,6 +63,7 @@ const EMPTY_TRANSACTION: Omit<NewTransactionRow, 'id' | 'type' | 'date'> = {
   sourceId: null,
   originalAmount: null,
   originalCurrency: null,
+  description: null,
   fromAccountId: null,
   toAccountId: null,
   leftAmount: null,
@@ -72,7 +73,16 @@ const EMPTY_TRANSACTION: Omit<NewTransactionRow, 'id' | 'type' | 'date'> = {
 };
 
 export function toTransactionRow(t: Transaction): NewTransactionRow {
-  const common = { ...EMPTY_TRANSACTION, id: t.id, type: t.type, date: t.date };
+  // The опис belongs to all five types alike — the bank's text describes the money, not the shape
+  // it was given — so it is written once here rather than in each branch. Absence is NULL, never
+  // an empty string: a транзакція with no опис and one whose опис was cleared are the same thing.
+  const common = {
+    ...EMPTY_TRANSACTION,
+    id: t.id,
+    type: t.type,
+    date: t.date,
+    description: t.description ?? null,
+  };
   switch (t.type) {
     case 'expense':
       return {
@@ -126,6 +136,10 @@ function amountOf(row: TransactionRow): Money {
 
 export function toTransaction(row: TransactionRow): Transaction {
   const date = isoDate(row.date);
+  // Spread, never assigned: a row stored before the column existed loads with no `description`
+  // property at all, exactly as a транзакція the owner recorded by hand does, so nothing
+  // downstream can tell an old row from a new one without an опис.
+  const description = row.description ? { description: row.description } : {};
   switch (row.type) {
     case 'expense': {
       const originalAmount =
@@ -140,6 +154,7 @@ export function toTransaction(row: TransactionRow): Transaction {
         amount: amountOf(row),
         categoryId: required(row.categoryId, 'category_id', row),
         ...(originalAmount ? { originalAmount } : {}),
+        ...description,
       };
     }
     case 'income':
@@ -150,6 +165,7 @@ export function toTransaction(row: TransactionRow): Transaction {
         accountId: required(row.accountId, 'account_id', row),
         amount: amountOf(row),
         sourceId: required(row.sourceId, 'source_id', row),
+        ...description,
       };
     case 'refund':
       return {
@@ -159,6 +175,7 @@ export function toTransaction(row: TransactionRow): Transaction {
         accountId: required(row.accountId, 'account_id', row),
         amount: amountOf(row),
         categoryId: required(row.categoryId, 'category_id', row),
+        ...description,
       };
     case 'correction':
       return {
@@ -167,6 +184,7 @@ export function toTransaction(row: TransactionRow): Transaction {
         date,
         accountId: required(row.accountId, 'account_id', row),
         amount: amountOf(row),
+        ...description,
       };
     case 'transfer':
       return {
@@ -183,6 +201,7 @@ export function toTransaction(row: TransactionRow): Transaction {
           required(row.arrivedAmount, 'arrived_amount', row),
           required(row.arrivedCurrency, 'arrived_currency', row),
         ),
+        ...description,
       };
     default:
       throw new Error(`stored transaction "${row.id}" has an unknown type "${row.type}"`);

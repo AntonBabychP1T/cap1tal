@@ -12,7 +12,20 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
-import { accounts, categories, monobankRates, rules, saldoImport, sources, transactions } from './schema';
+import {
+  accounts,
+  categories,
+  categoryLimits,
+  goals,
+  monobankAccounts,
+  monobankImportedItems,
+  monobankLinks,
+  monobankRates,
+  rules,
+  saldoImport,
+  sources,
+  transactions,
+} from './schema';
 import {
   openTestDb,
   openTestDbMigratedTo,
@@ -65,6 +78,30 @@ const oneOfEachType: readonly Transaction[] = [
   }),
   { type: 'correction', id: 'c1', date: '2026-03-31', accountId: 'card', amount: money(-3000, 'UAH') },
 ];
+
+/**
+ * Stores a транзакція in a database staged *before* migration 0005, which is the only way to hold
+ * one against the shape the owner's device actually had. Written as an explicit statement rather
+ * than through the query builder because the builder names every column of the current schema —
+ * `description` included — and the staged table has not got it yet. Values are bound, never
+ * interpolated, and `created_at` is left to its column default exactly as the builder leaves it.
+ */
+function insertBeforeDescriptionColumn(db: TestStorage['db'], t: Transaction): void {
+  const row = toTransactionRow(t);
+  db.run(sql`
+    INSERT INTO transactions
+      (id, type, date, account_id, amount, currency, category_id, source_id,
+       original_amount, original_currency, from_account_id, to_account_id,
+       left_amount, left_currency, arrived_amount, arrived_currency)
+    VALUES
+      (${row.id}, ${row.type}, ${row.date}, ${row.accountId ?? null}, ${row.amount ?? null},
+       ${row.currency ?? null}, ${row.categoryId ?? null}, ${row.sourceId ?? null},
+       ${row.originalAmount ?? null}, ${row.originalCurrency ?? null},
+       ${row.fromAccountId ?? null}, ${row.toAccountId ?? null},
+       ${row.leftAmount ?? null}, ${row.leftCurrency ?? null},
+       ${row.arrivedAmount ?? null}, ${row.arrivedCurrency ?? null})
+  `);
+}
 
 /**
  * What a device from before categories-rules can actually hold. Manual entry offered no category
@@ -347,7 +384,7 @@ describe('migrations — the monobank rate cache', () => {
       staged.db.insert(accounts).values(toAccountRow(card)).run();
       // A витрата in the reserved uncategorised category — the only kind a database this old can
       // hold, and the kind migration 0003's foreign key has to accept.
-      staged.db.insert(transactions).values(toTransactionRow(preCategoriesRows[0]!)).run();
+      insertBeforeDescriptionColumn(staged.db, preCategoriesRows[0]!);
       expect(() => staged.db.select().from(monobankRates).all()).toThrow();
 
       staged.migrateToLatest();
@@ -519,7 +556,7 @@ describe('migrations — the editable lists', () => {
     const staged = openTestDbMigratedTo(3);
     try {
       staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      staged.db.insert(transactions).values(preCategoriesRows.map(toTransactionRow)).run();
+      for (const row of preCategoriesRows) insertBeforeDescriptionColumn(staged.db, row);
 
       staged.migrateToLatest();
 
@@ -599,7 +636,7 @@ describe('migrations — the import marker', () => {
     try {
       seedReferences(staged.db, VOCABULARY);
       staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      staged.db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
+      for (const row of oneOfEachType) insertBeforeDescriptionColumn(staged.db, row);
       staged.db.insert(rules).values({
         id: 'rule-1',
         merchant: 'сільпо',
@@ -619,6 +656,292 @@ describe('migrations — the import marker', () => {
       expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
       // The device has imported nothing, so the marker arrives empty.
       expect(staged.db.select().from(saldoImport).all()).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+});
+
+/**
+ * What monobank sync needs to survive a restart, and the one column the транзакції table gains
+ * with it. Its own describe for the reason the import marker has one: the half that matters on
+ * the owner's phone is that a database already full of their money comes through untouched.
+ */
+describe('migrations — monobank links, progress and описи', () => {
+  let storage: TestStorage;
+
+  const tableNames = (db: TestStorage['db']): string[] =>
+    db
+      .all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`)
+      .map((row) => row.name);
+
+  /**
+   * Every column of every table, so "no storage location for a token" can be asserted whole.
+   * Joined against `sqlite_master` rather than fed a subquery: `pragma_table_info(<scalar>)` would
+   * take the first table name and quietly describe that one table alone.
+   */
+  const everyColumn = (db: TestStorage['db']): string[] =>
+    db
+      .all<{ name: string }>(
+        sql`SELECT DISTINCT ti.name FROM sqlite_master m JOIN pragma_table_info(m.name) ti WHERE m.type = 'table'`,
+      )
+      .map((row) => row.name);
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    storage.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: A fresh database supports monobank metadata but not the token', () => {
+    const { db } = storage;
+    db.insert(monobankAccounts)
+      .values({
+        id: 'mono-card',
+        kind: 'card',
+        name: 'black ··1234',
+        currency: 'UAH',
+        bankBalanceAmount: 5000000,
+        obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
+      })
+      .run();
+    db.insert(monobankLinks)
+      .values({
+        monobankAccountId: 'mono-card',
+        accountId: 'card',
+        syncStartDate: '2026-08-01',
+        cursorMs: new Date('2026-08-27T21:00:00.000Z'),
+      })
+      .run();
+    db.insert(monobankImportedItems)
+      .values({ monobankAccountId: 'mono-card', itemId: 'item-1' })
+      .run();
+    db.insert(transactions)
+      .values({
+        ...toTransactionRow(
+          expenseByDefault({
+            id: 'imported-1',
+            date: '2026-08-27',
+            accountId: 'card',
+            amount: money(12550, 'UAH'),
+            categoryId: UNCATEGORISED_CATEGORY_ID,
+            description: 'СІЛЬПО Київ',
+          }),
+        ),
+      })
+      .run();
+
+    // Links, cursors, imported ids, bank balances and описи all store…
+    expect(db.select().from(monobankLinks).all()).toEqual([
+      {
+        monobankAccountId: 'mono-card',
+        accountId: 'card',
+        syncStartDate: '2026-08-01',
+        cursorMs: new Date('2026-08-27T21:00:00.000Z'),
+      },
+    ]);
+    expect(db.select().from(monobankAccounts).get()?.bankBalanceAmount).toBe(5000000);
+    expect(db.select().from(monobankImportedItems).all()).toEqual([
+      { monobankAccountId: 'mono-card', itemId: 'item-1' },
+    ]);
+    expect(
+      db.select().from(transactions).where(eq(transactions.id, 'imported-1')).get()?.description,
+    ).toBe('СІЛЬПО Київ');
+
+    // …and nothing anywhere is a place to keep the token. The helper is held to actually seeing
+    // the whole schema first: a query that described one table would pass the check vacuously.
+    expect(everyColumn(db)).toContain('description');
+    expect(everyColumn(db)).toContain('bank_balance_amount');
+    expect(everyColumn(db)).toContain('opening_amount');
+    expect(tableNames(db).filter((name) => /token/i.test(name))).toEqual([]);
+    expect(everyColumn(db).filter((name) => /token/i.test(name))).toEqual([]);
+  });
+
+  it('A monobank account and a рахунок each take part in at most one link', () => {
+    const { db } = storage;
+    db.insert(monobankAccounts)
+      .values([
+        {
+          id: 'mono-card',
+          kind: 'card',
+          name: 'black ··1234',
+          currency: 'UAH',
+          bankBalanceAmount: 1,
+          obtainedAt: new Date(1),
+        },
+        {
+          id: 'mono-jar',
+          kind: 'jar',
+          name: 'банка',
+          currency: 'UAH',
+          bankBalanceAmount: 2,
+          obtainedAt: new Date(1),
+        },
+      ])
+      .run();
+    db.insert(monobankLinks)
+      .values({
+        monobankAccountId: 'mono-card',
+        accountId: 'card',
+        syncStartDate: '2026-08-01',
+        cursorMs: new Date(1),
+      })
+      .run();
+
+    // The same monobank account again — refused by its primary key…
+    expect(() =>
+      db
+        .insert(monobankLinks)
+        .values({
+          monobankAccountId: 'mono-card',
+          accountId: 'jar',
+          syncStartDate: '2026-08-01',
+          cursorMs: new Date(1),
+        })
+        .run(),
+    ).toThrow(/UNIQUE constraint failed/);
+    // …and the same рахунок again, by the unique index on the other side.
+    expect(() =>
+      db
+        .insert(monobankLinks)
+        .values({
+          monobankAccountId: 'mono-jar',
+          accountId: 'card',
+          syncStartDate: '2026-08-01',
+          cursorMs: new Date(1),
+        })
+        .run(),
+    ).toThrow(/UNIQUE constraint failed/);
+  });
+
+  it('The migrated shape keeps a bank identity from vanishing under its own history', () => {
+    const { db } = storage;
+    db.insert(monobankAccounts)
+      .values({
+        id: 'mono-card',
+        kind: 'card',
+        name: 'black ··1234',
+        currency: 'UAH',
+        bankBalanceAmount: 1,
+        obtainedAt: new Date(1),
+      })
+      .run();
+    db.insert(monobankImportedItems)
+      .values({ monobankAccountId: 'mono-card', itemId: 'item-1' })
+      .run();
+
+    // `onDelete: 'restrict'` — the seen ids reference the bank account, so it cannot be deleted
+    // out from under them, and the same item can never import twice.
+    expect(() =>
+      db.delete(monobankAccounts).where(eq(monobankAccounts.id, 'mono-card')).run(),
+    ).toThrow(/FOREIGN KEY constraint failed/);
+    // A second (account, item) pair is refused by the composite primary key.
+    expect(() =>
+      db.insert(monobankImportedItems).values({ monobankAccountId: 'mono-card', itemId: 'item-1' }).run(),
+    ).toThrow(/UNIQUE constraint failed/);
+    // The migrated shape also refuses a kind the parser cannot produce and a non-calendar date.
+    expect(() =>
+      db
+        .insert(monobankAccounts)
+        .values({
+          id: 'mono-x',
+          kind: 'wallet',
+          name: 'x',
+          currency: 'UAH',
+          bankBalanceAmount: 0,
+          obtainedAt: new Date(1),
+        })
+        .run(),
+    ).toThrow(/CHECK constraint failed/);
+    expect(() =>
+      db
+        .insert(monobankLinks)
+        .values({
+          monobankAccountId: 'mono-card',
+          accountId: 'card',
+          syncStartDate: 'вчора',
+          cursorMs: new Date(1),
+        })
+        .run(),
+    ).toThrow(/CHECK constraint failed/);
+  });
+
+  it('Scenario: Existing financial data survives the migration', () => {
+    // The migrations committed before this change: a database as the owner's device holds it,
+    // holding every транзакція type, рахунки, list rows, rules, the Saldo marker and a rate.
+    const staged = openTestDbMigratedTo(5);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      for (const row of oneOfEachType) insertBeforeDescriptionColumn(staged.db, row);
+      staged.db
+        .insert(rules)
+        .values({
+          id: 'rule-1',
+          merchant: 'сільпо',
+          categoryId: 'food',
+          createdAt: new Date('2026-08-24T09:00:00.000Z'),
+        })
+        .run();
+      staged.db
+        .insert(saldoImport)
+        .values({ id: 'saldo', committedAt: new Date('2026-08-25T12:00:00.000Z') })
+        .run();
+      staged.db
+        .insert(monobankRates)
+        .values({ currency: 'USD', rateMillionths: 41_500_000, obtainedAt: new Date(1) })
+        .run();
+
+      staged.migrateToLatest();
+
+      for (const original of oneOfEachType) {
+        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
+        expect(toTransaction(row!)).toEqual(original);
+      }
+      expect(staged.db.select().from(rules).all()).toHaveLength(1);
+      expect(staged.db.select().from(sources).all().map((row) => row.id)).toContain('salary');
+      expect(staged.db.select().from(categories).all().map((row) => row.id)).toContain('food');
+      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
+      expect(staged.db.select().from(saldoImport).all()).toHaveLength(1);
+      expect(staged.db.select().from(monobankRates).all()).toHaveLength(1);
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+      // The device has linked nothing, so the three tables arrive empty…
+      expect(staged.db.select().from(monobankAccounts).all()).toEqual([]);
+      expect(staged.db.select().from(monobankLinks).all()).toEqual([]);
+      expect(staged.db.select().from(monobankImportedItems).all()).toEqual([]);
+      // …and no monobank token exists in the database, asserted over every column of every
+      // table — the helper is held to seeing them all before the absence means anything.
+      expect(everyColumn(staged.db)).toContain('description');
+      expect(everyColumn(staged.db)).toContain('cursor_ms');
+      expect(everyColumn(staged.db).length).toBeGreaterThan(20);
+      expect(tableNames(staged.db).filter((name) => /token/i.test(name))).toEqual([]);
+      expect(everyColumn(staged.db).filter((name) => /token/i.test(name))).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('Scenario: An old transaction gains no invented description', () => {
+    const staged = openTestDbMigratedTo(5);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      for (const row of oneOfEachType) insertBeforeDescriptionColumn(staged.db, row);
+
+      staged.migrateToLatest();
+
+      for (const original of oneOfEachType) {
+        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
+        // NULL in the column, and no `description` property at all on the way out — a row from
+        // before the column is indistinguishable from one recorded by hand today.
+        expect(row?.description).toBeNull();
+        expect(toTransaction(row!)).not.toHaveProperty('description');
+        expect(toTransaction(row!)).toEqual(original);
+      }
     } finally {
       staged.close();
     }

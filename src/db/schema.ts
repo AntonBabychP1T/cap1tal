@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 /**
  * A faithful projection of the domain types — no shape is invented here.
@@ -105,6 +105,13 @@ export const transactions = sqliteTable(
     originalAmount: integer('original_amount'),
     originalCurrency: text('original_currency'),
 
+    /**
+     * The опис: the text the bank sent with an imported транзакція. Informational for every one of
+     * the five types — no total, balance or classification reads it — so it sits outside the shape
+     * CHECK, and a транзакція without one stores NULL rather than an empty string.
+     */
+    description: text('description'),
+
     /** transfer only: the two accounts and the two legs, each in its account's currency. */
     fromAccountId: text('from_account_id').references(() => accounts.id, { onDelete: 'restrict' }),
     toAccountId: text('to_account_id').references(() => accounts.id, { onDelete: 'restrict' }),
@@ -209,3 +216,101 @@ export const saldoImport = sqliteTable(
 
 export type SaldoImportRow = typeof saldoImport.$inferSelect;
 export type NewSaldoImportRow = typeof saldoImport.$inferInsert;
+
+/**
+ * The monobank accounts a validated token has shown us — bank identity, cached and kept apart
+ * from any link (design D3). Unlinking deletes the link, never this row: the last known баланс
+ * банку, the name the bank gave and — through `monobank_imported_items` — the memory of what has
+ * already been imported all survive it, so relinking can never import an item twice.
+ *
+ * There is no row and no column here for the token. It lives in the device's secure storage and
+ * in nothing else — see `src/platform/monobank-token.ts`.
+ */
+export const monobankAccounts = sqliteTable(
+  'monobank_accounts',
+  {
+    /** monobank's own opaque id for the card or банка. */
+    id: text('id').primaryKey(),
+    /** 'card' | 'jar' — the two shapes client-info returns. */
+    kind: text('kind').notNull(),
+    /** What the bank calls it: `black ··1234` for a card, its title for a банка. */
+    name: text('name').notNull(),
+    currency: text('currency').notNull(),
+    /**
+     * Баланс банку — the owner's own money, the credit limit already subtracted, in integer minor
+     * units of `currency` beside it. A cache of an observation, never the розрахунковий баланс:
+     * that one stays "opening balance plus транзакції" in the domain.
+     */
+    bankBalanceAmount: integer('bank_balance_amount').notNull(),
+    /** When that balance was fetched, so a stale figure can say how stale it is. */
+    obtainedAt: integer('obtained_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [check('monobank_accounts_kind_known', sql`${t.kind} IN ('card', 'jar')`)],
+);
+
+/**
+ * One monobank account *is* one рахунок. Both directions are unique — the primary key on the
+ * monobank side, the unique index on the app side — because two statements into one рахунок would
+ * double every витрата and one statement into two would put the same money in two places
+ * (`src/monobank/link.ts` says the same thing in the domain's words).
+ *
+ * `onDelete: 'restrict'` on both: no path deletes a monobank identity, and рахунки archive rather
+ * than delete, so neither reference can be left dangling.
+ */
+export const monobankLinks = sqliteTable(
+  'monobank_links',
+  {
+    monobankAccountId: text('monobank_account_id')
+      .primaryKey()
+      .references(() => monobankAccounts.id, { onDelete: 'restrict' }),
+    accountId: text('account_id')
+      .notNull()
+      .unique()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+    /**
+     * The inclusive calendar date the owner confirmed as the first day sync may import — an
+     * `IsoDate` stored verbatim, as every other date column is, so it invents no time of day.
+     */
+    syncStartDate: text('sync_start_date').notNull(),
+    /**
+     * The high-water mark: everything up to and including this instant has been imported *and*
+     * committed. It starts at the device-local midnight of `sync_start_date` and moves only when
+     * a whole planned window has been stored (design D4). Both ends of a window are inclusive, so
+     * the next run may see the item exactly here again — the imported ids make that harmless.
+     */
+    cursorMs: integer('cursor_ms', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    check(
+      'monobank_links_start_date_iso',
+      sql`${t.syncStartDate} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+  ],
+);
+
+/**
+ * Every monobank item id this device has ever imported, per bank account. The one memory that
+ * makes "at most once, forever" true: it references the *bank* account, never the транзакція, so
+ * editing, retyping or deleting a транзакція — or unlinking and linking again — cannot bring an
+ * item back. The pair is the key because two accounts may legitimately see the same id.
+ *
+ * An item that produced no транзакція (a zero-amount row) is remembered too, so it is not
+ * re-examined forever.
+ */
+export const monobankImportedItems = sqliteTable(
+  'monobank_imported_items',
+  {
+    monobankAccountId: text('monobank_account_id')
+      .notNull()
+      .references(() => monobankAccounts.id, { onDelete: 'restrict' }),
+    itemId: text('item_id').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.monobankAccountId, t.itemId] })],
+);
+
+export type MonobankAccountRow = typeof monobankAccounts.$inferSelect;
+export type NewMonobankAccountRow = typeof monobankAccounts.$inferInsert;
+export type MonobankLinkRow = typeof monobankLinks.$inferSelect;
+export type NewMonobankLinkRow = typeof monobankLinks.$inferInsert;
+export type MonobankImportedItemRow = typeof monobankImportedItems.$inferSelect;
+

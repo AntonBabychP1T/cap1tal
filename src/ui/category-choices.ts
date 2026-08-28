@@ -1,20 +1,35 @@
 import { activeCategories, activeSources, type Category, type Source } from '../domain/category';
-import { CORRECTION_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
+import {
+  CORRECTION_CATEGORY_ID,
+  UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
+} from '../domain/transaction';
 import { withCurrent } from './account-choices';
 import { byName } from './labels';
 
 /**
- * «Коригування» is never re-added by `withCurrent`, and cannot be: a коригування stores no
- * category id at all — the domain fixes its category — so no transaction with a category picker
- * ever carries it. The spec's "«Коригування» SHALL NOT be offered in any picker" therefore holds
- * without an exception to make; this guard says so out loud rather than relying on it.
+ * The rows the app itself carries and the owner never picks: «Коригування» on the категорії side,
+ * «Без джерела» on the джерела side. Both exist in the lists — a stored коригування and an
+ * imported дохід resolve to them and display their names — and neither is ever an offer.
+ */
+const APP_ONLY_IDS: readonly string[] = [CORRECTION_CATEGORY_ID, UNSOURCED_SOURCE_ID];
+
+/**
+ * An app-only row is never re-added by `withCurrent`. For «Коригування» that could not happen
+ * anyway — a коригування stores no category id at all, since the domain fixes its category — but
+ * an imported дохід really does carry «Без джерела» while it waits to be retyped, and the carried
+ * -row exception would otherwise put it back in the picker the spec keeps it out of. Opening such
+ * a дохід therefore shows no джерело selected, which is the question the owner has to answer;
+ * saving without answering stores the джерело it already had, untouched.
  */
 function keepingCurrent<Row extends { readonly id: string }>(
   offered: Row[],
   all: readonly Row[],
   currentId: string | undefined,
 ): Row[] {
-  return currentId === CORRECTION_CATEGORY_ID ? offered : withCurrent(offered, all, currentId);
+  return currentId !== undefined && APP_ONLY_IDS.includes(currentId)
+    ? offered
+    : withCurrent(offered, all, currentId);
 }
 
 /**
@@ -41,9 +56,17 @@ export function categoryChoicesFor(
   return keepingCurrent(expenseCategoryChoices(all), all, currentCategoryId);
 }
 
-/** The джерела a дохід may be recorded with: the unarchived ones, in Ukrainian order. */
+/**
+ * The джерела a дохід may be recorded with: the unarchived ones, in Ukrainian order, without
+ * «Без джерела» — that row is what a monobank arrival lands on before the owner has said what it
+ * was, the джерело half of what «Коригування» is to the категорії, so it is in the list and in no
+ * picker (categories: "App-only rows exist but are never pickable"). «Відсотки» is offered like
+ * any other row: the owner records interest by hand too.
+ */
 export function sourceChoices(all: readonly Source[]): Source[] {
-  return activeSources(all).sort(byName);
+  return activeSources(all)
+    .filter((s) => s.id !== UNSOURCED_SOURCE_ID)
+    .sort(byName);
 }
 
 /** `sourceChoices` for a stored дохід, keeping the джерело it already carries. */

@@ -16,6 +16,7 @@ import {
   FEES_CATEGORY_ID,
   INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
   type Correction,
   type Expense,
   type Income,
@@ -77,6 +78,7 @@ const SPEC_SOURCE_NAMES = [
   'інвестиції',
   'Other income',
   'Відсотки',
+  'Без джерела',
 ];
 
 describe('seedStarterSet', () => {
@@ -106,8 +108,10 @@ describe('seedStarterSet', () => {
     ] as const) {
       expect(storedCategories.find((c) => c.id === id)?.name).toBe(name);
     }
-    // The reserved джерело carries the id the відсотки proposal stores.
+    // The reserved джерела carry the ids the app itself stores: the відсотки proposal's, and the
+    // one a monobank arrival lands on before the owner says what it was.
     expect(storedSources.find((row) => row.id === INTEREST_SOURCE_ID)?.name).toBe('Відсотки');
+    expect(storedSources.find((row) => row.id === UNSOURCED_SOURCE_ID)?.name).toBe('Без джерела');
     // Lending is a переказ onto a рахунок-борг, so «Борг» is a category the app never has.
     expect(storedCategories.map((c) => c.name)).not.toContain('Борг');
     // Nothing arrives archived.
@@ -181,11 +185,12 @@ describe('seedStarterSet — across a restart', () => {
 });
 
 /**
- * The seed's one repair: until this change «Відсотки» was a row the owner was told to create by
- * hand, so a device may hold one under a generated id. Seeding the reserved row beside it would
- * leave two unarchived джерела of one name, which the list rules forbid.
+ * The seed's one repair: until each of them became reserved, «Відсотки» and «Без джерела» were
+ * rows the owner could create by hand — the first because the spec told them to — so a device may
+ * hold one under a generated id. Seeding the reserved row beside it would leave two unarchived
+ * джерела of one name, which the list rules forbid.
  */
-describe('seedStarterSet — adopting a hand-created «Відсотки»', () => {
+describe('seedStarterSet — adopting a hand-created reserved джерело', () => {
   let storage: TestStorage;
   const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
   const storedAt = new Date('2026-08-10T09:00:00.000Z');
@@ -199,40 +204,74 @@ describe('seedStarterSet — adopting a hand-created «Відсотки»', () =
     storage.close();
   });
 
-  const interestRows = () =>
-    storage.db.select().from(sources).all().filter((row) => row.name === 'Відсотки');
+  const rowsNamed = (name: string) =>
+    storage.db.select().from(sources).all().filter((row) => row.name === name);
 
-  it('Scenario: A hand-created «Відсотки» is not duplicated', () => {
-    // The state the previous spec invited: a джерело of that name under an id of the owner's own.
-    storage.db.insert(sources).values({ id: 'src-7f3a', name: 'Відсотки' }).run();
-    const interest: Income = {
+  /** The device the previous spec invited: that name under an id of the owner's own, with a дохід. */
+  const handCreated = (id: string, name: string, incomeId: string): void => {
+    storage.db.insert(sources).values({ id, name }).run();
+    const dohid: Income = {
       type: 'income',
-      id: 'i1',
+      id: incomeId,
       date: '2026-08-05',
       accountId: 'card',
       amount: money(10000, 'UAH'),
-      sourceId: 'src-7f3a',
+      sourceId: id,
     };
-    transactionsRepo(storage.db).save(interest, storedAt);
+    transactionsRepo(storage.db).save(dohid, storedAt);
+  };
+
+  it('Scenario: A hand-created «Відсотки» is not duplicated', () => {
+    handCreated('src-7f3a', 'Відсотки', 'i1');
 
     seedStarterSet(storage.db);
 
     // Exactly one row, and it is the reserved one.
-    const rows = interestRows();
+    const rows = rowsNamed('Відсотки');
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: INTEREST_SOURCE_ID, archived: false });
     // The дохід still resolves to it — the history moved with the row, it did not lose its джерело.
-    const loaded = transactionsRepo(storage.db).get('i1') as Income;
-    expect(loaded.sourceId).toBe(INTEREST_SOURCE_ID);
+    expect((transactionsRepo(storage.db).get('i1') as Income).sourceId).toBe(INTEREST_SOURCE_ID);
   });
 
-  it('An archived hand-created «Відсотки» comes back unarchived, still once', () => {
-    storage.db.insert(sources).values({ id: 'src-7f3a', name: 'Відсотки', archived: true }).run();
+  it('Scenario: A hand-created reserved source is not duplicated', () => {
+    handCreated('src-9c21', 'Без джерела', 'i2');
 
     seedStarterSet(storage.db);
 
-    expect(interestRows()).toEqual([
+    const rows = rowsNamed('Без джерела');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: UNSOURCED_SOURCE_ID, archived: false });
+    expect((transactionsRepo(storage.db).get('i2') as Income).sourceId).toBe(UNSOURCED_SOURCE_ID);
+  });
+
+  it('Both hand-created rows are adopted in one opening', () => {
+    handCreated('src-7f3a', 'Відсотки', 'i1');
+    handCreated('src-9c21', 'Без джерела', 'i2');
+
+    seedStarterSet(storage.db);
+
+    expect(rowsNamed('Відсотки')).toHaveLength(1);
+    expect(rowsNamed('Без джерела')).toHaveLength(1);
+    expect((transactionsRepo(storage.db).get('i1') as Income).sourceId).toBe(INTEREST_SOURCE_ID);
+    expect((transactionsRepo(storage.db).get('i2') as Income).sourceId).toBe(UNSOURCED_SOURCE_ID);
+    // The stray ids are gone; nothing else on the list was touched.
+    const ids = storage.db.select().from(sources).all().map((row) => row.id);
+    expect(ids).not.toContain('src-7f3a');
+    expect(ids).not.toContain('src-9c21');
+  });
+
+  it('An archived hand-created reserved джерело comes back unarchived, still once', () => {
+    storage.db.insert(sources).values({ id: 'src-7f3a', name: 'Відсотки', archived: true }).run();
+    storage.db.insert(sources).values({ id: 'src-9c21', name: 'Без джерела', archived: true }).run();
+
+    seedStarterSet(storage.db);
+
+    expect(rowsNamed('Відсотки')).toEqual([
       expect.objectContaining({ id: INTEREST_SOURCE_ID, archived: false }),
+    ]);
+    expect(rowsNamed('Без джерела')).toEqual([
+      expect.objectContaining({ id: UNSOURCED_SOURCE_ID, archived: false }),
     ]);
   });
 
@@ -244,7 +283,8 @@ describe('seedStarterSet — adopting a hand-created «Відсотки»', () =
 
     // Idempotent from the second opening on: same rows, same ids, none doubled.
     expect(storage.db.select().from(sources).all()).toEqual(before);
-    expect(interestRows()).toHaveLength(1);
+    expect(rowsNamed('Відсотки')).toHaveLength(1);
+    expect(rowsNamed('Без джерела')).toHaveLength(1);
   });
 });
 
@@ -361,6 +401,25 @@ describe('The reserved category ids resolve to seeded rows', () => {
 
     expect(stored).toMatchObject({ type: 'income', sourceId: INTEREST_SOURCE_ID });
     expect(sourceNameOf(INTEREST_SOURCE_ID)).toBe('Відсотки');
+  });
+
+  it('Scenario: An imported arrival lands in the seeded row', () => {
+    // What `mapStatement` builds for a positive statement item: a дохід carrying the reserved
+    // джерело and nothing the owner chose. Stored here, it has to resolve to a real row.
+    const arrival: Income = {
+      type: 'income',
+      id: 'in-1',
+      date: '2026-08-12',
+      accountId: 'card',
+      amount: money(25000, 'UAH'),
+      sourceId: UNSOURCED_SOURCE_ID,
+    };
+    transactionsRepo(storage.db).save(arrival, storedAt);
+
+    const stored = transactionsRepo(storage.db).get('in-1');
+
+    expect(stored).toMatchObject({ type: 'income', sourceId: UNSOURCED_SOURCE_ID });
+    expect(sourceNameOf(UNSOURCED_SOURCE_ID)).toBe('Без джерела');
   });
 
   it('Scenario: A default expense lands in the seeded uncategorised row', () => {

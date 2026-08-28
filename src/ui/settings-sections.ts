@@ -21,4 +21,5 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { href: '/manage/sources', title: 'Джерела', hint: 'Звідки прийшли гроші' },
   { href: '/manage/rules', title: 'Правила', hint: 'Автокатегоризація імпорту' },
   { href: '/manage/saldo-import', title: 'Імпорт Saldo', hint: 'Разовий переїзд з історією' },
+  { href: '/manage/monobank', title: 'monobank', hint: 'Токен, рахунки та синхронізація' },
 ];

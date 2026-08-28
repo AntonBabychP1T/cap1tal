@@ -16,6 +16,7 @@ import {
   FEES_CATEGORY_ID,
   INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
 } from './transaction';
 
 const groceries: Category = { id: 'groceries', name: 'Groceries', archived: false };
@@ -34,12 +35,28 @@ describe('the editable lists', () => {
     expect(isReservedCategory('groceries')).toBe(false);
   });
 
-  it('The one reserved джерело is «Відсотки»', () => {
-    expect([...RESERVED_SOURCE_IDS]).toEqual([INTEREST_SOURCE_ID]);
-    expect(isReservedSource(INTEREST_SOURCE_ID)).toBe(true);
+  it('The reserved джерела are «Відсотки» and «Без джерела»', () => {
+    expect([...RESERVED_SOURCE_IDS].sort()).toEqual(
+      [INTEREST_SOURCE_ID, UNSOURCED_SOURCE_ID].sort(),
+    );
     expect(isReservedSource('salary')).toBe(false);
     // The two lists are separate namespaces: an id reserved in one is ordinary in the other.
     expect(isReservedCategory(INTEREST_SOURCE_ID)).toBe(false);
+    expect(isReservedCategory(UNSOURCED_SOURCE_ID)).toBe(false);
+  });
+
+  it('Scenario: The reserved джерело may be neither renamed nor archived', () => {
+    // Reservedness is what the list repository refuses a rename and an archive on, and it is
+    // exactly "the id is one of these" — `sources-repo.test.ts` proves the refusals themselves.
+    expect(isReservedSource(INTEREST_SOURCE_ID)).toBe(true);
+  });
+
+  it('Scenario: The imported-arrival source may be neither edited nor picked', () => {
+    // The same refusal as «Відсотки»…
+    expect(isReservedSource(UNSOURCED_SOURCE_ID)).toBe(true);
+    // …and, unlike it, never an offer: `category-choices.test.ts` proves the picker half.
+    const unsourced: Source = { id: UNSOURCED_SOURCE_ID, name: 'Без джерела', archived: false };
+    expect(activeSources([salary, unsourced])).toContain(unsourced);
   });
 
   it('Scenario: An archived category leaves the picker', () => {

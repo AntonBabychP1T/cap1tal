@@ -93,3 +93,29 @@ export function monthLabel(month: Month): string {
   const { year, month: m } = partsOf(month);
   return `${MONTH_NAMES[m - 1]} ${year}`;
 }
+
+/**
+ * The same twelve, shortened — the standard three-letter Ukrainian abbreviations. A chart puts a
+ * label under every month of a whole history, and «Серпень 2026» under each of twenty-four of them
+ * is a wall of text rather than a time axis.
+ */
+const SHORT_MONTH_NAMES: readonly string[] = [
+  'Січ',
+  'Лют',
+  'Бер',
+  'Кві',
+  'Тра',
+  'Чер',
+  'Лип',
+  'Сер',
+  'Вер',
+  'Жов',
+  'Лис',
+  'Гру',
+];
+
+/** «Сер 2026» — the month and its year, short enough to sit under a bar. */
+export function shortMonthLabel(month: Month): string {
+  const { year, month: m } = partsOf(month);
+  return `${SHORT_MONTH_NAMES[m - 1]} ${year}`;
+}

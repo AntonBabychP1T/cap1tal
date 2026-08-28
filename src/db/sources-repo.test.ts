@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { account } from '../domain/account';
 import { activeSources } from '../domain/category';
 import { money } from '../domain/money';
-import { INTEREST_SOURCE_ID, type Income } from '../domain/transaction';
+import { INTEREST_SOURCE_ID, UNSOURCED_SOURCE_ID, type Income } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
 import { sourcesRepo, type SourcesRepo } from './sources-repo';
 import { openTestDb, type TestStorage } from './test-db';
@@ -178,6 +178,38 @@ describe('sourcesRepo — the rename rules the sibling repo already pins', () =>
     expect(() => repo.archive(INTEREST_SOURCE_ID)).toThrow(/службове джерело, його/);
     // Still offered as a джерело, which is the half that separates it from «Коригування».
     expect(activeSources(repo.list()).map((row) => row.id)).toContain(INTEREST_SOURCE_ID);
+  });
+
+  it('Scenario: Renaming a reserved row is rejected — on the джерела list too', () => {
+    repo.create({ id: UNSOURCED_SOURCE_ID, name: 'Без джерела' });
+
+    expect(() => repo.rename(UNSOURCED_SOURCE_ID, 'Невідомо звідки')).toThrow(
+      /службове джерело, його/,
+    );
+    expect(repo.get(UNSOURCED_SOURCE_ID)?.name).toBe('Без джерела');
+  });
+
+  it('Scenario: Archiving a reserved row is rejected — on the джерела list too', () => {
+    repo.create({ id: UNSOURCED_SOURCE_ID, name: 'Без джерела' });
+
+    expect(() => repo.archive(UNSOURCED_SOURCE_ID)).toThrow(/службове джерело, його/);
+    // It stays on the list an imported дохід resolves against; that it is offered in no picker
+    // is `category-choices.ts`'s doing, not the repository's.
+    expect(repo.get(UNSOURCED_SOURCE_ID)?.archived).toBe(false);
+  });
+
+  it('Scenario: The imported-arrival source may be neither edited nor picked', () => {
+    repo.create({ id: UNSOURCED_SOURCE_ID, name: 'Без джерела' });
+
+    expect(() => repo.rename(UNSOURCED_SOURCE_ID, 'Кешбек')).toThrow(/службове джерело, його/);
+    expect(() => repo.archive(UNSOURCED_SOURCE_ID)).toThrow(/службове джерело, його/);
+    // It stays on the list an imported дохід resolves against and displays its name from; that no
+    // picker offers it is `category-choices.ts`'s half of the scenario.
+    expect(repo.get(UNSOURCED_SOURCE_ID)).toEqual({
+      id: UNSOURCED_SOURCE_ID,
+      name: 'Без джерела',
+      archived: false,
+    });
   });
 
   it('Two rows sharing a name come back in a fixed order, not SQLite\'s', () => {

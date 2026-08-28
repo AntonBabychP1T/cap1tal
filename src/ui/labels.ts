@@ -1,4 +1,5 @@
 import type { Account, AccountKind } from '../domain/account';
+import type { NameEvidence } from '../domain/name-match';
 import type { TransactionType } from '../domain/transaction';
 
 /**
@@ -11,14 +12,22 @@ import type { TransactionType } from '../domain/transaction';
  * every stored id has a row — but the fallback is what keeps a half-loaded screen honest instead
  * of blank.
  *
- * There is no `sourceLabel` twin: nothing displays a джерело by id. The feed line names the type
- * and the рахунок, the pickers show the rows themselves, and no requirement asks for more. When
- * the importers of steps 6–8 need one, it is this function with the sources map — the two lists
- * are separate namespaces (`gifts` names a category *and* a source), so it will want its own name
- * then, and not before.
+ * `sourceLabel` is the same function against the other list, and it exists for the reason this
+ * module said it eventually would: monobank imports a дохід onto «Без джерела», and the feed has
+ * to name that джерело or the owner cannot see which arrivals still need saying. The two lists are
+ * separate namespaces — `gifts` names a category *and* a source — so it takes its own map rather
+ * than sharing one.
  */
+function labelOf(id: string, names: ReadonlyMap<string, string>): string {
+  return names.get(id) ?? id;
+}
+
 export function categoryLabel(categoryId: string, names: ReadonlyMap<string, string>): string {
-  return names.get(categoryId) ?? categoryId;
+  return labelOf(categoryId, names);
+}
+
+export function sourceLabel(sourceId: string, names: ReadonlyMap<string, string>): string {
+  return labelOf(sourceId, names);
 }
 
 /**
@@ -73,6 +82,22 @@ export const KIND_CHOICES: readonly { readonly value: AccountKind; readonly labe
 /** An account in a picker: its назва plus the currency, since two accounts may share a name. */
 export function accountChoiceLabel(a: Account): string {
   return `${a.name} · ${a.currency}`;
+}
+
+/**
+ * Why the app proposed that two accounts are one, in the owner's words. Shared by the monobank
+ * link proposals and the Saldo import's merge proposals, because they propose on the same
+ * evidence and must explain it the same way.
+ */
+const EVIDENCE_LABELS: Readonly<Record<NameEvidence, string>> = {
+  digits: 'збігаються останні цифри',
+  'same-name': 'та сама назва',
+  contains: 'назва збігається',
+  word: 'спільне слово в назві',
+};
+
+export function evidenceLabel(evidence: NameEvidence): string {
+  return EVIDENCE_LABELS[evidence];
 }
 
 /** What to show the owner when a write was refused. */

@@ -17,6 +17,7 @@ const asStoredRow = (t: Transaction): TransactionRow =>
     sourceId: null,
     originalAmount: null,
     originalCurrency: null,
+    description: null,
     fromAccountId: null,
     toAccountId: null,
     leftAmount: null,
@@ -116,6 +117,33 @@ describe('mappers', () => {
   it('A stored account kind outside the domain is rejected', () => {
     const row = { ...toAccountRow(account({ id: 'x', name: 'x', kind: 'cash', currency: 'UAH' })) };
     expect(() => toAccount({ ...row, kind: 'wallet' } as AccountRow)).toThrow();
+  });
+
+  it('Scenario: An imported description round-trips', () => {
+    // All five types, since the опис describes the money and not the shape it was given: the
+    // витрата a bank sent as «СІЛЬПО Київ» keeps it, and so does that same транзакція retyped.
+    fc.assert(
+      fc.property(anyTransaction, fc.string({ minLength: 1, maxLength: 40 }), (t, text) => {
+        const withText = { ...t, description: text } as Transaction;
+        const row = asStoredRow(withText);
+        expect(row.description).toBe(text);
+        expect(toTransaction(row)).toEqual(withText);
+      }),
+    );
+  });
+
+  it('Scenario: An old transaction gains no invented description', () => {
+    // NULL out, and no `description` property on the way back in: a row from before the column
+    // is indistinguishable from a транзакція the owner recorded by hand today.
+    fc.assert(
+      fc.property(anyTransaction, (t) => {
+        const row = asStoredRow(t);
+        expect(row.description).toBeNull();
+        const loaded = toTransaction({ ...row, description: null });
+        expect(loaded).not.toHaveProperty('description');
+        expect(loaded).toEqual(t);
+      }),
+    );
   });
 
   it('A stored transaction type outside the domain is rejected', () => {

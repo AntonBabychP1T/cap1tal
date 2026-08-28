@@ -7,6 +7,7 @@ import {
   monthLabel,
   nextMonth,
   prevMonth,
+  shortMonthLabel,
   stepForward,
 } from './months';
 
@@ -125,5 +126,18 @@ describe('monthLabel', () => {
       'Листопад 2026',
       'Грудень 2026',
     ]);
+  });
+});
+
+describe('shortMonthLabel', () => {
+  it('Names the month short, with its year', () => {
+    expect(shortMonthLabel('2026-08')).toBe('Сер 2026');
+    expect(shortMonthLabel('2026-01')).toBe('Січ 2026');
+    expect(shortMonthLabel('2025-12')).toBe('Гру 2025');
+  });
+
+  it('Refuses what is not a calendar month, like every other month function here', () => {
+    expect(() => shortMonthLabel('2026-13')).toThrow();
+    expect(() => shortMonthLabel('серпень')).toThrow();
   });
 });

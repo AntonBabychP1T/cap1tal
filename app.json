@@ -38,7 +38,13 @@
           }
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

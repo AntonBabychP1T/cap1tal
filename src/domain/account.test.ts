@@ -343,6 +343,37 @@ describe('звірити', () => {
     ).toBeUndefined();
   });
 
+  it('Scenario: Reconcile explains a surplus', () => {
+    // The linked рахунок's half of the same rule: 47000 computed against a баланс банку of
+    // 50000 makes a positive коригування of 3000, and applying it leaves the рахунок at 50000.
+    const correction = reconcile({
+      accountId: opened.id,
+      computed,
+      actual: money(50000, 'UAH'),
+      date: '2026-08-27',
+      newId,
+    });
+
+    expect(correction?.amount).toEqual(money(3000, 'UAH'));
+    expect(correction?.type).toBe('correction');
+    expect(computeBalance(opened, [spent, correction!])).toEqual(money(50000, 'UAH'));
+  });
+
+  it('Scenario: Equal balances create no correction', () => {
+    // A linked рахунок whose розрахунковий баланс already equals its баланс банку: «Звірити»
+    // writes nothing, and both balances stay exactly where they were.
+    expect(
+      reconcile({
+        accountId: opened.id,
+        computed,
+        actual: money(47000, 'UAH'),
+        date: '2026-08-27',
+        newId,
+      }),
+    ).toBeUndefined();
+    expect(computeBalance(opened, [spent])).toEqual(money(47000, 'UAH'));
+  });
+
   it('Scenario: A foreign-currency actual balance is rejected', () => {
     expect(() =>
       reconcile({

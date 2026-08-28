@@ -4,7 +4,9 @@ import type { Category, Source } from '../domain/category';
 import {
   CORRECTION_CATEGORY_ID,
   FEES_CATEGORY_ID,
+  INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
 } from '../domain/transaction';
 import {
   categoryChoicesFor,
@@ -28,6 +30,8 @@ const sources: readonly Source[] = [
   { id: 'salary', name: 'Salary', archived: false },
   { id: 'freelance', name: 'Freelance', archived: true },
   { id: 'batky', name: 'батьки', archived: false },
+  { id: INTEREST_SOURCE_ID, name: 'Відсотки', archived: false },
+  { id: UNSOURCED_SOURCE_ID, name: 'Без джерела', archived: false },
 ];
 
 const ids = (rows: readonly { id: string }[]) => rows.map((row) => row.id);
@@ -122,12 +126,46 @@ describe('categoryChoicesFor', () => {
 describe('sourceChoices', () => {
   it('Scenario: An archived source is not offered as a джерело', () => {
     // Recording a дохід is offered the unarchived джерела, in Ukrainian order…
-    expect(ids(sourceChoices(sources))).toEqual(['batky', 'salary']);
+    expect(ids(sourceChoices(sources))).toEqual(['batky', INTEREST_SOURCE_ID, 'salary']);
     // …while the дохід that already carries Freelance keeps showing it.
-    expect(ids(sourceChoicesFor(sources, 'freelance'))).toEqual(['batky', 'salary', 'freelance']);
+    expect(ids(sourceChoicesFor(sources, 'freelance'))).toEqual([
+      'batky',
+      INTEREST_SOURCE_ID,
+      'salary',
+      'freelance',
+    ]);
   });
 
   it('A дохід on an unarchived джерело is offered exactly the unarchived джерела', () => {
-    expect(ids(sourceChoicesFor(sources, 'salary'))).toEqual(['batky', 'salary']);
+    expect(ids(sourceChoicesFor(sources, 'salary'))).toEqual([
+      'batky',
+      INTEREST_SOURCE_ID,
+      'salary',
+    ]);
+  });
+
+  it('Scenario: An accepted відсотки proposal lands in the seeded row', () => {
+    // «Відсотки» is reserved and still an ordinary choice: the owner records interest by hand as
+    // well as accepting the proposal, so the picker has to hold it.
+    expect(ids(sourceChoices(sources))).toContain(INTEREST_SOURCE_ID);
+    expect(ids(sourceChoicesFor(sources, INTEREST_SOURCE_ID))).toContain(INTEREST_SOURCE_ID);
+  });
+
+  it('Scenario: App-only rows exist but are never pickable', () => {
+    // Both are rows of the owner's lists — a stored коригування and an imported arrival resolve
+    // to them and display their names…
+    expect(ids(categories)).toContain(CORRECTION_CATEGORY_ID);
+    expect(ids(sources)).toContain(UNSOURCED_SOURCE_ID);
+    // …and neither picker offers either.
+    expect(ids(expenseCategoryChoices(categories))).not.toContain(CORRECTION_CATEGORY_ID);
+    expect(ids(sourceChoices(sources))).not.toContain(UNSOURCED_SOURCE_ID);
+  });
+
+  it('Scenario: An imported arrival lands in the seeded row — and stays out of the picker', () => {
+    // The дохід an import stored really does carry «Без джерела», unlike a коригування, which
+    // carries no category id at all. So the carried-row exception is what has to refuse it: the
+    // picker opens with nothing selected, which is the question the owner has to answer.
+    expect(ids(sourceChoicesFor(sources, UNSOURCED_SOURCE_ID))).not.toContain(UNSOURCED_SOURCE_ID);
+    expect(ids(sourceChoicesFor(sources, UNSOURCED_SOURCE_ID))).toEqual(ids(sourceChoices(sources)));
   });
 });

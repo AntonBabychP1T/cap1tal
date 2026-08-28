@@ -3,6 +3,7 @@ import {
   FEES_CATEGORY_ID,
   INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
 } from '../domain/transaction';
 
 /**
@@ -70,15 +71,19 @@ export const STARTER_CATEGORIES: readonly StarterRow[] = [
 ];
 
 /**
- * «Відсотки» is the one starter row Saldo never held: the glossary makes what a borrower repays
- * above the principal income, and the відсотки proposal picks this row by id, so it is reserved
- * like «Комісія». The id comes from the domain constant rather than a literal — one slug, so the
- * seeded row and the id the proposal stores can never drift apart.
+ * The two starter джерела Saldo never held. «Відсотки»: the glossary makes what a borrower repays
+ * above the principal income, and the відсотки proposal picks this row by id. «Без джерела»: what
+ * a monobank arrival carries while the bank has said only that money came in — a visible starting
+ * state, the дохід half of «Без категорії», and not the owner's final word on it. Both are
+ * reserved like «Комісія», and both ids come from the domain constants rather than from literals —
+ * one slug each, so the seeded row and the id the app stores can never drift apart.
  */
 export const INTEREST_SOURCE_NAME = 'Відсотки';
+export const UNSOURCED_SOURCE_NAME = 'Без джерела';
 
 export const RESERVED_SOURCES: readonly StarterRow[] = [
   { id: INTEREST_SOURCE_ID, name: INTEREST_SOURCE_NAME },
+  { id: UNSOURCED_SOURCE_ID, name: UNSOURCED_SOURCE_NAME },
 ];
 
 /**

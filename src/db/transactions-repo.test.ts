@@ -161,6 +161,101 @@ describe('transactionsRepo', () => {
     expect(loadedCorrection).toMatchObject({ amount: money(-3000, 'UAH') });
   });
 
+  it('Scenario: An imported description round-trips', () => {
+    // All five types: the опис describes the money, so a витрата, a дохід, a переказ, a
+    // повернення and a коригування each keep the bank's text through a save and a load, with
+    // every money and category field beside it unchanged.
+    const described: readonly Transaction[] = [
+      expenseByDefault({
+        id: 'd-expense',
+        date: '2026-03-10',
+        accountId: 'card',
+        amount: money(12550, 'UAH'),
+        categoryId: UNCATEGORISED_CATEGORY_ID,
+        description: 'СІЛЬПО Київ',
+      }),
+      { ...income, id: 'd-income', description: 'Повернення за замовлення' },
+      transfer({
+        id: 'd-transfer',
+        date: '2026-03-15',
+        fromAccountId: 'card',
+        toAccountId: 'wallet',
+        left: money(200000, 'UAH'),
+        arrived: money(200000, 'UAH'),
+        description: 'Зняття готівки',
+      }),
+      refund({
+        id: 'd-refund',
+        date: '2026-03-18',
+        accountId: 'card',
+        amount: money(80000, 'UAH'),
+        categoryId: 'clothes',
+        description: 'Rozetka повернення',
+      }),
+      { ...correction, id: 'd-correction', description: 'Звірка з банком' },
+    ];
+
+    for (const t of described) {
+      repo.save(t, storedAt);
+      expect(repo.get(t.id)).toEqual(t);
+    }
+  });
+
+  it('Scenario: An old transaction gains no invented description', () => {
+    // Nothing the owner recorded by hand carries one, and loading it back invents none: the
+    // property is absent, not an empty string.
+    const plain = expenseByDefault({
+      id: 'e-plain',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(12550, 'UAH'),
+      categoryId: 'food',
+    });
+    repo.save(plain, storedAt);
+
+    const loaded = repo.get('e-plain');
+
+    expect(loaded).not.toHaveProperty('description');
+    expect(loaded).toEqual(plain);
+    expect(
+      storage.db.get<{ description: string | null }>(
+        sql`SELECT description FROM transactions WHERE id = 'e-plain'`,
+      )?.description,
+    ).toBeNull();
+  });
+
+  it('An опис survives a retype and can be cleared by one that has none', () => {
+    const imported = expenseByDefault({
+      id: 'e-imported',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(12550, 'UAH'),
+      categoryId: UNCATEGORISED_CATEGORY_ID,
+      description: 'Uklon',
+    });
+    repo.save(imported, storedAt);
+
+    // Retyped into a переказ under the same id — the bank's text says where it came from, so it
+    // moves with it.
+    const retyped = transfer({
+      id: 'e-imported',
+      date: '2026-03-10',
+      fromAccountId: 'card',
+      toAccountId: 'wallet',
+      left: money(12550, 'UAH'),
+      arrived: money(12550, 'UAH'),
+      description: 'Uklon',
+    });
+    repo.save(retyped, storedAt);
+    expect(repo.get('e-imported')).toEqual(retyped);
+
+    // And a replacement carrying none writes NULL rather than leaving the old text behind.
+    const { description: _cleared, ...withoutTextInput } = retyped;
+    const withoutText = transfer(withoutTextInput);
+    repo.save(withoutText, storedAt);
+    expect(repo.get('e-imported')).not.toHaveProperty('description');
+  });
+
   it('Scenario: Loading an unknown id returns nothing', () => {
     expect(repo.get('never-stored')).toBeUndefined();
   });
@@ -430,6 +525,30 @@ describe('transactionsRepo latest listing', () => {
     // No limit to pass and nothing left out — the same order the feed shows.
     expect(repo.listAll().map((t) => t.id)).toEqual(['e-newer', 'e-older']);
     expect(repo.listAll()).toHaveLength(repo.listLatest(50).length);
+  });
+
+  it('Scenario: Every stored транзакція is returned once', () => {
+    // Three months, so the reading the history series folds over is proven whole: nothing is
+    // dropped for being in an older month and nothing is counted twice for being in two.
+    const months = ['2026-06-11', '2026-07-11', '2026-08-11'] as const;
+    for (const date of months) {
+      repo.save(
+        expenseByDefault({
+          id: `e-${date}`,
+          date,
+          accountId: 'card',
+          amount: money(1000, 'UAH'),
+          categoryId: 'food',
+        }),
+        storedAt,
+      );
+    }
+
+    const listed = repo.listAll();
+
+    expect(listed).toHaveLength(3);
+    expect(new Set(listed.map((t) => t.id)).size).toBe(3);
+    expect(listed.map((t) => t.date).sort()).toEqual([...months]);
   });
 
   it('Scenario: The requested count is respected', () => {
