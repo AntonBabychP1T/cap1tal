@@ -1,33 +1,46 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View, type TextInputProps } from 'react-native';
 
 import { ThemedText } from './themed-text';
 
-import { Spacing } from '@/constants/theme';
+import { Radius, Spacing, TouchTarget } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
- * The few form pieces every screen needs. No design system, no dependency: a label above a field,
- * and a row of choices, themed like the rest of the app. Layout is deliberately unspecced — see
- * design.md "Non-Goals".
+ * The few form pieces every screen needs: a labelled field, a row of choices, and the one button
+ * shape in its three roles. Drawn to the design canvas — an overline label over a ruled field,
+ * chips that mark the current choice with an accent outline rather than a fill, and exactly one
+ * accent-filled action per screen. Layout beyond that stays unspecced — see design.md "Non-Goals".
  */
 
-export function Field({
-  label,
-  hint,
-  ...rest
-}: TextInputProps & { label: string; hint?: string }) {
+export function Field({ label, hint, ...rest }: TextInputProps & { label: string; hint?: string }) {
   const theme = useTheme();
+  const [focused, setFocused] = useState(false);
+
   return (
     <View style={styles.field}>
-      <ThemedText type="small" themeColor="textSecondary">
+      <ThemedText type="overline" themeColor={focused ? 'accent' : 'textSecondary'}>
         {label}
       </ThemedText>
       <TextInput
-        placeholderTextColor={theme.textSecondary}
+        placeholderTextColor={theme.textMuted}
         {...rest}
+        onFocus={(e) => {
+          setFocused(true);
+          rest.onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          setFocused(false);
+          rest.onBlur?.(e);
+        }}
         style={[
           styles.input,
-          { color: theme.text, backgroundColor: theme.backgroundElement },
+          {
+            color: theme.text,
+            // Ruled, not boxed: the line is the field, and it is the only thing that lights up.
+            borderBottomColor: focused ? theme.accent : theme.border,
+            borderBottomWidth: focused ? 1.5 : 1,
+          },
           rest.style,
         ]}
       />
@@ -63,49 +76,129 @@ export function Choices<T extends string>({
   const theme = useTheme();
   return (
     <View style={styles.field}>
-      <ThemedText type="small" themeColor="textSecondary">
-        {label}
-      </ThemedText>
+      <ThemedText type="overline">{label}</ThemedText>
       {choices.length === 0 ? (
         <ThemedText type="small" themeColor="textSecondary">
           —
         </ThemedText>
       ) : (
         <View style={styles.choices}>
-          {choices.map((choice) => (
-            <Pressable
-              key={choice.value}
-              disabled={disabled}
-              onPress={() => onSelect(choice.value)}
-              style={[
-                styles.choice,
-                {
-                  backgroundColor:
-                    choice.value === selected ? theme.backgroundSelected : theme.backgroundElement,
-                  opacity: disabled ? 0.5 : 1,
-                },
-              ]}>
-              <ThemedText
-                type="small"
-                themeColor={choice.value === selected ? 'text' : 'textSecondary'}>
-                {choice.label}
-              </ThemedText>
-            </Pressable>
-          ))}
+          {choices.map((choice) => {
+            const picked = choice.value === selected;
+            return (
+              <Pressable
+                key={choice.value}
+                disabled={disabled}
+                onPress={() => onSelect(choice.value)}
+                // The chip is 38 tall; the finger gets its 48 either way.
+                hitSlop={Spacing.two}
+                style={({ pressed }) => [
+                  styles.choice,
+                  {
+                    // An outline, not a fill: in a row of eight categories a filled chip shouts.
+                    backgroundColor: picked ? theme.accentSurface : theme.backgroundSelected,
+                    borderColor: picked ? theme.accent : 'transparent',
+                    opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
+                  },
+                ]}>
+                <ThemedText
+                  type={picked ? 'smallBold' : 'small'}
+                  themeColor={picked ? 'accent' : 'textSecondary'}>
+                  {choice.label}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
         </View>
       )}
     </View>
   );
 }
 
-/** The one button shape: a primary action at the bottom of a form. */
-export function Action({ title, onPress }: { title: string; onPress: () => void }) {
+/**
+ * The one button shape, in the three roles the canvas draws:
+ * `primary` — the accent fill, at most one per screen;
+ * `secondary` — an outline, for leaving and cancelling;
+ * `destructive` — text alone, never a fill, so deleting is never the loudest thing on the screen.
+ */
+export type ActionVariant = 'primary' | 'secondary' | 'destructive';
+
+export function Action({
+  title,
+  onPress,
+  variant = 'primary',
+  disabled,
+}: {
+  title: string;
+  onPress: () => void;
+  variant?: ActionVariant;
+  disabled?: boolean;
+}) {
+  const theme = useTheme();
+  const filled = variant === 'primary' && !disabled;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.action,
+        variant === 'primary' && {
+          backgroundColor: disabled ? theme.backgroundSelected : theme.accent,
+        },
+        variant === 'secondary' && { borderWidth: 1, borderColor: theme.border },
+        pressed && styles.pressed,
+      ]}>
+      <ThemedText
+        type="default"
+        // The filled action is the loudest thing on its screen; the outline and the destructive
+        // verb beside it are a weight quieter.
+        style={filled ? styles.actionFilledLabel : styles.actionLabel}
+        themeColor={
+          disabled
+            ? 'textMuted'
+            : variant === 'destructive'
+              ? 'textDanger'
+              : filled
+                ? 'onAccent'
+                : 'text'
+        }>
+        {title}
+      </ThemedText>
+    </Pressable>
+  );
+}
+
+/**
+ * A verb inside a row — «Перейменувати», «Звірити · −50,00». Smaller than an `Action` and outlined
+ * rather than filled, so two fit side by side and neither competes with the screen's own action.
+ */
+export function RowAction({
+  title,
+  onPress,
+  tone = 'accent',
+}: {
+  title: string;
+  onPress: () => void;
+  tone?: 'accent' | 'quiet' | 'danger';
+}) {
   const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.action, { backgroundColor: theme.backgroundSelected }]}>
-      <ThemedText type="smallBold">{title}</ThemedText>
+      hitSlop={Spacing.two}
+      style={({ pressed }) => [
+        styles.rowAction,
+        { borderColor: theme.border },
+        pressed && styles.pressed,
+      ]}>
+      <ThemedText
+        type="smallBold"
+        themeColor={
+          tone === 'accent' ? 'accent' : tone === 'danger' ? 'textDanger' : 'textSecondary'
+        }>
+        {title}
+      </ThemedText>
     </Pressable>
   );
 }
@@ -113,21 +206,33 @@ export function Action({ title, onPress }: { title: string; onPress: () => void 
 const styles = StyleSheet.create({
   field: { gap: Spacing.one },
   input: {
-    paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
-    borderRadius: Spacing.two,
-    fontSize: 16,
+    fontSize: 17,
   },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
   choice: {
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.chip,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 38,
   },
   action: {
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.control,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: TouchTarget,
   },
+  actionFilledLabel: { fontWeight: 700 },
+  actionLabel: { fontWeight: 600 },
+  rowAction: {
+    paddingHorizontal: Spacing.three - Spacing.half,
+    paddingVertical: Spacing.two,
+    borderRadius: Radius.chip,
+    borderWidth: 1,
+  },
+  pressed: { opacity: 0.75 },
 });
