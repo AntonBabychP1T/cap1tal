@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { account, type Account, type AccountKind } from '../domain/account';
 import { namesById } from '../domain/category';
+import type { CategoryLimit } from '../domain/limits';
 import { money, type CurrencyCode } from '../domain/money';
 import {
   CORRECTION_CATEGORY_ID,
@@ -64,8 +65,12 @@ const categoryNames = namesById([
   { id: 'groceries', name: 'Groceries' },
 ]);
 
-const view = (transactions: Transaction[], rates: MonobankRate[] = [], month = '2026-08') =>
-  monthViewModel({ month, accounts, transactions, rates, categoryNames, now: august });
+const view = (
+  transactions: Transaction[],
+  rates: MonobankRate[] = [],
+  month = '2026-08',
+  limits: CategoryLimit[] = [],
+) => monthViewModel({ month, accounts, transactions, rates, categoryNames, limits, now: august });
 
 const groupOf = (model: ReturnType<typeof view>, currency: CurrencyCode) => {
   const group = model.groups.find((g) => g.currency === currency);
@@ -141,14 +146,25 @@ describe('monthViewModel', () => {
         label: 'Без категорії',
         currency: 'UAH',
         amount: '1000,00 UAH',
+        overLimit: false,
+        share: 1,
       },
       {
         categoryId: CORRECTION_CATEGORY_ID,
         label: 'Коригування',
         currency: 'UAH',
         amount: '30,00 UAH',
+        overLimit: false,
+        share: 0.03,
       },
-      { categoryId: FEES_CATEGORY_ID, label: 'Комісія', currency: 'UAH', amount: '5,00 UAH' },
+      {
+        categoryId: FEES_CATEGORY_ID,
+        label: 'Комісія',
+        currency: 'UAH',
+        amount: '5,00 UAH',
+        overLimit: false,
+        share: 0.005,
+      },
     ]);
   });
 
@@ -270,6 +286,7 @@ describe('the breakdown reads the editable category list', () => {
       transactions: spent,
       rates: [],
       categoryNames: renamed,
+      limits: [],
       now: august,
     }).groups[0]!.breakdown;
 
@@ -286,7 +303,14 @@ describe('the breakdown reads the editable category list', () => {
     const model = view([expense(80000, 'UAH', 'groceries')]);
 
     expect(model.groups[0]!.breakdown).toEqual([
-      { categoryId: 'groceries', label: 'Groceries', currency: 'UAH', amount: '800,00 UAH' },
+      {
+        categoryId: 'groceries',
+        label: 'Groceries',
+        currency: 'UAH',
+        amount: '800,00 UAH',
+        overLimit: false,
+        share: 1,
+      },
     ]);
   });
 
@@ -294,5 +318,103 @@ describe('the breakdown reads the editable category list', () => {
     const model = view([expense(80000, 'UAH', 'not-loaded-yet')]);
 
     expect(model.groups[0]!.breakdown.map((row) => row.label)).toEqual(['not-loaded-yet']);
+  });
+});
+
+/**
+ * FR-L2's «у місячній картині»: the breakdown marks a category over its ліміт for the shown month.
+ * The determination itself is `domain/limits.ts`; what is proven here is that the right row wears
+ * it — the one in the ліміт's own currency, in the month that was actually judged.
+ */
+describe('the breakdown marks a category over its ліміт', () => {
+  const groceriesLimit: CategoryLimit = {
+    categoryId: 'groceries',
+    amount: money(250000, 'UAH'),
+  };
+
+  const rowFor = (model: ReturnType<typeof view>, currency: CurrencyCode, categoryId: string) =>
+    groupOf(model, currency).breakdown.find((row) => row.categoryId === categoryId);
+
+  it('Scenario: An over-limit row is red', () => {
+    const model = view([expense(260000, 'UAH', 'groceries')], [], '2026-08', [groceriesLimit]);
+
+    expect(rowFor(model, 'UAH', 'groceries')?.overLimit).toBe(true);
+  });
+
+  it('Scenario: Spending at the ліміт is not marked', () => {
+    const model = view([expense(250000, 'UAH', 'groceries')], [], '2026-08', [groceriesLimit]);
+
+    expect(rowFor(model, 'UAH', 'groceries')?.overLimit).toBe(false);
+  });
+
+  it('Scenario: Another currency’s amount stays unmarked', () => {
+    const model = view(
+      [expense(260000, 'UAH', 'groceries'), expense(10000, 'USD', 'groceries')],
+      [],
+      '2026-08',
+      [groceriesLimit],
+    );
+
+    expect(rowFor(model, 'UAH', 'groceries')?.overLimit).toBe(true);
+    expect(rowFor(model, 'USD', 'groceries')?.overLimit).toBe(false);
+  });
+
+  it('Scenario: The mark follows the shown month', () => {
+    const spent = [
+      expense(260000, 'UAH', 'groceries', '2026-08-10'),
+      expense(100000, 'UAH', 'groceries', '2026-07-10'),
+    ];
+
+    expect(rowFor(view(spent, [], '2026-08', [groceriesLimit]), 'UAH', 'groceries')?.overLimit).toBe(
+      true,
+    );
+    expect(rowFor(view(spent, [], '2026-07', [groceriesLimit]), 'UAH', 'groceries')?.overLimit).toBe(
+      false,
+    );
+  });
+
+  it('A category with no ліміт is never marked', () => {
+    const model = view([expense(99_000_000, 'UAH', 'groceries')], [], '2026-08', []);
+
+    expect(rowFor(model, 'UAH', 'groceries')?.overLimit).toBe(false);
+  });
+});
+
+
+/**
+ * The bar beside each категорія. It is a display decision, like the order the rows come in, so it
+ * is proven here rather than left to JSX.
+ */
+describe('the breakdown sizes its bars against the month’s largest категорія', () => {
+  it('The largest fills its track and the rest read against it', () => {
+    const model = view([
+      expense(100000, 'UAH', 'groceries'),
+      expense(25000, 'UAH', 'transport'),
+      expense(50000, 'UAH', UNCATEGORISED_CATEGORY_ID),
+    ]);
+
+    expect(groupOf(model, 'UAH').breakdown.map((row) => [row.label, row.share])).toEqual([
+      ['Groceries', 1],
+      ['Без категорії', 0.5],
+      ['transport', 0.25],
+    ]);
+  });
+
+  it('Each currency is measured against its own largest, never across currencies', () => {
+    const model = view([expense(100000, 'UAH', 'groceries'), expense(1000, 'USD', 'groceries')]);
+
+    expect(groupOf(model, 'UAH').breakdown[0]?.share).toBe(1);
+    expect(groupOf(model, 'USD').breakdown[0]?.share).toBe(1);
+  });
+
+  it('A категорія a повернення pushed below zero gets no bar', () => {
+    const model = view([
+      expense(100000, 'UAH', 'groceries'),
+      { ...expense(0, 'UAH', 'transport'), amount: money(-20000, 'UAH') },
+    ]);
+
+    expect(
+      groupOf(model, 'UAH').breakdown.find((row) => row.categoryId === 'transport')?.share,
+    ).toBe(0);
   });
 });

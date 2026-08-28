@@ -314,3 +314,61 @@ export type MonobankLinkRow = typeof monobankLinks.$inferSelect;
 export type NewMonobankLinkRow = typeof monobankLinks.$inferInsert;
 export type MonobankImportedItemRow = typeof monobankImportedItems.$inferSelect;
 
+/**
+ * A category's ліміт: the optional monthly ceiling the limits capability defines. Its own table
+ * rather than two nullable columns on `categories` — the primary key *is* "at most one ліміт per
+ * category", setting is an upsert and clearing a delete, and a half-set pair (a сума without its
+ * currency) is not representable. The same argument shaped `rules`: a thing that points at a
+ * category is its own table (design D1).
+ *
+ * `onDelete: 'restrict'` like every other reference to a категорія: категорії archive rather than
+ * delete, and archiving keeps the ліміт (limits: "Archiving keeps the ліміт").
+ */
+export const categoryLimits = sqliteTable(
+  'category_limits',
+  {
+    categoryId: text('category_id')
+      .primaryKey()
+      .references(() => categories.id, { onDelete: 'restrict' }),
+    /** Integer minor units, beside the currency code it is measured in — never one without the other. */
+    amount: integer('amount').notNull(),
+    currency: text('currency').notNull(),
+  },
+  (t) => [check('category_limits_amount_positive', sql`${t.amount} > 0`)],
+);
+
+/**
+ * A ціль: «відкласти N до дати» on one рахунок. No progress column — progress is the linked
+ * рахунок's розрахунковий баланс, read when the ціль is shown, so no second number can drift from
+ * the stored truth (goals: "Progress is the linked рахунок's розрахунковий баланс").
+ *
+ * The currency column stays even though the рахунок has one: an amount without its currency code
+ * would be the first such amount in the schema. That the two agree is `goals-repo`'s check — a
+ * read-and-compare, not a trigger — since SQLite cannot express it as a constraint (design D2).
+ *
+ * `deadline` is the domain's `IsoDate` verbatim, TEXT 'YYYY-MM-DD', exactly as a транзакція's date
+ * is: a calendar date, not an instant, so no device timezone can move it.
+ */
+export const goals = sqliteTable(
+  'goals',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    amount: integer('amount').notNull(),
+    currency: text('currency').notNull(),
+    deadline: text('deadline').notNull(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+  },
+  (t) => [
+    check('goals_amount_positive', sql`${t.amount} > 0`),
+    check('goals_name_not_blank', sql`length(trim(${t.name})) > 0`),
+    check('goals_deadline_iso', sql`${t.deadline} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`),
+  ],
+);
+
+export type CategoryLimitRow = typeof categoryLimits.$inferSelect;
+export type NewCategoryLimitRow = typeof categoryLimits.$inferInsert;
+export type GoalRow = typeof goals.$inferSelect;
+export type NewGoalRow = typeof goals.$inferInsert;

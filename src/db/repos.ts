@@ -1,7 +1,9 @@
 import { accountsRepo } from './accounts-repo';
 import { categoriesRepo } from './categories-repo';
 import { db } from './client';
+import { goalsRepo } from './goals-repo';
 import { importRepo } from './import-repo';
+import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
 import { ratesRepo } from './rates-repo';
 import { rulesRepo } from './rules-repo';
@@ -25,3 +27,6 @@ export const rules = rulesRepo(db);
 export const imports = importRepo(db);
 /** monobank's own side: the accounts a token showed, their links, cursors and imported ids. */
 export const monobank = monobankRepo(db);
+/** The ліміти categories carry, and the цілі — what the owner wants, beside what already is. */
+export const limits = limitsRepo(db);
+export const goals = goalsRepo(db);

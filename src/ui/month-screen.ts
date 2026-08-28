@@ -1,4 +1,5 @@
 import type { Account } from '../domain/account';
+import { overLimitCategories, type CategoryLimit } from '../domain/limits';
 import type { CurrencyCode } from '../domain/money';
 import {
   categoryBreakdown,
@@ -44,6 +45,19 @@ export interface MonthBreakdownRow {
   readonly label: string;
   readonly currency: CurrencyCode;
   readonly amount: string;
+  /**
+   * The category is over its ліміт for this month, in this row's currency — the screen draws the
+   * amount red. Only the row in the ліміт's own currency carries it: the same category's amount in
+   * another currency never counted toward the ліміт, so marking it would say something untrue.
+   */
+  readonly overLimit: boolean;
+  /**
+   * How long this row's bar is: the amount as a fraction of the month's largest категорія in the
+   * same currency, so the biggest fills the track and the rest read against it. Purely a display
+   * decision, like the order — it is here so the screen keeps adding none of its own. A category
+   * that a повернення pushed to or below zero gets no bar at all.
+   */
+  readonly share: number;
 }
 
 /** One currency's numbers and its share of spent. Two currencies are two of these, never one. */
@@ -118,6 +132,8 @@ export function monthViewModel(input: {
   /** The categories list as the screen loaded it, so a breakdown row reads the owner's own name
    * for the category — a renamed one included. See `categoryLabel` in ./labels. */
   categoryNames: ReadonlyMap<string, string>;
+  /** The ліміти as the screen loaded them; an empty list marks nothing. */
+  limits: readonly CategoryLimit[];
   now: Date;
 }): MonthViewModel {
   const picture = monthlyPicture({
@@ -130,23 +146,33 @@ export function monthViewModel(input: {
     transactions: input.transactions,
   });
 
+  // Judged once for the whole month, in each ліміт's own currency (domain/limits.ts): the map says
+  // which categories are over and which currency each was judged in, so a row is marked only when
+  // it is the row that was judged.
+  const over = overLimitCategories({ breakdown, limits: input.limits });
+
   const groups: MonthCurrencyGroup[] = [...picture.keys()]
     .sort(byCurrency)
     .map((currency) => {
-      const rows: MonthBreakdownRow[] = [...(breakdown.get(currency) ?? [])]
+      const sorted = [...(breakdown.get(currency) ?? [])]
         .map(([categoryId, money]) => ({
           categoryId,
           label: categoryLabel(categoryId, input.categoryNames),
           amount: money.amount,
           formatted: formatMoney(money),
         }))
-        .sort(byAmountThenLabel)
-        .map(({ categoryId, label, formatted }) => ({
-          categoryId,
-          label,
-          currency,
-          amount: formatted,
-        }));
+        .sort(byAmountThenLabel);
+      // The largest is the first, since that is what the sort just did. Zero or less — a month
+      // whose every категорія was refunded away — leaves every bar empty rather than dividing.
+      const largest = sorted[0]?.amount ?? 0;
+      const rows: MonthBreakdownRow[] = sorted.map(({ categoryId, label, amount, formatted }) => ({
+        categoryId,
+        label,
+        currency,
+        amount: formatted,
+        overLimit: over.get(categoryId) === currency,
+        share: largest > 0 ? Math.max(0, amount / largest) : 0,
+      }));
       return {
         currency,
         numbers: numbersOf(picture.get(currency)!),

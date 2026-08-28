@@ -75,9 +75,19 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   investments, interest, …
 - **Starter set** **[PROPOSED]** — the owner's Saldo categories and sources, flattened.
 - **Rule** (правило) — "merchant / MCC X → category Y", applied to imports; editable by the owner.
-- **Limit** (ліміт) — an optional monthly ceiling on a category. Exceeding it marks the category
+- **Limit** (ліміт) — an optional monthly ceiling on a category: at most one per category, a сума
+  with a currency code. A category is **over its ліміт** for a month when that month's spent of it
+  **in the ліміт's own currency** — the net-of-повернення amount the monthly-picture breakdown
+  holds — is strictly greater than the ліміт; equality is not over, and spending in any other
+  currency neither counts toward it nor is converted toward it. Exceeding it marks the category
   red in the monthly picture and in the transaction list. Nothing is blocked, nothing is pushed.
-- **Goal** (ціль) — "set aside N by a date", with progress shown.
+- **Goal** (ціль) — "set aside N by a date", with progress shown: a назва, a target сума, a дата
+  and one linked рахунок. Its **progress is that рахунок's розрахунковий баланс**, read when the
+  ціль is shown — never a second number entered by hand, which could drift from the stored truth,
+  so money reaches a ціль only the way money reaches its рахунок. The target lives in the linked
+  рахунок's currency; nothing is ever converted. A ціль is **reached** (досягнута) when its
+  progress is at or above its target, and **overdue** (прострочена) when its дата has passed and
+  it is not reached; a reached ціль is never overdue.
 
 ## The month
 

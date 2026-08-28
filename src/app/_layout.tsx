@@ -5,9 +5,40 @@ import { useEffect } from 'react';
 import { StyleSheet, Text, useColorScheme, View } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { Colors } from '@/constants/theme';
 import { db } from '@/db/client';
 import { seedStarterSet } from '@/db/seed';
 import migrations from '../../drizzle/migrations';
+
+/**
+ * The navigator's own palette. React Navigation paints the surface a pushed screen slides over
+ * and the space around it; left on its defaults it would flash white under the warm light theme
+ * and a different black under the dark one. Same tokens, so there is one palette in the app.
+ */
+const navigationTheme = {
+  dark: {
+    ...DarkTheme,
+    colors: {
+      ...DarkTheme.colors,
+      background: Colors.dark.background,
+      card: Colors.dark.backgroundElement,
+      text: Colors.dark.text,
+      border: Colors.dark.border,
+      primary: Colors.dark.accent,
+    },
+  },
+  light: {
+    ...DefaultTheme,
+    colors: {
+      ...DefaultTheme.colors,
+      background: Colors.light.background,
+      card: Colors.light.backgroundElement,
+      text: Colors.light.text,
+      border: Colors.light.border,
+      primary: Colors.light.accent,
+    },
+  },
+};
 
 SplashScreen.preventAutoHideAsync();
 
@@ -37,11 +68,18 @@ export default function RootLayout() {
   // error below stays invisible. Keeping the tree shape stable also stops the splash replaying
   // when migrations finish.
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={colorScheme === 'dark' ? navigationTheme.dark : navigationTheme.light}>
       <AnimatedSplashOverlay />
       {error ? (
-        <View style={styles.failure}>
-          <Text>Не вдалося підготувати сховище: {error.message}</Text>
+        <View
+          style={[
+            styles.failure,
+            { backgroundColor: Colors[colorScheme === 'dark' ? 'dark' : 'light'].background },
+          ]}>
+          <Text
+            style={{ color: Colors[colorScheme === 'dark' ? 'dark' : 'light'].textDanger }}>
+            Не вдалося підготувати сховище: {error.message}
+          </Text>
         </View>
       ) : success ? (
         // A Stack, not the tabs themselves: editing one transaction, and a category's month list,
@@ -56,6 +94,10 @@ export default function RootLayout() {
           <Stack.Screen name="manage/categories" options={{ presentation: 'card' }} />
           <Stack.Screen name="manage/sources" options={{ presentation: 'card' }} />
           <Stack.Screen name="manage/rules" options={{ presentation: 'card' }} />
+          <Stack.Screen name="manage/monobank" options={{ presentation: 'card' }} />
+          {/* «Перші кроки»: pushed like the management screens, and where a device holding
+              nothing at all lands from Головний. */}
+          <Stack.Screen name="onboarding" options={{ presentation: 'card' }} />
         </Stack>
       ) : null}
     </ThemeProvider>

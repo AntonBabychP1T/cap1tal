@@ -1,9 +1,12 @@
+import { overLimitCategories, type CategoryLimit } from '../domain/limits';
+import { categoryBreakdown } from '../domain/monthly-picture';
 import {
   CORRECTION_CATEGORY_ID,
   monthOf,
   type Month,
   type Transaction,
 } from '../domain/transaction';
+import { categoryLabel } from './labels';
 
 /**
  * The transactions behind one breakdown row: the shown month's витрати and повернення of one
@@ -43,4 +46,30 @@ export function categoryTransactions(input: {
         return false;
     }
   });
+}
+
+/**
+ * What the drill-down says it is showing: the category's own name, and whether that category is
+ * over its ліміт for the shown month.
+ *
+ * The mark lives on the heading rather than on each row because the heading is where this screen
+ * names the category — every row below it is that same category, so marking each one would say the
+ * same thing many times. It is the same determination the feed and the Місяць breakdown make, from
+ * the same month's whole breakdown (main-screen: "wherever a category's month-scoped транзакції
+ * are listed").
+ */
+export function categoryMonthHeading(input: {
+  month: Month;
+  categoryId: string;
+  /** The month's транзакції, whole — the breakdown is the month's, not this list's. */
+  transactions: readonly Transaction[];
+  categoryNames: ReadonlyMap<string, string>;
+  limits: readonly CategoryLimit[];
+}): { readonly label: string; readonly overLimit: boolean } {
+  const breakdown = categoryBreakdown({ month: input.month, transactions: input.transactions });
+  const over = overLimitCategories({ breakdown, limits: input.limits });
+  return {
+    label: categoryLabel(input.categoryId, input.categoryNames),
+    overLimit: over.has(input.categoryId),
+  };
 }

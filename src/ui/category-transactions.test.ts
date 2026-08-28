@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { namesById } from '../domain/category';
+import type { CategoryLimit } from '../domain/limits';
 import { money, type CurrencyCode } from '../domain/money';
 import {
   CORRECTION_CATEGORY_ID,
@@ -12,7 +14,7 @@ import {
   type Refund,
   type Transaction,
 } from '../domain/transaction';
-import { categoryTransactions } from './category-transactions';
+import { categoryMonthHeading, categoryTransactions } from './category-transactions';
 
 const expense = (
   id: string,
@@ -165,5 +167,42 @@ describe('categoryTransactions', () => {
     expect(idsOf(categoryTransactions({ month: '2026-08', categoryId: 'food', transactions }))).toEqual(
       ['e3', 'e1', 'e2'],
     );
+  });
+});
+
+/**
+ * The drill-down carries the same over-limit mark the feed and the Місяць breakdown do
+ * (main-screen: "wherever a category's month-scoped транзакції are listed").
+ */
+describe('categoryMonthHeading', () => {
+  const names = namesById([{ id: 'food', name: 'Groceries' }]);
+  const limits: CategoryLimit[] = [{ categoryId: 'food', amount: money(250000, 'UAH') }];
+
+  it('Scenario: A витрата in an over-limit category is marked', () => {
+    const transactions: Transaction[] = [expense('e1', '2026-08-10', 'food', 260000)];
+
+    expect(categoryMonthHeading({ month: '2026-08', categoryId: 'food', transactions, categoryNames: names, limits })).toEqual(
+      { label: 'Groceries', overLimit: true },
+    );
+  });
+
+  it('Scenario: A line in an under-limit month is not marked', () => {
+    const transactions: Transaction[] = [
+      expense('e1', '2026-08-10', 'food', 260000),
+      expense('e2', '2026-07-10', 'food', 100000),
+    ];
+
+    expect(
+      categoryMonthHeading({ month: '2026-07', categoryId: 'food', transactions, categoryNames: names, limits })
+        .overLimit,
+    ).toBe(false);
+  });
+
+  it('A category with no ліміт is named and never marked', () => {
+    const transactions: Transaction[] = [expense('e1', '2026-08-10', 'food', 99_000_000)];
+
+    expect(
+      categoryMonthHeading({ month: '2026-08', categoryId: 'food', transactions, categoryNames: names, limits: [] }),
+    ).toEqual({ label: 'Groceries', overLimit: false });
   });
 });

@@ -947,3 +947,131 @@ describe('migrations — monobank links, progress and описи', () => {
     }
   });
 });
+
+/**
+ * Ліміти and цілі: the two tables migration 0006 adds. Its own describe for the reason the import
+ * marker has one — the half that matters on the owner's phone is that a database already full of
+ * their money comes through untouched, and that no category quietly gains a ліміт it never had.
+ */
+describe('migrations — ліміти and цілі', () => {
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    storage.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: A fresh database from migrations alone stores ліміти', () => {
+    const { db } = storage;
+    db.insert(categoryLimits).values({ categoryId: 'food', amount: 250000, currency: 'UAH' }).run();
+
+    expect(db.select().from(categoryLimits).all()).toEqual([
+      { categoryId: 'food', amount: 250000, currency: 'UAH' },
+    ]);
+    // The primary key is the "at most one ліміт per category" rule (design D1), and the CHECK is
+    // "a ліміт is positive" — both of them the storage's, not only the repository's.
+    expect(() =>
+      db.insert(categoryLimits).values({ categoryId: 'food', amount: 300000, currency: 'UAH' }).run(),
+    ).toThrow();
+    expect(() =>
+      db.insert(categoryLimits).values({ categoryId: 'clothes', amount: 0, currency: 'UAH' }).run(),
+    ).toThrow();
+    expect(() =>
+      db.insert(categoryLimits).values({ categoryId: 'nope', amount: 1000, currency: 'UAH' }).run(),
+    ).toThrow();
+  });
+
+  it('Scenario: A fresh database from migrations alone stores цілі', () => {
+    const { db } = storage;
+    db.insert(goals)
+      .values({
+        id: 'g1',
+        name: 'Авто',
+        amount: 20000000,
+        currency: 'UAH',
+        deadline: '2026-12-31',
+        accountId: 'jar',
+      })
+      .run();
+
+    expect(db.select().from(goals).all()).toEqual([
+      {
+        id: 'g1',
+        name: 'Авто',
+        amount: 20000000,
+        currency: 'UAH',
+        deadline: '2026-12-31',
+        accountId: 'jar',
+      },
+    ]);
+    const g = { id: 'g2', name: 'Авто', amount: 1, currency: 'UAH', deadline: '2026-12-31', accountId: 'jar' };
+    expect(() => db.insert(goals).values({ ...g, amount: 0 }).run()).toThrow();
+    expect(() => db.insert(goals).values({ ...g, name: '   ' }).run()).toThrow();
+    expect(() => db.insert(goals).values({ ...g, deadline: '31.12.2026' }).run()).toThrow();
+    expect(() => db.insert(goals).values({ ...g, accountId: 'nope' }).run()).toThrow();
+  });
+
+  it('Scenario: Rows stored before the migration survive it', () => {
+    // The migrations committed before this change: a device holding рахунки, категорії, джерела,
+    // правила, monobank links and one транзакція of each type.
+    const staged = openTestDbMigratedTo(6);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      staged.db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
+      staged.db
+        .insert(rules)
+        .values({
+          id: 'rule-1',
+          merchant: 'сільпо',
+          categoryId: 'food',
+          createdAt: new Date('2026-08-24T09:00:00.000Z'),
+        })
+        .run();
+      staged.db
+        .insert(monobankAccounts)
+        .values({
+          id: 'mono-card',
+          kind: 'card',
+          name: 'black ··1234',
+          currency: 'UAH',
+          bankBalanceAmount: 5000000,
+          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
+        })
+        .run();
+      staged.db
+        .insert(monobankLinks)
+        .values({
+          monobankAccountId: 'mono-card',
+          accountId: 'card',
+          syncStartDate: '2026-08-01',
+          cursorMs: new Date('2026-08-27T21:00:00.000Z'),
+        })
+        .run();
+
+      staged.migrateToLatest();
+
+      for (const original of oneOfEachType) {
+        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
+        expect(toTransaction(row!)).toEqual(original);
+      }
+      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
+      expect(staged.db.select().from(rules).all()).toHaveLength(1);
+      expect(staged.db.select().from(categories).all().map((row) => row.id)).toContain('food');
+      expect(staged.db.select().from(sources).all().map((row) => row.id)).toContain('salary');
+      expect(staged.db.select().from(monobankLinks).all()).toHaveLength(1);
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+      // The two new tables arrive empty: no category gains a ліміт it was never given, and the
+      // migration invents no ціль.
+      expect(staged.db.select().from(categoryLimits).all()).toEqual([]);
+      expect(staged.db.select().from(goals).all()).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+});

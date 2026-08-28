@@ -1,11 +1,10 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field } from '@/components/form';
+import { Action, Choices, Field, RowAction } from '@/components/form';
+import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { categories as categoriesRepo, rules as rulesRepo } from '@/db/repos';
 import { namesById } from '@/domain/category';
 import type { Rule } from '@/domain/rules';
@@ -81,96 +80,92 @@ export default function RulesScreen() {
   );
 
   return (
-    <ThemedView style={styles.screen}>
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <ThemedText type="subtitle">Правила</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            «Продавець / MCC → категорія». Застосуються, коли зʼявиться імпорт.
-          </ThemedText>
+    <Screen>
+      <ScreenHeader
+        title="Правила"
+        subtitle="«Продавець / MCC → категорія». Застосуються, коли зʼявиться імпорт."
+        back={() => router.back()}
+      />
 
-          {draft ? (
-            <ThemedView type="backgroundElement" style={styles.card}>
-              <Field
-                label="Продавець"
-                value={draft.merchant}
-                onChangeText={(merchant) => setDraft({ ...draft, merchant })}
-                autoCapitalize="none"
-                placeholder="частина опису, напр. сільпо"
-              />
-              <Field
-                label="MCC"
-                value={draft.mcc}
-                onChangeText={(mcc) => setDraft({ ...draft, mcc })}
-                keyboardType="number-pad"
-                placeholder="напр. 5411"
-              />
-              <Choices
-                label="Категорія"
-                choices={choices}
-                selected={draft.categoryId}
-                onSelect={(categoryId: string) => setDraft({ ...draft, categoryId })}
-              />
-              <Action title="Зберегти" onPress={save} />
-              <Action title="Скасувати" onPress={() => setDraft(undefined)} />
-            </ThemedView>
-          ) : (
-            <Action title="Нове правило" onPress={() => setDraft({ ...EMPTY })} />
-          )}
+      {draft ? (
+        <Card style={styles.form}>
+          <Field
+            label="Продавець"
+            value={draft.merchant}
+            onChangeText={(merchant) => setDraft({ ...draft, merchant })}
+            autoCapitalize="none"
+            placeholder="частина опису, напр. сільпо"
+          />
+          <Field
+            label="MCC"
+            value={draft.mcc}
+            onChangeText={(mcc) => setDraft({ ...draft, mcc })}
+            keyboardType="number-pad"
+            placeholder="напр. 5411"
+          />
+          <Choices
+            label="Категорія"
+            choices={choices}
+            selected={draft.categoryId}
+            onSelect={(categoryId: string) => setDraft({ ...draft, categoryId })}
+          />
+          <Action title="Зберегти" onPress={save} />
+          <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
+        </Card>
+      ) : (
+        <Action title="Нове правило" onPress={() => setDraft({ ...EMPTY })} />
+      )}
 
-          {stored.rules.length === 0 ? (
-            <ThemedText type="small" themeColor="textSecondary">
-              Поки жодного правила.
-            </ThemedText>
-          ) : (
-            stored.rules.map((rule) => {
-              const line = ruleLine(rule, names);
-              return (
-                <ThemedView key={line.id} type="backgroundElement" style={styles.row}>
-                  <View style={styles.rowTop}>
-                    <ThemedText type="smallBold">{line.criteria}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      → {line.category}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.actions}>
-                    <Pressable
-                      onPress={() =>
-                        setDraft({
-                          id: rule.id,
-                          merchant: rule.merchant ?? '',
-                          mcc: rule.mcc === undefined ? '' : String(rule.mcc),
-                          categoryId: rule.categoryId,
-                        })
-                      }>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        Змінити
-                      </ThemedText>
-                    </Pressable>
-                    <Pressable onPress={() => remove(rule)}>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        Видалити
-                      </ThemedText>
-                    </Pressable>
-                  </View>
-                </ThemedView>
-              );
-            })
-          )}
-
-          <Action title="Назад" onPress={() => router.back()} />
-        </ScrollView>
-      </SafeAreaView>
-    </ThemedView>
+      {stored.rules.length === 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          Поки жодного правила.
+        </ThemedText>
+      ) : (
+        <ListCard>
+          {stored.rules.map((rule, index) => {
+            const line = ruleLine(rule, names);
+            return (
+              <ListRow key={line.id} last={index === stored.rules.length - 1} style={styles.row}>
+                <View style={styles.rowTop}>
+                  <ThemedText numberOfLines={1} style={styles.criteria}>
+                    {line.criteria}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    → {line.category}
+                  </ThemedText>
+                </View>
+                <View style={styles.actions}>
+                  <RowAction
+                    title="Змінити"
+                    onPress={() =>
+                      setDraft({
+                        id: rule.id,
+                        merchant: rule.merchant ?? '',
+                        mcc: rule.mcc === undefined ? '' : String(rule.mcc),
+                        categoryId: rule.categoryId,
+                      })
+                    }
+                  />
+                  <RowAction tone="danger" title="Видалити" onPress={() => remove(rule)} />
+                </View>
+              </ListRow>
+            );
+          })}
+        </ListCard>
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  safeArea: { flex: 1 },
-  content: { padding: Spacing.three, gap: Spacing.three },
-  card: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.three },
-  row: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.two },
-  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  actions: { flexDirection: 'row', gap: Spacing.three },
+  form: { gap: Spacing.three },
+  row: { gap: Spacing.two },
+  rowTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  criteria: { flex: 1 },
+  actions: { flexDirection: 'row', gap: Spacing.two },
 });

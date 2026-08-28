@@ -1,22 +1,20 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, View } from 'react-native';
 
-import { Action } from '@/components/form';
+import { ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
+  limits as limitsRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { categoryTransactions } from '@/ui/category-transactions';
-import { categoryLabel } from '@/ui/labels';
+import { categoryMonthHeading, categoryTransactions } from '@/ui/category-transactions';
 import { monthLabel } from '@/ui/months';
-import { accountsById, transactionLine } from '@/ui/transaction-line';
+import { accountsById, feedSubtitle, feedTitle, transactionLine } from '@/ui/transaction-line';
 
 import { Spacing } from '@/constants/theme';
 
@@ -39,6 +37,7 @@ export default function CategoryMonthScreen() {
         // Archived ones included: this list exists to show a category's history, and archiving
         // takes a category out of pickers, never out of the months it already has.
         categories: categoriesRepo.list(),
+        limits: limitsRepo.list(),
       }),
       [month],
     ),
@@ -50,52 +49,67 @@ export default function CategoryMonthScreen() {
     () => categoryTransactions({ month, categoryId, transactions: stored.transactions }),
     [categoryId, month, stored.transactions],
   );
+  /** The category's own name, and whether it is over its ліміт for the month being shown. */
+  const heading = useMemo(
+    () =>
+      categoryMonthHeading({
+        month,
+        categoryId,
+        transactions: stored.transactions,
+        categoryNames: names,
+        limits: stored.limits,
+      }),
+    [categoryId, month, names, stored.limits, stored.transactions],
+  );
 
   return (
-    <ThemedView style={styles.screen}>
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <ScrollView contentContainerStyle={styles.content}>
-          <ThemedText type="subtitle">{categoryLabel(categoryId, names)}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {monthLabel(month)}
-          </ThemedText>
+    <Screen>
+      <ScreenHeader
+        title={heading.label}
+        subtitle={monthLabel(month)}
+        danger={heading.overLimit}
+        back={() => router.back()}
+      />
 
-          {listed.length === 0 ? (
-            <ThemedText type="small" themeColor="textSecondary">
-              У цій категорії за місяць нічого немає.
-            </ThemedText>
-          ) : (
-            listed.map((t) => {
-              const line = transactionLine(t, byId, names);
-              return (
-                <Pressable key={line.id} onPress={() => router.push(`/transaction/${line.id}`)}>
-                  <ThemedView type="backgroundElement" style={styles.row}>
-                    <View style={styles.rowTop}>
-                      <ThemedText type="smallBold">{line.amount}</ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {line.date}
-                      </ThemedText>
-                    </View>
+      {listed.length === 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          У цій категорії за місяць нічого немає.
+        </ThemedText>
+      ) : (
+        <ListCard>
+          {listed.map((t, index) => {
+            const line = transactionLine(t, byId, names);
+            return (
+              <ListRow key={line.id} last={index === listed.length - 1}>
+                <Pressable
+                  onPress={() => router.push(`/transaction/${line.id}`)}
+                  style={styles.row}>
+                  <View style={styles.label}>
+                    <ThemedText numberOfLines={1}>{feedTitle(line)}</ThemedText>
                     <ThemedText type="small" themeColor="textSecondary">
-                      {line.type} · {line.accounts}
+                      {feedSubtitle(line)}
                     </ThemedText>
-                  </ThemedView>
+                  </View>
+                  <ThemedText tabular style={styles.amount}>
+                    {line.amount}
+                  </ThemedText>
                 </Pressable>
-              );
-            })
-          )}
-
-          <Action title="Назад" onPress={() => router.back()} />
-        </ScrollView>
-      </SafeAreaView>
-    </ThemedView>
+              </ListRow>
+            );
+          })}
+        </ListCard>
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  safeArea: { flex: 1 },
-  content: { padding: Spacing.three, gap: Spacing.three },
-  row: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.one },
-  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: Spacing.three,
+  },
+  label: { flex: 1, gap: Spacing.half },
+  amount: { fontWeight: 600 },
 });

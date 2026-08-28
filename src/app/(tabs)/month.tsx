@@ -1,13 +1,19 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Fragment, useCallback, useMemo, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 
+import {
+  Card,
+  Divider,
+  Meter,
+  Screen,
+  SectionLabel,
+} from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
+  limits as limitsRepo,
   rates as ratesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
@@ -19,6 +25,17 @@ import { monthViewModel } from '@/ui/month-screen';
 import { currentMonth, prevMonth, stepForward } from '@/ui/months';
 
 import { Spacing } from '@/constants/theme';
+
+/** The step arrows. Drawn, never removed: at the edge the disabled one keeps the title centred. */
+function Step({ arrow, onPress }: { arrow: string; onPress?: () => void }) {
+  return (
+    <Pressable onPress={onPress} disabled={!onPress} hitSlop={Spacing.three}>
+      <ThemedText type="subtitle" themeColor={onPress ? 'text' : 'textMuted'}>
+        {arrow}
+      </ThemedText>
+    </Pressable>
+  );
+}
 
 /**
  * Місяць — where the owner reads one calendar month: витрачено, інвестовано, відкладено,
@@ -42,6 +59,8 @@ export default function MonthScreen() {
         // Every category, archived included: a month keeps showing the categories its витрати
         // already carry, and an archived one appears there like any other.
         categories: categoriesRepo.list(),
+        // Every ліміт, so the breakdown can mark the categories this month went over.
+        limits: limitsRepo.list(),
       }),
       [shown],
     ),
@@ -100,100 +119,147 @@ export default function MonthScreen() {
         transactions: stored.transactions,
         rates: stored.rates,
         categoryNames: namesById(stored.categories),
+        limits: stored.limits,
         now: new Date(),
       }),
     [shown, stored],
   );
 
   return (
-    <ThemedView style={styles.screen}>
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.header}>
-            <Pressable onPress={() => setShown(prevMonth(shown))} hitSlop={Spacing.two}>
-              <ThemedText type="smallBold">←</ThemedText>
-            </Pressable>
-            <ThemedText type="subtitle">{model.title}</ThemedText>
-            {/* The current month is the far edge: forward is not offered there at all. */}
-            {model.canStepForward ? (
-              <Pressable
-                onPress={() => setShown(stepForward(shown, new Date()))}
-                hitSlop={Spacing.two}>
-                <ThemedText type="smallBold">→</ThemedText>
-              </Pressable>
-            ) : (
-              // Keeps the title centred at the edge without offering a control that does nothing.
-              <View style={styles.stepPlaceholder} />
-            )}
-          </View>
+    <Screen>
+      <View style={styles.stepper}>
+        <Step arrow="←" onPress={() => setShown(prevMonth(shown))} />
+        <ThemedText type="subtitle">{model.title}</ThemedText>
+        {/* The current month is the far edge: forward is shown spent rather than offered. */}
+        <Step
+          arrow="→"
+          onPress={
+            model.canStepForward ? () => setShown(stepForward(shown, new Date())) : undefined
+          }
+        />
+      </View>
 
-          {model.emptyMessage ? (
-            <ThemedView type="backgroundElement" style={styles.card}>
-              <ThemedText>{model.emptyMessage}</ThemedText>
-            </ThemedView>
-          ) : null}
+      {model.emptyMessage ? (
+        <Card>
+          <ThemedText>{model.emptyMessage}</ThemedText>
+        </Card>
+      ) : null}
 
-          {model.groups.map((group) => (
-            <ThemedView key={group.currency} type="backgroundElement" style={styles.card}>
-              <ThemedText type="smallBold">{group.currency}</ThemedText>
-              {group.numbers.map((row) => (
-                <View key={row.key} style={styles.row}>
+      {model.groups.map((group) => {
+        const left = group.numbers.find((row) => row.key === 'left');
+        const rest = group.numbers.filter((row) => row.key !== 'left');
+        return (
+          <Fragment key={group.currency}>
+            <Card style={styles.numbers}>
+              <ThemedText type="overline">{group.currency}</ThemedText>
+              {/* One number leads the card — what is left is the answer the month is opened for. */}
+              {left ? (
+                <View style={styles.hero}>
                   <ThemedText type="small" themeColor="textSecondary">
-                    {row.label}
+                    {left.label}
                   </ThemedText>
-                  <ThemedText type="smallBold">{row.amount}</ThemedText>
+                  <ThemedText type="title" numberOfLines={1} adjustsFontSizeToFit>
+                    {left.amount}
+                  </ThemedText>
                 </View>
-              ))}
+              ) : null}
+              <Divider />
+              <View style={styles.numberRows}>
+                {rest.map((row) => (
+                  <View key={row.key} style={styles.line}>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {row.label}
+                    </ThemedText>
+                    <ThemedText
+                      type="small"
+                      tabular
+                      style={styles.amount}
+                      themeColor={row.key === 'income' ? 'textPositive' : undefined}>
+                      {row.amount}
+                    </ThemedText>
+                  </View>
+                ))}
+              </View>
+            </Card>
 
-              {group.breakdown.length > 0 ? (
-                <>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Витрачено за категоріями
-                  </ThemedText>
+            {group.breakdown.length > 0 ? (
+              <>
+                <SectionLabel note={group.currency}>Витрачено за категоріями</SectionLabel>
+                <Card style={styles.breakdown}>
                   {group.breakdown.map((row) => (
                     <Pressable
                       key={row.categoryId}
                       onPress={() => router.push(`/category/${model.month}/${row.categoryId}`)}>
-                      <View style={styles.row}>
-                        <ThemedText type="small">{row.label}</ThemedText>
-                        <ThemedText type="smallBold">{row.amount}</ThemedText>
+                      <View style={styles.line}>
+                        {/* Over its ліміт for this month, in this row's own currency: the amount
+                            and its category turn red, and nothing else about the row changes. */}
+                        <ThemedText
+                          numberOfLines={1}
+                          style={styles.label}
+                          themeColor={row.overLimit ? 'textDanger' : undefined}>
+                          {row.label}
+                        </ThemedText>
+                        <ThemedText
+                          tabular
+                          style={styles.amount}
+                          themeColor={row.overLimit ? 'textDanger' : undefined}>
+                          {row.amount}
+                        </ThemedText>
+                      </View>
+                      {/* The bar is the month's shape at a glance: the largest категорія fills it
+                          and the rest are read against it. */}
+                      <View style={styles.meter}>
+                        <Meter
+                          value={row.share}
+                          color={row.overLimit ? 'textDanger' : 'textSecondary'}
+                          track={row.overLimit ? 'dangerSurface' : 'backgroundSelected'}
+                        />
                       </View>
                     </Pressable>
                   ))}
-                </>
-              ) : null}
-            </ThemedView>
-          ))}
+                </Card>
+              </>
+            ) : null}
+          </Fragment>
+        );
+      })}
 
-          {/* One «≈» line per monthly number, across every currency of that number — never one
-              total per currency group. Absent whenever it cannot be honest. */}
-          {model.approximate ? (
-            <ThemedView type="backgroundElement" style={styles.card}>
-              <ThemedText type="smallBold">Приблизно в гривні</ThemedText>
-              {model.approximate.map((row) => (
-                <View key={row.key} style={styles.row}>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {row.label}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {row.amount}
-                  </ThemedText>
-                </View>
-              ))}
-            </ThemedView>
-          ) : null}
-        </ScrollView>
-      </SafeAreaView>
-    </ThemedView>
+      {/* One «≈» line per monthly number, across every currency of that number — never one
+          total per currency group. Absent whenever it cannot be honest. */}
+      {model.approximate ? (
+        <>
+          <SectionLabel>Приблизно в гривні</SectionLabel>
+          <Card>
+            {model.approximate.map((row) => (
+              <View key={row.key} style={styles.line}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {row.label}
+                </ThemedText>
+                <ThemedText type="small" tabular themeColor="textSecondary">
+                  {row.amount}
+                </ThemedText>
+              </View>
+            ))}
+          </Card>
+        </>
+      ) : null}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  safeArea: { flex: 1 },
-  content: { padding: Spacing.three, gap: Spacing.three },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  card: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.two },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  stepPlaceholder: { width: Spacing.three },
+  stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  numbers: { gap: Spacing.three },
+  hero: { gap: Spacing.half },
+  numberRows: { gap: Spacing.two + Spacing.half },
+  breakdown: { gap: Spacing.three },
+  line: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    gap: Spacing.two,
+  },
+  label: { flex: 1 },
+  meter: { marginTop: Spacing.two - Spacing.half },
+  amount: { fontWeight: 600 },
 });

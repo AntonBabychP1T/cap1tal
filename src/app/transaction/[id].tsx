@@ -1,12 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert, StyleSheet, View } from 'react-native';
 
 import { askAboutTransfer } from '@/components/transfer-dialog';
 import { Action, Choices, Field } from '@/components/form';
+import { Card, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
@@ -199,8 +198,8 @@ export default function EditTransactionScreen() {
   if (!original) {
     return (
       <Screen>
+        <ScreenHeader title="Транзакція" back={() => router.back()} />
         <ThemedText>Транзакцію не знайдено.</ThemedText>
-        <Action title="Назад" onPress={() => router.back()} />
       </Screen>
     );
   }
@@ -208,12 +207,15 @@ export default function EditTransactionScreen() {
   if (!form) {
     return (
       <Screen>
-        <ThemedText type="smallBold">Коригування поки не редагується</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          Воно зʼявиться разом зі «звірити», що вміє його записати.
-        </ThemedText>
-        <Action title="Видалити" onPress={remove} />
-        <Action title="Назад" onPress={() => router.back()} />
+        <ScreenHeader title="Коригування" back={() => router.back()} />
+        <Card>
+          <ThemedText>Коригування поки не редагується</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            Воно зʼявиться разом зі «звірити», що вміє його записати.
+          </ThemedText>
+          <ImportedDescription of={original} />
+        </Card>
+        <Action variant="destructive" title="Видалити транзакцію" onPress={remove} />
       </Screen>
     );
   }
@@ -223,8 +225,8 @@ export default function EditTransactionScreen() {
 
   return (
     <Screen>
-      <ThemedText type="subtitle">Транзакція</ThemedText>
-      <ThemedView type="backgroundElement" style={styles.card}>
+      <ScreenHeader title="Транзакція" back={() => router.back()} />
+      <Card style={styles.form}>
         <Choices
           label="Тип"
           choices={shapesFor(original).map((shape) => ({
@@ -272,6 +274,7 @@ export default function EditTransactionScreen() {
           autoCapitalize="none"
           placeholder="РРРР-ММ-ДД"
         />
+        <ImportedDescription of={original} />
         {/* A витрата shows «Без категорії» selected when it carries nothing, because that is what
             saving would store — the same default the Головний form shows. A повернення shows
             nothing selected, because nothing is what saving it would refuse. */}
@@ -295,23 +298,30 @@ export default function EditTransactionScreen() {
             onSelect={(sourceId: string) => setForm({ ...form, sourceId })}
           />
         ) : null}
-        <Action title="Зберегти" onPress={apply} />
-        <Action title="Видалити" onPress={remove} />
-        <Action title="Назад" onPress={() => router.back()} />
-      </ThemedView>
+      </Card>
+      {/* The one accent fill on this screen, and the destructive verb under it as text alone —
+          deleting is never the loudest thing here. */}
+      <Action title="Зберегти" onPress={apply} />
+      <Action variant="destructive" title="Видалити транзакцію" onPress={remove} />
     </Screen>
   );
 }
 
-function Screen({ children }: { children: React.ReactNode }) {
+/**
+ * The bank's own text, shown and not edited. It is context for the fields above it — which
+ * «Без категорії» this is, what an arrival on «Без джерела» actually was — and never a field of
+ * its own: nothing here can change it, and `apply` carries it through every retype untouched. A
+ * транзакція recorded by hand has none, and then this renders nothing at all.
+ */
+function ImportedDescription({ of }: { of: Transaction }) {
+  if (!of.description) {
+    return null;
+  }
   return (
-    <ThemedView style={styles.screen}>
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          {children}
-        </ScrollView>
-      </SafeAreaView>
-    </ThemedView>
+    <View style={styles.field}>
+      <ThemedText type="overline">Опис від банку</ThemedText>
+      <ThemedText>{of.description}</ThemedText>
+    </View>
   );
 }
 
@@ -360,8 +370,6 @@ function initialForm(t: Transaction | undefined): Form | undefined {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  safeArea: { flex: 1 },
-  content: { padding: Spacing.three, gap: Spacing.three },
-  card: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.three },
+  form: { gap: Spacing.three },
+  field: { gap: Spacing.one },
 });

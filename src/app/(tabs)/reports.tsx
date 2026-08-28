@@ -1,0 +1,274 @@
+import { useCallback, useMemo, useState } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
+
+import { Choices } from '@/components/form';
+import { Card, Screen, ScreenHeader } from '@/components/surfaces';
+import { ThemedText } from '@/components/themed-text';
+import {
+  accounts as accountsRepo,
+  categories as categoriesRepo,
+  goals as goalsRepo,
+  transactions as transactionsRepo,
+} from '@/db/repos';
+import { namesById } from '@/domain/category';
+import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { reportsViewModel, type ReportsBar } from '@/ui/reports-screen';
+
+import { Spacing, type ThemeColor } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+
+/**
+ * Звіти — the whole history instead of one month: витрачено, дохід and інвестовано by month, one
+ * category by month, and the цілі with their progress. Everything it decides —
+ * which currency is shown, how tall each bar is, which categories the chooser offers, whether a
+ * ціль is reached or overdue — is `src/ui/reports-screen.ts`, where `verify` can reach it; this
+ * file is the wiring.
+ *
+ * The bars are plain `View`s with a height: two charts are not a reason for a charting library,
+ * and a new native-ish dependency would put both the build and iOS at risk for a rectangle
+ * (design D6).
+ */
+
+/** How tall a full-height bar is, in points. Every `size` of the model is a share of this. */
+const CHART_HEIGHT = 96;
+
+/**
+ * One theme colour per number, so a column reads without a legend beside every bar. They are the
+ * palette's own roles, not chart colours of their own: дохід is the app's `textPositive`
+ * everywhere, and інвестовано borrows the one accent.
+ */
+const BAR_COLORS: Readonly<Record<string, ThemeColor>> = {
+  spent: 'textSecondary',
+  income: 'textPositive',
+  invested: 'accent',
+};
+
+function Bar({
+  bar,
+  color,
+  room,
+}: {
+  bar: ReportsBar;
+  color: ThemeColor;
+  /** Whether this chart holds a negative month at all, and so needs a half below the baseline. */
+  room: boolean;
+}) {
+  const theme = useTheme();
+  const filled = (
+    <View
+      style={[styles.bar, { height: bar.size * CHART_HEIGHT, backgroundColor: theme[color] }]}
+    />
+  );
+  return (
+    <View style={styles.barSlot}>
+      {/* Above the baseline for a positive number, below it for a negative one — a month of
+          returns really is below zero, and drawing it upwards would say the opposite. */}
+      <View style={styles.barHalf}>{bar.negative ? null : filled}</View>
+      {room ? (
+        <View style={[styles.barHalf, styles.barHalfBelow]}>{bar.negative ? filled : null}</View>
+      ) : null}
+    </View>
+  );
+}
+
+export default function ReportsScreen() {
+  const [stored] = useReloadOnFocus(
+    useCallback(
+      () => ({
+        // Every рахунок and every категорія, archived included: the history keeps showing what it
+        // already carries, and classifying an old переказ needs its вид.
+        accounts: accountsRepo.list(),
+        transactions: transactionsRepo.listAll(),
+        categories: categoriesRepo.list(),
+        goals: goalsRepo.list(),
+      }),
+      [],
+    ),
+  );
+
+  const [shownCurrency, setShownCurrency] = useState<string>();
+  const [chosenCategoryId, setChosenCategoryId] = useState<string>();
+
+  const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const model = useMemo(
+    () =>
+      reportsViewModel({
+        accounts: stored.accounts,
+        transactions: stored.transactions,
+        categoryNames,
+        goals: stored.goals,
+        shownCurrency,
+        chosenCategoryId,
+        now: new Date(),
+      }),
+    [categoryNames, chosenCategoryId, shownCurrency, stored],
+  );
+
+  return (
+    <Screen>
+      <ScreenHeader title="Звіти" />
+
+      {model.emptyHistoryMessage ? (
+        <Card>
+          <ThemedText>{model.emptyHistoryMessage}</ThemedText>
+        </Card>
+      ) : (
+        <>
+          {/* One currency governs both charts; the switch appears only when there is one. */}
+          {model.canSwitchCurrency ? (
+            <Choices
+              label="Валюта"
+              choices={model.currencies.map((c) => ({ value: c, label: c }))}
+              selected={model.shownCurrency ?? undefined}
+              onSelect={setShownCurrency}
+            />
+          ) : null}
+
+          <Card style={styles.chartCard}>
+            <ThemedText type="overline">Історія за місяцями · {model.shownCurrency}</ThemedText>
+            <View style={styles.legend}>
+              {model.history[0]?.bars.map((bar) => (
+                <View key={bar.key} style={styles.legendItem}>
+                  <Swatch color={BAR_COLORS[bar.key]!} />
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {bar.label}
+                  </ThemedText>
+                </View>
+              ))}
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={styles.chart}>
+                {model.history.map((column) => (
+                  <View key={column.month} style={styles.column}>
+                    <View style={styles.columnBars}>
+                      {column.bars.map((bar) => (
+                        <Bar
+                          key={bar.key}
+                          bar={bar}
+                          color={BAR_COLORS[bar.key]!}
+                          room={model.historyHasNegative}
+                        />
+                      ))}
+                    </View>
+                    <ThemedText type="small" themeColor="textMuted">
+                      {column.label}
+                    </ThemedText>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          </Card>
+
+          <Card style={styles.chartCard}>
+            <ThemedText type="overline">Одна категорія за місяцями</ThemedText>
+            <Choices
+              label="Категорія"
+              choices={model.categoryChoices.map((c) => ({ value: c.id, label: c.label }))}
+              selected={model.chosenCategoryId ?? undefined}
+              onSelect={setChosenCategoryId}
+            />
+            {model.categoryChart.length === 0 ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                Оберіть категорію, щоб побачити її по місяцях.
+              </ThemedText>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.chart}>
+                  {model.categoryChart.map((column) => (
+                    <View key={column.month} style={styles.column}>
+                      <View style={styles.columnBars}>
+                        <Bar
+                          bar={column}
+                          color={BAR_COLORS.spent!}
+                          room={model.categoryChartHasNegative}
+                        />
+                      </View>
+                      <ThemedText type="small" themeColor="textMuted">
+                        {column.label}
+                      </ThemedText>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+            )}
+          </Card>
+        </>
+      )}
+
+      <Card style={styles.chartCard}>
+        <ThemedText type="overline">Цілі</ThemedText>
+        {model.emptyGoalsMessage ? (
+          <ThemedText type="small" themeColor="textSecondary">
+            {model.emptyGoalsMessage}
+          </ThemedText>
+        ) : (
+          model.goals.map((goal) => (
+            <View key={goal.id} style={styles.goal}>
+              <View style={styles.row}>
+                <ThemedText
+                  numberOfLines={1}
+                  style={styles.goalName}
+                  themeColor={
+                    goal.reached ? 'textPositive' : goal.overdue ? 'textDanger' : undefined
+                  }>
+                  {goal.name}
+                </ThemedText>
+                <ThemedText
+                  type="small"
+                  tabular
+                  themeColor={
+                    goal.reached ? 'textPositive' : goal.overdue ? 'textDanger' : 'textSecondary'
+                  }>
+                  {goal.progress} / {goal.target}
+                </ThemedText>
+              </View>
+              <View style={styles.row}>
+                <ThemedText type="small" themeColor="textMuted">
+                  до {goal.deadline}
+                </ThemedText>
+                {goal.reached ? (
+                  <ThemedText type="overline" themeColor="textPositive">
+                    Досягнута
+                  </ThemedText>
+                ) : null}
+                {goal.overdue ? (
+                  <ThemedText type="overline" themeColor="textDanger">
+                    Прострочена
+                  </ThemedText>
+                ) : null}
+              </View>
+            </View>
+          ))
+        )}
+      </Card>
+    </Screen>
+  );
+}
+
+/** The legend's dot — the same colour its bars are drawn in. */
+function Swatch({ color }: { color: ThemeColor }) {
+  const theme = useTheme();
+  return <View style={[styles.swatch, { backgroundColor: theme[color] }]} />;
+}
+
+const styles = StyleSheet.create({
+  chartCard: { gap: Spacing.three },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    gap: Spacing.two,
+  },
+  goal: { gap: Spacing.one },
+  goalName: { flex: 1 },
+  legend: { flexDirection: 'row', gap: Spacing.three, flexWrap: 'wrap' },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  swatch: { width: Spacing.two, height: Spacing.two, borderRadius: Spacing.half },
+  chart: { flexDirection: 'row', gap: Spacing.two, paddingVertical: Spacing.one },
+  column: { alignItems: 'center', gap: Spacing.one },
+  columnBars: { flexDirection: 'row', alignItems: 'stretch', gap: Spacing.half },
+  barSlot: { width: Spacing.two },
+  barHalf: { height: CHART_HEIGHT, justifyContent: 'flex-end' },
+  barHalfBelow: { justifyContent: 'flex-start' },
+  bar: { width: '100%', borderRadius: Spacing.half },
+});
