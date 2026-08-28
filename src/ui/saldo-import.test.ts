@@ -11,12 +11,14 @@ import { accountKey } from '../saldo/survey';
 import { csv, pair, existingAccount, existingState, SALDO_COLUMNS } from '../saldo/test-fixtures';
 import {
   accountRows,
+  applyMerges,
   assignDescription,
   assignTransaction,
   canCommit,
   commitFailed,
   debtRows,
   committed,
+  mergeSuggestions,
   confirmSecondImport,
   planSummary,
   redirectAccount,
@@ -30,9 +32,32 @@ import {
 
 /** An export the flow can actually run on: an opening balance, a витрата and a переказ. */
 const ORDINARY = csv([
-  ...pair({ id: '1', account: 'mono black', journalType: 'DEBIT', amount: '1000.00', other: 'Initial balance', otherType: 'EQUITY' }),
-  ...pair({ id: '2', datetime: '2024-11-01T10:00:00.000', account: 'mono black', journalType: 'CREDIT', amount: '250.00', other: 'булка', otherType: 'EXPENSES' }),
-  ...pair({ id: '3', datetime: '2024-11-02T10:00:00.000', account: 'mono black', journalType: 'CREDIT', amount: '300.00', other: 'готівка', otherType: 'CASH' }),
+  ...pair({
+    id: '1',
+    account: 'mono black',
+    journalType: 'DEBIT',
+    amount: '1000.00',
+    other: 'Initial balance',
+    otherType: 'EQUITY',
+  }),
+  ...pair({
+    id: '2',
+    datetime: '2024-11-01T10:00:00.000',
+    account: 'mono black',
+    journalType: 'CREDIT',
+    amount: '250.00',
+    other: 'булка',
+    otherType: 'EXPENSES',
+  }),
+  ...pair({
+    id: '3',
+    datetime: '2024-11-02T10:00:00.000',
+    account: 'mono black',
+    journalType: 'CREDIT',
+    amount: '300.00',
+    other: 'готівка',
+    otherType: 'CASH',
+  }),
 ]);
 
 const started = () => startWithText(startFlow(), ORDINARY);
@@ -41,7 +66,14 @@ describe('the import flow — choosing the export', () => {
   it('Scenario: A file with an alien header is refused with the reason', () => {
     const withoutJournalType = SALDO_COLUMNS.filter((column) => column !== 'Journal Type');
     const alien = csv(
-      pair({ id: '1', account: 'mono black', journalType: 'DEBIT', amount: '1.00', other: 'булка', otherType: 'EXPENSES' }),
+      pair({
+        id: '1',
+        account: 'mono black',
+        journalType: 'DEBIT',
+        amount: '1.00',
+        other: 'булка',
+        otherType: 'EXPENSES',
+      }),
       withoutJournalType,
     );
 
@@ -56,7 +88,14 @@ describe('the import flow — choosing the export', () => {
 
   it('A malformed amount refuses the file too, naming it', () => {
     const malformed = csv(
-      pair({ id: '1', account: 'mono black', journalType: 'DEBIT', amount: '1,234.5', other: 'булка', otherType: 'EXPENSES' }),
+      pair({
+        id: '1',
+        account: 'mono black',
+        journalType: 'DEBIT',
+        amount: '1,234.5',
+        other: 'булка',
+        otherType: 'EXPENSES',
+      }),
     );
 
     expect(startWithText(startFlow(), malformed).refusal).toMatch(/1,234\.5/);
@@ -87,8 +126,22 @@ describe('the import flow — choosing the export', () => {
 describe('the import flow — the account map', () => {
   it('Scenario: Merging two entries leaves one рахунок', () => {
     const twoCards = csv([
-      ...pair({ id: '1', account: 'mono black', journalType: 'CREDIT', amount: '100.00', other: 'булка', otherType: 'EXPENSES' }),
-      ...pair({ id: '2', account: 'Monobank UAH, Black', journalType: 'CREDIT', amount: '200.00', other: 'булка', otherType: 'EXPENSES' }),
+      ...pair({
+        id: '1',
+        account: 'mono black',
+        journalType: 'CREDIT',
+        amount: '100.00',
+        other: 'булка',
+        otherType: 'EXPENSES',
+      }),
+      ...pair({
+        id: '2',
+        account: 'Monobank UAH, Black',
+        journalType: 'CREDIT',
+        amount: '200.00',
+        other: 'булка',
+        otherType: 'EXPENSES',
+      }),
     ]);
     const state = startWithText(startFlow(), twoCards);
     expect(state.plan!.accounts).toHaveLength(2);
@@ -111,7 +164,14 @@ describe('the import flow — the account map', () => {
 
   it('Scenario: Changing a вид changes what the month counts', () => {
     const reserve = csv([
-      ...pair({ id: '1', account: 'РЕЗЕРВ', journalType: 'DEBIT', amount: '500.00', other: 'Initial balance', otherType: 'EQUITY' }),
+      ...pair({
+        id: '1',
+        account: 'РЕЗЕРВ',
+        journalType: 'DEBIT',
+        amount: '500.00',
+        other: 'Initial balance',
+        otherType: 'EQUITY',
+      }),
     ]);
     const state = startWithText(startFlow(), reserve);
     expect(accountRows(state)[0]!.becomes.kind).toBe('spending');
@@ -206,8 +266,8 @@ describe('the import flow — proposed категорії and джерела', (
     expect(redirected.plan!.categories.map((p) => p.saldoName)).not.toContain('булка');
     expect(planSummary(redirected)?.categories).toBe(0);
     // And the витрата carries the existing row rather than a new one.
-    const expense = redirected.plan!.transactions
-      .map((planned) => planned.transaction)
+    const expense = redirected
+      .plan!.transactions.map((planned) => planned.transaction)
       .find((t) => t.type === 'expense');
     expect(expense?.type === 'expense' && expense.categoryId).toBe('groceries');
   });
@@ -215,8 +275,26 @@ describe('the import flow — proposed категорії and джерела', (
 
 /** «Борг» history: lending and a repayment, both needing a person before anything may be stored. */
 const DEBTS = csv([
-  ...pair({ id: '1', datetime: '2024-11-01T10:00:00.000', description: 'борг', account: 'mono black', journalType: 'CREDIT', amount: '1000.00', other: 'Борг', otherType: 'EXPENSES' }),
-  ...pair({ id: '2', datetime: '2024-11-02T10:00:00.000', description: 'борг', account: 'mono black', journalType: 'DEBIT', amount: '400.00', other: 'Борг', otherType: 'EXPENSES' }),
+  ...pair({
+    id: '1',
+    datetime: '2024-11-01T10:00:00.000',
+    description: 'борг',
+    account: 'mono black',
+    journalType: 'CREDIT',
+    amount: '1000.00',
+    other: 'Борг',
+    otherType: 'EXPENSES',
+  }),
+  ...pair({
+    id: '2',
+    datetime: '2024-11-02T10:00:00.000',
+    description: 'борг',
+    account: 'mono black',
+    journalType: 'DEBIT',
+    amount: '400.00',
+    other: 'Борг',
+    otherType: 'EXPENSES',
+  }),
 ]);
 
 const yaroslav = { to: 'person', name: 'Ярослав' } as const;
@@ -266,8 +344,20 @@ describe('the import flow — «Борг»', () => {
 
     // Before any assignment: both listed, both unassigned, each with what the export says.
     expect(debtRows(state)).toEqual([
-      { transactionId: '1', description: 'борг', date: '2024-11-01', amount: money(100000, 'UAH'), assigned: false },
-      { transactionId: '2', description: 'борг', date: '2024-11-02', amount: money(40000, 'UAH'), assigned: false },
+      {
+        transactionId: '1',
+        description: 'борг',
+        date: '2024-11-01',
+        amount: money(100000, 'UAH'),
+        assigned: false,
+      },
+      {
+        transactionId: '2',
+        description: 'борг',
+        date: '2024-11-02',
+        amount: money(40000, 'UAH'),
+        assigned: false,
+      },
     ]);
 
     const assigned = assignDescription(state, 'борг', yaroslav);
@@ -275,8 +365,22 @@ describe('the import flow — «Борг»', () => {
     // After: both carry the person their money moves to and from, and keep the description they
     // were assigned by.
     expect(debtRows(assigned)).toEqual([
-      { transactionId: '1', description: 'борг', date: '2024-11-01', amount: money(100000, 'UAH'), assigned: true, person: 'Ярослав' },
-      { transactionId: '2', description: 'борг', date: '2024-11-02', amount: money(40000, 'UAH'), assigned: true, person: 'Ярослав' },
+      {
+        transactionId: '1',
+        description: 'борг',
+        date: '2024-11-01',
+        amount: money(100000, 'UAH'),
+        assigned: true,
+        person: 'Ярослав',
+      },
+      {
+        transactionId: '2',
+        description: 'борг',
+        date: '2024-11-02',
+        amount: money(40000, 'UAH'),
+        assigned: true,
+        person: 'Ярослав',
+      },
     ]);
     expect(unassignedDebts(assigned)).toEqual([]);
   });
@@ -380,7 +484,14 @@ describe('the import flow — the report and the pre-commit summary', () => {
     // One in-transit departure with no arrival: the рахунок it left cannot be explained by the
     // plan, so the report shows the gap and names the row.
     const unpaired = csv([
-      ...pair({ id: '1', account: 'Monobank UAH, White', journalType: 'CREDIT', amount: '121.98', other: 'Monobank UAH, Black', otherType: 'MONEY_ON_THE_WAY' }),
+      ...pair({
+        id: '1',
+        account: 'Monobank UAH, White',
+        journalType: 'CREDIT',
+        amount: '121.98',
+        other: 'Monobank UAH, Black',
+        otherType: 'MONEY_ON_THE_WAY',
+      }),
     ]);
 
     const report = startWithText(startFlow(), unpaired).report!;
@@ -395,8 +506,26 @@ describe('the import flow — the report and the pre-commit summary', () => {
 
   it('Scenario: An over-repaid рахунок-борг is visible before the commit', () => {
     const overRepaid = csv([
-      ...pair({ id: '1', datetime: '2024-11-01T10:00:00.000', description: 'борг', account: 'mono black', journalType: 'CREDIT', amount: '1000.00', other: 'Борг', otherType: 'EXPENSES' }),
-      ...pair({ id: '2', datetime: '2024-11-02T10:00:00.000', description: 'борг', account: 'mono black', journalType: 'DEBIT', amount: '1100.00', other: 'Борг', otherType: 'EXPENSES' }),
+      ...pair({
+        id: '1',
+        datetime: '2024-11-01T10:00:00.000',
+        description: 'борг',
+        account: 'mono black',
+        journalType: 'CREDIT',
+        amount: '1000.00',
+        other: 'Борг',
+        otherType: 'EXPENSES',
+      }),
+      ...pair({
+        id: '2',
+        datetime: '2024-11-02T10:00:00.000',
+        description: 'борг',
+        account: 'mono black',
+        journalType: 'DEBIT',
+        amount: '1100.00',
+        other: 'Борг',
+        otherType: 'EXPENSES',
+      }),
     ]);
     const state = assignDescription(
       toStep(startWithText(startFlow(), overRepaid), 'report'),
@@ -432,7 +561,10 @@ describe('the import flow — the commit gate', () => {
   it('Scenario: A second import states when the first happened', () => {
     const first = new Date('2026-08-25T12:00:00.000Z');
 
-    const state = toStep(startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY), 'report');
+    const state = toStep(
+      startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY),
+      'report',
+    );
 
     expect(state.previouslyCommittedAt).toEqual(first);
   });
@@ -440,7 +572,10 @@ describe('the import flow — the commit gate', () => {
   it('Scenario: Declining the extra confirmation writes nothing', () => {
     const first = new Date('2026-08-25T12:00:00.000Z');
 
-    const state = toStep(startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY), 'report');
+    const state = toStep(
+      startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY),
+      'report',
+    );
 
     // Nothing is written because nothing may be: the commit is not on offer at all.
     expect(canCommit(state)).toBe(false);
@@ -448,7 +583,10 @@ describe('the import flow — the commit gate', () => {
 
   it('Scenario: Accepting the extra confirmation stores the second plan', () => {
     const first = new Date('2026-08-25T12:00:00.000Z');
-    const state = toStep(startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY), 'report');
+    const state = toStep(
+      startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY),
+      'report',
+    );
 
     const confirmed = confirmSecondImport(state);
 
@@ -477,5 +615,242 @@ describe('the import flow — the commit gate', () => {
     expect(failed.step).toBe('done');
     expect(failed.outcome).toEqual({ kind: 'failed', reason: 'FOREIGN KEY constraint failed' });
     expect(canCommit(failed)).toBe(false);
+  });
+});
+
+describe('the import flow — proposed merges', () => {
+  const uahKey = (name: string) => accountKey(name, 'UAH');
+
+  /** Two spellings of one card, plus a third account that resembles neither. */
+  const TWO_SPELLINGS = csv([
+    ...pair({
+      id: '1',
+      account: 'mono black',
+      journalType: 'DEBIT',
+      amount: '1000.00',
+      other: 'Initial balance',
+      otherType: 'EQUITY',
+    }),
+    ...pair({
+      id: '2',
+      account: 'Monobank Black',
+      journalType: 'CREDIT',
+      amount: '250.00',
+      other: 'булка',
+      otherType: 'EXPENSES',
+    }),
+    ...pair({
+      id: '3',
+      account: 'готівка',
+      journalType: 'CREDIT',
+      amount: '300.00',
+      other: 'кава',
+      otherType: 'EXPENSES',
+    }),
+  ]);
+
+  it('Scenario: Two spellings of one card are proposed as one рахунок', () => {
+    const state = startWithText(startFlow(), TWO_SPELLINGS);
+    const proposed = mergeSuggestions(state);
+
+    expect(proposed).toEqual([
+      {
+        key: uahKey('Monobank Black'),
+        entryName: 'Monobank Black',
+        onto: { to: 'entry', key: uahKey('mono black') },
+        targetName: 'mono black',
+        ontoExisting: false,
+        reason: 'спільне слово в назві',
+      },
+    ]);
+    // Proposing changes nothing: both entries are still their own рахунок until the owner accepts.
+    expect(accountRows(state).filter((row) => row.mergedInto)).toEqual([]);
+    expect(state.decisions.accountRedirects).toBeUndefined();
+  });
+
+  it('Scenario: A рахунок the owner already keeps wins over another entry', () => {
+    const state = startWithText(
+      startFlow({
+        existing: existingState({
+          accounts: [existingAccount({ id: 'kept', name: 'Monobank Black' })],
+        }),
+      }),
+      TWO_SPELLINGS,
+    );
+
+    // Both spellings land on the рахунок that already holds this card's opening balance and its
+    // транзакції, and neither is proposed onto the other.
+    expect(mergeSuggestions(state).map((s) => [s.key, s.onto])).toEqual([
+      [uahKey('mono black'), { to: 'account', accountId: 'kept' }],
+      [uahKey('Monobank Black'), { to: 'account', accountId: 'kept' }],
+    ]);
+    expect(mergeSuggestions(state).every((s) => s.ontoExisting)).toBe(true);
+  });
+
+  it('Scenario: An equal match proposes nothing', () => {
+    const state = startWithText(
+      startFlow({
+        existing: existingState({
+          accounts: [
+            existingAccount({ id: 'a', name: 'Monobank Black' }),
+            existingAccount({ id: 'b', name: 'Monobank Black стара' }),
+          ],
+        }),
+      }),
+      csv([
+        ...pair({
+          id: '1',
+          account: 'mono black',
+          journalType: 'DEBIT',
+          amount: '1000.00',
+          other: 'Initial balance',
+          otherType: 'EQUITY',
+        }),
+      ]),
+    );
+
+    // «mono black» shares exactly one word with both. Naming one of them would be a coin flip.
+    expect(mergeSuggestions(state)).toEqual([]);
+  });
+
+  it('Scenario: Nothing is proposed across currencies', () => {
+    const state = startWithText(
+      startFlow(),
+      csv([
+        ...pair({
+          id: '1',
+          account: 'mono black',
+          journalType: 'DEBIT',
+          amount: '1000.00',
+          other: 'Initial balance',
+          otherType: 'EQUITY',
+        }),
+        ...pair({
+          id: '2',
+          account: 'mono black',
+          currency: 'USD',
+          journalType: 'DEBIT',
+          amount: '100.00',
+          other: 'Initial balance',
+          otherType: 'EQUITY',
+          otherCurrency: 'USD',
+        }),
+      ]),
+    );
+
+    // The import rejects a cross-currency redirect, so proposing one would be proposing a refusal.
+    expect(mergeSuggestions(state)).toEqual([]);
+  });
+
+  it('Scenario: Proposals never chain', () => {
+    const state = startWithText(
+      startFlow(),
+      csv([
+        ...pair({
+          id: '1',
+          account: 'mono black',
+          journalType: 'DEBIT',
+          amount: '1000.00',
+          other: 'Initial balance',
+          otherType: 'EQUITY',
+        }),
+        ...pair({
+          id: '2',
+          account: 'Monobank Black',
+          journalType: 'CREDIT',
+          amount: '250.00',
+          other: 'булка',
+          otherType: 'EXPENSES',
+        }),
+        ...pair({
+          id: '3',
+          account: 'моно black стара',
+          journalType: 'CREDIT',
+          amount: '50.00',
+          other: 'кава',
+          otherType: 'EXPENSES',
+        }),
+      ]),
+    );
+
+    const proposed = mergeSuggestions(state);
+    expect(proposed.map((s) => s.onto)).toEqual([
+      { to: 'entry', key: uahKey('mono black') },
+      { to: 'entry', key: uahKey('mono black') },
+    ]);
+    // No proposal points at an entry that is itself merging away.
+    const merging = new Set(proposed.map((s) => s.key));
+    for (const suggestion of proposed) {
+      expect(suggestion.onto.to === 'entry' && merging.has(suggestion.onto.key)).toBe(false);
+    }
+  });
+
+  it('Scenario: Accepting the set merges every proposal at once', () => {
+    const state = startWithText(startFlow(), TWO_SPELLINGS);
+    const merged = applyMerges(state, mergeSuggestions(state));
+
+    const rows = accountRows(merged);
+    expect(rows.filter((row) => row.mergedInto).map((row) => row.entry.saldoAccount)).toEqual([
+      'Monobank Black',
+    ]);
+    // Two entries, one рахунок — plus готівка, which nothing matched.
+    expect(new Set(rows.map((row) => row.becomes.id)).size).toBe(2);
+  });
+
+  it('Scenario: A refused proposal is not applied', () => {
+    const state = startWithText(startFlow(), TWO_SPELLINGS);
+    const refusedAll = applyMerges(state, []);
+
+    expect(refusedAll).toBe(state);
+    expect(refusedAll.decisions.accountRedirects).toBeUndefined();
+    expect(accountRows(refusedAll).filter((row) => row.mergedInto)).toEqual([]);
+  });
+
+  it('Scenario: An accepted merge can be undone', () => {
+    const state = startWithText(startFlow(), TWO_SPELLINGS);
+    const merged = applyMerges(state, mergeSuggestions(state));
+    const undone = redirectAccount(merged, uahKey('Monobank Black'));
+
+    expect(accountRows(undone).filter((row) => row.mergedInto)).toEqual([]);
+    // Undone through the path a hand-made merge is undone through: nothing about a proposal is
+    // remembered as a proposal.
+    expect(undone.decisions.accountRedirects).toBeUndefined();
+    expect(new Set(accountRows(undone).map((row) => row.becomes.id)).size).toBe(3);
+  });
+
+  it('Accepting a set leaves the same map as making the merges one at a time', () => {
+    const state = startWithText(startFlow(), TWO_SPELLINGS);
+    const proposed = mergeSuggestions(state);
+
+    const atOnce = applyMerges(state, proposed);
+    const oneByOne = proposed.reduce(
+      (current, suggestion) => redirectAccount(current, suggestion.key, suggestion.onto),
+      state,
+    );
+
+    expect(atOnce.decisions).toEqual(oneByOne.decisions);
+    expect(accountRows(atOnce)).toEqual(accountRows(oneByOne));
+  });
+
+  it('Scenario: Nothing is written by proposing or accepting', () => {
+    const state = startWithText(startFlow(), TWO_SPELLINGS);
+    const merged = applyMerges(state, mergeSuggestions(state));
+
+    // The flow's view of the device is untouched: no рахунок, no транзакція, nothing committed.
+    expect(merged.existing).toEqual(state.existing);
+    expect(merged.existing.accounts).toEqual([]);
+    expect(merged.existing.transactions).toEqual([]);
+    expect(merged.outcome).toBeUndefined();
+  });
+
+  it('A decision the owner already made is never argued with', () => {
+    const state = startWithText(startFlow(), TWO_SPELLINGS);
+    const decided = redirectAccount(state, uahKey('Monobank Black'), {
+      to: 'entry',
+      key: uahKey('готівка'),
+    });
+
+    // Their answer stands, and the entry they answered for is proposed nothing.
+    expect(mergeSuggestions(decided).map((s) => s.key)).not.toContain(uahKey('Monobank Black'));
   });
 });
