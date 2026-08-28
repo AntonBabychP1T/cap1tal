@@ -56,6 +56,16 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   expense itself is the UAH the bank charged.
 - **Uncategorised** (без категорії) — an imported transaction no rule recognised. Still an
   expense, still counted as spent, highlighted for one-tap categorisation.
+- **Unsourced** (без джерела) — the income half of "uncategorised": the джерело an imported
+  arrival carries while the bank has said only that money came in. A visible starting state, never
+  a verdict and never a classification of a refund — the owner retypes it into what it was.
+- **Draft** (чернетка) — a транзакція an import proposes and the owner has not yet said a word
+  about: it sits on a рахунок with a date, the text the bank sent, and a proposed amount, and it
+  moves no money — no розрахунковий баланс and no monthly number reads it. Confirming it creates
+  the транзакція it proposed; dismissing it creates nothing and it never returns.
+- **Watched app** (відстежуваний застосунок) — a phone app whose push notifications the owner has
+  opted this app into reading, mapped to exactly one рахунок. Only a watched app's notifications
+  are read at all, and what is read never leaves the phone.
 
 ## Categories and sources
 
@@ -103,3 +113,4 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 | Fee on a transfer | Part of the transfer | the shortfall is an expense ("Fees") **[PROPOSED]** |
 | Bank balance | Computed balance | the bank's number is shown for comparison; the computed one is the truth until a correction explains the gap |
 | Original-currency amount | The expense | the expense is the UAH the bank charged **[PROPOSED]** |
+| Draft (чернетка) | Transaction | it only proposes; nothing counts it until the owner confirms it |
