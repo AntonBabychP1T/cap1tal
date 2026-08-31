@@ -233,3 +233,36 @@ $ adb shell run-as com.antonbabychp1t.cap1tal cat no_backup/notification-capture
       - `src/notifications/draft.ts` `addWatch` still accepts a `com.ftband.mono*` package into the
         domain watch list; D6 put the refusal at the port. Nothing calls either path yet —
         `bank-notifications-screen` must route every watch through the port.
+
+### Re-smoke after the change was committed (2026-08-31, emulator-5554, Pixel_10_Pro, API 37)
+
+The diff-reviewer's warning about §5.2 was fair: that block is a collage across runs. This run
+redid the reachable scenarios as one contiguous transcript each, on the installed build, with the
+`DEV_COLLECT` / `DEV_ACKNOWLEDGE` split. Screenshots in
+`.cache/android/smoke/bank-notifications-capture/`. No defects; `logcat -s AndroidRuntime:E` empty.
+
+- **Granting / revoking** — at launch `settings get secure enabled_notification_listeners` ended
+  with `…/expo.modules.notificationcapture.CaptureListenerService` and the step read «готово» +
+  «Налаштування доступу»; the system screen listed **cap1tal** under *Allowed*. Toggled off →
+  the setting no longer names the service → «Оновити стан» flipped the step to «ще не зроблено» +
+  «Надати доступ». Re-granted through the app's own action → «готово» again. Both directions agree
+  with the operating system's own answer.
+- **A stored watched set naming monobank still captures nothing** — the broadcast carrying
+  `com.android.shell,com.ftband.mono` left `watched.json` as `["com.android.shell"]`. The other
+  half (a notification posted *by* `com.ftband.mono`) stays unreachable for the reason task 2.2
+  records: `cmd notification post` always posts as `com.android.shell`.
+- **A watched app's notification becomes a captured notification** — queue at 0 bytes before,
+  and after the post exactly
+  `{"packageName":"com.android.shell","postedAt":1788199231712,"title":"Оплата","text":"Картка *1234, 125.50 UAH, СІЛЬПО"}`.
+- **Collecting without acknowledging redelivers** — `DEV_COLLECT` twice, `collected 1, waiting 1`
+  both times, with `md5sum` of `queue.jsonl` identical (`841353374b…`) either side. The md5 is the
+  part the old evidence was missing.
+- **After acknowledgement nothing returns** — `acknowledged 1, waiting 0`, then
+  `collected 0, waiting 0`, queue back to 0 bytes.
+- **An unwatched app's notification leaves no trace** — with the watched set pointed elsewhere, a
+  posted notification reached the shade (`cmd notification list` shows it) while the queue stayed
+  at 0 bytes, `DEV_COLLECT` reporting 0 either side to prove the service was alive.
+
+Not re-exercised this run (the earlier evidence stands): the 500 bound, the reboot, "a capture
+during processing", and "nothing is captured before any set was given" — that last one needs the
+app-data wipe, which would have cost unrelated in-flight state on the device.
