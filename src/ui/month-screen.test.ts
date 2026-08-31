@@ -386,7 +386,7 @@ describe('the breakdown marks a category over its ліміт', () => {
  * is proven here rather than left to JSX.
  */
 describe('the breakdown sizes its bars against the month’s largest категорія', () => {
-  it('The largest fills its track and the rest read against it', () => {
+  it('Scenario: The largest fills its track and the rest read against it', () => {
     const model = view([
       expense(100000, 'UAH', 'groceries'),
       expense(25000, 'UAH', 'transport'),
@@ -400,14 +400,14 @@ describe('the breakdown sizes its bars against the month’s largest катег�
     ]);
   });
 
-  it('Each currency is measured against its own largest, never across currencies', () => {
+  it('Scenario: Each currency is measured against its own largest, never across currencies', () => {
     const model = view([expense(100000, 'UAH', 'groceries'), expense(1000, 'USD', 'groceries')]);
 
     expect(groupOf(model, 'UAH').breakdown[0]?.share).toBe(1);
     expect(groupOf(model, 'USD').breakdown[0]?.share).toBe(1);
   });
 
-  it('A категорія a повернення pushed below zero gets no bar', () => {
+  it('Scenario: A категорія a повернення pushed below zero gets no bar', () => {
     const model = view([
       expense(100000, 'UAH', 'groceries'),
       { ...expense(0, 'UAH', 'transport'), amount: money(-20000, 'UAH') },

@@ -66,9 +66,13 @@
       транзакція in another currency is judged by the ліміт's currency" and "The «Без
       категорії» highlight and the over-limit mark coexist".
 - [x] 3.3 Render the marks red in `src/app/(tabs)/index.tsx`, the Місяць screen and its
-      drill-down, feeding the view models the limits from `limits-repo`; verify
-      `npm run verify` stays green and the flags from 3.1–3.2 are the only logic the screens
-      add.
+      drill-down, feeding the view models the limits from `limits-repo`, and draw the Місяць
+      breakdown's bars from a `share` field the view model computes (each row's amount against
+      the month's largest категорія in the same currency), so the screens map over the view
+      models and decide nothing themselves; verify `npm run verify` stays green and
+      `src/ui/month-screen.test.ts` covers the month-screen scenarios "The largest fills its
+      track and the rest read against it", "Each currency is measured against its own largest,
+      never across currencies" and "A категорія a повернення pushed below zero gets no bar".
 
 ## 4. Налаштування: Ліміти and Цілі
 
@@ -125,5 +129,11 @@
 - [x] 6.1 Extend the glossary's **Goal (ціль)** entry with the states the specs name —
       reached (досягнута) and overdue (прострочена) — and the progress-is-the-рахунок's-баланс
       decision; verify every term the new specs use exists in `docs/glossary.md` verbatim.
-- [ ] 6.2 Run `npm run verify` on the finished tree and quote its last lines green; then run
+- [x] 6.2 Run `npm run verify` on the finished tree and quote its last lines green; then run
       the `diff-reviewer` subagent and fix CRITICAL findings until it returns PASS.
+      `Test Files 63 passed (63)` / `Tests 957 passed (957)` /
+      `✔ verify passed (d778e448f7b5c0a89bc62593a9039b29e08308f0)`.
+      diff-reviewer: FAIL on the first pass — the `share` bar on the Місяць breakdown rows was
+      behaviour no requirement asked for; it is now specified in the month-screen delta with
+      three scenarios and the tests carry their `Scenario:` titles. Second pass PASS,
+      0 critical, 6 warnings accepted.

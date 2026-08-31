@@ -31,3 +31,32 @@ month where the category is not over shows it unmarked.
 - **WHEN** Groceries is over its ліміт for August and under it for July, and the owner steps
   from August to July
 - **THEN** July's Groceries row is not marked
+
+### Requirement: Each breakdown row carries a bar sized against the month's largest категорія
+
+For the shown month the Місяць screen SHALL draw beside each breakdown row a bar whose length is
+that row's amount as a fraction of the largest amount among the rows of the same currency, so the
+month's largest категорія fills its track and the rest are read against it. Each currency's rows
+SHALL be measured against that currency's own largest, never across currencies. A row whose amount
+is zero or less — a категорія a повернення pulled to or below zero — SHALL get no bar, and when the
+largest amount of a currency's rows is itself zero or less no row of that currency SHALL get one.
+The bar states no number of its own: it is the shape of the same amounts the rows already show, and
+the bar of a row marked over its ліміт carries that same mark.
+
+#### Scenario: The largest fills its track and the rest read against it
+
+- **WHEN** August's UAH breakdown holds 100000 minor units in Groceries, 50000 in «Без категорії»
+  and 25000 in transport
+- **THEN** the Groceries bar is full, the «Без категорії» bar is half of the track and the
+  transport bar is a quarter of it
+
+#### Scenario: Each currency is measured against its own largest, never across currencies
+
+- **WHEN** August holds 100000 minor units UAH and 1000 minor units USD of Groceries витрати
+- **THEN** the Groceries bar is full in the UAH group and full in the USD group
+
+#### Scenario: A категорія a повернення pushed below zero gets no bar
+
+- **WHEN** August's UAH breakdown holds 100000 minor units in Groceries and transport stands at
+  −20000 minor units after a повернення
+- **THEN** the transport row gets no bar

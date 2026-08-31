@@ -52,10 +52,11 @@ step only reads what is already true and compares it with what the owner wants.
 
 Non-goals of this change (deliberate):
 
-- No overall monthly limit (vision §13.13) — ліміти are per category only.
-- No push notifications of any kind (vision §13.14) and no blocking: exceeding a ліміт changes
-  colours, never behaviour.
-- No forecasts (vision §13.10) — the charts show what happened, never "at this pace…".
+- No overall monthly limit (vision §14.13) — ліміти are per category only.
+- No over-limit notification and no blocking: exceeding a ліміт changes colours, never behaviour.
+  Vision §13 permits a daily bookkeeping reminder and operational error alerts, neither of which
+  reports a category crossing its limit; vision §14.14 still excludes remote push notifications.
+- No forecasts (vision §14.10) — the charts show what happened, never "at this pace…".
 - No manual goal progress and no multi-рахунок цілі: one ціль reads one рахунок's
   розрахунковий баланс, and no money is ever assigned to a ціль by hand.
 - No rate conversion anywhere in this step: ліміти compare within their own currency, цілі live
