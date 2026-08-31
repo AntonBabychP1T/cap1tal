@@ -21,7 +21,8 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Investment account** (інвестиційний рахунок) — military bonds, Inzhur, IBKR, Binance, …;
   kind *investment*. The app knows only money in and out, plus a hand-entered current value.
 - **Debt account** (рахунок-борг) — one per person the owner has lent money to; kind *debt*.
-  Its balance is what that person still owes.
+  Its balance is what that person still owes. The Saldo import is the one exception: its debts are
+  all closed and nameless, so it puts them on a single «Борги» account per currency.
 - **Computed balance** (розрахунковий баланс) — opening balance plus every transaction since; the
   balance the app believes.
 - **Bank balance** (баланс банку) — the balance the bank reports where an API exists; shown next

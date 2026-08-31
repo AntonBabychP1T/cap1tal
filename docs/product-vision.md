@@ -9,7 +9,9 @@ the UI. Terms are defined in [glossary.md](glossary.md).
 
 ## 1. Who it is for and the problem
 
-- One person, one phone. Data is not shared with anyone and not synchronised anywhere.
+- One person, one primary phone. Data is not shared with anyone. The database remains local-first;
+  the owner may opt into a private daily backup in their own Google Drive for recovery on a new
+  phone. This is backup synchronisation, not a shared account or live multi-device editing.
 - Other people may install the app for themselves, so nothing personal is hardcoded into it.
 - The problem, in the owner's words: *"I don't know where my money went this month"* and
   *"I don't know how much I can still spend."* Both must be answered.
@@ -146,16 +148,34 @@ Not in v1: forecasts ("at this pace you will have X left").
 
 ## 12. Trust and privacy **[PROPOSED]**
 
-- All data lives on the phone. The only outbound connections are the monobank API (with the owner's
-  own token, stored on the device) and monobank's exchange rate. No accounts, no cloud, no analytics.
-- Bank notifications are parsed on the device and never sent anywhere.
-- Backup is a complete export to a file (accounts, categories, rules, limits, goals, transactions)
-  that the owner stores wherever they like, and an import that restores it on a new phone. Losing the
-  phone means losing everything since the last export. Trade-off accepted: no sync, nothing leaks.
+- The phone's database is the primary truth and the app works offline. Outbound connections are
+  limited to the monobank API and exchange rate, plus Google Drive only after the owner explicitly
+  connects it for backup. There is no analytics and no cap1tal server account.
+- Bank notifications are captured and parsed on the device. Raw notification payloads and the local
+  capture queue never enter the Google Drive backup and are never sent to a server.
+- Backup has one versioned file format. The owner can export/import that file manually. When Google
+  Drive backup is enabled, the same backup is sent automatically about once a day, retried when the
+  phone next has network/app execution time, and can be restored explicitly on a new phone. The app
+  shows the last successful backup and failures; it never claims an exact daily time Android cannot
+  guarantee. Tokens and OAuth secrets are never included.
+- Google Drive is recovery, not silent two-way merging. A second device does not concurrently edit
+  the same data in v1; restore always names the backup version and date before replacing local state.
+- The backup contains sensitive financial data. Its encryption and recovery-key contract must be
+  decided and tested before Google Drive backup ships.
 
-## 13. Explicitly not in v1 **[PROPOSED list, confirmed by the owner]**
+## 13. Reminders and operational notifications
 
-1. Shared data, multiple users, sync between devices, login.
+- The owner may enable one local daily reminder at a chosen time to record and review expenses.
+  Tapping it opens the place where a transaction can be added and pending drafts can be checked.
+- cap1tal may send a local notification when an action failed and needs attention: import, save,
+  local or Google Drive backup, or notification capture/processing. The notification says only what
+  action failed, exposes no bank text or secret on the lock screen, and leads to details and retry.
+- These are device-local notifications scheduled by the app. There is no remote push-notification
+  service, marketing messaging or analytics channel.
+
+## 14. Explicitly not in v1 **[PROPOSED list, confirmed by the owner]**
+
+1. Shared data, multiple users, cap1tal accounts, or live two-way sync between devices.
 2. Investment positions / instruments and automatic prices (only a hand-entered value per account).
 3. Loan details: due dates, interest rates, repayment schedules (only a debt account per person).
 4. "Money in transit" / bank holds as a separate state — a hold is just a transaction.
@@ -163,22 +183,22 @@ Not in v1: forecasts ("at this pace you will have X left").
 6. Recurring or scheduled transactions.
 7. Bank integrations beyond the monobank API and notification parsing (no PrivatBank API, no SMS).
 8. Category hierarchy and tags.
-9. Cloud backup or sync — file export/import only.
+9. Cloud services other than the owner's opt-in Google Drive backup.
 10. Forecasts ("at this pace…").
 11. Moving a transaction to a different month than its date.
 12. Payments or transfers initiated from the app — it records money, it never moves it.
 13. An overall monthly limit (only per-category limits).
-14. Push notifications of any kind.
+14. Remote push notifications; the daily reminder and actionable error alerts are local only.
 15. An iOS build — but nothing in the product model may depend on Android or stand in the way of iOS.
 
-## 14. How we know v1 worked **[PROPOSED]**
+## 15. How we know v1 worked **[PROPOSED]**
 
 For three consecutive calendar months: every transaction from every account is in the app, "left" is
 a number the owner trusts without opening a bank app or recounting cash, and the month's corrections
 total less than 2 % of that month's spending. (The 2 % is the interviewer's figure; the owner may
 replace it.)
 
-## 15. Import notes and what is left open
+## 16. Import notes and what is left open
 
 Decided for the one-time import of the Saldo history:
 
@@ -189,10 +209,12 @@ Decided for the one-time import of the Saldo history:
 - Saldo records lending as an expense category "Борг" with repayments as refunds. That is the same
   thing this product models as debt accounts; the history maps onto debt accounts (lend = transfer
   out, repayment = transfer back).
+- The person behind a historic "Борг" transaction is not kept. Every debt the export carries is
+  already repaid, so what is worth keeping is that the money went out and came back — not who
+  held it. The import puts all of them on one debt account «Борги» per currency and asks nothing.
+  Debts entered by hand from now on still name their person, one account each.
 
 Still open, to be decided when relevant:
 
-- How to identify the person behind each historic "Борг" transaction (probably from its
-  description), so it lands in the right debt account.
 - Whether the monthly picture should also show the approximate-UAH totals per account kind, or only
   the grand total.
