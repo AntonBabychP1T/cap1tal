@@ -47,6 +47,62 @@ describe('parseAmount', () => {
   });
 });
 
+/**
+ * What was refused, as the owner reads it: `failureMessage` puts exactly this string into an
+ * Alert. The currency codes are set aside before the "no English" check — an ISO-4217 code is
+ * not a word of any language, and «сума в UAH» is what the owner's own screens already say.
+ */
+const refusalOf = (run: () => unknown): string => {
+  try {
+    run();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error('nothing was refused');
+};
+
+const withoutCurrencyCodes = (message: string) => message.replace(/UAH|EUR|USD/g, '');
+
+describe('parseAmount — the refusal is in the owner\'s language', () => {
+  it('Scenario: A сума that is not a number is refused in Ukrainian', () => {
+    const refusal = refusalOf(() => parseAmount('12 000', 'UAH'));
+    expect(refusal).toBe('«12 000» — це не сума; напишіть число, напр. 125,50');
+    expect(withoutCurrencyCodes(refusal)).not.toMatch(/[A-Za-z]/);
+  });
+
+  it('Scenario: Too many fractional digits are refused in Ukrainian', () => {
+    const refusal = refusalOf(() => parseAmount('12,345', 'UAH'));
+    expect(refusal).toBe('у сумі в UAH щонайбільше 2 цифри після коми, а «12,345» має 3');
+    expect(withoutCurrencyCodes(refusal)).not.toMatch(/[A-Za-z]/);
+  });
+
+  it('Scenario: A ліміт that is not positive is refused in Ukrainian', () => {
+    // The сума the smoke found: "0" typed as a ліміт used to answer `an amount is positive, got "0"`.
+    const refusal = refusalOf(() => parseAmount('0', 'UAH'));
+    expect(refusal).toBe('сума має бути більша за нуль, а не «0»');
+    expect(withoutCurrencyCodes(refusal)).not.toMatch(/[A-Za-z]/);
+  });
+
+  it('Every refusal of a typed сума is in Ukrainian, whatever was typed', () => {
+    for (const typed of ['', ' ', 'abc', '12.', '1.2.3', '1 000', '12,', '.5', '0', '0,00', '-5']) {
+      const refusal = withoutCurrencyCodes(refusalOf(() => parseAmount(typed, 'EUR')));
+      // The typed text is quoted back, so its own letters are stripped before the check.
+      expect(refusal.replace(typed, ''), `"${typed}" was refused in English`).not.toMatch(
+        /[A-Za-z]/,
+      );
+    }
+  });
+
+  it('An opening balance inherits those refusals unchanged', () => {
+    expect(refusalOf(() => parseOpeningBalance('12.345', 'UAH'))).toBe(
+      'у сумі в UAH щонайбільше 2 цифри після коми, а «12.345» має 3',
+    );
+    expect(refusalOf(() => parseOpeningBalance('abc', 'UAH'))).toBe(
+      '«abc» — це не сума; напишіть число, напр. 125,50',
+    );
+  });
+});
+
 describe('formatMoney', () => {
   it('Minor units are shown as major units with their currency', () => {
     expect(formatMoney(money(12550, 'UAH'))).toBe('125,50 UAH');

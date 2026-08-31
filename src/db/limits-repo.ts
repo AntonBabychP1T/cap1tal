@@ -37,7 +37,7 @@ export function limitsRepo(db: Storage) {
         .where(eq(categories.id, limit.categoryId))
         .get();
       if (!category) {
-        throw new Error(`no category "${limit.categoryId}" to carry a ліміт`);
+        throw new Error(`категорії «${limit.categoryId}» не існує`);
       }
       const row = {
         categoryId: limit.categoryId,

@@ -228,12 +228,15 @@ describe('переказ', () => {
     ).toMatchObject({ left: money(100000, 'UAH'), arrived: money(99500, 'UAH') });
   });
 
-  it('Scenario: The same account on both legs is rejected', () => {
+  it('Scenario: A переказ onto the same рахунок is refused in Ukrainian', () => {
     const { stored, refused } = record(
       draft({ type: 'transfer', toAccountId: 'card', amount: '1000' }),
     );
     expect(stored).toBeUndefined();
-    expect(refused).toBe('a transfer connects two distinct accounts');
+    // The domain refuses this too, in the English of an invariant; the form names it first,
+    // because this sentence is put into an Alert the owner reads.
+    expect(refused).toBe('переказ зʼєднує два різні рахунки — оберіть інший рахунок');
+    expect(refused).not.toMatch(/[A-Za-z]/);
   });
 
   it('Without the рахунок the money arrived at nothing is stored', () => {
@@ -446,5 +449,33 @@ describe('proposeForTransfer — a repayment above the principal', () => {
     // Nothing was lent, so there is no principal to exceed — the owner means something else, and
     // the app does not guess what.
     expect(propose(repayment({ left: 110000 }), [])).toBeNull();
+  });
+});
+
+describe('the дата a form was filled with', () => {
+  it('Scenario: A дата in the wrong shape is refused in Ukrainian', () => {
+    // Every вид goes through the same parser, so none of the four can show the domain's English.
+    for (const type of ['expense', 'income', 'refund', 'transfer'] as const) {
+      const { stored, refused } = record(
+        draft({
+          type,
+          date: '31.12.2026',
+          amount: '100',
+          ...(type === 'income' ? { sourceId: 'salary' } : {}),
+          ...(type === 'refund' ? { categoryId: 'groceries' } : {}),
+          ...(type === 'transfer' ? { toAccountId: 'jar' } : {}),
+        }),
+      );
+      expect(stored, `a ${type} with a mistyped дата was stored`).toBeUndefined();
+      expect(refused, `a ${type}'s дата was refused in English`).toBe(
+        'дата пишеться як РРРР-ММ-ДД, напр. 2026-08-31, а не «31.12.2026»',
+      );
+    }
+  });
+
+  it('Scenario: A day that does not exist is refused in Ukrainian', () => {
+    const { stored, refused } = record(draft({ date: '2026-02-31', amount: '100' }));
+    expect(stored).toBeUndefined();
+    expect(refused).toBe('такого дня немає в календарі: «2026-02-31»');
   });
 });

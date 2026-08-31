@@ -1,9 +1,9 @@
 import { activeAccounts, type Account } from '../domain/account';
 import type { Goal } from '../domain/goals';
 import type { IsoDate } from '../domain/transaction';
-import { isoDate } from '../domain/transaction';
 import { withCurrent } from './account-choices';
 import { formatMoney, parseAmount } from './amount-input';
+import { parseTypedDate } from './dates';
 
 /**
  * What the «Цілі» section of Налаштування shows and accepts. Pure, because the section itself is
@@ -100,7 +100,7 @@ export function goalFromDraft(
   if (!account) {
     throw new Error('Такого рахунку немає');
   }
-  const deadline = isoDate(draft.deadline.trim());
+  const deadline = parseTypedDate(draft.deadline);
   return {
     id: context.id,
     name,

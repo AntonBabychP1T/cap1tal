@@ -25,3 +25,28 @@ export function startOfLocalDayMs(date: IsoDate): number {
   const [year, month, day] = isoDate(date).split('-');
   return new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0).getTime();
 }
+
+/** The shape a дата is typed in, and the shape the placeholder «РРРР-ММ-ДД» asks for. */
+const TYPED_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The one place a typed дата becomes an `IsoDate`, and the one place a wrong one is refused in the
+ * owner's own language. The domain's `isoDate` decides what a calendar date *is* — this wraps it so
+ * that a form never shows its invariant text: «date must be YYYY-MM-DD, got "31.12.2026"» is a
+ * sentence for whoever is debugging, not for someone who has just mistyped a ціль's дата.
+ *
+ * The shape is checked here and the calendar is left to `isoDate`, so the two refusals stay two:
+ * "that is not how a дата is written" and "there is no such day".
+ */
+export function parseTypedDate(typed: string): IsoDate {
+  const trimmed = typed.trim();
+  if (!TYPED_DATE.test(trimmed)) {
+    throw new Error(`дата пишеться як РРРР-ММ-ДД, напр. 2026-08-31, а не «${typed}»`);
+  }
+  try {
+    return isoDate(trimmed);
+  } catch {
+    // The shape is already right, so the only thing `isoDate` can be refusing is the calendar.
+    throw new Error(`такого дня немає в календарі: «${trimmed}»`);
+  }
+}

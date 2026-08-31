@@ -48,7 +48,10 @@ describe('limitsRepo', () => {
   });
 
   it('Scenario: An unknown category id is rejected', () => {
-    expect(() => repo.set({ categoryId: 'ghost', amount: money(250000, 'UAH') })).toThrow();
+    // Refused in the owner's own language, like every other refusal of this layer.
+    expect(() => repo.set({ categoryId: 'ghost', amount: money(250000, 'UAH') })).toThrow(
+      'категорії «ghost» не існує',
+    );
     expect(repo.list()).toEqual([]);
   });
 

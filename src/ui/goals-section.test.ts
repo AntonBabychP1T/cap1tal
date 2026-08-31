@@ -162,3 +162,48 @@ describe('deleteGoalConfirmation', () => {
     expect(deleteGoalConfirmation('Авто')).toContain('транзакції лишаться');
   });
 });
+
+describe("a refused ціль says why in the owner's language", () => {
+  const refusalOf = (over: Parameters<typeof draft>[0]) => {
+    try {
+      goalFromDraft(draft(over), { id: 'g1', accounts: ACCOUNTS });
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error('nothing was refused');
+  };
+
+  it('Scenario: A дата in the wrong shape is refused in Ukrainian', () => {
+    // What the smoke found: «Цілі» answered `date must be YYYY-MM-DD, got "31.12.2026"`.
+    expect(refusalOf({ deadline: '31.12.2026' })).toBe(
+      'дата пишеться як РРРР-ММ-ДД, напр. 2026-08-31, а не «31.12.2026»',
+    );
+  });
+
+  it('Scenario: A day that does not exist is refused in Ukrainian', () => {
+    expect(refusalOf({ deadline: '2026-02-31' })).toBe('такого дня немає в календарі: «2026-02-31»');
+  });
+
+  it('Scenario: A ліміт that is not positive is refused in Ukrainian — a target too', () => {
+    expect(refusalOf({ target: '0' })).toBe('сума має бути більша за нуль, а не «0»');
+  });
+
+  it('Every refusal of the ціль form is in Ukrainian', () => {
+    for (const over of [
+      { name: '  ' },
+      { accountId: undefined },
+      { accountId: 'нема такого' },
+      { target: '0' },
+      { target: 'abc' },
+      { target: '1,234' },
+      { deadline: 'вчора' },
+      { deadline: '2026-02-31' },
+    ] as Parameters<typeof draft>[0][]) {
+      const refusal = refusalOf(over)
+        .replace(/UAH|EUR|USD/g, '')
+        // The typed text is quoted back, so its own letters are not the app's.
+        .replace(/«[^»]*»/g, '');
+      expect(refusal, `refused in English for ${JSON.stringify(over)}`).not.toMatch(/[A-Za-z]/);
+    }
+  });
+});

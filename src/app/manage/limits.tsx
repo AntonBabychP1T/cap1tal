@@ -6,6 +6,7 @@ import { Action, Choices, Field, RowAction } from '@/components/form';
 import { ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { categories as categoriesRepo, limits as limitsRepo } from '@/db/repos';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { failureMessage } from '@/ui/labels';
 import {
@@ -44,6 +45,10 @@ export default function LimitsScreen() {
 
   /** The category whose ліміт is being set, and the draft beside it; `undefined` — no form open. */
   const [editing, setEditing] = useState<{ categoryId: string; draft: LimitDraft } | undefined>();
+
+  /** The phone's own «назад» closes the open editor first, and only then leaves the section. */
+  const closeEditor = useCallback(() => setEditing(undefined), []);
+  useCloseOnBack(editing !== undefined, closeEditor);
 
   const save = useCallback(() => {
     if (!editing) return;
@@ -126,11 +131,7 @@ export default function LimitsScreen() {
                   }
                 />
                 <Action title="Зберегти" onPress={save} />
-                <Action
-                  variant="secondary"
-                  title="Скасувати"
-                  onPress={() => setEditing(undefined)}
-                />
+                <Action variant="secondary" title="Скасувати" onPress={closeEditor} />
               </>
             ) : (
               <View style={styles.actions}>

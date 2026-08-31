@@ -7,6 +7,7 @@ import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surf
 import { ThemedText } from '@/components/themed-text';
 import { accounts as accountsRepo, goals as goalsRepo } from '@/db/repos';
 import type { Goal } from '@/domain/goals';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { formatMinorUnits } from '@/ui/amount-input';
 import { todayIso } from '@/ui/dates';
@@ -47,6 +48,10 @@ export default function GoalsScreen() {
 
   /** `undefined` — the form is closed; a draft with no id — a new ціль; with one — an edit. */
   const [draft, setDraft] = useState<(GoalDraft & { id?: string }) | undefined>();
+
+  /** The phone's own «назад» closes the open form first, and only then leaves the section. */
+  const closeForm = useCallback(() => setDraft(undefined), []);
+  useCloseOnBack(draft !== undefined, closeForm);
 
   /**
    * The рахунок an *edited* ціль already sits on, so an archived one stays in its own picker while
@@ -145,7 +150,7 @@ export default function GoalsScreen() {
             placeholder="РРРР-ММ-ДД"
           />
           <Action title="Зберегти" onPress={save} />
-          <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
+          <Action variant="secondary" title="Скасувати" onPress={closeForm} />
         </Card>
       ) : (
         <Action

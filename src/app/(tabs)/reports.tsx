@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { Choices } from '@/components/form';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
@@ -12,7 +12,12 @@ import {
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { reportsViewModel, type ReportsBar } from '@/ui/reports-screen';
+import {
+  reportsViewModel,
+  type ChartAxis,
+  type HistoryReadout,
+  type ReportsBar,
+} from '@/ui/reports-screen';
 
 import { Spacing, type ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -20,13 +25,13 @@ import { useTheme } from '@/hooks/use-theme';
 /**
  * Звіти — the whole history instead of one month: витрачено, дохід and інвестовано by month, one
  * category by month, and the цілі with their progress. Everything it decides —
- * which currency is shown, how tall each bar is, which categories the chooser offers, whether a
- * ціль is reached or overdue — is `src/ui/reports-screen.ts`, where `verify` can reach it; this
- * file is the wiring.
+ * which currency is shown, how tall each bar is, which categories the chooser offers, what each
+ * chart's scale is, which month is spelled out, whether a ціль is reached or overdue — is
+ * `src/ui/reports-screen.ts`, where `verify` can reach it; this file is the wiring.
  *
  * The bars are plain `View`s with a height: two charts are not a reason for a charting library,
  * and a new native-ish dependency would put both the build and iOS at risk for a rectangle
- * (design D6).
+ * (design D6). The axis is two labels and a hairline, for the same reason.
  */
 
 /** How tall a full-height bar is, in points. Every `size` of the model is a share of this. */
@@ -71,6 +76,94 @@ function Bar({
   );
 }
 
+/**
+ * A chart's scale, down the left of its plot: the сума a full-height bar stands for, zero at the
+ * baseline, and the bottom of the scale where the chart uses the half below it. Outside the
+ * horizontal scroll, so the labels never scroll away from the bars they measure.
+ */
+function Axis({ axis }: { axis: ChartAxis }) {
+  return (
+    <View>
+      <View style={styles.axisAbove}>
+        <AxisLabel>{axis.top}</AxisLabel>
+        <AxisLabel>{axis.zero}</AxisLabel>
+      </View>
+      {axis.bottom ? (
+        <View style={styles.axisBelow}>
+          <AxisLabel>{axis.bottom}</AxisLabel>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function AxisLabel({ children }: { children: string }) {
+  return (
+    <ThemedText type="small" tabular themeColor="textMuted" numberOfLines={1}>
+      {children}
+    </ThemedText>
+  );
+}
+
+/** One month's column: its bars over the zero line, its name under them, and the tap that picks it. */
+function Column({
+  label,
+  selected,
+  onPick,
+  children,
+}: {
+  label: string;
+  selected: boolean;
+  onPick: () => void;
+  children: React.ReactNode;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPick}
+      accessibilityLabel={label}
+      style={[styles.column, selected ? { backgroundColor: theme.backgroundSelected } : null]}>
+      <View>
+        <View style={styles.columnBars}>{children}</View>
+        {/* The zero the bars grow from, drawn per column so it reaches exactly as far as the
+            chart does and scrolls with it. */}
+        <View
+          style={[styles.baseline, { top: CHART_HEIGHT, borderTopColor: theme.border }]}
+          pointerEvents="none"
+        />
+      </View>
+      <ThemedText type="small" themeColor={selected ? 'textSecondary' : 'textMuted'}>
+        {label}
+      </ThemedText>
+    </Pressable>
+  );
+}
+
+/**
+ * The picked month of the history chart, spelled out — and the chart's legend, because each number
+ * carries the colour its bars are drawn in. One row instead of a legend and no numbers at all.
+ */
+function HistoryNumbers({ readout }: { readout: HistoryReadout }) {
+  return (
+    <View style={styles.readout}>
+      <ThemedText type="overline" themeColor="textSecondary">
+        {readout.label}
+      </ThemedText>
+      {readout.numbers.map((number) => (
+        <View key={number.key} style={styles.readoutRow}>
+          <Swatch color={BAR_COLORS[number.key]!} />
+          <ThemedText type="small" themeColor="textSecondary" style={styles.readoutLabel}>
+            {number.label}
+          </ThemedText>
+          <ThemedText type="small" tabular>
+            {number.amount}
+          </ThemedText>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function ReportsScreen() {
   const [stored] = useReloadOnFocus(
     useCallback(
@@ -88,6 +181,8 @@ export default function ReportsScreen() {
 
   const [shownCurrency, setShownCurrency] = useState<string>();
   const [chosenCategoryId, setChosenCategoryId] = useState<string>();
+  /** The month whose numbers are spelled out. Undefined until tapped — the model reads the newest. */
+  const [chosenMonth, setChosenMonth] = useState<string>();
 
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
   const model = useMemo(
@@ -99,9 +194,10 @@ export default function ReportsScreen() {
         goals: stored.goals,
         shownCurrency,
         chosenCategoryId,
+        chosenMonth,
         now: new Date(),
       }),
-    [categoryNames, chosenCategoryId, shownCurrency, stored],
+    [categoryNames, chosenCategoryId, chosenMonth, shownCurrency, stored],
   );
 
   return (
@@ -126,21 +222,17 @@ export default function ReportsScreen() {
 
           <Card style={styles.chartCard}>
             <ThemedText type="overline">Історія за місяцями · {model.shownCurrency}</ThemedText>
-            <View style={styles.legend}>
-              {model.history[0]?.bars.map((bar) => (
-                <View key={bar.key} style={styles.legendItem}>
-                  <Swatch color={BAR_COLORS[bar.key]!} />
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {bar.label}
-                  </ThemedText>
-                </View>
-              ))}
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.chart}>
-                {model.history.map((column) => (
-                  <View key={column.month} style={styles.column}>
-                    <View style={styles.columnBars}>
+            {model.historyReadout ? <HistoryNumbers readout={model.historyReadout} /> : null}
+            <View style={styles.plot}>
+              {model.historyAxis ? <Axis axis={model.historyAxis} /> : null}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.chart}>
+                  {model.history.map((column) => (
+                    <Column
+                      key={column.month}
+                      label={column.label}
+                      selected={column.selected}
+                      onPick={() => setChosenMonth(column.month)}>
                       {column.bars.map((bar) => (
                         <Bar
                           key={bar.key}
@@ -149,14 +241,11 @@ export default function ReportsScreen() {
                           room={model.historyHasNegative}
                         />
                       ))}
-                    </View>
-                    <ThemedText type="small" themeColor="textMuted">
-                      {column.label}
-                    </ThemedText>
-                  </View>
-                ))}
-              </View>
-            </ScrollView>
+                    </Column>
+                  ))}
+                </View>
+              </ScrollView>
+            </View>
           </Card>
 
           <Card style={styles.chartCard}>
@@ -172,24 +261,38 @@ export default function ReportsScreen() {
                 Оберіть категорію, щоб побачити її по місяцях.
               </ThemedText>
             ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={styles.chart}>
-                  {model.categoryChart.map((column) => (
-                    <View key={column.month} style={styles.column}>
-                      <View style={styles.columnBars}>
-                        <Bar
-                          bar={column}
-                          color={BAR_COLORS.spent!}
-                          room={model.categoryChartHasNegative}
-                        />
-                      </View>
-                      <ThemedText type="small" themeColor="textMuted">
-                        {column.label}
-                      </ThemedText>
+              <>
+                {model.categoryReadout ? (
+                  <View style={styles.readoutRow}>
+                    <ThemedText type="overline" themeColor="textSecondary">
+                      {model.categoryReadout.label}
+                    </ThemedText>
+                    <ThemedText type="small" tabular>
+                      {model.categoryReadout.amount}
+                    </ThemedText>
+                  </View>
+                ) : null}
+                <View style={styles.plot}>
+                  {model.categoryAxis ? <Axis axis={model.categoryAxis} /> : null}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={styles.chart}>
+                      {model.categoryChart.map((column) => (
+                        <Column
+                          key={column.month}
+                          label={column.label}
+                          selected={column.selected}
+                          onPick={() => setChosenMonth(column.month)}>
+                          <Bar
+                            bar={column}
+                            color={BAR_COLORS.spent!}
+                            room={model.categoryChartHasNegative}
+                          />
+                        </Column>
+                      ))}
                     </View>
-                  ))}
+                  </ScrollView>
                 </View>
-              </ScrollView>
+              </>
             )}
           </Card>
         </>
@@ -245,7 +348,7 @@ export default function ReportsScreen() {
   );
 }
 
-/** The legend's dot — the same colour its bars are drawn in. */
+/** The read-out's dot — the same colour the number's bars are drawn in. */
 function Swatch({ color }: { color: ThemeColor }) {
   const theme = useTheme();
   return <View style={[styles.swatch, { backgroundColor: theme[color] }]} />;
@@ -261,12 +364,23 @@ const styles = StyleSheet.create({
   },
   goal: { gap: Spacing.one },
   goalName: { flex: 1 },
-  legend: { flexDirection: 'row', gap: Spacing.three, flexWrap: 'wrap' },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  readout: { gap: Spacing.one },
+  readoutRow: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.one },
+  readoutLabel: { flex: 1 },
   swatch: { width: Spacing.two, height: Spacing.two, borderRadius: Spacing.half },
-  chart: { flexDirection: 'row', gap: Spacing.two, paddingVertical: Spacing.one },
-  column: { alignItems: 'center', gap: Spacing.one },
+  plot: { flexDirection: 'row', gap: Spacing.two },
+  axisAbove: { height: CHART_HEIGHT, justifyContent: 'space-between', alignItems: 'flex-end' },
+  axisBelow: { height: CHART_HEIGHT, justifyContent: 'flex-end', alignItems: 'flex-end' },
+  chart: { flexDirection: 'row', gap: Spacing.one, paddingVertical: Spacing.one },
+  column: {
+    alignItems: 'center',
+    gap: Spacing.one,
+    paddingHorizontal: Spacing.half,
+    paddingTop: Spacing.half,
+    borderRadius: Spacing.half,
+  },
   columnBars: { flexDirection: 'row', alignItems: 'stretch', gap: Spacing.half },
+  baseline: { position: 'absolute', left: 0, right: 0, borderTopWidth: StyleSheet.hairlineWidth },
   barSlot: { width: Spacing.two },
   barHalf: { height: CHART_HEIGHT, justifyContent: 'flex-end' },
   barHalfBelow: { justifyContent: 'flex-start' },

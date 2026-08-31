@@ -2,7 +2,6 @@ import { computeBalance, type Account } from '../domain/account';
 import { money, type Money } from '../domain/money';
 import {
   expenseByDefault,
-  isoDate,
   proposeFee,
   refund,
   transfer,
@@ -14,6 +13,7 @@ import {
   type Transfer,
 } from '../domain/transaction';
 import { parseAmount } from './amount-input';
+import { parseTypedDate } from './dates';
 
 /**
  * What the Головний entry form decides, with none of its JSX: the four-way type switch turned
@@ -57,8 +57,12 @@ export interface EntryDraft {
  * The transaction the draft describes, or an `Error` naming in Ukrainian what is missing — the
  * screen shows that message verbatim through `failureMessage`. Every сума is parsed in its own
  * account's currency, so no amount can land on an account in a foreign one; the amount rules and
- * the calendar-date rule belong to `parseAmount` and to the domain, and their rejections pass
- * through untouched rather than being restated here.
+ * the calendar-date rule belong to `parseAmount` and to `parseTypedDate`, and their rejections
+ * pass through untouched rather than being restated here — they are already the owner's own
+ * sentences.
+ *
+ * The дата is parsed once, here, rather than by each domain factory in turn: the factories check
+ * it again, and they refuse in the English of an invariant, which no form may show.
  */
 export function buildEntry(
   draft: EntryDraft,
@@ -70,12 +74,13 @@ export function buildEntry(
   if (!from) {
     throw new Error('оберіть рахунок');
   }
+  const date = parseTypedDate(draft.date);
 
   switch (draft.type) {
     case 'expense':
       return expenseByDefault({
         id: context.id,
-        date: draft.date,
+        date,
         accountId: from.id,
         amount: parseAmount(draft.amount, from.currency),
         // Nothing picked means «Без категорії» — the default is the domain's, not the form's.
@@ -88,11 +93,11 @@ export function buildEntry(
         throw new Error('оберіть джерело');
       }
       // The domain has no factory for a дохід, and it asks nothing an Expense does not: a
-      // calendar date and a positive сума, which `isoDate` and `parseAmount` already are.
+      // calendar date and a positive сума, which `parseTypedDate` and `parseAmount` already are.
       const income: Income = {
         type: 'income',
         id: context.id,
-        date: isoDate(draft.date),
+        date,
         accountId: from.id,
         amount: parseAmount(draft.amount, from.currency),
         sourceId: draft.sourceId,
@@ -108,7 +113,7 @@ export function buildEntry(
       // Typed positive like a витрата's: `refund` is the negative expense, not a negative number.
       return refund({
         id: context.id,
-        date: draft.date,
+        date,
         accountId: from.id,
         amount: parseAmount(draft.amount, from.currency),
         categoryId: draft.categoryId,
@@ -119,6 +124,11 @@ export function buildEntry(
       const to = context.accounts.find((a) => a.id === draft.toAccountId);
       if (!to) {
         throw new Error('оберіть рахунок, куди прийшли гроші');
+      }
+      // `transfer` refuses this too, and in the English of an invariant. Named here for the same
+      // reason the cross-currency leg below is: the owner reads this sentence.
+      if (to.id === from.id) {
+        throw new Error('переказ зʼєднує два різні рахунки — оберіть інший рахунок');
       }
       const left = parseAmount(draft.amount, from.currency);
       const typedArrived = draft.arrived?.trim() ?? '';
@@ -132,10 +142,9 @@ export function buildEntry(
       }
       const arrived =
         typedArrived === '' && sameCurrency ? left : parseAmount(typedArrived, to.currency);
-      // `transfer` rejects the same account on both legs; that error surfaces to the screen.
       return transfer({
         id: context.id,
-        date: draft.date,
+        date,
         fromAccountId: from.id,
         toAccountId: to.id,
         left,

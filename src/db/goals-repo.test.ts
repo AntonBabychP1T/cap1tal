@@ -83,12 +83,16 @@ describe('goalsRepo', () => {
   });
 
   it('Scenario: An unknown рахунок id is rejected', () => {
-    expect(() => repo.save({ ...car, accountId: 'ghost' })).toThrow();
+    expect(() => repo.save({ ...car, accountId: 'ghost' })).toThrow(
+      'рахунку «ghost» не існує',
+    );
     expect(repo.list()).toEqual([]);
   });
 
   it('Scenario: A currency mismatching the рахунок is rejected', () => {
-    expect(() => repo.save({ ...car, target: money(500000, 'USD') })).toThrow();
+    expect(() => repo.save({ ...car, target: money(500000, 'USD') })).toThrow(
+      'рахунок «Подушка» — у UAH, тож ціль у USD на ньому стояти не може',
+    );
     expect(repo.list()).toEqual([]);
 
     // And on the way through an edit too: the check is in the one write path, not only on create.

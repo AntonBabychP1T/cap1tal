@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { monthOf } from '../domain/transaction';
+import { isoDate, monthOf } from '../domain/transaction';
 import { planWindows } from '../monobank/sync';
-import { startOfLocalDayMs, todayIso } from './dates';
+import { parseTypedDate, startOfLocalDayMs, todayIso } from './dates';
 
 describe('todayIso', () => {
   it('The date defaults to today', () => {
@@ -52,3 +52,39 @@ describe('startOfLocalDayMs', () => {
     expect(() => startOfLocalDayMs('28.08.2026')).toThrow(/YYYY-MM-DD/);
   });
 });
+
+describe('parseTypedDate', () => {
+  it('A дата written as РРРР-ММ-ДД is the same IsoDate the domain makes', () => {
+    expect(parseTypedDate('2026-08-31')).toBe(isoDate('2026-08-31'));
+    // Trimmed, because a keyboard leaves spaces where a finger did.
+    expect(parseTypedDate('  2026-08-31 ')).toBe(isoDate('2026-08-31'));
+  });
+
+  it('Scenario: A дата in the wrong shape is refused in Ukrainian', () => {
+    // What the smoke found on «Цілі»: this used to answer `date must be YYYY-MM-DD, got "…"`.
+    expect(() => parseTypedDate('31.12.2026')).toThrow(
+      'дата пишеться як РРРР-ММ-ДД, напр. 2026-08-31, а не «31.12.2026»',
+    );
+    for (const typed of ['', '2026-8-31', '31-12-2026', 'вчора', '2026/08/31']) {
+      expect(refusalOf(() => parseTypedDate(typed)), `"${typed}" was refused in English`).not.toMatch(
+        /[A-Za-z]/,
+      );
+    }
+  });
+
+  it('Scenario: A day that does not exist is refused in Ukrainian', () => {
+    expect(() => parseTypedDate('2026-02-31')).toThrow('такого дня немає в календарі: «2026-02-31»');
+    expect(() => parseTypedDate('2026-13-01')).toThrow('такого дня немає в календарі: «2026-13-01»');
+    expect(refusalOf(() => parseTypedDate('2026-02-31'))).not.toMatch(/[A-Za-z]/);
+  });
+});
+
+/** The refusal as the owner reads it — the same helper `amount-input.test.ts` keeps. */
+function refusalOf(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error('nothing was refused');
+}

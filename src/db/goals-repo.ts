@@ -44,11 +44,12 @@ export function goalsRepo(db: Storage) {
       isoDate(goal.deadline);
       const account = db.select().from(accounts).where(eq(accounts.id, goal.accountId)).get();
       if (!account) {
-        throw new Error(`no рахунок "${goal.accountId}" for the ціль "${goal.name}"`);
+        throw new Error(`рахунку «${goal.accountId}» не існує`);
       }
       if (account.currency !== goal.target.currency) {
         throw new Error(
-          `рахунок "${account.name}" is in ${account.currency}; a ${goal.target.currency} target cannot sit on it`,
+          `рахунок «${account.name}» — у ${account.currency}, ` +
+            `тож ціль у ${goal.target.currency} на ньому стояти не може`,
         );
       }
       const row = {

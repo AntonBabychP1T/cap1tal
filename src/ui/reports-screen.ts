@@ -19,7 +19,8 @@ import { currentMonth, shortMonthLabel } from './months';
  *
  * The numbers are `domain/reports.ts`'s and the ціль states are `domain/goals.ts`'s; what lives
  * here is the presentation: which currency is shown, how tall each bar is against the others, what
- * a month is called, and which sentence stands in for an empty chart.
+ * scale it is read against, which month is spelled out in full under it, what a month is called,
+ * and which sentence stands in for an empty chart.
  */
 
 /** The three numbers of the history chart, in the order they are read. */
@@ -51,6 +52,8 @@ export interface HistoryColumn {
   readonly month: Month;
   /** «Сер 2026» — the month and its year, so no column is ambiguous across a year end. */
   readonly label: string;
+  /** This is the month spelled out in full under the chart, and marked on it. */
+  readonly selected: boolean;
   readonly bars: readonly (ReportsBar & { readonly key: HistoryKey; readonly label: string })[];
 }
 
@@ -58,6 +61,42 @@ export interface HistoryColumn {
 export interface CategoryColumn extends ReportsBar {
   readonly month: Month;
   readonly label: string;
+  readonly selected: boolean;
+}
+
+/**
+ * The scale one chart is read against. Without it a bar says only "taller than that other bar",
+ * which is not an answer to "how much did August cost".
+ *
+ * `bottom` is `null` unless the chart holds a month below zero: a chart with nothing negative in
+ * it should not label a half of itself it never uses. When it is there it is `top` with a minus
+ * sign, because the scale is symmetric by construction — every bar is measured against the
+ * largest *absolute* amount of its own chart.
+ */
+export interface ChartAxis {
+  /** «45000,00 UAH» — what a full-height bar stands for. */
+  readonly top: string;
+  /** «0,00 UAH» — the baseline the bars grow from. */
+  readonly zero: string;
+  readonly bottom: string | null;
+}
+
+/** One month of the history chart, spelled out: the three numbers, each with its currency. */
+export interface HistoryReadout {
+  readonly month: Month;
+  readonly label: string;
+  readonly numbers: readonly {
+    readonly key: HistoryKey;
+    readonly label: string;
+    readonly amount: string;
+  }[];
+}
+
+/** The same for the category chart, which has one number per month. */
+export interface CategoryReadout {
+  readonly month: Month;
+  readonly label: string;
+  readonly amount: string;
 }
 
 /** One ціль as «Звіти» shows it: what was wanted, by when, and how far the рахунок has got. */
@@ -80,6 +119,10 @@ export interface ReportsViewModel {
   /** One currency is no choice: the switch is offered only when there is something to switch to. */
   readonly canSwitchCurrency: boolean;
   readonly history: readonly HistoryColumn[];
+  /** The history chart's scale; `null` only when there is no chart to scale. */
+  readonly historyAxis: ChartAxis | null;
+  /** The picked month of the history chart, spelled out; `null` when there is no chart. */
+  readonly historyReadout: HistoryReadout | null;
   /**
    * Some month of the history chart is below zero, so the chart needs room under its baseline.
    * A chart with nothing negative in it should not reserve half its height for the possibility.
@@ -90,6 +133,10 @@ export interface ReportsViewModel {
   readonly chosenCategoryId: string | null;
   readonly chosenCategoryLabel: string | null;
   readonly categoryChart: readonly CategoryColumn[];
+  /** The category chart's scale; `null` while no category is chosen. */
+  readonly categoryAxis: ChartAxis | null;
+  /** The picked month of the category chart, spelled out; `null` while none is chosen. */
+  readonly categoryReadout: CategoryReadout | null;
   /** The same, for the category chart — a category's month goes negative when повернення outran it. */
   readonly categoryChartHasNegative: boolean;
   readonly goals: readonly ReportsGoalRow[];
@@ -120,17 +167,52 @@ function bar(amount: Money, scale: number): ReportsBar {
   };
 }
 
-function historyColumns(series: readonly MonthTotals[]): HistoryColumn[] {
-  const scale = largest(series.flatMap((month) => HISTORY_KEYS.map((key) => month[key])));
+/** The tallest of the three numbers over every month — what the whole history chart is scaled to. */
+function historyScaleOf(series: readonly MonthTotals[]): number {
+  return largest(series.flatMap((month) => HISTORY_KEYS.map((key) => month[key])));
+}
+
+function historyColumns(
+  series: readonly MonthTotals[],
+  scale: number,
+  readMonth: Month | null,
+): HistoryColumn[] {
   return series.map((month) => ({
     month: month.month,
     label: shortMonthLabel(month.month),
+    selected: month.month === readMonth,
     bars: HISTORY_KEYS.map((key) => ({
       key,
       label: HISTORY_LABELS[key],
       ...bar(month[key], scale),
     })),
   }));
+}
+
+/**
+ * A chart's scale as the three labels beside it. An all-zero chart gets a scale of zero rather
+ * than none: "nothing happened in this currency" is an answer, and a chart with no scale at all
+ * cannot be told from a chart whose scale was left off — which is exactly the defect this fixes.
+ */
+function axisOf(scale: number, currency: CurrencyCode, hasNegative: boolean): ChartAxis {
+  return {
+    top: formatMoney(money(scale, currency)),
+    zero: formatMoney(money(0, currency)),
+    bottom: hasNegative ? formatMoney(money(-scale, currency)) : null,
+  };
+}
+
+/**
+ * Which month is spelled out: the one the owner picked, or the newest of the span until they pick.
+ * A picked month the span no longer holds — after a currency switch onto a shorter history, say —
+ * falls back to the newest rather than leaving nothing spelled out. Deciding it here, and not in a
+ * `useEffect` that resets state, is what makes the fallback provable.
+ */
+function monthToRead(months: readonly Month[], chosen: Month | undefined): Month | null {
+  if (chosen && months.includes(chosen)) {
+    return chosen;
+  }
+  return months[months.length - 1] ?? null;
 }
 
 export function reportsViewModel(input: {
@@ -145,6 +227,8 @@ export function reportsViewModel(input: {
   shownCurrency?: CurrencyCode;
   /** What the owner chose; ignored when the history does not carry it. */
   chosenCategoryId?: string;
+  /** The month whose numbers are spelled out; ignored when the span does not hold it. */
+  chosenMonth?: Month;
   now: Date;
 }): ReportsViewModel {
   const month = currentMonth(input.now);
@@ -172,24 +256,30 @@ export function reportsViewModel(input: {
       ? input.chosenCategoryId
       : null;
 
-  const categoryChart: CategoryColumn[] =
+  // Both charts span exactly the months `historyMonths` decided, so one picked month governs both:
+  // June's history above August's Groceries would be two answers to one question.
+  const shownSeries = shownCurrency ? series.get(shownCurrency)! : [];
+  const readMonth = monthToRead(
+    shownSeries.map((m) => m.month),
+    input.chosenMonth,
+  );
+
+  const categoryMonths =
     chosenCategoryId && shownCurrency
-      ? (() => {
-          const months =
-            categorySeries({
-              categoryId: chosenCategoryId,
-              transactions: input.transactions,
-              currentMonth: month,
-              currencies: [shownCurrency],
-            }).get(shownCurrency) ?? [];
-          const scale = largest(months.map((m) => m.amount));
-          return months.map((m) => ({
-            month: m.month,
-            label: shortMonthLabel(m.month),
-            ...bar(m.amount, scale),
-          }));
-        })()
+      ? (categorySeries({
+          categoryId: chosenCategoryId,
+          transactions: input.transactions,
+          currentMonth: month,
+          currencies: [shownCurrency],
+        }).get(shownCurrency) ?? [])
       : [];
+  const categoryScale = largest(categoryMonths.map((m) => m.amount));
+  const categoryChart: CategoryColumn[] = categoryMonths.map((m) => ({
+    month: m.month,
+    label: shortMonthLabel(m.month),
+    selected: m.month === readMonth,
+    ...bar(m.amount, categoryScale),
+  }));
 
   const today = todayIso(input.now);
   const accountsById = new Map(input.accounts.map((a) => [a.id, a]));
@@ -211,21 +301,47 @@ export function reportsViewModel(input: {
     };
   });
 
-  const history = shownCurrency ? historyColumns(series.get(shownCurrency)!) : [];
+  const historyScale = historyScaleOf(shownSeries);
+  const history = shownCurrency ? historyColumns(shownSeries, historyScale, readMonth) : [];
+  const historyHasNegative = history.some((column) => column.bars.some((b) => b.negative));
+  const categoryChartHasNegative = categoryChart.some((column) => column.negative);
+
+  // The month spelled out *is* the marked column, so the read-out and the bar can never disagree:
+  // there is one formatted сума and both read it.
+  const readHistory = history.find((column) => column.selected);
+  const readCategory = categoryChart.find((column) => column.selected);
 
   return {
     currencies,
     shownCurrency,
     canSwitchCurrency: currencies.length > 1,
     history,
-    historyHasNegative: history.some((column) => column.bars.some((b) => b.negative)),
+    historyAxis:
+      shownCurrency && history.length > 0
+        ? axisOf(historyScale, shownCurrency, historyHasNegative)
+        : null,
+    historyReadout: readHistory
+      ? {
+          month: readHistory.month,
+          label: readHistory.label,
+          numbers: readHistory.bars.map(({ key, label, amount }) => ({ key, label, amount })),
+        }
+      : null,
+    historyHasNegative,
     categoryChoices: offered,
     chosenCategoryId,
     chosenCategoryLabel: chosenCategoryId
       ? categoryLabel(chosenCategoryId, input.categoryNames)
       : null,
     categoryChart,
-    categoryChartHasNegative: categoryChart.some((column) => column.negative),
+    categoryAxis:
+      shownCurrency && categoryChart.length > 0
+        ? axisOf(categoryScale, shownCurrency, categoryChartHasNegative)
+        : null,
+    categoryReadout: readCategory
+      ? { month: readCategory.month, label: readCategory.label, amount: readCategory.amount }
+      : null,
+    categoryChartHasNegative,
     goals,
     emptyHistoryMessage: emptyHistoryMessageFor(currencies.length, input.transactions.length > 0),
     emptyGoalsMessage: goals.length === 0 ? 'Цілей поки немає.' : null,
