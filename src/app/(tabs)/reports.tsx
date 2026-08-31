@@ -105,7 +105,13 @@ function AxisLabel({ children }: { children: string }) {
   );
 }
 
-/** One month's column: its bars over the zero line, its name under them, and the tap that picks it. */
+/**
+ * One month's column: its bars over the zero line, its name under them, and the tap that picks it.
+ *
+ * The pick is marked on the month's name and nowhere else — the app's own «current choice» tint,
+ * the one a `Choices` chip carries. A fill behind the whole plot was tried first and read as one
+ * more bar, which on a chart is worse than not marking it at all.
+ */
 function Column({
   label,
   selected,
@@ -119,10 +125,7 @@ function Column({
 }) {
   const theme = useTheme();
   return (
-    <Pressable
-      onPress={onPick}
-      accessibilityLabel={label}
-      style={[styles.column, selected ? { backgroundColor: theme.backgroundSelected } : null]}>
+    <Pressable onPress={onPick} accessibilityLabel={label} style={styles.column}>
       <View>
         <View style={styles.columnBars}>{children}</View>
         {/* The zero the bars grow from, drawn per column so it reaches exactly as far as the
@@ -132,7 +135,13 @@ function Column({
           pointerEvents="none"
         />
       </View>
-      <ThemedText type="small" themeColor={selected ? 'textSecondary' : 'textMuted'}>
+      <ThemedText
+        type="small"
+        themeColor={selected ? 'accent' : 'textMuted'}
+        style={[
+          styles.columnLabel,
+          selected ? { backgroundColor: theme.accentSurface } : null,
+        ]}>
         {label}
       </ThemedText>
     </Pressable>
@@ -372,12 +381,12 @@ const styles = StyleSheet.create({
   axisAbove: { height: CHART_HEIGHT, justifyContent: 'space-between', alignItems: 'flex-end' },
   axisBelow: { height: CHART_HEIGHT, justifyContent: 'flex-end', alignItems: 'flex-end' },
   chart: { flexDirection: 'row', gap: Spacing.one, paddingVertical: Spacing.one },
-  column: {
-    alignItems: 'center',
-    gap: Spacing.one,
-    paddingHorizontal: Spacing.half,
-    paddingTop: Spacing.half,
+  column: { alignItems: 'center', gap: Spacing.one },
+  columnLabel: {
+    paddingHorizontal: Spacing.one,
+    paddingVertical: Spacing.half,
     borderRadius: Spacing.half,
+    overflow: 'hidden',
   },
   columnBars: { flexDirection: 'row', alignItems: 'stretch', gap: Spacing.half },
   baseline: { position: 'absolute', left: 0, right: 0, borderTopWidth: StyleSheet.hairlineWidth },
