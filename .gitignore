@@ -14,6 +14,9 @@ expo-env.d.ts
 /android
 /ios
 local.properties
+# a local Expo module's own Gradle output — the module's source is committed, its build is not
+modules/*/android/build/
+modules/*/android/.gradle/
 
 # secrets — also denied to the agent in .claude/settings.json
 .env

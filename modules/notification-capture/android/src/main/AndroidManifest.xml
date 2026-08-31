@@ -1,0 +1,20 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!--
+      The listener Android binds to when the owner switches the app on at «Доступ до сповіщень».
+      `BIND_NOTIFICATION_LISTENER_SERVICE` is the system's own guard on that binding — held by the
+      OS, never asked of the user — and declaring it is what makes the app appear on that screen
+      at all, which is the permission FR-S3's reading of other banks' push notifications rests on.
+      Exported because the system binds it from outside the app; the guard is what keeps everyone
+      else out.
+    -->
+    <service
+      android:name="expo.modules.notificationcapture.CaptureListenerService"
+      android:exported="true"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>

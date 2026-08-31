@@ -1,6 +1,7 @@
 ---
 paths:
   - "android/**"
+  - "modules/**"
   - "app.json"
   - "app.config.*"
   - "plugins/**"

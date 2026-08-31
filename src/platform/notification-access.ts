@@ -21,6 +21,22 @@
  */
 export type NotificationAccess = 'granted' | 'denied' | 'unsupported';
 
+/**
+ * The three answers, from the one thing a platform can actually tell us: whether a notification
+ * listener is installed here at all, and if it is, whether the owner has switched it on.
+ *
+ * `undefined` is "there is nothing to switch on" — no listener in this build, or a platform with
+ * no such permission — and that is what makes `unsupported` a separate answer rather than a
+ * pessimistic `denied`. Pure, so the mapping the device adapter applies is proven under `verify`
+ * even though the adapter itself can never be loaded there.
+ */
+export function notificationAccessFrom(enabled: boolean | undefined): NotificationAccess {
+  if (enabled === undefined) {
+    return 'unsupported';
+  }
+  return enabled ? 'granted' : 'denied';
+}
+
 export interface NotificationAccessPort {
   /** What the device says right now. Asked on opening the setup view, and after coming back. */
   state(): Promise<NotificationAccess>;

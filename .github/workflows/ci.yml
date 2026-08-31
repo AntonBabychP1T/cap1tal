@@ -42,7 +42,7 @@ jobs:
         run: |
           base="${{ github.event.before }}"
           if git cat-file -e "$base" 2>/dev/null; then
-            changed=$(git diff --name-only "$base" "${{ github.sha }}" -- android app.json 'app.config.*' plugins package.json package-lock.json eas.json || true)
+            changed=$(git diff --name-only "$base" "${{ github.sha }}" -- android modules app.json 'app.config.*' plugins package.json package-lock.json eas.json || true)
           else
             changed="first-push"
           fi
