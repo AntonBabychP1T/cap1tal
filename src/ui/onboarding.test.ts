@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { NotificationAccess } from '../platform/notification-access';
+import { SETTINGS_SECTIONS } from './settings-sections';
 import { firstRun, onboardingSteps, onboardingSummary, type OnboardingStep } from './onboarding';
 
 /**
@@ -72,7 +73,24 @@ describe('the setup steps', () => {
     expect(byId(steps({ saldoImported: true }), 'saldo').state).toBe('done');
   });
 
-  it('Every step offers exactly one action, or none at all', () => {
+  it('Scenario: The checklist can be reopened after being skipped', () => {
+    // Reopened from Налаштування, which is the only way back in once a launch has left it.
+    expect(SETTINGS_SECTIONS.some((section) => section.href === '/onboarding')).toBe(true);
+
+    // Skipping writes nothing, so the same steps come back — with the state the device has now,
+    // not the state it had when the checklist was left. Nothing here remembers being skipped.
+    const skipped = steps();
+    const reopened = steps();
+    expect(reopened).toEqual(skipped);
+    expect(reopened.map((step) => step.id)).toEqual(skipped.map((step) => step.id));
+
+    const afterDoingOne = steps({ accounts: 1 });
+    expect(byId(afterDoingOne, 'account').state).toBe('done');
+    expect(byId(afterDoingOne, 'saldo').state).toBe('todo');
+  });
+
+  it('Scenario: A step that cannot be acted on offers nothing', () => {
+    // Exactly one action, or none at all — and none is exactly the unavailable ones.
     for (const access of ['granted', 'denied', 'unsupported'] as NotificationAccess[]) {
       for (const step of steps({ notificationAccess: access })) {
         expect(step.action === undefined).toBe(step.state === 'unavailable');
@@ -80,7 +98,7 @@ describe('the setup steps', () => {
     }
   });
 
-  it('Counts only what the owner can actually do', () => {
+  it('Scenario: The view says how much of the setup is behind the owner', () => {
     // The unavailable step is not a step the owner is failing at, so it is not in the total.
     expect(onboardingSummary(steps())).toBe('Готово 0 з 3');
     expect(

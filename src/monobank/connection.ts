@@ -1,4 +1,4 @@
-import type { MonobankTokenStore } from '../platform/monobank-token';
+import { tokenKept, type MonobankTokenStore } from '../platform/monobank-token';
 import { fetchClientInfo, type AuthFetchLike, type MonobankAccount, type Outcome } from './api';
 
 /**
@@ -98,7 +98,7 @@ export function monobankConnection(ports: ConnectionPorts) {
       if (stored.kind === 'unavailable') {
         return { kind: 'storage-unavailable' };
       }
-      return stored.token ? { kind: 'configured' } : { kind: 'not-configured' };
+      return tokenKept(stored) ? { kind: 'configured' } : { kind: 'not-configured' };
     },
 
     /**

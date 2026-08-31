@@ -5,15 +5,10 @@ import { StyleSheet } from 'react-native';
 import { Action } from '@/components/form';
 import { Card, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import {
-  accounts as accountsRepo,
-  imports as importsRepo,
-  monobank as monobankRepo,
-  transactions as transactionsRepo,
-} from '@/db/repos';
-import { monobankConnection } from '@/monobank/connection';
+import { accounts as accountsRepo, imports as importsRepo } from '@/db/repos';
 import { notificationAccess } from '@/platform/notification-access-device';
 import type { NotificationAccess } from '@/platform/notification-access';
+import { tokenKept } from '@/platform/monobank-token';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { onboardingSteps, onboardingSummary, type OnboardingStep } from '@/ui/onboarding';
@@ -30,47 +25,34 @@ import { Spacing } from '@/constants/theme';
  * where `verify` can reach it.
  */
 
-/**
- * The connection, only ever asked `state()` here — which reads secure storage and stops. No
- * request goes out from this screen; the ports it needs for its other methods are wired for
- * completeness, not because this screen uses them.
- */
-const connection = monobankConnection({
-  tokenStore: monobankTokenStore,
-  fetch: (url, headers) => fetch(url, { headers }),
-  cacheAccounts: (fetched, obtainedAt) => monobankRepo.upsertAccounts(fetched, obtainedAt),
-  now: () => new Date(),
-});
-
 export default function OnboardingScreen() {
   const router = useRouter();
   const [stored, reload] = useReloadOnFocus(
     useCallback(
       () => ({
         accounts: accountsRepo.list().length,
-        transactions: transactionsRepo.listAll().length,
         saldoImported: importsRepo.committedAt() !== undefined,
       }),
       [],
     ),
   );
-  const [monobankConfigured, setMonobankConfigured] = useState(false);
+  const [connected, setConnected] = useState(false);
   const [access, setAccess] = useState<NotificationAccess>('unsupported');
 
   // The two answers that are not a database read. Both are asked once per opening, and neither
-  // sends anything anywhere: the token state is a secure-storage read, the permission a platform
-  // question.
+  // can change anything: the token is read straight from secure storage — no network port and no
+  // account-cache port is wired here at all — and the permission is a platform question.
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const [connectionState, permission] = await Promise.all([
-        connection.state(),
+      const [token, permission] = await Promise.all([
+        monobankTokenStore.read(),
         notificationAccess.state(),
       ]);
       if (!alive) {
         return;
       }
-      setMonobankConfigured(connectionState.kind === 'configured');
+      setConnected(tokenKept(token));
       setAccess(permission);
     })();
     return () => {
@@ -82,11 +64,11 @@ export default function OnboardingScreen() {
     () =>
       onboardingSteps({
         accounts: stored.accounts,
-        monobankConfigured,
+        monobankConfigured: connected,
         saldoImported: stored.saldoImported,
         notificationAccess: access,
       }),
-    [access, monobankConfigured, stored.accounts, stored.saldoImported],
+    [access, connected, stored.accounts, stored.saldoImported],
   );
 
   const act = useCallback(

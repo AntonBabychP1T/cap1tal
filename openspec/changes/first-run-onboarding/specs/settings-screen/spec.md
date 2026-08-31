@@ -2,16 +2,17 @@
 
 ### Requirement: The Налаштування tab hosts the management sections
 
-The app SHALL offer a «Налаштування» tab, last after Головний, Місяць and Рахунки. Opening it
-SHALL offer «Перші кроки», which opens the setup view, and the sections «Категорії», «Джерела»
-and «Правила», each opening its management list, «Імпорт Saldo», which opens the one-time import
+The app SHALL offer a «Налаштування» tab, last after Головний, Місяць, Рахунки and Звіти.
+Opening it SHALL offer «Перші кроки», which opens the setup view, and the sections «Категорії»,
+«Джерела» and «Правила», each opening its management list, «Ліміти», which opens limit
+management, «Цілі», which opens goal management, «Імпорт Saldo», which opens the one-time import
 flow, and «monobank», which opens token, account linking and sync management.
 
 #### Scenario: The tab opens on its sections
 
 - **WHEN** the owner opens «Налаштування»
-- **THEN** the sections «Перші кроки», «Категорії», «Джерела», «Правила», «Імпорт Saldo» and
-  «monobank» are offered
+- **THEN** the sections «Перші кроки», «Категорії», «Джерела», «Правила», «Ліміти», «Цілі»,
+  «Імпорт Saldo» and «monobank» are offered
 
 #### Scenario: The import section opens the import flow
 

@@ -20,6 +20,10 @@ paths:
 
 ## How to write them
 - Test file sits next to its source: `foo.ts` → `foo.test.ts`.
+- **Never under `src/app/`.** expo-router bundles every file there through `require.context`, so a
+  test file in that tree ships into the app and its Node-only imports (`node:fs`) crash the bundle
+  on launch — `verify` green, app dead on the device. A test that has to inspect a screen lives in
+  `src/ui/` and reads the `.tsx` by path.
 - Test names quote the OpenSpec scenario they prove, e.g.
   `it("Scenario: ATM withdrawal does not count as spent", …)`. Every scenario in a change's
   delta spec has at least one test whose name contains that scenario title.

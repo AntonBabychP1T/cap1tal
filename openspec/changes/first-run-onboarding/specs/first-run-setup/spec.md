@@ -29,7 +29,15 @@ The setup view SHALL list the steps the app needs to be useful — a перши�
 connection, the one-time Saldo import, and permission to read bank notifications — each with what
 it is for and whether it is done, still to do, or not available. A step that can be acted on SHALL
 offer exactly one action, opening the single screen where that step is done; a step that cannot be
-acted on SHALL offer no action at all.
+acted on SHALL offer no action at all. The view SHALL also say how many of the steps that can be
+acted on are done, counting only those — a step that is not available is not one the owner is
+failing at.
+
+#### Scenario: The view says how much of the setup is behind the owner
+
+- **WHEN** the setup view is opened with one of three actionable steps done and one further step
+  not available on this device
+- **THEN** it reports one of three done, and the unavailable step is in neither number
 
 #### Scenario: A finished step reads as finished
 

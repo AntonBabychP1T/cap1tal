@@ -45,3 +45,21 @@ that permission exists, what it is for, or that nothing read ever leaves the pho
 - **No wizard.** The steps are a list the owner may do in any order, or none; nothing is blocked
   behind them and there is no "next".
 - **No change to Головний, Місяць, Рахунки** or to what any of the linked screens do.
+
+## What this change stacks on
+
+This change does not land alone, and its delta says so.
+
+- **`monobank-connect-flow`** owns `/manage/monobank`, `src/monobank/connection.ts` and
+  `src/platform/monobank-token-store.ts`. The monobank step links to that route and the setup
+  view reads that token store, so this change compiles only on top of it.
+- **`limits-goals-reports`** owns «Ліміти» and «Цілі» in the Налаштування sections, and modifies
+  the same requirement this change modifies — *The Налаштування tab hosts the management
+  sections*. A MODIFIED requirement replaces the whole requirement on archive, so the two deltas
+  cannot both be written against the old six-section list without one of them silently deleting
+  the other's sections from truth.
+
+  This change's delta therefore carries the union: all eight sections and the Звіти-inclusive tab
+  order — the state of the tab after both have landed. **It must be archived after
+  `limits-goals-reports`.** Archived before it, the older seven-section delta would overwrite this
+  one and drop «Перші кроки» from the source of truth while the code and its test still have it.

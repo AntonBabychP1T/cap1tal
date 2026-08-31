@@ -47,6 +47,41 @@
 ## 4. Verification
 
 - [x] 4.1 Run `npm run verify` and paste the final lines —
-      `Test Files 61 passed (61) / Tests 954 passed (954)`,
-      `✔ verify passed (093ac943be2c5dcd176962ae98a919affa8886e8)`
-- [ ] 4.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+      `Test Files 62 passed (62) / Tests 942 passed (942)`, `✔ verify passed`. This change's own
+      six test files account for 44 of those.
+      Neither the fingerprint nor the tree-wide total is pinned here. `openspec/**` is in
+      `scripts/fingerprint.sh`'s watch list, so writing a hash into this file is what invalidates
+      it; and the total moves whenever a sibling change lands in the same working tree (it read
+      961 before `saldo-import-simple-debts` reworked its own tests). The commit hook compares
+      the tree to its own last green run, which is the check that matters.
+- [x] 4.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS — **PASS**, 0 critical.
+      The first pass returned FAIL on two: the `settings-screen` delta collided with
+      `limits-goals-reports`'s MODIFIED of the same requirement (now the union, see 4.4), and the
+      setup view wired a write-capable monobank connection into a view specified to write nothing
+      (now a direct token-store read, guarded by `src/ui/onboarding-screen.test.ts`). Of the four
+      warnings on the second pass, three are closed: the duplicated "a kept token means
+      configured" rule is now one `tokenKept` predicate in `src/platform/monobank-token.ts` used
+      by both the connection and the setup view, the writes-nothing guard asserts on imports
+      rather than call-site aliases, and 4.1 no longer quotes a self-invalidating hash. The
+      fourth became 4.4. Those three fixes landed after the PASS; `verify` is green on them and
+      the smoke of 4.3 was re-run against them.
+- [x] 4.3 Smoke the two things `verify` cannot reach, on the emulator after
+      `scripts/android.sh reset` (the "no рахунок yet" state) — screenshots in
+      `.cache/android/first-run*.png`:
+      - the launch lands on «Перші кроки», not on an empty Головний;
+      - the four steps render with «Готово 0 з 3», each actionable one with exactly one button,
+        and «Читання сповіщень банків» reading «поки недоступно» with **no** button at all;
+      - «До застосунку» leaves for Головний and nothing pulls the owner back.
+
+      This smoke caught a bug `verify` could not: the guard test first written as
+      `src/app/onboarding.test.ts` was bundled by expo-router's `require.context`, and its
+      `node:fs` import broke the bundle on launch — green `verify`, dead app. It now lives at
+      `src/ui/onboarding-screen.test.ts`, and `.claude/rules/testing.md` says why.
+
+- [ ] 4.4 **Precondition for archiving, not a code task.** Archive this change only *after*
+      `limits-goals-reports` is archived. Both changes MODIFY the requirement "The Налаштування
+      tab hosts the management sections", and a MODIFIED requirement replaces the whole
+      requirement: this change's delta carries the union of both section lists, so archiving it
+      first lets that change's seven-section version overwrite it and drop «Перші кроки» from
+      `openspec/specs/settings-screen/spec.md` while `src/ui/settings-sections.ts` and its test
+      still carry it. Tick this only once `openspec list` no longer shows `limits-goals-reports`.

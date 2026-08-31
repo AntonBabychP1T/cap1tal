@@ -23,6 +23,15 @@ export type TokenRead =
   | { readonly kind: 'ok'; readonly token?: string }
   | { readonly kind: 'unavailable' };
 
+/**
+ * Whether a read found a token kept. One definition, because two drift: an empty string is not a
+ * token, and a caller that reimplements the check is one `!== undefined` away from calling the
+ * device connected when it is not.
+ */
+export function tokenKept(read: TokenRead): boolean {
+  return read.kind === 'ok' && Boolean(read.token);
+}
+
 /** What a write or a removal can say. Neither ever hands the value back. */
 export type TokenWrite = { readonly kind: 'ok' } | { readonly kind: 'unavailable' };
 
