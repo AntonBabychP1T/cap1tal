@@ -180,3 +180,17 @@ nothing changed.
       half is the half that goes unread, and it is half of the comparison the preview exists for.
       Fix: `flex: 1` on `.column`, so the two halves share the width and a long span wraps instead
       of leaving the card. Re-smoke the preview afterwards.
+
+## 8. The re-smoke §7.1 asked for (2026-09-01, after the fix)
+
+`emulator-5554` (Pixel_10_Pro, API 37), on a device carrying 6 рахунків and 83 транзакції, so the
+«Місяці» span is long on both sides — the condition that produced the defect.
+
+- **The preview** — «Бекап» and «Телефон» now sit in equal columns, and each renders «Червень 2026
+  — Вересень 2026» wrapped onto two lines wholly inside the card. «Рахунки» 6 / 6 and «Транзакції»
+  83 / 83 both read in full. Compared frame by frame against the original defect shot, where the
+  phone's half read «Червень 2026 — В» and ran off the card's edge. §7.1 is closed.
+- **Saving**, on the way there, reported «Бекап від 2026-09-01 збережено: 6 рахунків, 83
+  транзакції.» through Android's own folder chooser.
+- **«Скасувати»** returned the section to its two plain actions with no result line, and Головний
+  still showed the pre-restore money — nothing was replaced.

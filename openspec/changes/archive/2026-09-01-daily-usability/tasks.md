@@ -211,3 +211,15 @@ after «Записати».
       Fix in `RowAction` (`src/components/form.tsx:176`), whose label is a single line by design
       and whose box is already sized to the whole string. Re-smoke the keyboard path afterwards:
       `verify` is Node-only and cannot see a paint.
+
+## 9. The re-smoke §8.1 asked for (2026-09-01, after the fix)
+
+`emulator-5554` (Pixel_10_Pro, API 37).
+
+- **Fresh launch** — the pill beside «Останні транзакції» reads «Усі транзакції та пошук».
+- **After the keyboard** — a сума typed into the field, one refusal («Не записано — оберіть
+  рахунок»), рахунок picked, recorded: «Записано: витрата 42,00 UAH — Без категорії.» and the new
+  line at the top of the стрічка. In that same frame, with the IME still shown, the pill still
+  reads «Усі транзакції та пошук» in full. The original defect frame shows the same IME state with
+  the pill truncated to «Усі транзакції та» inside an unchanged box, so the condition was
+  reproduced and not merely avoided. §8.1 is closed.

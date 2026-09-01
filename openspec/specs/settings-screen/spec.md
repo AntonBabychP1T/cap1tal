@@ -10,14 +10,15 @@ The app SHALL offer a «Налаштування» tab, last after Головн�
 Opening it SHALL offer «Перші кроки», which opens the setup view, and the sections «Категорії»,
 «Джерела» and «Правила», each opening its management list, «Ліміти», which opens limit
 management, «Цілі», which opens goal management, «Імпорт Saldo», which opens the one-time import
-flow, «monobank», which opens token, account linking and sync management, and
-«Сповіщення банків», which opens notification access and watched apps management.
+flow, «monobank», which opens token, account linking and sync management,
+«Сповіщення банків», which opens notification access and watched apps management, and «Бекап»,
+which opens saving the whole state to one file and restoring it from one.
 
 #### Scenario: The tab opens on its sections
 
 - **WHEN** the owner opens «Налаштування»
 - **THEN** the sections «Перші кроки», «Категорії», «Джерела», «Правила», «Ліміти», «Цілі»,
-  «Імпорт Saldo», «monobank» and «Сповіщення банків» are offered
+  «Імпорт Saldo», «monobank», «Сповіщення банків» and «Бекап» are offered
 
 #### Scenario: The import section opens the import flow
 
@@ -39,6 +40,11 @@ flow, «monobank», which opens token, account linking and sync management, and
 - **WHEN** the owner opens «Сповіщення банків»
 - **THEN** the notification access state and the watched apps management are available in one
   flow
+
+#### Scenario: The backup section opens saving and restoring
+
+- **WHEN** the owner opens «Бекап»
+- **THEN** saving the whole state to one file and restoring it from one are available in one flow
 
 ### Requirement: The Категорії and Джерела sections manage the lists
 
@@ -158,4 +164,3 @@ leave the section — the same rule the «Ліміти» section carries, for th
 - **WHEN** the owner opens the form of a new ціль, fills in its назва and uses the device's back
   gesture
 - **THEN** the form closes, the «Цілі» section is still open, and no ціль has been created
-
