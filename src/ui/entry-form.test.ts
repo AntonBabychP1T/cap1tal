@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -718,22 +720,22 @@ describe('who may remember a рахунок', () => {
   const main = source('../app/(tabs)/index.tsx');
 
   it('Scenario: An import does not move the memory', () => {
-    // Every source file in the app, asked rather than listed: only Головний's hand-entry path may
-    // name `remember`, so nothing that stores транзакції on the owner's behalf can move it.
-    const callers = [
-      '../app/(tabs)/index.tsx',
-      '../app/(tabs)/accounts.tsx',
-      '../app/(tabs)/month.tsx',
-      '../app/(tabs)/settings.tsx',
-      '../app/account/[id].tsx',
-      '../app/transaction/[id].tsx',
-      '../app/manage/monobank.tsx',
-      '../app/manage/saldo-import.tsx',
-      '../app/manage/backup.tsx',
-      '../app/_layout.tsx',
-    ].filter((path) => /entryDefaultsRepo\.remember\(/.test(source(path)));
+    // Every screen in the app, walked rather than listed — a list goes stale the next time a
+    // screen is added, and this assertion is only worth having if it asks all of them. Only
+    // Головний's hand-entry path may name `remember`, so nothing that stores транзакції on the
+    // owner's behalf can move it.
+    const dir = fileURLToPath(new URL('../app/', import.meta.url));
+    const screens = readdirSync(dir, { recursive: true, encoding: 'utf8' })
+      .filter((name) => name.endsWith('.tsx'))
+      .sort();
+    const callers = screens.filter((name) =>
+      /entryDefaultsRepo\.remember\(/.test(readFileSync(join(dir, name), 'utf8')),
+    );
 
-    expect(callers).toEqual(['../app/(tabs)/index.tsx']);
+    // The walk found the app and not an empty directory.
+    expect(screens).toContain(join('(tabs)', 'index.tsx'));
+    expect(screens.length).toBeGreaterThan(15);
+    expect(callers).toEqual([join('(tabs)', 'index.tsx')]);
   });
 
   it('The form opens on what was remembered, resolved against what is offered', () => {

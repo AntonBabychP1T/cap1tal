@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import type { Category, Source } from '../domain/category';
@@ -152,5 +154,26 @@ describe('emptyMessage', () => {
   it('A list needs no sentence in its place', () => {
     expect(emptyMessage({ shown: 3, narrowed: true })).toBeNull();
     expect(emptyMessage({ shown: 3, narrowed: false })).toBeNull();
+  });
+});
+
+/**
+ * The rows «Транзакції» shows are storage's, and it must ask storage again whenever it comes back
+ * into focus. `verify` never runs a screen, so the assertion is structural — the idiom
+ * `entry-form.test.ts` already uses on Головний.
+ */
+describe('the shown list follows storage', () => {
+  const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+
+  it('Scenario: A found транзакція is edited', () => {
+    // Not a `useMemo`: with an empty query — the screen's own default — `searchCriteria('')` is
+    // `undefined` on both sides of a focus reload, so a memo keeps the page it computed at mount
+    // and the edited транзакція reads as it was.
+    expect(screen).toContain('const [shown] = useReloadOnFocus(');
+    expect(screen).not.toMatch(/const shown = useMemo\(/);
+  });
+
+  it('The рахунок, категорія and місяць it reads beside them are re-read too', () => {
+    expect(screen).toMatch(/const \[stored\] = useReloadOnFocus\(/);
   });
 });

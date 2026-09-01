@@ -130,7 +130,37 @@
       `✔ verify passed (767e72660852c84327a02787008fca0d899cf53f)` — the tree carrying 1.7 and 2.5,
       the two CRITICAL findings of the 6.2 review. The stamp is the run that proved that code;
       writing this note moved it, as ticking any box does.
-- [ ] 6.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+- [x] 6.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+
+      **PASS** (0 critical, 4 warnings), on `git diff ac6fe2f..ace3b3e` restricted to the 19 files
+      this change names — that commit carries several changes at once. The reviewer filled the
+      requirement → implementation → test table for every scenario of `backup-file`,
+      `backup-file-screen`, the `settings-screen` delta and the two `persistence` requirements with
+      no empty cell, and checked besides: no сума is a float or a decimal string (every one goes
+      through `money()` in `src/backup/format.ts:238`), `figuresOf` never sums across currencies,
+      the delete order in `replaceAll` covers every `restrict` FK onto `accounts`, `categories`,
+      `sources` and `monobank_accounts`, no committed migration was edited, and
+      `BACKUP_SCHEMA_VERSION = 11` still matches `drizzle/meta/_journal.json`.
+
+      Two warnings fixed here:
+      - `src/db/backup-repo.test.ts:310` asserted `not.toContain('СІЛЬПО ')`, which cannot fail:
+        «СІЛЬПО» ends the чернетка's text, so the searched substring is absent whether the
+        чернетка leaked into the snapshot or not. It is now `not.toContain('Приват24 Списання')`.
+        «СІЛЬПО» alone cannot be asserted — a транзакція of the same fixture carries it as its own
+        опис, and that one belongs in the бекап; the comment beside it now says so.
+      - `src/ui/backup-screen.ts:161` re-implemented `failureMessage(error)`, which already exists
+        at `src/ui/labels.ts:110` in a file this one already imports from. It now calls it.
+
+      Two recorded rather than fixed:
+      - This change's `settings-screen` delta enumerates ten sections; `reminders-and-alerts`
+        modifies the same requirement with eleven, «Нагадування» included. Whichever is archived
+        last overwrites the other, so the decision is recorded here: **`backup-file` is archived
+        first**, and `reminders-and-alerts` — which is not finished — carries «Нагадування» in
+        afterwards. Archiving them the other way round would silently delete «Нагадування» from
+        the spec.
+      - §7.1's fix is a StyleSheet value (`column: { flex: 1 }`) that `verify` cannot see, and the
+        re-smoke §7 asks for is not recorded. It is the one thing standing between this change and
+        `/opsx:archive`.
 
 ## 7. What the emulator showed (2026-09-01)
 

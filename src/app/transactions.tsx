@@ -86,20 +86,27 @@ export default function TransactionsScreen() {
   );
 
   /**
-   * How many pages the owner has asked for, and the pages themselves derived from it. State holds
-   * the *asking*, not the rows: the list is then a function of the query, the narrowing and that
-   * count, so returning from editing a транзакція shows it as it now is instead of as it was, and
-   * «Показати ще» still keeps everything already on the screen in place — the same offsets in the
-   * same order. `showMore` is what decides both, and it is proven in `transaction-search.test.ts`.
+   * How many pages the owner has asked for, and the pages themselves read from storage. State
+   * holds the *asking*, not the rows, so «Показати ще» keeps everything already on the screen in
+   * place — the same offsets in the same order.
+   *
+   * The rows come back through `useReloadOnFocus` and not through a `useMemo`: with an empty
+   * query — this screen's own default — `searchCriteria('')` is `undefined` on both sides of a
+   * focus reload, so nothing a memo depends on would change and the screen would keep the page it
+   * computed when it was mounted. A транзакція edited from the results would then read as it was,
+   * and a deleted one would stay on the screen as a row that opens «Такої транзакції немає».
+   * `showMore` is what decides a page, and it is proven in `transaction-search.test.ts`.
    */
   const [pages, setPages] = useState(1);
-  const shown = useMemo(() => {
-    let current = showMore([], read);
-    for (let more = 1; more < pages; more += 1) {
-      current = showMore(current.transactions, read);
-    }
-    return current;
-  }, [pages, read]);
+  const [shown] = useReloadOnFocus(
+    useCallback(() => {
+      let current = showMore([], read);
+      for (let more = 1; more < pages; more += 1) {
+        current = showMore(current.transactions, read);
+      }
+      return current;
+    }, [pages, read]),
+  );
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);

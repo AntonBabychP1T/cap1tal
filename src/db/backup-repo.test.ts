@@ -307,7 +307,9 @@ describe('the whole stored state as one snapshot', () => {
     // A бекап holds what the owner confirmed as their money, not what the phone overheard.
     const written = JSON.stringify(snapshot);
     expect(written).not.toContain('41000000');
-    expect(written).not.toContain('СІЛЬПО ');
+    // Not «СІЛЬПО»: a транзакція of this device carries that as its own опис, and that one
+    // belongs in the бекап. This is the half of the чернетка's text only the phone overheard.
+    expect(written).not.toContain('Приват24 Списання');
     expect(written).not.toContain('seen-1');
     expect(Object.keys(snapshot)).not.toContain('rates');
     expect(Object.keys(snapshot)).not.toContain('drafts');

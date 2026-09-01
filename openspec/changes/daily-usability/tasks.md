@@ -145,7 +145,52 @@ parallelisable, and «Звірити» (group 3) needs the рухи screen of gr
 ## 7. Verification
 
 - [x] 7.1 Run `npm run verify` and paste the final lines
-- [ ] 7.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+- [x] 7.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+
+      First pass: **FAIL** — 1 critical, 5 warnings, on `git diff ac6fe2f..ace3b3e` restricted to
+      the 35 files this change names. The critical one was real; it and one warning are fixed
+      below. Second pass over those fixes: **PASS** (0 critical, 4 warnings) — the reviewer
+      checked mechanically that the new test fails on the old wiring and passes on the new, that
+      `useFocusEffect` re-runs on the focus event itself and not merely on the callback's identity
+      (so returning from `transaction/[id]` re-reads whatever the query says), that paging keeps
+      its offsets and its order, and that the second `useReloadOnFocus` on this screen settles
+      after one extra pass rather than feeding itself.
+
+      **CRITICAL — «Транзакції» never re-read storage while the search box was empty**, which is
+      the screen's own default state. `shown` was a `useMemo` over `[pages, read]`, `read` a
+      `useCallback` over `[accountId, criteria, month]`, and `searchCriteria('')` returns
+      `undefined` (`src/ui/transaction-search.ts:46`) — so a focus reload changed no dependency and
+      the screen kept the page it had computed when it was mounted. On the screen whose requirement
+      is «Every stored транзакція is reachable»: a транзакція edited from the results still showed
+      its old сума, категорія and опис; a deleted one stayed as a row that opens «Такої транзакції
+      немає»; one recorded on Головний while the screen was mounted never appeared. The screen's own
+      comment asserted the opposite, so this was a false claim and not a known limitation.
+      Fixed at `src/app/transactions.tsx:95`: the rows are read through `useReloadOnFocus`, the
+      idiom `src/app/account/[id].tsx:92` already uses, and the comment now says what the code does.
+      Held by `src/ui/transaction-search.test.ts` «the shown list follows storage» — structural, in
+      the idiom of `entry-form.test.ts:718`, and it fails on the old wiring
+      (`git show ace3b3e:src/app/transactions.tsx:96` is `const shown = useMemo(`).
+
+      One warning fixed: `src/ui/entry-form.test.ts:722` said «Every source file in the app, asked
+      rather than listed» over a hardcoded list of ten paths, missing twelve of the app's
+      twenty-two screens — `src/app/transactions.tsx`, added by this very change, among them. It
+      now walks `src/app/` and asks all of them, so the comment is true and the assertion cannot go
+      stale the next time a screen is added.
+
+      Four warnings recorded rather than fixed, none of them a defect in behaviour:
+      - `src/ui/account-movements.ts:117` duplicates `reconcileConfirmation`
+        (`src/ui/account-groups.ts:103`) — the same sentence for the same act — and the two have
+        already diverged: рухи names the difference through `formatSignedMoney` («+30,00 UAH»),
+        Рахунки through `formatMoney` («30,00 UAH»). Same коригування, two descriptions.
+      - `src/app/transactions.tsx:190` and `src/app/account/[id].tsx:303` are verbatim copies of
+        the feed row block at `src/app/(tabs)/index.tsx:714`, a fourth reduced copy being
+        `src/app/category/[month]/[categoryId].tsx:103`. One component over `transactionLine`
+        would carry all four.
+      - Nine scenarios have implementation but no automated evidence — only the 2026-09-01 smoke,
+        and four of them are not among the things §8 says that smoke exercised.
+      - §8.1's fix is `numberOfLines={1}` on a label, a paint-level change no test here can see,
+        and the re-smoke §8 asks for is not recorded. It is the one thing standing between this
+        change and `/opsx:archive`.
 
 ## 8. What the emulator showed (2026-09-01)
 

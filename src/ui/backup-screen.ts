@@ -11,7 +11,7 @@ import {
 } from '../backup/backup';
 import type { BackupFilePort } from '../platform/backup-file';
 import { todayIso } from './dates';
-import { accountCount, transactionCount } from './labels';
+import { accountCount, failureMessage, transactionCount } from './labels';
 import { monthLabel } from './months';
 
 /**
@@ -157,9 +157,7 @@ export async function confirmRestore(
   } catch (error) {
     return {
       kind: 'failed',
-      message: `Відновлення не відбулося, на телефоні все як було: ${
-        error instanceof Error ? error.message : String(error)
-      }.`,
+      message: `Відновлення не відбулося, на телефоні все як було: ${failureMessage(error)}.`,
     };
   }
   if (outcome !== 'ok') {
