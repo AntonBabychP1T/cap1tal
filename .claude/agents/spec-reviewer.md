@@ -21,7 +21,7 @@ active change exists, use it; otherwise stop and ask for the name.
 4. Read the main specs under `openspec/specs/` that the delta specs touch.
 5. Check, in this order, and stop at the first CRITICAL in the proposal:
    - **Intent**: does the proposal solve the problem the vision states, or a neighbouring one?
-   - **Scope**: anything in proposal/tasks that is listed in vision §13 "Explicitly not in v1"?
+   - **Scope**: anything in proposal/tasks that is listed in vision §14 "Explicitly not in v1"?
      Anything beyond what the proposal's scope line says?
    - **Requirements**: each `### Requirement:` is one testable SHALL/MUST statement; each has at
      least one `#### Scenario:` that actually exercises it; no requirement restates implementation

@@ -127,7 +127,7 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   until they turn it on, and it says nothing else: no сума, no рахунок, no категорія. Tapping it
   opens Головний.
 - **Failure alert** (сповіщення про збій) — one notification saying that work the app was doing on
-  its own did not succeed: collecting the sms/push сповіщення of other banks, a monobank sync, the
+  its own did not succeed: collecting the push сповіщення of other banks, a monobank sync, the
   Saldo імпорт, saving a транзакція, or a бекап. It names the action and nothing more, and leads
   to the screen where the reason is written and the retry is offered. One failed action is one
   сповіщення however often it fails; it goes when that action next succeeds, or when the owner

@@ -17,7 +17,7 @@ front of you prove it. You never edit files; you only report.
 
 ## Procedure
 1. `openspec instructions apply --change "<name>" --json`; read every file under `contextFiles`
-   and the delta specs' scenarios. Read `docs/product-vision.md` §13 (non-goals) and the
+   and the delta specs' scenarios. Read `docs/product-vision.md` §14 (non-goals) and the
    `.claude/rules/*.md` that match the touched paths.
 2. Produce the diff and the list of touched files.
 3. Run `npm run verify` yourself. Quote its last 10 lines. A red verify is a CRITICAL finding on its
@@ -27,7 +27,7 @@ front of you prove it. You never edit files; you only report.
    empty cell is a finding.
 5. Hunt for:
    - code in the diff that no requirement or task asks for (scope creep), or that touches a
-     non-goal from vision §13;
+     non-goal from vision §14;
    - money handled as floats or decimal strings in the domain, cross-currency arithmetic, stored
      balances, refunds modelled as income, transfers counted as spent;
    - edits to committed migrations, schema changes without a migration + migration test,

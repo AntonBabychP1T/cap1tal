@@ -5,7 +5,7 @@ context: |
   cap1tal — personal money tracker for one person on one phone (others may install it locally).
   Product truth: docs/product-vision.md (problem, entities, money rules, monthly model, non-goals)
   and docs/glossary.md (every domain term with its exact meaning). Read both before writing any
-  artifact; use glossary terms verbatim; anything in vision §13 "Explicitly not in v1" is out of
+  artifact; use glossary terms verbatim; anything in vision §14 "Explicitly not in v1" is out of
   scope unless the owner says otherwise in the proposal.
   Stack (decided): Expo / React Native, TypeScript, SQLite + Drizzle ORM, npm, Android first, iOS
   must stay possible. Money is integers in minor units + currency code; monthly numbers are per
@@ -17,7 +17,7 @@ context: |
 # Rules injected only for the matching artifact.
 rules:
   proposal:
-    - State scope AND non-goals for this change; name any vision §13 item it deliberately touches
+    - State scope AND non-goals for this change; name any vision §14 item it deliberately touches
     - Intent must map to one of the two problems in the vision (where money went / how much is left) or say why not
   specs:
     - Every requirement is one testable SHALL/MUST statement with at least one Given/When/Then scenario that exercises it

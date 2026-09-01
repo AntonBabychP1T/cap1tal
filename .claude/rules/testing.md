@@ -11,9 +11,12 @@ paths:
 - `npm run verify` is the only definition of "green": spec validation → lint → typecheck →
   `vitest run`. It must stay under a minute and must never need an emulator, a device or a
   native build. Do not add anything to it that breaks that.
-- Vitest covers pure TypeScript only: `src/domain/**`, `src/db/**` (in-memory SQLite) and
+- Vitest covers pure TypeScript only: `src/domain/**`, `src/db/**` (in-memory SQLite),
   `src/ui/**` (screen logic with no React/React Native imports — amount parsing, feed rows,
-  account grouping, display labels).
+  account grouping, display labels), and the other pure modules — `src/monobank/**`,
+  `src/notifications/**`, `src/saldo/**`, `src/backup/**`, `src/reminders/**`, plus the *ports*
+  of `src/platform/**` against their in-memory doubles. A `*-device.ts` adapter loads a native
+  module and is therefore never imported from a test: that is what the port exists for.
 - React Native components and screens are not under Vitest. When UI tests arrive they use
   `jest-expo` and run in the slow CI job, not in `verify`. [PROPOSED]
 - Run a single file while iterating: `npx vitest run src/domain/<file>.test.ts`.

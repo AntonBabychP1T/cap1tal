@@ -23,24 +23,40 @@ Android first (iOS must stay possible).
 
 ```
 docs/            product-vision.md, glossary.md, tech-task.md — why, vocabulary, build plan
+BACKLOG.md       the owner's priority queue; what `auto-work` takes its next wave from
 openspec/        specs/<capability>/spec.md (truth), changes/<name>/ (work in flight), config.yaml
-src/app/         expo-router screens: (tabs)/ = Головний, Місяць, Рахунки, Налаштування;
-                 pushed over them: transaction/[id] (editing), category/…, manage/ (the lists)
-src/domain/      pure TypeScript: entities, money rules, monthly picture   → .claude/rules/domain.md
+src/app/         expo-router screens: (tabs)/ = Головний, Місяць, Рахунки, Звіти, Налаштування;
+                 pushed over them: transaction/[id], transactions (search), account/[id]
+                 (movements), category/…, onboarding («Перші кроки»), manage/ (the lists)
+src/domain/      pure TypeScript: money, entities, monthly picture, rules, limits, goals, reports
+                                                                        → .claude/rules/domain.md
 src/ui/          pure TypeScript screen logic, no React imports: amount parsing, labels, grouping
-src/db/          Drizzle schema, queries; drizzle/ = migrations          → .claude/rules/database.md
-src/monobank/    the public, tokenless currency endpoint: fetch + parse, no token anywhere near it
-**/*.test.ts     Vitest, next to the source                               → .claude/rules/testing.md
-app.json, plugins/   Expo config; android/ & ios/ are generated, never committed → .claude/rules/android.md
+src/db/          Drizzle schema, repositories; drizzle/ = migrations    → .claude/rules/database.md
+src/monobank/    the bank: the tokenless currency endpoint, plus the personal API, linking,
+                 sync and connection — the token reaches them through a port, never a global
+src/notifications/  another bank's push → fingerprint → чернетка (pure; the device half is platform/)
+src/saldo/       the one-time CSV import: parse → interpret → survey → verify
+src/backup/      the backup file: canonical shape, versioned format, restore plan
+src/reminders/   the daily нагадування and the failure alerts (pure: schedule, notices, alerts)
+src/platform/    the device behind one port each (the port is what `verify` tests, the adapter
+                 never loads under it): token store, backup file, local notifications,
+                 notification access, notification capture
+modules/         notification-capture — a local Expo module (Kotlin NotificationListenerService),
+                 committed; it carries its own manifest, so no config plugin exists
+**/*.test.ts     Vitest, next to the source                              → .claude/rules/testing.md
+app.json, modules/   Expo config and native code; android/ & ios/ are generated, never committed
+                                                                       → .claude/rules/android.md
 types/           committed ambient types (expo.d.ts replaces gitignored expo-env.d.ts for CI tsc)
-scripts/         verify.sh, fingerprint.sh (used by hooks)
-.claude/         settings.json (permissions + hooks), hooks/, rules/, agents/, skills/
+scripts/         verify.sh + fingerprint.sh (the hooks), android.sh (the emulator), *-dry-run.ts
+.claude/         settings.json (permissions + hooks), hooks/, rules/, agents/, skills/, and
+                 worktrees/ — `auto-work`'s lanes, kept out of git by `.git/info/exclude`
 ```
 
 The app is scaffolded from the Expo SDK 57 default template (expo-router, code under `src/`).
 The template's demo screens and components are gone; `src/components`, `src/constants` and
-`src/hooks` keep only what the real screens use. Later tech-task.md steps add the remaining
-screens. `npm run verify` stays Node-only — it never runs JSX.
+`src/hooks` keep only what the real screens use. All five tabs exist; what tech-task.md §5 still
+adds is behind them, not new tabs. `npm run verify` stays Node-only — it never runs JSX: screen
+logic lives in `src/ui/` as plain TypeScript precisely so the gate can test it.
 
 ## Workflow for any change
 
