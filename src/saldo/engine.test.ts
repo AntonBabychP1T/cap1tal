@@ -4,7 +4,7 @@ import { account, computeBalance } from '../domain/account';
 import { monthlyPicture } from '../domain/monthly-picture';
 import { FEES_CATEGORY_ID } from '../domain/transaction';
 import { interpret } from './interpret';
-import { survey, type Decisions } from './survey';
+import { debtAccountId, survey, type Decisions } from './survey';
 import { leg, pair, parseRows, type FixtureRow } from './test-fixtures';
 import { verify } from './verify';
 
@@ -69,8 +69,6 @@ const DECISIONS: Decisions = {
     'UAH|mono black': { to: 'entry', key: 'UAH|Monobank UAH, Black' },
   },
   accountKinds: { 'UAH|Monobank UAH, White': 'savings' },
-  debtPeople: { 'борг яріку': { to: 'person', name: 'Ярослав' } },
-  debtTransactions: { '62': { to: 'person', name: 'Оля' } },
 };
 
 const build = (decisions: Decisions = DECISIONS) => {
@@ -89,7 +87,6 @@ describe('the engine over one export of every shape', () => {
       ).toBe(`${row.name}: plan ${row.saldoBalance.amount} vs saldo ${row.saldoBalance.amount}`);
     }
     expect(report.reconciles).toBe(true);
-    expect(report.unresolvedDebts).toEqual([]);
     expect(report.rejectedRedirects).toEqual([]);
     // Nothing the plan skipped moves any рахунок: the only listed row is the informational
     // original-currency amount a повернення cannot carry.
@@ -121,19 +118,16 @@ describe('the engine over one export of every shape', () => {
       { type: 'income', amount: { amount: -27100, currency: 'UAH' } },
     );
 
-    // Both people got their own рахунок-борг, one of them from a transaction with no description.
-    expect(plan.accounts.filter((a) => a.kind === 'debt').map((a) => a.name)).toEqual([
-      'Ярослав',
-      'Оля',
-    ]);
-    expect(plan.complete).toBe(true);
+    // Every «Борг» row — both directions, one description between two of them and none on the
+    // third — landed on the single рахунок-борг, and the owner was asked nothing.
+    expect(plan.accounts.filter((a) => a.kind === 'debt').map((a) => a.name)).toEqual(['Борги']);
   });
 
-  it('states each рахунок-борг’s resulting balance', () => {
+  it('states the рахунок-борг’s resulting balance', () => {
     const { report } = build();
+    // 1000 lent out, 400 back, 300 more out — what is still on loan, on one рахунок.
     expect(report.debts).toEqual([
-      { accountId: expect.any(String), name: 'Ярослав', balance: { amount: 60000, currency: 'UAH' } },
-      { accountId: expect.any(String), name: 'Оля', balance: { amount: 30000, currency: 'UAH' } },
+      { accountId: debtAccountId('UAH'), name: 'Борги', balance: { amount: 90000, currency: 'UAH' } },
     ]);
   });
 
@@ -168,16 +162,6 @@ describe('the engine over one export of every shape', () => {
     // «Борг» lending and repayment net to what is still out on loan; the jar рахунок holds відкладено.
     expect(november?.lent.amount).toBe(90000);
     expect(november?.saved.amount).toBe(-487802);
-  });
-
-  it('leaves the plan incomplete while a «Борг» transaction is unassigned', () => {
-    const { report } = build({ ...DECISIONS, debtTransactions: {} });
-    expect(report.unresolvedDebts.map((d) => d.transactionId)).toEqual(['62']);
-    expect(report.reconciles).toBe(false);
-    // The гаманець is short by exactly the row nothing was done with, and the report says so.
-    const wallet = report.accounts.find((r) => r.name === 'гаманець');
-    expect(wallet?.difference).toEqual({ amount: 30000, currency: 'UAH' });
-    expect(wallet?.explanations[0]).toMatchObject({ kind: 'export-row' });
   });
 
 });

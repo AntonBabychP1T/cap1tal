@@ -44,7 +44,7 @@ not available money, and no monthly number moves because of it.
 
 Non-goals of this change (deliberate):
 
-- No позиції, інструменти, кількості or prices, and no automatic prices — vision §13.2 keeps this
+- No позиції, інструменти, кількості or prices, and no automatic prices — vision §14.2 keeps this
   step to one hand-entered number per рахунок, and this change stays inside that.
 - No history of values and no value-over-time chart: a вартість replaces the previous one. Only
   the current worth is asked for, and a series of hand-typed numbers would invent a record of

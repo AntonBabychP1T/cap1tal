@@ -377,9 +377,6 @@ describe('survey — categories and sources', () => {
       ]),
     );
     expect(surveyed.categories).toEqual([]);
-    expect(surveyed.debtDescriptions).toEqual([
-      { description: 'борг яріку', transactionIds: ['1'] },
-    ]);
   });
 
   it('Scenario: "Uncategorised income" is proposed as an ordinary джерело', () => {
@@ -451,20 +448,6 @@ describe('survey — categories and sources', () => {
     expect(reservedCategoryFor('Fees')).toBe(FEES_CATEGORY_ID);
     expect(reservedCategoryFor('Uncategorised expense')).toBe(UNCATEGORISED_CATEGORY_ID);
     expect(reservedCategoryFor('Groceries')).toBeUndefined();
-  });
-
-  it('collects each distinct «Борг» description once, with every transaction that used it', () => {
-    const surveyed = survey(
-      parse([
-        ...pair({ id: '1', account: 'mono black', journalType: 'CREDIT', amount: '10.00', description: 'борг яріку', other: 'Борг', otherType: 'EXPENSES' }),
-        ...pair({ id: '2', account: 'mono black', journalType: 'DEBIT', amount: '10.00', description: 'борг яріку', other: 'Борг', otherType: 'EXPENSES' }),
-        ...pair({ id: '3', account: 'mono black', journalType: 'CREDIT', amount: '10.00', description: '', other: 'Борг', otherType: 'EXPENSES' }),
-      ]),
-    );
-    expect(surveyed.debtDescriptions).toEqual([
-      { description: 'борг яріку', transactionIds: ['1', '2'] },
-      { description: '', transactionIds: ['3'] },
-    ]);
   });
 
   it('surveys the same export into the same survey twice running', () => {

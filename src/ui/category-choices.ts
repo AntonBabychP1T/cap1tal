@@ -3,6 +3,7 @@ import {
   CORRECTION_CATEGORY_ID,
   UNCATEGORISED_CATEGORY_ID,
   UNSOURCED_SOURCE_ID,
+  type Transaction,
 } from '../domain/transaction';
 import { withCurrent } from './account-choices';
 import { byName } from './labels';
@@ -75,4 +76,54 @@ export function sourceChoicesFor(
   currentSourceId: string | undefined,
 ): Source[] {
   return keepingCurrent(sourceChoices(all), all, currentSourceId);
+}
+
+/** The категорії and джерела of the latest транзакції, most recently used first, each once. */
+export interface RecentlyUsed {
+  readonly categories: readonly string[];
+  readonly sources: readonly string[];
+}
+
+/**
+ * What the owner reached for last, read straight off the стрічка the screen has already loaded —
+ * never counted and never stored (design D10). No table, no migration, and nothing to explain: it
+ * is the order of use, not a ranking, so the категорія of the last витрата is first and the app
+ * has learned nothing it cannot show.
+ *
+ * `feed` is `listLatest`'s order — newest first. A коригування contributes nothing because the
+ * domain fixes its категорія and stores none; a переказ carries neither. Only what the транзакція
+ * actually holds counts, so nothing is inferred from an опис or an amount.
+ */
+export function recentlyUsed(feed: readonly Transaction[], limit: number): RecentlyUsed {
+  const categories: string[] = [];
+  const sources: string[] = [];
+  for (const t of feed) {
+    if (t.type === 'expense' || t.type === 'refund') {
+      if (!categories.includes(t.categoryId)) categories.push(t.categoryId);
+    } else if (t.type === 'income') {
+      if (!sources.includes(t.sourceId)) sources.push(t.sourceId);
+    }
+    if (categories.length >= limit && sources.length >= limit) break;
+  }
+  return { categories: categories.slice(0, limit), sources: sources.slice(0, limit) };
+}
+
+/**
+ * The recently used rows to offer ahead of the full list: those `recentlyUsed` named that the
+ * picker is offering anyway, in the order they were used.
+ *
+ * Resolved against `offered` and not against the whole list, so an archived категорія is not
+ * resurrected by having been used and «Без джерела» is not offered by having been imported onto —
+ * `expenseCategoryChoices` and `sourceChoices` already decide what may be picked, and this adds no
+ * second rule. A row may appear here and in the full list both; that is the point of a shortcut.
+ */
+export function recentRows<Row extends { readonly id: string }>(
+  recentIds: readonly string[],
+  offered: readonly Row[],
+): Row[] {
+  const byId = new Map(offered.map((row) => [row.id, row]));
+  return recentIds.flatMap((id) => {
+    const row = byId.get(id);
+    return row ? [row] : [];
+  });
 }

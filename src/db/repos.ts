@@ -1,11 +1,15 @@
 import { accountsRepo } from './accounts-repo';
+import { backupRepo } from './backup-repo';
 import { categoriesRepo } from './categories-repo';
 import { db } from './client';
+import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { importRepo } from './import-repo';
 import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
+import { notificationsRepo } from './notifications-repo';
 import { ratesRepo } from './rates-repo';
+import { remindersRepo } from './reminders-repo';
 import { rulesRepo } from './rules-repo';
 import { sourcesRepo } from './sources-repo';
 import { transactionsRepo } from './transactions-repo';
@@ -30,3 +34,11 @@ export const monobank = monobankRepo(db);
 /** The ліміти categories carry, and the цілі — what the owner wants, beside what already is. */
 export const limits = limitsRepo(db);
 export const goals = goalsRepo(db);
+/** What bank notifications have come to: the watched apps, the fingerprints, the чернетки. */
+export const notifications = notificationsRepo(db);
+/** The whole state as one snapshot, and the atomic replacement a відновлення is. */
+export const backup = backupRepo(db);
+/** The daily нагадування's setting, and the сповіщення про збій still outstanding. */
+export const reminders = remindersRepo(db);
+/** The рахунок the entry form opens on — written by Головний's hand-entry path and nothing else. */
+export const entryDefaults = entryDefaultsRepo(db);

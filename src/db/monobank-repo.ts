@@ -52,6 +52,12 @@ export interface StoredMonobankLink extends MonobankLink {
   readonly syncStartDate: IsoDate;
   /** Epoch milliseconds: everything up to and including this instant is imported and committed. */
   readonly cursorMs: number;
+  /**
+   * Epoch milliseconds of the last sync that *completed* for this link, or `null` for a link no
+   * sync has ever completed for. `null` and a moment of zero are two different things, and the
+   * screen says them differently.
+   */
+  readonly lastSyncedAtMs: number | null;
 }
 
 /** One statement answer, whole — the unit `commitStatementAnswer` either stores or does not. */
@@ -107,12 +113,14 @@ function toStoredLink(row: {
   accountId: string;
   syncStartDate: string;
   cursorMs: Date;
+  lastSyncedAt: Date | null;
 }): StoredMonobankLink {
   return {
     monobankAccountId: row.monobankAccountId,
     accountId: row.accountId,
     syncStartDate: row.syncStartDate,
     cursorMs: row.cursorMs.getTime(),
+    lastSyncedAtMs: row.lastSyncedAt?.getTime() ?? null,
   };
 }
 
@@ -412,6 +420,22 @@ export function monobankRepo(db: Storage) {
           throw new Error(`рахунок monobank «${answer.monobankAccountId}» уже відʼєднано`);
         }
       });
+    },
+
+    /**
+     * Records that a sync completed for this link, at `at`. Called for an account whose run
+     * settled as `complete` and for no other outcome, and deliberately outside the transaction
+     * that stores money: a statement answer is one page of a paginated sync, so an account that
+     * is rate-limited halfway would otherwise have committed pages and claimed a finished sync.
+     *
+     * A link that is gone takes no moment — the same silence as any other write to nothing.
+     */
+    markSynced(monobankAccountId: string, at: Date): void {
+      db
+        .update(monobankLinks)
+        .set({ lastSyncedAt: at })
+        .where(eq(monobankLinks.monobankAccountId, monobankAccountId))
+        .run();
     },
 
     /** The link of one monobank account, when it has one. */

@@ -72,6 +72,17 @@ export interface NotificationCapturePort {
    * after the collection is still waiting when the acknowledgement lands.
    */
   acknowledge(count: number): Promise<void>;
+  /**
+   * Which of `packages` this phone actually has, or `'unknown'` where the question cannot be
+   * asked — iOS, a build with no capture module in it, a double that was not told. `'unknown'` is
+   * not "none": an unanswered question must never empty a picker, so the caller offers everything
+   * when it comes back.
+   *
+   * Only the packages it is handed are looked at, never the phone's whole list: the Android side
+   * declares visibility of exactly the known bank packages by name (`<queries>`), and asking about
+   * anything else is a question this app has no business asking.
+   */
+  installedAmong(packages: readonly string[]): Promise<readonly string[] | 'unknown'>;
 }
 
 /**
@@ -84,11 +95,16 @@ export interface NotificationCapturePort {
  * the delivery contract, because that is what downstream code will be written against.
  *
  * `unavailable` makes every call answer as a build with no listener in it would.
+ *
+ * `installed` is what the phone is imagined to have; without it the double answers `'unknown'`,
+ * which is the honest default — a test that says nothing about installed apps has not said "none".
  */
 export function inMemoryNotificationCapture(
   options: {
     readonly queue?: readonly CapturedNotification[];
     readonly unavailable?: boolean;
+    /** The packages this imagined phone has. Omitted entirely: the device cannot answer. */
+    readonly installed?: readonly string[];
   } = {},
 ): NotificationCapturePort & {
   /** The set as the device holds it now — unchanged by a refused call. */
@@ -146,6 +162,16 @@ export function inMemoryNotificationCapture(
         remaining -= 1;
       }
       collected = collected.slice(index);
+    },
+
+    installedAmong: async (packages: readonly string[]) => {
+      // A build that cannot capture cannot look either, and a double that was not told what the
+      // phone has does not get to invent an empty answer.
+      if (unavailable || options.installed === undefined) {
+        return 'unknown';
+      }
+      const present = new Set(options.installed);
+      return packages.filter((name) => present.has(name));
     },
 
     watched: () => watched,

@@ -2,22 +2,18 @@ import type { CommitSummary } from '../db/import-repo';
 import type { ImportPlan } from '../saldo/interpret';
 import { parseSaldoExport, type SaldoTransaction } from '../saldo/parse';
 import {
-  debtLegOf,
   survey,
   EMPTY_EXISTING,
   type AccountEntry,
   type AccountRedirect,
   type Decisions,
   type ExistingState,
-  type PersonAssignment,
   type Survey,
 } from '../saldo/survey';
 import { interpret } from '../saldo/interpret';
 import { verify, type Report } from '../saldo/verify';
 import type { AccountKind } from '../domain/account';
-import { EVIDENCE_STRENGTH, nameEvidence, type NameEvidence } from '../domain/name-match';
-import type { Money } from '../domain/money';
-import { evidenceLabel } from './labels';
+import { accountChoiceLabel } from './labels';
 
 /**
  * The «Імпорт Saldo» flow with none of its JSX: which step it stands on, the decisions the owner
@@ -33,7 +29,7 @@ import { evidenceLabel } from './labels';
  * restated.
  */
 
-export type Step = 'file' | 'accounts' | 'debts' | 'report' | 'done';
+export type Step = 'file' | 'accounts' | 'report' | 'done';
 
 /** How a commit ended, once the screen has attempted one. */
 export type Outcome =
@@ -173,30 +169,6 @@ export function redirectName(
   });
 }
 
-/** Assigns every «Борг» transaction carrying one description to a person; nothing undoes it. */
-export function assignDescription(
-  state: FlowState,
-  description: string,
-  to?: PersonAssignment,
-): FlowState {
-  return withDecisions(state, {
-    ...state.decisions,
-    debtPeople: withEntry(state.decisions.debtPeople, description, to),
-  });
-}
-
-/** Assigns one «Борг» transaction, overriding whatever its description says. */
-export function assignTransaction(
-  state: FlowState,
-  transactionId: string,
-  to?: PersonAssignment,
-): FlowState {
-  return withDecisions(state, {
-    ...state.decisions,
-    debtTransactions: withEntry(state.decisions.debtTransactions, transactionId, to),
-  });
-}
-
 /** Moving between steps. Reaching the report is what marks it seen — the commit needs that. */
 export function toStep(state: FlowState, step: Step): FlowState {
   return { ...state, step, reportSeen: state.reportSeen || step === 'report' };
@@ -208,12 +180,12 @@ export function confirmSecondImport(state: FlowState): FlowState {
 }
 
 /**
- * Whether the commit may be offered at all: a complete plan the owner has seen the report for,
- * and — on a device that has imported before — the extra confirmation, because committing again
- * doubles the whole history.
+ * Whether the commit may be offered at all: a plan the owner has seen the report for, and — on a
+ * device that has imported before — the extra confirmation, because committing again doubles the
+ * whole history.
  */
 export function canCommit(state: FlowState): boolean {
-  if (!state.plan?.complete || !state.reportSeen || state.outcome) {
+  if (!state.plan || !state.reportSeen || state.outcome) {
     return false;
   }
   return state.previouslyCommittedAt === undefined || state.secondImportConfirmed;
@@ -281,77 +253,47 @@ export function accountRows(state: FlowState): AccountRow[] {
   });
 }
 
-/** One «Борг» transaction and the person it is going to, if any. */
-export interface DebtRow {
-  readonly transactionId: string;
-  readonly description: string;
-  readonly date: string;
-  readonly amount: Money;
-  readonly assigned: boolean;
-  /** The рахунок-борг it lands on, once it is assigned. */
-  readonly person?: string;
+/** One offer in the «Об'єднати з» list: what the owner reads, and what a tap sends back. */
+export interface MergeTarget {
+  readonly value: string;
+  readonly label: string;
 }
 
 /**
- * Every «Борг» transaction of the export, each with its date, its amount and the person it is
- * going to — the unassigned ones first, since they are what holds the commit back. The plan lists
- * only what is unresolved, so the assigned ones are read back off the перекази the plan built.
+ * Everything one entry could merge into, by name: the other entries of this import that are still
+ * рахунки of their own, then the рахунки the owner already keeps.
+ *
+ * Three rules, and each is a promise the requirement makes rather than a convenience:
+ * an entry that is itself merging away is not offered, because merging onto it would build a chain
+ * no row displays; an archived рахунок is not offered, for the reason every other picker leaves
+ * them out — an archived рахунок takes no new money; and the currency rides every label, because
+ * it is the one thing that turns a redirect into a refusal, and the owner should read it before
+ * they pick rather than after.
+ *
+ * It lives here and not in the screen because it is the whole of the scenario "The targets are
+ * offered on the row", and `verify` never runs a screen.
  */
-export function debtRows(state: FlowState): DebtRow[] {
-  const plan = state.plan;
-  if (!plan) {
-    return [];
-  }
-  const unresolved = new Set(plan.unresolvedDebts.map((debt) => debt.transactionId));
-  const namesById = new Map(plan.accounts.map((planned) => [planned.id, planned.name]));
-  // Which transactions are «Борг» is the export's answer, not the plan's: a рахунок the owner set
-  // to вид `debt` on the map step has ordinary перекази too, and none of them is a «Борг» row.
-  const debtDescriptions = new Map(
-    state.transactions
-      .filter((t) => debtLegOf(t) !== undefined)
-      .map((t) => [t.id, t.legs[0]?.description ?? '']),
-  );
-  const rows: DebtRow[] = plan.unresolvedDebts.map((debt) => ({
-    transactionId: debt.transactionId,
-    description: debt.description,
-    date: debt.date,
-    amount: debt.amount,
-    assigned: false,
-  }));
-  for (const planned of plan.transactions) {
-    const [saldoId] = planned.saldoIds;
-    const t = planned.transaction;
-    if (
-      t.type !== 'transfer' ||
-      saldoId === undefined ||
-      unresolved.has(saldoId) ||
-      !debtDescriptions.has(saldoId)
-    ) {
-      continue;
-    }
-    const debtLeg = [t.fromAccountId, t.toAccountId].find((id) =>
-      plan.accounts.some((planned2) => planned2.id === id && planned2.kind === 'debt'),
-    );
-    if (debtLeg === undefined) {
-      continue;
-    }
-    rows.push({
-      transactionId: saldoId,
-      // The description it was assigned by, kept: it is how the owner tells two rows of one week
-      // apart from each other after they have moved.
-      description: debtDescriptions.get(saldoId) ?? '',
-      date: t.date,
-      amount: t.left,
-      assigned: true,
-      person: namesById.get(debtLeg) ?? '',
-    });
-  }
-  return rows;
+export function mergeTargets(state: FlowState, key: string): MergeTarget[] {
+  return [
+    ...accountRows(state)
+      .filter((row) => row.key !== key && !row.mergedInto && !row.ontoExisting)
+      .map((row) => ({ value: `entry:${row.key}`, label: accountChoiceLabel(row.becomes) })),
+    ...state.existing.accounts
+      .filter((a) => !a.archived)
+      .map((a) => ({ value: `account:${a.id}`, label: `${accountChoiceLabel(a)} — наявний` })),
+  ];
 }
 
-/** Every «Борг» transaction still attached to nobody — what blocks the commit, listed. */
-export function unassignedDebts(state: FlowState): DebtRow[] {
-  return debtRows(state).filter((row) => !row.assigned);
+/**
+ * The value a merge choice carries back, decoded. Two kinds of target live in one list, and the
+ * prefix is what keeps «an entry of this import» and «a рахунок the owner already has» apart —
+ * they are indistinguishable by name, and very different decisions. Encoded by `mergeTargets`
+ * three lines up, so the pair is read and proven together.
+ */
+export function targetOf(value: string): AccountRedirect {
+  return value.startsWith('account:')
+    ? { to: 'account', accountId: value.slice('account:'.length) }
+    : { to: 'entry', key: value.slice('entry:'.length) };
 }
 
 /** What the commit would create, for the owner to read before it does. */
@@ -362,7 +304,6 @@ export interface PlanSummary {
   readonly sources: number;
   readonly transactions: number;
   readonly droppedRows: number;
-  readonly unassignedDebts: number;
 }
 
 export function planSummary(state: FlowState): PlanSummary | undefined {
@@ -379,155 +320,5 @@ export function planSummary(state: FlowState): PlanSummary | undefined {
     sources: plan.sources.length,
     transactions: plan.transactions.length,
     droppedRows: plan.unexplained.length,
-    unassignedDebts: plan.unresolvedDebts.length,
   };
-}
-
-/** One merge the flow proposes: an entry, where it would go, and why the app thinks so. */
-export interface MergeSuggestion {
-  /** The map entry that would stop being its own рахунок. */
-  readonly key: string;
-  /** What the entry's row calls it. */
-  readonly entryName: string;
-  readonly onto: AccountRedirect;
-  /** The рахунок it would join, by the name the owner sees. */
-  readonly targetName: string;
-  /** Whether that рахунок is one the owner already keeps, rather than another entry. */
-  readonly ontoExisting: boolean;
-  /** The evidence, in the owner's words. */
-  readonly reason: string;
-}
-
-/** The strongest candidate, or nothing when two are equally strong — a coin flip is not evidence. */
-function strongest<T>(
-  candidates: readonly { readonly target: T; readonly evidence: NameEvidence }[],
-): { readonly target: T; readonly evidence: NameEvidence } | undefined {
-  let best: { target: T; evidence: NameEvidence } | undefined;
-  let tied = false;
-  for (const candidate of candidates) {
-    if (!best || EVIDENCE_STRENGTH[candidate.evidence] > EVIDENCE_STRENGTH[best.evidence]) {
-      best = { target: candidate.target, evidence: candidate.evidence };
-      tied = false;
-    } else if (EVIDENCE_STRENGTH[candidate.evidence] === EVIDENCE_STRENGTH[best.evidence]) {
-      tied = true;
-    }
-  }
-  return tied ? undefined : best;
-}
-
-/**
- * Which map entries look like the same рахунок, before the owner has touched anything.
- *
- * A Saldo export carries one entry per account name the file ever used, so one card renamed once
- * arrives as two or three entries and would become two or three рахунки with a fraction of the
- * history each. The evidence that says otherwise is already on the screen — the names, and the
- * рахунки the owner already keeps — and this is what reads it.
- *
- * The rules, and each one is a refusal to guess:
- *
- * - Only entries the owner has made no decision about are proposed for; a redirect they already
- *   set is their answer, and this never argues with it.
- * - A рахунок the owner already has beats another entry: they kept it, its opening balance and
- *   its транзакції are there, and merging onto it is where this history belongs.
- * - Currencies must be equal, because the import rejects a cross-currency redirect — proposing
- *   one would be proposing a refusal.
- * - Two targets of equal strength propose nothing. The owner decides on the row.
- * - No chains: the first entry of a matching group is the target and the rest merge into it, so
- *   no proposal ever points at an entry that is itself merging away.
- *
- * Pure, like everything else here: it reads the flow's state and writes nothing.
- */
-export function mergeSuggestions(state: FlowState): MergeSuggestion[] {
-  const entries = state.survey?.accounts ?? [];
-  if (entries.length === 0) {
-    return [];
-  }
-  const decided = new Set(Object.keys(state.decisions.accountRedirects ?? {}));
-  const existing = state.existing.accounts.filter((a) => !a.archived);
-
-  const suggestions: MergeSuggestion[] = [];
-  /** Entries that will merge away, and entries that will receive one. Never both. */
-  const sources = new Set<string>();
-  const targets = new Set<string>();
-
-  entries.forEach((entry, index) => {
-    if (decided.has(entry.key) || targets.has(entry.key)) {
-      return;
-    }
-
-    const ontoExisting = strongest(
-      existing
-        .filter((a) => a.currency === entry.currency)
-        .map((a) => ({ target: a, evidence: nameEvidence(entry.proposedName, a.name) }))
-        .filter((c): c is { target: (typeof existing)[number]; evidence: NameEvidence } =>
-          Boolean(c.evidence),
-        ),
-    );
-    if (ontoExisting) {
-      sources.add(entry.key);
-      suggestions.push({
-        key: entry.key,
-        entryName: entry.proposedName,
-        onto: { to: 'account', accountId: ontoExisting.target.id },
-        targetName: ontoExisting.target.name,
-        ontoExisting: true,
-        reason: evidenceLabel(ontoExisting.evidence),
-      });
-      return;
-    }
-
-    // Earlier entries only: the first name a matching group appears under is the one the group
-    // merges into, so no proposal can ever point at an entry that is itself merging away.
-    const ontoEntry = strongest(
-      entries
-        .slice(0, index)
-        .filter(
-          (other) =>
-            other.currency === entry.currency && !sources.has(other.key) && !decided.has(other.key),
-        )
-        .map((other) => ({
-          target: other,
-          evidence: nameEvidence(entry.proposedName, other.proposedName),
-        }))
-        .filter((c): c is { target: AccountEntry; evidence: NameEvidence } => Boolean(c.evidence)),
-    );
-    if (!ontoEntry) {
-      return;
-    }
-    sources.add(entry.key);
-    targets.add(ontoEntry.target.key);
-    suggestions.push({
-      key: entry.key,
-      entryName: entry.proposedName,
-      onto: { to: 'entry', key: ontoEntry.target.key },
-      targetName: ontoEntry.target.proposedName,
-      ontoExisting: false,
-      reason: evidenceLabel(ontoEntry.evidence),
-    });
-  });
-
-  return suggestions;
-}
-
-/**
- * Accepts a whole set of merges in one transition, so the engine runs once over the finished map
- * rather than once per merge. Not only for speed: a map derived halfway through a set is a map
- * nobody asked to see, and its intermediate rejections would appear and vanish.
- *
- * What it writes is exactly what the hand path writes — the same `accountRedirects` — so undoing
- * one is the «Скасувати об'єднання» that already exists, and nothing about an accepted proposal
- * is remembered as a proposal.
- */
-export function applyMerges(
-  state: FlowState,
-  merges: readonly { readonly key: string; readonly onto: AccountRedirect }[],
-): FlowState {
-  if (merges.length === 0) {
-    return state;
-  }
-  const accountRedirects = { ...(state.decisions.accountRedirects ?? {}) };
-  for (const merge of merges) {
-    accountRedirects[merge.key] = merge.onto;
-  }
-  return withDecisions(state, { ...state.decisions, accountRedirects });
 }

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { account, computeBalance } from '../domain/account';
@@ -11,7 +13,15 @@ import {
   type Transaction,
   type Transfer,
 } from '../domain/transaction';
-import { buildEntry, proposeForTransfer, type EntryDraft } from './entry-form';
+import {
+  buildEntry,
+  defaultAccountId,
+  normaliseDescription,
+  proposeForTransfer,
+  recordedConfirmation,
+  type EntryDraft,
+} from './entry-form';
+import { accountsById } from './transaction-line';
 
 const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
 const jar = account({ id: 'jar', name: 'банка', kind: 'savings', currency: 'UAH' });
@@ -477,5 +487,378 @@ describe('the дата a form was filled with', () => {
     const { stored, refused } = record(draft({ date: '2026-02-31', amount: '100' }));
     expect(stored).toBeUndefined();
     expect(refused).toBe('такого дня немає в календарі: «2026-02-31»');
+  });
+});
+
+describe('normaliseDescription', () => {
+  it('Scenario: An empty опис stores none', () => {
+    expect(normaliseDescription('')).toBeUndefined();
+    expect(normaliseDescription('   ')).toBeUndefined();
+    expect(normaliseDescription(undefined)).toBeUndefined();
+  });
+
+  it('What the owner typed is stored trimmed', () => {
+    expect(normaliseDescription('  шини на зиму ')).toBe('шини на зиму');
+  });
+});
+
+describe('the опис the owner writes', () => {
+  const base = { amount: '1200', date: '2026-09-01' } as const;
+
+  it('Scenario: A typed опис is stored', () => {
+    const draft: EntryDraft = {
+      ...base,
+      type: 'expense',
+      accountId: 'card',
+      description: normaliseDescription('шини на зиму'),
+    };
+
+    const built = buildEntry(draft, { id: 'e1', accounts });
+
+    expect(built).toMatchObject({
+      type: 'expense',
+      amount: money(120000, 'UAH'),
+      description: 'шини на зиму',
+    });
+  });
+
+  it('Scenario: The owner"s own опис is an опис like any other', () => {
+    const built = buildEntry(
+      { ...base, type: 'expense', accountId: 'card', description: 'шини на зиму' },
+      { id: 'e1', accounts },
+    );
+
+    expect(built.type).toBe('expense');
+    if (built.type !== 'expense') return;
+    // The сума is untouched by it, and the опис took no part in choosing the категорія.
+    expect(built.amount).toEqual(money(120000, 'UAH'));
+    expect(built.categoryId).toBe(UNCATEGORISED_CATEGORY_ID);
+  });
+
+  it('Scenario: An empty опис stores none — through the form', () => {
+    const built = buildEntry(
+      {
+        ...base,
+        type: 'expense',
+        accountId: 'card',
+        description: normaliseDescription('  '),
+      },
+      { id: 'e1', accounts },
+    );
+
+    expect(built).not.toHaveProperty('description');
+  });
+
+  it('Scenario: A переказ can be explained too', () => {
+    const built = buildEntry(
+      {
+        ...base,
+        type: 'transfer',
+        accountId: 'card',
+        toAccountId: 'jar',
+        description: 'на ремонт',
+      },
+      { id: 't1', accounts },
+    );
+
+    expect(built.type).toBe('transfer');
+    if (built.type !== 'transfer') return;
+    expect(built.description).toBe('на ремонт');
+    // Both legs are exactly what was typed; nothing about the опис touched them.
+    expect(built.left).toEqual(money(120000, 'UAH'));
+    expect(built.arrived).toEqual(money(120000, 'UAH'));
+  });
+
+  it('A дохід and a повернення carry one too', () => {
+    const income = buildEntry(
+      { ...base, type: 'income', accountId: 'card', sourceId: 'salary', description: 'аванс' },
+      { id: 'i1', accounts },
+    );
+    const refunded = buildEntry(
+      {
+        ...base,
+        type: 'refund',
+        accountId: 'card',
+        categoryId: 'groceries',
+        description: 'повернули за каву',
+      },
+      { id: 'r1', accounts },
+    );
+
+    expect(income).toMatchObject({ type: 'income', description: 'аванс' });
+    expect(refunded).toMatchObject({ type: 'refund', description: 'повернули за каву' });
+  });
+
+  it('Scenario: A cleared опис changes no number', () => {
+    const carrying = buildEntry(
+      { ...base, type: 'expense', accountId: 'card', description: 'шини на зиму' },
+      { id: 'e1', accounts },
+    );
+    const cleared = buildEntry(
+      { ...base, type: 'expense', accountId: 'card', description: normaliseDescription('') },
+      { id: 'e1', accounts },
+    );
+
+    expect(cleared).not.toHaveProperty('description');
+    expect(cleared.type).toBe('expense');
+    if (cleared.type !== 'expense' || carrying.type !== 'expense') return;
+    expect(cleared.amount).toEqual(carrying.amount);
+    expect(cleared.categoryId).toBe(carrying.categoryId);
+    expect(cleared.accountId).toBe(carrying.accountId);
+    expect(cleared.date).toBe(carrying.date);
+  });
+
+  it('Scenario: Changing another field leaves the опис alone', () => {
+    const stored = buildEntry(
+      { ...base, type: 'expense', accountId: 'card', description: 'СІЛЬПО Київ' },
+      { id: 'e1', accounts },
+    );
+    const changed = buildEntry(
+      { ...base, amount: '130', type: 'expense', accountId: 'card', description: 'СІЛЬПО Київ' },
+      { id: 'e1', accounts },
+    );
+
+    expect(changed).toMatchObject({ amount: money(13000, 'UAH'), description: 'СІЛЬПО Київ' });
+    expect(stored.id).toBe(changed.id);
+  });
+});
+
+describe('the опис corrected from editing', () => {
+  const base = { amount: '1200', date: '2026-09-01' } as const;
+  /** Editing is `buildEntry` under the original's id — the same function recording uses. */
+  const edit = (draft: Omit<EntryDraft, 'type'> & { type: EntryDraft['type'] }) =>
+    buildEntry(draft, { id: 'e1', accounts });
+
+  it('Scenario: A wrong опис is corrected from editing', () => {
+    const corrected = edit({
+      ...base,
+      type: 'expense',
+      accountId: 'card',
+      categoryId: 'groceries',
+      description: normaliseDescription('шини на літо'),
+    });
+
+    expect(corrected).toMatchObject({
+      id: 'e1',
+      type: 'expense',
+      description: 'шини на літо',
+      amount: money(120000, 'UAH'),
+      accountId: 'card',
+      categoryId: 'groceries',
+      date: '2026-09-01',
+    });
+  });
+
+  it('Scenario: An опис can be cleared', () => {
+    const cleared = edit({
+      ...base,
+      type: 'expense',
+      accountId: 'card',
+      categoryId: 'groceries',
+      description: normaliseDescription(''),
+    });
+
+    // No опис at all — not an empty one — so the feed has no description row to show.
+    expect(cleared).not.toHaveProperty('description');
+  });
+
+  it('Scenario: A manual transaction stays compact', () => {
+    const manual = edit({ ...base, type: 'expense', accountId: 'card' });
+
+    // Nothing is stored for the опис, so neither the feed nor the editor has one to show.
+    expect(manual).not.toHaveProperty('description');
+    expect(normaliseDescription(undefined)).toBeUndefined();
+  });
+
+  it('A retype keeps whatever the опис says', () => {
+    const retyped = edit({
+      ...base,
+      type: 'transfer',
+      accountId: 'card',
+      toAccountId: 'jar',
+      description: 'Переказ на банку',
+    });
+
+    expect(retyped).toMatchObject({ type: 'transfer', description: 'Переказ на банку' });
+  });
+});
+
+describe('defaultAccountId', () => {
+  const offered = [card, jar];
+
+  it('Scenario: The next витрата opens on the same рахунок', () => {
+    expect(defaultAccountId('card', offered)).toBe('card');
+  });
+
+  it('Scenario: An archived рахунок is not offered as the default', () => {
+    // `offered` is the list the pickers show, and an archived рахунок is already out of it.
+    expect(defaultAccountId('card', [jar])).toBeUndefined();
+    // Recording without picking one is refused exactly as it is on a device that never recorded.
+    expect(() =>
+      buildEntry({ type: 'expense', amount: '1200', date: '2026-09-01' }, { id: 'e1', accounts }),
+    ).toThrow('оберіть рахунок');
+  });
+
+  it('A device that has never recorded by hand pre-chooses nothing', () => {
+    expect(defaultAccountId(undefined, offered)).toBeUndefined();
+  });
+
+  it('A рахунок that no longer exists pre-chooses nothing', () => {
+    expect(defaultAccountId('gone', offered)).toBeUndefined();
+  });
+});
+
+/**
+ * The memory itself is one line of wiring on Головний, which `verify` never runs. What can be
+ * proven here is the part that would be easy to break: that exactly one place in the app writes
+ * it, so an import, a sync and a confirmed чернетка leave it alone.
+ */
+describe('who may remember a рахунок', () => {
+  const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+  const main = source('../app/(tabs)/index.tsx');
+
+  it('Scenario: An import does not move the memory', () => {
+    // Every source file in the app, asked rather than listed: only Головний's hand-entry path may
+    // name `remember`, so nothing that stores транзакції on the owner's behalf can move it.
+    const callers = [
+      '../app/(tabs)/index.tsx',
+      '../app/(tabs)/accounts.tsx',
+      '../app/(tabs)/month.tsx',
+      '../app/(tabs)/settings.tsx',
+      '../app/account/[id].tsx',
+      '../app/transaction/[id].tsx',
+      '../app/manage/monobank.tsx',
+      '../app/manage/saldo-import.tsx',
+      '../app/manage/backup.tsx',
+      '../app/_layout.tsx',
+    ].filter((path) => /entryDefaultsRepo\.remember\(/.test(source(path)));
+
+    expect(callers).toEqual(['../app/(tabs)/index.tsx']);
+  });
+
+  it('The form opens on what was remembered, resolved against what is offered', () => {
+    expect(main).toContain('defaultAccountId(stored.rememberedAccountId');
+    expect(main).toContain('entryDefaultsRepo.remembered()');
+  });
+});
+
+/**
+ * Where Головний starts when the tab is opened again. It is wiring `verify` never runs — the
+ * assertion is structural, like the one above: the ref is lent by `Screen`, held here, and moved
+ * on focus and on nothing else.
+ */
+describe('Головний shows itself from its top', () => {
+  const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+  const main = source('../app/(tabs)/index.tsx');
+
+  it('Scenario: Coming back lands at the start of the entry form', () => {
+    // The column is scrolled by the screen that owns it, from a navigation focus.
+    expect(main).toContain('<Screen scrollRef={scrollRef}>');
+    expect(main).toContain('useFocusEffect');
+    expect(main).toMatch(/scrollRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\)/);
+  });
+
+  it('Scenario: Scrolling within the screen is untouched', () => {
+    // Nothing binds the reset to scrolling itself, and the feed is read exactly as before.
+    expect(main).not.toContain('onScroll');
+    expect(main).not.toContain('scrollEnabled');
+    expect(main).toContain('transactionsRepo.listLatest(FEED_SIZE)');
+  });
+
+  it('Only Головний asks to be scrolled back', () => {
+    // `Screen` lends the ref; teaching every tab to reset would be a policy nobody asked for.
+    const askers = [
+      '../app/(tabs)/index.tsx',
+      '../app/(tabs)/accounts.tsx',
+      '../app/(tabs)/month.tsx',
+      '../app/(tabs)/settings.tsx',
+      '../app/(tabs)/reports.tsx',
+    ].filter((path) => /scrollRef=/.test(source(path)));
+
+    expect(askers).toEqual(['../app/(tabs)/index.tsx']);
+  });
+});
+
+describe('recordedConfirmation', () => {
+  const names = {
+    accounts: accountsById(accounts),
+    categoryNames: new Map([
+      ['groceries', 'Groceries'],
+      [UNCATEGORISED_CATEGORY_ID, 'Без категорії'],
+      ['fees', 'Комісія'],
+    ]),
+    sourceNames: new Map([
+      ['salary', 'Salary'],
+      [INTEREST_SOURCE_ID, 'Відсотки'],
+    ]),
+  };
+
+  it('Scenario: The owner sees what was recorded', () => {
+    const written = buildEntry(
+      {
+        type: 'expense',
+        accountId: 'card',
+        amount: '1200',
+        date: '2026-09-01',
+        categoryId: 'groceries',
+      },
+      { id: 'e1', accounts },
+    );
+
+    expect(recordedConfirmation([written], names)).toBe(
+      'Записано: витрата 1200,00 UAH — Groceries.',
+    );
+  });
+
+  it('Scenario: An accepted комісія is part of the confirmation', () => {
+    const short = transfer({
+      id: 't1',
+      date: '2026-09-01',
+      fromAccountId: 'card',
+      toAccountId: 'jar',
+      left: money(100000, 'UAH'),
+      arrived: money(99500, 'UAH'),
+    });
+    const proposal = proposeForTransfer(short, { accounts, sourceTransactions: [] });
+    expect(proposal?.kind).toBe('fee');
+    if (proposal?.kind !== 'fee') return;
+
+    const said = recordedConfirmation(
+      [proposal.transfer, { ...proposal.expense, id: 'f1' }],
+      names,
+    );
+
+    expect(said).toContain('переказ');
+    expect(said).toContain('mono black');
+    expect(said).toContain('банка');
+    // The комісія is named as what was stored with it, not silently added.
+    expect(said).toContain('разом із цим — витрата 5,00 UAH — Комісія');
+  });
+
+  it('A дохід is named by its джерело, a переказ by both рахунки', () => {
+    const income = buildEntry(
+      { type: 'income', accountId: 'card', amount: '5000', date: '2026-09-01', sourceId: 'salary' },
+      { id: 'i1', accounts },
+    );
+    const moved = buildEntry(
+      {
+        type: 'transfer',
+        accountId: 'card',
+        toAccountId: 'jar',
+        amount: '1000',
+        date: '2026-09-01',
+      },
+      { id: 't1', accounts },
+    );
+
+    expect(recordedConfirmation([income], names)).toBe('Записано: дохід 5000,00 UAH — Salary.');
+    expect(recordedConfirmation([moved], names)).toBe(
+      'Записано: переказ 1000,00 UAH з «mono black» на «банка».',
+    );
+  });
+
+  it('Scenario: A refusal is not a confirmation', () => {
+    // Nothing was stored, so there is nothing to confirm — the refusal is shown on its own.
+    expect(recordedConfirmation([], names)).toBeUndefined();
   });
 });

@@ -203,16 +203,24 @@ function axisOf(scale: number, currency: CurrencyCode, hasNegative: boolean): Ch
 }
 
 /**
- * Which month is spelled out: the one the owner picked, or the newest of the span until they pick.
+ * Which month is spelled out: the one the owner picked, or — until they pick — the newest month of
+ * the span that holds a сума of its own in the shown currency. The newest month of the span is the
+ * current one, and the current one holds nothing until its first транзакція is recorded: opening
+ * the tab on three zeroes spells out a month that has not happened yet while the month that did is
+ * left unmentioned. A span whose every month is zero still spells out its newest — an all-zero
+ * history is an answer, and blank is not.
+ *
  * A picked month the span no longer holds — after a currency switch onto a shorter history, say —
- * falls back to the newest rather than leaving nothing spelled out. Deciding it here, and not in a
- * `useEffect` that resets state, is what makes the fallback provable.
+ * falls through to the same choice rather than leaving nothing spelled out. Deciding it here, and
+ * not in a `useEffect` that resets state, is what makes the fallback provable.
  */
-function monthToRead(months: readonly Month[], chosen: Month | undefined): Month | null {
-  if (chosen && months.includes(chosen)) {
+function monthToRead(series: readonly MonthTotals[], chosen: Month | undefined): Month | null {
+  if (chosen && series.some((month) => month.month === chosen)) {
     return chosen;
   }
-  return months[months.length - 1] ?? null;
+  const happened = series.filter((month) => HISTORY_KEYS.some((key) => month[key].amount !== 0));
+  const fallback = happened[happened.length - 1] ?? series[series.length - 1];
+  return fallback?.month ?? null;
 }
 
 export function reportsViewModel(input: {
@@ -259,10 +267,7 @@ export function reportsViewModel(input: {
   // Both charts span exactly the months `historyMonths` decided, so one picked month governs both:
   // June's history above August's Groceries would be two answers to one question.
   const shownSeries = shownCurrency ? series.get(shownCurrency)! : [];
-  const readMonth = monthToRead(
-    shownSeries.map((m) => m.month),
-    input.chosenMonth,
-  );
+  const readMonth = monthToRead(shownSeries, input.chosenMonth);
 
   const categoryMonths =
     chosenCategoryId && shownCurrency

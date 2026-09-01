@@ -79,8 +79,13 @@ export function overLimitByMonth(input: {
   return marked;
 }
 
-/** An account whose row is gone shows its id rather than an empty gap. */
-function nameOf(accountId: string, accountsById: ReadonlyMap<string, Account>): string {
+/**
+ * An account whose row is gone shows its id rather than an empty gap. Exported because every
+ * surface that names a рахунок needs the same fallback — the feed here, the чернетки on Головний,
+ * the watched apps in «Сповіщення банків» — and three copies would be three chances to drift into
+ * showing nothing at all.
+ */
+export function accountNameOf(accountId: string, accountsById: ReadonlyMap<string, Account>): string {
   return accountsById.get(accountId)?.name ?? accountId;
 }
 
@@ -111,13 +116,13 @@ export function transactionLine(
     return {
       ...common,
       amount: legs,
-      accounts: `${nameOf(t.fromAccountId, accountsById)} → ${nameOf(t.toAccountId, accountsById)}`,
+      accounts: `${accountNameOf(t.fromAccountId, accountsById)} → ${accountNameOf(t.toAccountId, accountsById)}`,
     };
   }
   return {
     ...common,
     amount: formatMoney(t.amount),
-    accounts: nameOf(t.accountId, accountsById),
+    accounts: accountNameOf(t.accountId, accountsById),
     ...(t.type === 'expense' || t.type === 'refund'
       ? {
           category: categoryLabel(t.categoryId, categoryNames),

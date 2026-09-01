@@ -21,10 +21,12 @@ import {
 /**
  * What the export says exists, and what the owner decides to do about it. The survey is derived
  * from the export alone — one entry per real (Saldo account, currency) pair, one proposal per
- * category and source name, one row per distinct «Борг» description. The `Decisions` value is the
- * owner's answer to it: a plain JSON-able object the confirm screen will build and the tests and
- * the dry-run hand-write. Nothing here guesses: an unmapped «Борг» description stays unresolved
- * rather than being attached to a person the import invented.
+ * category and source name. The `Decisions` value is the owner's answer to it: a plain JSON-able
+ * object the confirm screen builds and the tests and the dry-run hand-write.
+ *
+ * «Борг» is not among the questions. The debts the export carries are closed, so the import puts
+ * every one of them on a single рахунок-борг «Борги» per currency and asks nothing — see
+ * `DEBT_ACCOUNT_NAME`.
  */
 
 /** The Saldo EXPENSES names that are not categories at all. */
@@ -42,9 +44,19 @@ const KIND_BY_ACCOUNT_TYPE: Readonly<Record<string, AccountKind>> = {
 
 /** Plan-local id namespaces. Real ids are generated at commit time; the engine stays replayable. */
 export const NEW_ACCOUNT_PREFIX = 'saldo:account:';
-export const NEW_DEBT_PREFIX = 'saldo:debt:';
 export const NEW_CATEGORY_PREFIX = 'saldo:category:';
 export const NEW_SOURCE_PREFIX = 'saldo:source:';
+
+/**
+ * The one рахунок-борг the import builds, and its plan-local id per currency. Every «Борг» row of
+ * the export lands here: the debts the export carries are closed, so what is worth keeping about
+ * them is that they happened — the person behind a 2023 loan is not something the import asks.
+ */
+export const DEBT_ACCOUNT_NAME = 'Борги';
+
+export function debtAccountId(currency: CurrencyCode): string {
+  return `saldo:debt:${currency}`;
+}
 
 /**
  * A (Saldo account, currency) pair's stable key. The currency comes first and is always three
@@ -88,18 +100,11 @@ export interface NameProposal {
   readonly proposedId: string;
 }
 
-/** A distinct «Борг» description the owner has to attach to a person. */
-export interface DebtDescription {
-  readonly description: string;
-  readonly transactionIds: readonly string[];
-}
-
 export interface Survey {
   readonly accounts: readonly AccountEntry[];
   readonly droppedPairs: readonly DroppedPair[];
   readonly categories: readonly NameProposal[];
   readonly sources: readonly NameProposal[];
-  readonly debtDescriptions: readonly DebtDescription[];
 }
 
 /** The app's current state, as plain values — the engine never reaches for the database. */
@@ -129,10 +134,6 @@ export type AccountRedirect =
   | { readonly to: 'entry'; readonly key: string }
   | { readonly to: 'account'; readonly accountId: string };
 
-export type PersonAssignment =
-  | { readonly to: 'person'; readonly name: string }
-  | { readonly to: 'account'; readonly accountId: string };
-
 /**
  * The owner's answers, serializable end to end: the confirm screen of the follow-up change stores
  * exactly this, the dry-run passes `{}`, and replaying the same value over the same export
@@ -147,16 +148,6 @@ export interface Decisions {
   readonly categoryRedirects?: Readonly<Record<string, string>>;
   /** Saldo source name → an existing source id to use instead of creating one. */
   readonly sourceRedirects?: Readonly<Record<string, string>>;
-  /**
-   * «Борг» description → the person whose рахунок-борг the money moves to and from. A convenience
-   * that answers for every transaction carrying that description at once.
-   */
-  readonly debtPeople?: Readonly<Record<string, PersonAssignment>>;
-  /**
-   * «Борг» Transaction ID → person, overriding whatever the description says. Description alone
-   * cannot be the identity: two of the export's «Борг» rows carry an empty one.
-   */
-  readonly debtTransactions?: Readonly<Record<string, PersonAssignment>>;
 }
 
 export const NO_DECISIONS: Decisions = {};
@@ -210,7 +201,6 @@ export function survey(
   const pairs = new Map<string, { entry: AccountEntry; legs: SaldoLeg[]; initialOnly: boolean }>();
   const categories = new Map<string, NameProposal>();
   const sources = new Map<string, NameProposal>();
-  const debts = new Map<string, string[]>();
 
   for (const transaction of transactions) {
     const initial = isInitialBalance(transaction);
@@ -267,15 +257,6 @@ export function survey(
         }
       }
     }
-
-    if (debtLegOf(transaction)) {
-      const ids = debts.get(transaction.description);
-      if (ids) {
-        ids.push(transaction.id);
-      } else {
-        debts.set(transaction.description, [transaction.id]);
-      }
-    }
   }
 
   const accounts: AccountEntry[] = [];
@@ -298,10 +279,6 @@ export function survey(
     droppedPairs,
     categories: [...categories.values()],
     sources: [...sources.values()],
-    debtDescriptions: [...debts].map(([description, transactionIds]) => ({
-      description,
-      transactionIds,
-    })),
   };
 }
 

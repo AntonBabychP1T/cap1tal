@@ -443,6 +443,53 @@ describe('syncLinkedAccounts', () => {
     expect(repo.importedIds('mono-card')).toEqual(new Set());
   });
 
+  it('A completed account is dated with the moment its run finished', async () => {
+    link('mono-card', 'card');
+    const { fetchImpl } = scriptedFetch({
+      statement: () => ({
+        status: 200,
+        body: [item({ id: 'a1', timeSeconds: AUGUST_28, description: 'СІЛЬПО', amount: -12550 })],
+      }),
+    });
+
+    // Nothing has synced yet — the state of a link the owner has only just made.
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBeNull();
+
+    const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
+
+    expect(run.accounts[0]?.outcome).toBe('complete');
+    // The run's own clock, passed in like every other date in this app.
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(clockMs);
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBeGreaterThanOrEqual(RUN_AT);
+  });
+
+  it('Scenario: A failed run leaves the moment alone', async () => {
+    link('mono-card', 'card');
+    // Yesterday's completed sync, as the device would hold it.
+    const yesterday = new Date(RUN_AT - 86_400_000);
+    repo.markSynced('mono-card', yesterday);
+    const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 429, body: {} }) });
+
+    const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
+
+    expect(run.accounts[0]?.outcome).toBe('rate-limited');
+    // Still yesterday: a run that did not finish must not date a sync that did not happen.
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(yesterday.getTime());
+  });
+
+  it('An invalid token, an unavailable bank and a cancelled account all leave the moment alone', async () => {
+    link('mono-card', 'card');
+    const yesterday = new Date(RUN_AT - 86_400_000);
+    repo.markSynced('mono-card', yesterday);
+    // 401 on client-info: the whole run stops, and no account is dated.
+    const { fetchImpl } = scriptedFetch({ clientInfo: () => ({ status: 401, body: {} }) });
+
+    const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
+
+    expect(run.accounts[0]?.outcome).toBe('invalid-token');
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(yesterday.getTime());
+  });
+
   it('Scenario: A partial run keeps its truth', async () => {
     link('mono-card', 'card');
     repo.upsertAccounts(

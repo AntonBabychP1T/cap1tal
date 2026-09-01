@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import type { CapturedNotification } from '../notifications/capture';
+import { KNOWN_BANK_APPS } from '../ui/notification-settings';
 import {
   inMemoryNotificationCapture,
   monobankPackagesIn,
@@ -124,6 +125,45 @@ describe('the delivery contract the double honours', () => {
   });
 });
 
+/**
+ * Which of the known bank apps this phone has. The double answers the two ways a real device can:
+ * a list, or `'unknown'` — and `'unknown'` is not an empty list, because the caller offers the
+ * whole list when the question could not be asked.
+ */
+describe('which of the named packages the phone has', () => {
+  const KNOWN = ['ua.privatbank.ap24', 'ua.oschadbank.online', 'ua.abank24.mobileapp'];
+
+  it('A phone that was described answers with what it has, and nothing else', async () => {
+    const port = inMemoryNotificationCapture({
+      installed: ['ua.privatbank.ap24', 'com.example.unrelated'],
+    });
+
+    // Only the packages it was asked about: an app it was never asked about is not an answer.
+    expect(await port.installedAmong(KNOWN)).toEqual(['ua.privatbank.ap24']);
+  });
+
+  it('A phone described as having none of them says so, which is not «unknown»', async () => {
+    const port = inMemoryNotificationCapture({ installed: [] });
+
+    expect(await port.installedAmong(KNOWN)).toEqual([]);
+  });
+
+  it('A double that was told nothing cannot answer', async () => {
+    const port = inMemoryNotificationCapture();
+
+    expect(await port.installedAmong(KNOWN)).toBe('unknown');
+  });
+
+  it('A build where capture cannot work cannot look either', async () => {
+    const port = inMemoryNotificationCapture({
+      unavailable: true,
+      installed: ['ua.privatbank.ap24'],
+    });
+
+    expect(await port.installedAmong(KNOWN)).toBe('unknown');
+  });
+});
+
 describe('a build where capture cannot work', () => {
   it('Scenario: Collecting where capture cannot work yields nothing', async () => {
     const port = inMemoryNotificationCapture({ queue: [capture()], unavailable: true });
@@ -174,6 +214,32 @@ it('Scenario: A captured notification exists only on the phone', () => {
       expect(source).not.toContain(forbidden);
     }
   }
+});
+
+/**
+ * The same list of packages lives in two files: `KNOWN_BANK_APPS`, which is what the picker
+ * offers, and the module manifest's `<queries>`, which is what Android will let the app see at
+ * all. A package in one and not the other reads as "not installed" on every phone that has it,
+ * silently — so the two are held together here rather than by remembering.
+ *
+ * Node reads the manifest as text: no Android, no Gradle, `verify` stays what it is.
+ */
+it('Every known bank app is a package the manifest asks to see', () => {
+  const manifest = readFileSync(
+    new URL('../../modules/notification-capture/android/src/main/AndroidManifest.xml', import.meta.url),
+    'utf8',
+  );
+  const queries = manifest.slice(manifest.indexOf('<queries>'), manifest.indexOf('</queries>'));
+
+  expect(queries).not.toBe('');
+  for (const app of KNOWN_BANK_APPS) {
+    expect(queries, `${app.packageName} is not in <queries>`).toContain(
+      `<package android:name="${app.packageName}" />`,
+    );
+  }
+  // By name, and only by name: the whole-phone permission is what a named list exists to avoid.
+  // Matched as a declaration, so the comment explaining why it is absent does not count as one.
+  expect(manifest).not.toMatch(/<uses-permission[^>]*QUERY_ALL_PACKAGES/);
 });
 
 /**

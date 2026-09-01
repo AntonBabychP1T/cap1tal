@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { EVIDENCE_STRENGTH, nameEvidence } from './name-match';
 
 /**
- * The one definition of «these two names are the same account», shared by the monobank link
- * proposals and the Saldo import's merge proposals.
+ * The one definition of «these two names are the same account». Its only caller is the monobank
+ * link proposals: the Saldo import's merge proposals were withdrawn, and it now offers targets
+ * instead of guessing at them.
  */
 
 describe('nameEvidence', () => {

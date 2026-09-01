@@ -18,7 +18,7 @@ import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountChoicesFor, legsOf } from '@/ui/account-choices';
 import { formatMinorUnits } from '@/ui/amount-input';
 import { categoryChoicesFor, sourceChoicesFor } from '@/ui/category-choices';
-import { buildEntry, type EntryType } from '@/ui/entry-form';
+import { buildEntry, normaliseDescription, type EntryType } from '@/ui/entry-form';
 import { accountChoiceLabel, failureMessage, transactionTypeLabel } from '@/ui/labels';
 import { labelsAfterRetype, shapesFor } from '@/ui/retype';
 
@@ -155,9 +155,10 @@ export default function EditTransactionScreen() {
           date: form.date,
           categoryId: form.categoryId,
           sourceId: form.sourceId,
-          // The опис is the bank's, not the form's: nothing here edits it, and every shape the
-          // транзакція is retyped into keeps it.
-          description: original.description,
+          // The опис as the form now holds it — the owner's correction, or the bank's text
+          // untouched when they left it alone. Every shape the транзакція is retyped into keeps
+          // whatever it says, and an emptied field clears it rather than storing «».
+          description: normaliseDescription(form.description),
         },
         { id: original.id, accounts: stored.accounts },
       );
@@ -213,7 +214,7 @@ export default function EditTransactionScreen() {
           <ThemedText type="small" themeColor="textSecondary">
             Воно зʼявиться разом зі «звірити», що вміє його записати.
           </ThemedText>
-          <ImportedDescription of={original} />
+          <StoredDescription of={original} />
         </Card>
         <Action variant="destructive" title="Видалити транзакцію" onPress={remove} />
       </Screen>
@@ -274,7 +275,14 @@ export default function EditTransactionScreen() {
           autoCapitalize="none"
           placeholder="РРРР-ММ-ДД"
         />
-        <ImportedDescription of={original} />
+        {/* The опис, editable whatever put it there — an import, a чернетка or the owner's own
+            hand. No placeholder: a транзакція carrying none shows an empty field and nothing
+            standing in for a description it does not have. */}
+        <Field
+          label="Опис"
+          value={form.description}
+          onChangeText={(description) => setForm({ ...form, description })}
+        />
         {/* A витрата shows «Без категорії» selected when it carries nothing, because that is what
             saving would store — the same default the Головний form shows. A повернення shows
             nothing selected, because nothing is what saving it would refuse. */}
@@ -308,18 +316,18 @@ export default function EditTransactionScreen() {
 }
 
 /**
- * The bank's own text, shown and not edited. It is context for the fields above it — which
- * «Без категорії» this is, what an arrival on «Без джерела» actually was — and never a field of
- * its own: nothing here can change it, and `apply` carries it through every retype untouched. A
- * транзакція recorded by hand has none, and then this renders nothing at all.
+ * The опис of a коригування — the one транзакція this screen shows rather than edits, so its опис
+ * is read here and nowhere corrected. Named «Опис» and not «Опис від банку»: the text is no longer
+ * the bank's alone. A транзакція carrying none renders nothing at all, so nothing stands in for a
+ * description that does not exist.
  */
-function ImportedDescription({ of }: { of: Transaction }) {
+function StoredDescription({ of }: { of: Transaction }) {
   if (!of.description) {
     return null;
   }
   return (
     <View style={styles.field}>
-      <ThemedText type="overline">Опис від банку</ThemedText>
+      <ThemedText type="overline">Опис</ThemedText>
       <ThemedText>{of.description}</ThemedText>
     </View>
   );
@@ -334,6 +342,8 @@ interface Form {
   date: string;
   categoryId?: string;
   sourceId?: string;
+  /** The опис as typed. Empty means none — `normaliseDescription` turns it back into `undefined`. */
+  description: string;
 }
 
 /**
@@ -343,7 +353,7 @@ interface Form {
  */
 function initialForm(t: Transaction | undefined): Form | undefined {
   if (!t) return undefined;
-  const common = { toId: '', arrived: '', date: t.date };
+  const common = { toId: '', arrived: '', date: t.date, description: t.description ?? '' };
   if (t.type === 'transfer') {
     return {
       ...common,

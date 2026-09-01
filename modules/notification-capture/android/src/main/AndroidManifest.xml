@@ -1,4 +1,28 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!--
+    Package visibility, by name and only by name. Android 11 and later hide the installed apps
+    from an app that has not said which ones it cares about, and «Сповіщення банків» offers only
+    the bank apps this phone actually has: an app the phone does not have can never post a
+    сповіщення, and offering it is offering a watch that will stay silent forever.
+
+    Every package here is one already hard-coded in `KNOWN_BANK_APPS`
+    (`src/ui/notification-settings.ts`), and a Node-only test in
+    `src/platform/notification-capture.test.ts` fails the day the two lists drift.
+
+    Never `QUERY_ALL_PACKAGES`: it is a Play-restricted permission, it asks for the whole phone,
+    and this app has no case for either. A named list gives visibility of exactly the packages the
+    app already knows about and of nothing else.
+  -->
+  <queries>
+    <package android:name="ua.privatbank.ap24" />
+    <package android:name="ua.oschadbank.online" />
+    <package android:name="ua.abank24.mobileapp" />
+    <package android:name="com.ukrsibbank.client.android" />
+    <package android:name="ua.pumb.mobile" />
+    <package android:name="ua.sensebank.mobile" />
+    <package android:name="ua.raiffeisen.mobile" />
+    <package android:name="ua.creditagricole.mobile" />
+  </queries>
   <application>
     <!--
       The listener Android binds to when the owner switches the app on at «Доступ до сповіщень».

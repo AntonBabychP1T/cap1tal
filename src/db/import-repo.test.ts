@@ -103,8 +103,6 @@ describe('importRepo — committing a plan', () => {
       ...pair({ id: '3', datetime: '2024-11-02T10:00:00.000', account: 'mono black', journalType: 'CREDIT', amount: '300.00', other: 'готівка', otherType: 'CASH' }),
       ...pair({ id: '4', datetime: '2024-11-03T10:00:00.000', account: 'mono black', journalType: 'DEBIT', amount: '500.00', other: 'Salary', otherType: 'INCOME' }),
     ]);
-    expect(plan.complete).toBe(true);
-
     const summary = importRepo(storage.db).commit(plan, committedAt);
 
     // Literals, not the plan's own arithmetic: «булка» is created as a категорія and "Salary" as a

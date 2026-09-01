@@ -4,7 +4,14 @@ import type { IsoDate } from '../domain/transaction';
 import type { AccountOutcome, SyncProgress, SyncRun } from '../monobank/coordinator';
 import { suggestKind, type LinkProposal, type MonobankLink } from '../monobank/link';
 import { formatMoney } from './amount-input';
-import { accountChoiceLabel, evidenceLabel, kindLabel } from './labels';
+import { momentLabel, parseTypedDate, startOfLocalDayMs } from './dates';
+import {
+  accountChoiceLabel,
+  accountCount,
+  evidenceLabel,
+  kindLabel,
+  transactionCount,
+} from './labels';
 
 /**
  * What «monobank» shows and what it lets the owner decide, with none of its JSX — so `verify`,
@@ -44,6 +51,52 @@ export interface MonobankAccountRow {
   readonly accountName?: string;
   /** The inclusive first day sync may import for it, when it is linked. */
   readonly syncStartDate?: IsoDate;
+  /**
+   * When a sync last completed for it, in the owner's words — «Синхронізовано вчора о 18:05» — or
+   * «Ще не синхронізовано» when none has. Only a linked account has one: an unlinked account is
+   * not one sync visits.
+   *
+   * Said rather than left blank, because an empty moment and a moment nobody looked up read the
+   * same on a screen, and only one of them is true.
+   */
+  readonly lastSync?: string;
+}
+
+/** One linked account's moment, said either way. */
+function lastSyncOf(lastSyncedAtMs: number | null | undefined, now: Date): string {
+  return lastSyncedAtMs === null || lastSyncedAtMs === undefined
+    ? NEVER_SYNCED_ACCOUNT
+    : `Синхронізовано ${momentLabel(lastSyncedAtMs, now)}`;
+}
+
+/** Said for a linked account no sync has completed for — never an empty gap where a date goes. */
+export const NEVER_SYNCED_ACCOUNT = 'Ще не синхронізовано';
+
+/** Said when no linked account has ever completed a sync on this device. */
+export const NEVER_SYNCED_DEVICE = 'Синхронізації на цьому пристрої ще не було';
+
+/**
+ * The screen's own last sync: the most recent moment among the linked accounts, said in the
+ * owner's words — or plainly that there has not been one. `null` only where there is nothing to
+ * say it about: a device with no link has no sync to have missed.
+ *
+ * The most recent, not the oldest: the question the line answers is "when did this app last hear
+ * from the bank", and the newest answer is what answers it.
+ */
+export function lastSyncLine(input: {
+  readonly links: readonly (MonobankLink & { readonly lastSyncedAtMs?: number | null })[];
+  readonly now: Date;
+}): string | null {
+  if (input.links.length === 0) {
+    return null;
+  }
+  const moments = input.links
+    .map((link) => link.lastSyncedAtMs)
+    .filter((ms): ms is number => ms !== null && ms !== undefined);
+  if (moments.length === 0) {
+    return NEVER_SYNCED_DEVICE;
+  }
+  return `Остання синхронізація — ${momentLabel(Math.max(...moments), input.now)}`;
 }
 
 /** The state the screen is in as far as monobank's own answer is concerned. */
@@ -65,8 +118,11 @@ export function monobankAccountRows(input: {
   readonly monobankAccounts: readonly MonobankAccountView[];
   readonly links: readonly (MonobankLink & {
     readonly syncStartDate?: IsoDate;
+    readonly lastSyncedAtMs?: number | null;
   })[];
   readonly accounts: readonly Account[];
+  /** The clock, passed in like every other one — «сьогодні» is decided by the caller's instant. */
+  readonly now: Date;
 }): MonobankAccountRow[] {
   const linkOf = new Map(input.links.map((link) => [link.monobankAccountId, link]));
   const accountsById = new Map(input.accounts.map((a) => [a.id, a]));
@@ -87,6 +143,7 @@ export function monobankAccountRows(input: {
         // same fallback the feed uses, and as transient as that one.
         ...(link ? { accountName: account ? account.name : link.accountId } : {}),
         ...(link?.syncStartDate ? { syncStartDate: link.syncStartDate } : {}),
+        ...(link ? { lastSync: lastSyncOf(link.lastSyncedAtMs, input.now) } : {}),
       };
     });
 }
@@ -149,35 +206,25 @@ export function boundaryConfirmation(date: IsoDate, accountName: string): string
   return `Синхронізувати «${accountName}» з ${date} включно. Записи до цієї дати не імпортуються, а те, що вже є з Saldo, не звіряється — збіги доведеться прибрати вручну.`;
 }
 
-/**
- * The Ukrainian plural of «транзакція», which the result sentence needs and no other screen has
- * needed yet: 1 транзакція, 2–4 транзакції, 5 and the rest транзакцій, with the teens exempt.
- */
-export function transactionCount(n: number): string {
-  return `${n} ${plural(n, 'транзакція', 'транзакції', 'транзакцій')}`;
-}
-
-/** The same three forms for «рахунок», which the progress line counts. */
-export function accountCount(n: number): string {
-  return `${n} ${plural(n, 'рахунок', 'рахунки', 'рахунків')}`;
+/** The boundary a link is stored with: the date the owner typed, and where the cursor starts. */
+export interface SyncBoundary {
+  readonly syncStartDate: IsoDate;
+  readonly cursorMs: number;
 }
 
 /**
- * The Ukrainian three-form plural, in one place: 1 and anything ending in 1 take the singular,
- * 2–4 the few form, everything else the many form — and 11–14 take the many form whatever they
- * end in. Written once because two hand-rolled two-form guesses in one file is how «2 рахунків»
- * happens.
+ * The «Синхронізувати з» field is a typed дата like any other, so it is refused like any other —
+ * in Ukrainian, naming what was typed. Before this it went straight into `startOfLocalDayMs`, and
+ * a boundary of «31.12.2026» answered `date must be YYYY-MM-DD, got "31.12.2026"` inside a
+ * «Не приєднано» alert: the engine's own invariant text, in front of the owner, at the moment they
+ * are already being told no. That is exactly what the app-shell requirement forbids.
+ *
+ * All three link paths — an existing рахунок, a created one, and the reviewed set — go through
+ * here, so the date is checked once and both stored fields come from the same parse.
  */
-function plural(n: number, one: string, few: string, many: string): string {
-  const lastTwo = Math.abs(n) % 100;
-  const last = lastTwo % 10;
-  if (lastTwo >= 11 && lastTwo <= 14) {
-    return many;
-  }
-  if (last === 1) {
-    return one;
-  }
-  return last >= 2 && last <= 4 ? few : many;
+export function syncBoundary(typed: string): SyncBoundary {
+  const date = parseTypedDate(typed);
+  return { syncStartDate: date, cursorMs: startOfLocalDayMs(date) };
 }
 
 /**
@@ -252,6 +299,27 @@ export function syncSummary(
     retryOffered: run.accounts.some((result) => result.outcome !== 'complete'),
     replaceTokenOffered: run.accounts.some((result) => result.outcome === 'invalid-token'),
   };
+}
+
+/**
+ * Whether a finished run is a failure the owner has to be told about when they are not watching.
+ *
+ * A run that never started because there is no token and one with nothing linked are setup states,
+ * not failures: nothing was attempted, nothing silently stopped arriving, and a сповіщення would
+ * be the app complaining about work the owner never asked for. A cancelled account is the owner's
+ * own decision, for the reason `AccountOutcome` already gives about not blaming the bank for it.
+ * Everything else means транзакції did not arrive and «залишилось» is now too large.
+ */
+export function syncFailed(run: SyncRun): boolean {
+  if (run.kind === 'not-configured' || run.kind === 'no-links') {
+    return false;
+  }
+  if (run.kind === 'storage-unavailable') {
+    return true;
+  }
+  return run.accounts.some(
+    (result) => result.outcome !== 'complete' && result.outcome !== 'cancelled',
+  );
 }
 
 const RUN_HEADLINES: Readonly<

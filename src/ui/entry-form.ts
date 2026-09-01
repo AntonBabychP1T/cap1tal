@@ -12,8 +12,10 @@ import {
   type TransactionType,
   type Transfer,
 } from '../domain/transaction';
-import { parseAmount } from './amount-input';
+import { formatMoney, parseAmount } from './amount-input';
 import { parseTypedDate } from './dates';
+import { categoryLabel, sourceLabel, transactionTypeLabel } from './labels';
+import { accountNameOf } from './transaction-line';
 
 /**
  * What the Головний entry form decides, with none of its JSX: the four-way type switch turned
@@ -46,11 +48,41 @@ export interface EntryDraft {
   /** дохід only, required, no default. */
   readonly sourceId?: string;
   /**
-   * The опис the транзакція already carries — imports put it there, the form never asks for one.
-   * Editing and retyping rebuild the транзакція through here, so this is what keeps the bank's
-   * text on it whatever shape it takes.
+   * The опис: the bank's text on an imported транзакція, or the note the owner wrote when
+   * recording or editing one by hand. Optional everywhere and informational everywhere — it moves
+   * no total, no balance and no classification. Editing and retyping rebuild the транзакція
+   * through here, so this is also what keeps the bank's text on it whatever shape it takes. Pass
+   * what `normaliseDescription` returns: an empty field must arrive here as `undefined`, never as
+   * `''`.
    */
   readonly description?: string;
+}
+
+/**
+ * What the owner typed as the опис, ready to be stored: trimmed, and an empty field turned into
+ * no опис at all. One place, because both screens that offer the field — recording and editing —
+ * must agree, and because the column stores NULL for "no опис" and never the empty string
+ * (`src/db/schema.ts`). A транзакція with no опис shows no empty row anywhere.
+ */
+export function normaliseDescription(typed: string | undefined): string | undefined {
+  const trimmed = typed?.trim() ?? '';
+  return trimmed === '' ? undefined : trimmed;
+}
+
+/**
+ * The рахунок the entry form opens on: the one last recorded on by hand, when it is still among
+ * the рахунки the form offers. An offer and nothing more — the owner changes it freely before
+ * recording, and `buildEntry` resolves whatever they end with against the same list.
+ *
+ * A remembered рахунок that has since been archived (or deleted, which nothing does) pre-chooses
+ * nothing rather than quietly picking a neighbour: recording then refuses until the owner picks
+ * one, which is exactly what it does on a device that has never recorded by hand.
+ */
+export function defaultAccountId(
+  remembered: string | undefined,
+  offered: readonly Account[],
+): string | undefined {
+  return offered.some((a) => a.id === remembered) ? remembered : undefined;
 }
 
 /**
@@ -249,4 +281,62 @@ function interestExcess(
     return null;
   }
   return money(candidate.left.amount - owed.amount, from.currency);
+}
+
+
+/**
+ * What the owner reads after «Записати»: the сума with its currency and what it was recorded as —
+ * the категорія of a витрата or повернення, the джерело of a дохід, both рахунки of a переказ —
+ * and, when the owner accepted one, the комісія or the дохід «Відсотки» stored alongside.
+ *
+ * A line inside the entry card and not an Alert or a Toast (design D11): an Alert blocks and eats
+ * the next tap, and `ToastAndroid` is Android-only while iOS must stay possible. Built here rather
+ * than in JSX for the usual reason — it is what the screen *says*, so `verify` has to be able to
+ * read it.
+ *
+ * `written` is exactly what was stored, in the order it was stored: one транзакція normally, and a
+ * переказ followed by its accepted комісія or «Відсотки». Nothing stored, nothing said — a refused
+ * recording shows its own refusal and no confirmation.
+ */
+export function recordedConfirmation(
+  written: readonly Transaction[],
+  names: {
+    readonly accounts: ReadonlyMap<string, Account>;
+    readonly categoryNames: ReadonlyMap<string, string>;
+    readonly sourceNames: ReadonlyMap<string, string>;
+  },
+): string | undefined {
+  const [first, ...alongside] = written;
+  if (!first) {
+    return undefined;
+  }
+  const parts = [`Записано: ${describe(first, names)}`];
+  for (const extra of alongside) {
+    parts.push(`разом із цим — ${describe(extra, names)}`);
+  }
+  return `${parts.join('; ')}.`;
+}
+
+function describe(
+  t: Transaction,
+  names: {
+    readonly accounts: ReadonlyMap<string, Account>;
+    readonly categoryNames: ReadonlyMap<string, string>;
+    readonly sourceNames: ReadonlyMap<string, string>;
+  },
+): string {
+  switch (t.type) {
+    case 'expense':
+    case 'refund':
+      return `${transactionTypeLabel(t.type)} ${formatMoney(t.amount)} — ${categoryLabel(t.categoryId, names.categoryNames)}`;
+    case 'income':
+      return `дохід ${formatMoney(t.amount)} — ${sourceLabel(t.sourceId, names.sourceNames)}`;
+    case 'transfer':
+      return (
+        `переказ ${formatMoney(t.left)} з «${accountNameOf(t.fromAccountId, names.accounts)}» ` +
+        `на «${accountNameOf(t.toAccountId, names.accounts)}»`
+      );
+    case 'correction':
+      return `коригування ${formatMoney(t.amount)}`;
+  }
 }

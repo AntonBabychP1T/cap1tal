@@ -25,4 +25,15 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { href: '/manage/goals', title: 'Цілі', hint: 'Відкласти суму до дати' },
   { href: '/manage/saldo-import', title: 'Імпорт Saldo', hint: 'Разовий переїзд з історією' },
   { href: '/manage/monobank', title: 'monobank', hint: 'Токен, рахунки та синхронізація' },
+  {
+    href: '/manage/notifications',
+    title: 'Сповіщення банків',
+    hint: 'Доступ і застосунки, які читаємо',
+  },
+  {
+    href: '/manage/reminders',
+    title: 'Нагадування',
+    hint: 'Щоденне нагадування і що застосунок повідомляє',
+  },
+  { href: '/manage/backup', title: 'Бекап', hint: 'Зберегти все у файл і відновити з нього' },
 ];

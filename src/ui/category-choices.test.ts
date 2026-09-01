@@ -7,10 +7,14 @@ import {
   INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
   UNSOURCED_SOURCE_ID,
+  type Transaction,
 } from '../domain/transaction';
+import { money } from '../domain/money';
 import {
   categoryChoicesFor,
   expenseCategoryChoices,
+  recentRows,
+  recentlyUsed,
   sourceChoices,
   sourceChoicesFor,
 } from './category-choices';
@@ -167,5 +171,130 @@ describe('sourceChoices', () => {
     // picker opens with nothing selected, which is the question the owner has to answer.
     expect(ids(sourceChoicesFor(sources, UNSOURCED_SOURCE_ID))).not.toContain(UNSOURCED_SOURCE_ID);
     expect(ids(sourceChoicesFor(sources, UNSOURCED_SOURCE_ID))).toEqual(ids(sourceChoices(sources)));
+  });
+});
+
+/** A feed as `listLatest` hands it over: newest first. */
+const spent = (id: string, categoryId: string): Transaction => ({
+  type: 'expense',
+  id,
+  date: '2026-09-01',
+  accountId: 'card',
+  amount: money(12000, 'UAH'),
+  categoryId,
+});
+const earned = (id: string, sourceId: string): Transaction => ({
+  type: 'income',
+  id,
+  date: '2026-09-01',
+  accountId: 'card',
+  amount: money(500000, 'UAH'),
+  sourceId,
+});
+
+describe('recentlyUsed', () => {
+  it('Scenario: The last used категорія is one tap away', () => {
+    // Newest first: Groceries again, then Eating out, then Groceries.
+    const feed = [
+      spent('e3', 'groceries'),
+      spent('e2', 'eating-out'),
+      spent('e1', 'groceries'),
+    ];
+
+    const recent = recentlyUsed(feed, 5);
+
+    // Each named once, most recently used first.
+    expect(recent.categories).toEqual(['groceries', 'eating-out']);
+
+    const offered = expenseCategoryChoices(categories);
+    expect(recentRows(recent.categories, offered).map((c) => c.name)).toEqual([
+      'Groceries',
+      'Eating out',
+    ]);
+    // The full list is still reachable, unchanged.
+    expect(offered.map((c) => c.id)).toContain('groceries');
+    expect(offered.map((c) => c.id)).toContain('eating-out');
+  });
+
+  it('Scenario: An archived категорія is not resurrected by having been used', () => {
+    const recent = recentlyUsed([spent('e1', 'pets')], 5);
+
+    expect(recent.categories).toEqual(['pets']);
+    // «Pets» is archived, so neither list offers it — one rule, `expenseCategoryChoices`'s.
+    const offered = expenseCategoryChoices(categories);
+    expect(recentRows(recent.categories, offered)).toEqual([]);
+    expect(offered.map((c) => c.id)).not.toContain('pets');
+  });
+
+  it('Scenario: A fresh device offers only the full list', () => {
+    const recent = recentlyUsed([], 5);
+
+    expect(recent).toEqual({ categories: [], sources: [] });
+    expect(recentRows(recent.categories, expenseCategoryChoices(categories))).toEqual([]);
+  });
+
+  it('Джерела are read the same way, off the доходи', () => {
+    const feed = [earned('i2', 'batky'), earned('i1', 'salary'), spent('e1', 'groceries')];
+
+    const recent = recentlyUsed(feed, 5);
+
+    expect(recent.sources).toEqual(['batky', 'salary']);
+    expect(recentRows(recent.sources, sourceChoices(sources)).map((s) => s.id)).toEqual([
+      'batky',
+      'salary',
+    ]);
+    // An archived джерело is out of both lists, exactly as an archived категорія is.
+    expect(recentRows(['freelance'], sourceChoices(sources))).toEqual([]);
+  });
+
+  it('«Без джерела» is not offered by having been imported onto', () => {
+    const recent = recentlyUsed([earned('i1', UNSOURCED_SOURCE_ID)], 5);
+
+    expect(recent.sources).toEqual([UNSOURCED_SOURCE_ID]);
+    expect(recentRows(recent.sources, sourceChoices(sources))).toEqual([]);
+  });
+
+  it('A переказ and a коригування carry neither, so they name nothing', () => {
+    const feed: Transaction[] = [
+      {
+        type: 'transfer',
+        id: 't1',
+        date: '2026-09-01',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(10000, 'UAH'),
+        arrived: money(10000, 'UAH'),
+      },
+      {
+        type: 'correction',
+        id: 'c1',
+        date: '2026-09-01',
+        accountId: 'card',
+        amount: money(-2000, 'UAH'),
+      },
+    ];
+
+    expect(recentlyUsed(feed, 5)).toEqual({ categories: [], sources: [] });
+  });
+
+  it('A повернення names its категорія like a витрата', () => {
+    const feed: Transaction[] = [
+      {
+        type: 'refund',
+        id: 'r1',
+        date: '2026-09-01',
+        accountId: 'card',
+        amount: money(-5000, 'UAH'),
+        categoryId: 'eating-out',
+      },
+    ];
+
+    expect(recentlyUsed(feed, 5).categories).toEqual(['eating-out']);
+  });
+
+  it('The row is bounded: only the last few are a shortcut', () => {
+    const feed = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, index) => spent(`e${index}`, id));
+
+    expect(recentlyUsed(feed, 5).categories).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 });

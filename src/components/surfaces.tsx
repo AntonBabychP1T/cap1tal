@@ -26,11 +26,25 @@ import { useTheme } from '@/hooks/use-theme';
  * with the 16pt gutter the canvas draws. Taps reach a button through an open keyboard, because on
  * a form the button under the thumb is usually the next thing tapped.
  */
-export function Screen({ children }: { children: React.ReactNode }) {
+export function Screen({
+  children,
+  scrollRef,
+}: {
+  children: React.ReactNode;
+  /**
+   * Lent out so a screen can scroll its own column — Головний shows itself from the top when the
+   * tab is opened again. `Screen` is a surface: it hands the ref over and knows nothing of
+   * navigation, so exactly the screens that ask for the behaviour have it.
+   */
+  scrollRef?: React.RefObject<ScrollView | null>;
+}) {
   return (
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.screen} edges={['top']}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled">
           {children}
         </ScrollView>
       </SafeAreaView>

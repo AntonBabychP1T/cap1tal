@@ -2,7 +2,7 @@ import { account, computeBalance, type AccountKind } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
 import type { Transaction } from '../domain/transaction';
 import { isRealAccountType, legEffect, type SaldoTransaction } from './parse';
-import type { ImportPlan, UnexplainedRow, UnresolvedDebt } from './interpret';
+import type { ImportPlan, UnexplainedRow } from './interpret';
 import { accountKey, EMPTY_EXISTING, type ExistingState, type RejectedRedirect } from './survey';
 
 /**
@@ -58,9 +58,8 @@ export interface Report {
   readonly debts: readonly DebtBalance[];
   /** Every row the plan turned into no money moving, whatever the reason. */
   readonly droppedRows: readonly UnexplainedRow[];
-  readonly unresolvedDebts: readonly UnresolvedDebt[];
   readonly rejectedRedirects: readonly RejectedRedirect[];
-  /** True when every рахунок reconciles exactly and no «Борг» transaction is unassigned. */
+  /** True when every рахунок the export maps onto reconciles exactly. */
   readonly reconciles: boolean;
 }
 
@@ -194,9 +193,8 @@ export function verify(input: {
     accounts,
     debts,
     droppedRows: plan.unexplained,
-    unresolvedDebts: plan.unresolvedDebts,
     rejectedRedirects: plan.rejectedRedirects,
-    reconciles: accounts.every((row) => row.reconciles) && plan.complete,
+    reconciles: accounts.every((row) => row.reconciles),
   };
 }
 

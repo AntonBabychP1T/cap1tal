@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { isoDate, monthOf } from '../domain/transaction';
 import { planWindows } from '../monobank/sync';
-import { parseTypedDate, startOfLocalDayMs, todayIso } from './dates';
+import {
+  dateOfEpochMs,
+  momentLabel,
+  parseTypedDate,
+  startOfLocalDayMs,
+  todayIso,
+} from './dates';
 
 describe('todayIso', () => {
   it('The date defaults to today', () => {
@@ -19,6 +25,30 @@ describe('todayIso', () => {
 
   it('Single digits are padded so the date is always YYYY-MM-DD', () => {
     expect(todayIso(new Date(2026, 0, 5, 9, 0, 0))).toBe('2026-01-05');
+  });
+});
+
+describe('dateOfEpochMs', () => {
+  it('Every instant of a local day is that same day', () => {
+    // Both bounds of the local day and one moment in between: the day a bank posted about is one
+    // date from its first millisecond to its last, whatever the device's zone.
+    const start = startOfLocalDayMs('2026-08-26');
+    const end = startOfLocalDayMs('2026-08-27') - 1;
+    expect(dateOfEpochMs(start)).toBe('2026-08-26');
+    expect(dateOfEpochMs(end)).toBe('2026-08-26');
+    expect(dateOfEpochMs(new Date(2026, 7, 26, 13, 45).getTime())).toBe('2026-08-26');
+    // And the next millisecond is already the next day — the boundary is where it is stated.
+    expect(dateOfEpochMs(end + 1)).toBe('2026-08-27');
+  });
+
+  it('It is the inverse of startOfLocalDayMs, which is what both importers rely on', () => {
+    for (const date of ['2026-01-05', '2026-08-26', '2026-12-31'] as const) {
+      expect(dateOfEpochMs(startOfLocalDayMs(date))).toBe(date);
+    }
+    // monobank's statement carries epoch seconds, the phone's notifications epoch milliseconds;
+    // one function dates both, so a purchase cannot land on two different days.
+    const unixSeconds = Math.floor(new Date(2026, 7, 26, 23, 30).getTime() / 1000);
+    expect(dateOfEpochMs(unixSeconds * 1000)).toBe(todayIso(new Date(unixSeconds * 1000)));
   });
 });
 
@@ -76,6 +106,51 @@ describe('parseTypedDate', () => {
     expect(() => parseTypedDate('2026-02-31')).toThrow('такого дня немає в календарі: «2026-02-31»');
     expect(() => parseTypedDate('2026-13-01')).toThrow('такого дня немає в календарі: «2026-13-01»');
     expect(refusalOf(() => parseTypedDate('2026-02-31'))).not.toMatch(/[A-Za-z]/);
+  });
+});
+
+/**
+ * The moment a sync last completed, in the owner's words. `now` is data these tests control, as
+ * every clock in this app is.
+ */
+describe('momentLabel', () => {
+  /** 1 September 2026, 10:15 local — the caller's instant. */
+  const now = new Date(2026, 8, 1, 10, 15, 0);
+  const at = (...parts: [number, number, number, number, number]) =>
+    new Date(parts[0], parts[1], parts[2], parts[3], parts[4], 0).getTime();
+
+  it('The same calendar day reads as today, with the time of day', () => {
+    expect(momentLabel(at(2026, 8, 1, 9, 30), now)).toBe('сьогодні о 09:30');
+    // Local parts, not UTC: 01:00 in Kyiv is today, not yesterday.
+    expect(momentLabel(at(2026, 8, 1, 1, 0), now)).toBe('сьогодні о 01:00');
+  });
+
+  it('The day before reads as yesterday, across a month boundary', () => {
+    expect(momentLabel(at(2026, 7, 31, 18, 5), now)).toBe('вчора о 18:05');
+  });
+
+  it('An older day of this year is named by its day and month', () => {
+    expect(momentLabel(at(2026, 7, 30, 9, 0), now)).toBe('30 серпня о 09:00');
+    expect(momentLabel(at(2026, 0, 5, 23, 59), now)).toBe('5 січня о 23:59');
+  });
+
+  it('Another year carries its year', () => {
+    expect(momentLabel(at(2025, 7, 30, 9, 0), now)).toBe('30 серпня 2025 о 09:00');
+    // Even the day that would be «вчора» in another year is not: it is a different day.
+    expect(momentLabel(at(2025, 8, 1, 10, 15), now)).toBe('1 вересня 2025 о 10:15');
+  });
+
+  it('The clock is the caller’s, never an ambient one', () => {
+    const sameMoment = at(2026, 8, 1, 9, 30);
+
+    expect(momentLabel(sameMoment, now)).toBe('сьогодні о 09:30');
+    // A day later, the very same instant reads as yesterday — nothing here reads a real clock.
+    expect(momentLabel(sameMoment, new Date(2026, 8, 2, 8, 0, 0))).toBe('вчора о 09:30');
+    expect(momentLabel(sameMoment, new Date(2026, 8, 3, 8, 0, 0))).toBe('1 вересня о 09:30');
+  });
+
+  it('The hour and the minute are always two digits, and the day never is', () => {
+    expect(momentLabel(at(2026, 7, 3, 7, 4), now)).toBe('3 серпня о 07:04');
   });
 });
 

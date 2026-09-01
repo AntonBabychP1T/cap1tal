@@ -3,12 +3,10 @@
 ## Purpose
 
 The one-time move of the owner's history out of Saldo: parse the double-entry export CSV,
-interpret its legs into cap1tal транзакції under an owner-confirmed account map and «Борг»
-person assignment, and prove with a verification report that the resulting розрахункові баланси
-match what Saldo held at export time — before anything is committed.
-
+interpret its legs into cap1tal транзакції under an owner-confirmed account map, and prove with
+a verification report that the resulting розрахункові баланси match what Saldo held at export
+time — before anything is committed.
 ## Requirements
-
 ### Requirement: The export parses into double-entry transactions
 
 The system SHALL parse a Saldo export CSV — RFC-4180 quoted fields, which may contain commas,
@@ -280,54 +278,6 @@ no джерело beyond what the коригування type itself defines.
   "Balance correction" 4200 minor units UAH
 - **THEN** the plan holds a коригування of +4200 minor units UAH on the гаманець рахунок
 
-### Requirement: «Борг» legs become перекази on рахунки-борги by the owner's person assignment
-
-A transaction pairing a real leg with a «Борг» EXPENSES leg SHALL become a переказ with a
-рахунок-борг: lending — the «Борг» leg debited — SHALL move the money from the real рахунок onto
-the assigned person's рахунок-борг, and a repayment — the «Борг» leg credited — SHALL move it
-back. The person SHALL come only from the owner's assignment; the system SHALL NOT guess. The
-assignment SHALL be per «Борг» transaction: assigning a description to a person's рахунок-борг
-(new or existing) SHALL assign every transaction carrying that description, and an assignment of
-one transaction SHALL override the assignment of its description — so two transactions sharing a
-description, or the transactions whose description is empty, can still go to different people.
-Every «Борг» transaction with no assigned person SHALL be listed as unresolved, and the plan
-SHALL be incomplete while any remains. A repayment SHALL move back exactly what its leg says,
-even when the person has now repaid more than was lent: splitting an over-repayment into
-principal and «Відсотки» belongs to FR-T9 and is outside this change — the report shows the
-resulting negative рахунок-борг instead.
-
-#### Scenario: Lending lands on the person's рахунок-борг
-
-- **WHEN** a transaction credits "Monobank UAH, Black" 100000 minor units UAH and debits «Борг»
-  with description "борг яріку", which the owner assigned to the person "Ярослав"
-- **THEN** the plan holds a переказ of 100000 minor units UAH from the Black рахунок onto the
-  рахунок-борг "Ярослав", whose розрахунковий баланс thereby shows 100000 minor units UAH owed
-
-#### Scenario: A repayment is the переказ back
-
-- **WHEN** a later transaction debits "Monobank UAH, Black" 100000 minor units UAH and credits
-  «Борг» with description "ярік борг повернення", assigned to "Ярослав"
-- **THEN** the plan holds a переказ of 100000 minor units UAH from the рахунок-борг "Ярослав"
-  back to the Black рахунок, and that рахунок-борг's розрахунковий баланс returns to 0
-
-#### Scenario: An unassigned description leaves the plan incomplete
-
-- **WHEN** a «Борг» transaction's description is assigned to no person
-- **THEN** the plan lists it as unresolved and reports itself incomplete
-
-#### Scenario: Two «Борг» transactions with no description go to different people
-
-- **WHEN** two «Борг» transactions both carry an empty description, and the owner assigns one to
-  "Ярослав" and the other to "Оля"
-- **THEN** the plan holds one переказ onto the рахунок-борг "Ярослав" and one onto "Оля", and
-  reports itself complete
-
-#### Scenario: A transaction assignment overrides its description's
-
-- **WHEN** the description "борг" is assigned to "Ярослав" and one of the two transactions
-  carrying it is assigned to "Оля"
-- **THEN** that transaction's переказ lands on "Оля" and the other on "Ярослав"
-
 ### Requirement: MONEY_ON_THE_WAY transactions pair into one переказ
 
 Two transactions SHALL pair into one переказ when one credits a real рахунок with a
@@ -449,3 +399,49 @@ v1). A fully interpreted рахунок SHALL show equal balances.
 
 - **WHEN** a row's Accrual Month is 2025-07 while its Transaction Date is 2025-08-02
 - **THEN** the plan dates the транзакція 2025-08-02 and the report notes the divergence
+
+### Requirement: «Борг» legs become перекази on the рахунок-борг «Борги»
+
+A transaction pairing a real leg with a «Борг» EXPENSES leg SHALL become a переказ between that
+real рахунок and a рахунок-борг named «Борги» in the currency of the real leg: lending — the
+«Борг» leg debited — SHALL move the money from the real рахунок onto «Борги», and a repayment —
+the «Борг» leg credited — SHALL move it back. The plan SHALL hold exactly one «Борги» per
+currency its «Борг» rows use, SHALL create it only when at least one «Борг» переказ lands on it,
+and SHALL ask the owner nothing about it — no person, no name, and the transaction's description
+SHALL NOT be read for either. No «Борг» transaction SHALL hold the plan back from being
+committed. A repayment SHALL move back exactly what its leg says, even when more has come back
+than went out: splitting an over-repayment into principal and «Відсотки» belongs to FR-T9 and is
+outside this change — the report shows the resulting negative «Борги» instead.
+
+#### Scenario: Lending lands on «Борги»
+
+- **WHEN** a transaction credits "Monobank UAH, Black" 100000 minor units UAH and debits «Борг»
+  with description "борг яріку"
+- **THEN** the plan holds a переказ of 100000 minor units UAH from the Black рахунок onto a
+  рахунок-борг named «Борги» in UAH, whose розрахунковий баланс thereby shows 100000 minor units
+  UAH
+
+#### Scenario: A repayment is the переказ back
+
+- **WHEN** a later transaction debits "Monobank UAH, Black" 100000 minor units UAH and credits
+  «Борг» with description "ярік борг повернення"
+- **THEN** the plan holds a переказ of 100000 minor units UAH from «Борги» back to the Black
+  рахунок, and the розрахунковий баланс of «Борги» returns to 0
+
+#### Scenario: Every «Борг» row lands, whatever its description
+
+- **WHEN** the export holds four «Борг» transactions, two sharing one description and two
+  carrying none
+- **THEN** all four become перекази on the same UAH «Борги», the plan creates that one
+  рахунок-борг, and nothing is listed as awaiting a decision
+
+#### Scenario: Two currencies get two рахунки-борги
+
+- **WHEN** the export holds one «Борг» transaction in UAH and another in USD
+- **THEN** the plan holds a UAH «Борги» and a USD «Борги» and neither переказ crosses currencies
+
+#### Scenario: An export with no «Борг» row creates no рахунок-борг
+
+- **WHEN** the export holds no «Борг» leg at all
+- **THEN** the plan holds no рахунок-борг «Борги»
+

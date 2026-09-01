@@ -11,23 +11,19 @@ import { accountKey } from '../saldo/survey';
 import { csv, pair, existingAccount, existingState, SALDO_COLUMNS } from '../saldo/test-fixtures';
 import {
   accountRows,
-  applyMerges,
-  assignDescription,
-  assignTransaction,
   canCommit,
   commitFailed,
-  debtRows,
   committed,
-  mergeSuggestions,
   confirmSecondImport,
+  mergeTargets,
   planSummary,
   redirectAccount,
   redirectName,
   setAccountKind,
   startFlow,
   startWithText,
+  targetOf,
   toStep,
-  unassignedDebts,
 } from './saldo-import';
 
 /** An export the flow can actually run on: an opening balance, a витрата and a переказ. */
@@ -160,6 +156,74 @@ describe('the import flow — the account map', () => {
       'Monobank UAH, Black',
     );
     expect(planSummary(merged)?.newAccounts).toBe(1);
+  });
+
+  it('Scenario: The targets are offered on the row', () => {
+    const threeCards = csv([
+      ...pair({
+        id: '1',
+        account: 'mono black',
+        journalType: 'CREDIT',
+        amount: '100.00',
+        other: 'булка',
+        otherType: 'EXPENSES',
+      }),
+      ...pair({
+        id: '2',
+        account: 'Monobank UAH, Black',
+        journalType: 'CREDIT',
+        amount: '200.00',
+        other: 'булка',
+        otherType: 'EXPENSES',
+      }),
+      ...pair({
+        id: '3',
+        account: 'готівка',
+        journalType: 'CREDIT',
+        amount: '300.00',
+        other: 'булка',
+        otherType: 'EXPENSES',
+      }),
+    ]);
+    const existing = existingState({
+      accounts: [
+        existingAccount({ id: 'card', name: 'картка' }),
+        { ...existingAccount({ id: 'old', name: 'закритий' }), archived: true },
+      ],
+    });
+    const state = startWithText(startFlow({ existing }), threeCards);
+    const mono = accountKey('mono black', 'UAH');
+
+    const offered = mergeTargets(state, mono);
+
+    // The other two entries, then the рахунки the owner keeps — and never the row itself.
+    expect(offered.map((t) => t.value)).toEqual([
+      `entry:${accountKey('Monobank UAH, Black', 'UAH')}`,
+      `entry:${accountKey('готівка', 'UAH')}`,
+      'account:card',
+    ]);
+    // The currency rides every label, on both halves of the list, in one format.
+    expect(offered.map((t) => t.label)).toEqual([
+      'Monobank UAH, Black · UAH',
+      'готівка · UAH',
+      'картка · UAH — наявний',
+    ]);
+    // The archived рахунок is not offered: an archived рахунок takes no new money.
+    expect(offered.some((t) => t.value === 'account:old')).toBe(false);
+
+    // An entry already merging away is not a target either — that would build a chain no row shows.
+    const merged = redirectAccount(state, accountKey('готівка', 'UAH'), {
+      to: 'entry',
+      key: accountKey('Monobank UAH, Black', 'UAH'),
+    });
+    expect(mergeTargets(merged, mono).map((t) => t.value)).toEqual([
+      `entry:${accountKey('Monobank UAH, Black', 'UAH')}`,
+      'account:card',
+    ]);
+
+    // What a tap sends back is what `redirectAccount` takes, for both kinds of target.
+    expect(targetOf(`entry:${mono}`)).toEqual({ to: 'entry', key: mono });
+    expect(targetOf('account:card')).toEqual({ to: 'account', accountId: 'card' });
   });
 
   it('Scenario: Changing a вид changes what the month counts', () => {
@@ -297,129 +361,39 @@ const DEBTS = csv([
   }),
 ]);
 
-const yaroslav = { to: 'person', name: 'Ярослав' } as const;
-const olya = { to: 'person', name: 'Оля' } as const;
-
 describe('the import flow — «Борг»', () => {
-  it('Scenario: An unassigned «Борг» transaction blocks the commit', () => {
+  it('Scenario: The map step leads straight to the звірка', () => {
+    // An export whose only rows are «Борг» ones: nothing is asked about them, and the commit is
+    // offered off the report itself.
     const state = toStep(startWithText(startFlow(), DEBTS), 'report');
 
-    expect(state.plan!.complete).toBe(false);
-    expect(unassignedDebts(state).map((row) => row.transactionId)).toEqual(['1', '2']);
-    expect(canCommit(state)).toBe(false);
+    expect(canCommit(state)).toBe(true);
+    expect(state.step).toBe('report');
   });
 
-  it('Scenario: Assigning the last one opens the commit', () => {
-    const state = toStep(startWithText(startFlow(), DEBTS), 'report');
-
-    const assigned = assignDescription(state, 'борг', yaroslav);
-
-    expect(assigned.plan!.complete).toBe(true);
-    expect(unassignedDebts(assigned)).toEqual([]);
-    expect(canCommit(assigned)).toBe(true);
-    // The money went onto a рахунок-борг named for the person, and came partly back.
-    const debtAccount = assigned.plan!.accounts.find((a) => a.kind === 'debt');
-    expect(debtAccount?.name).toBe('Ярослав');
-    expect(assigned.report!.debts).toEqual([
-      expect.objectContaining({ name: 'Ярослав', balance: money(60000, 'UAH') }),
-    ]);
-  });
-
-  it('Scenario: One transaction goes to a different person than its description', () => {
-    const state = assignDescription(startWithText(startFlow(), DEBTS), 'борг', yaroslav);
-
-    const split = assignTransaction(state, '2', olya);
-
-    expect(split.plan!.complete).toBe(true);
-    const names = split.report!.debts.map((debt) => debt.name).sort();
-    expect(names).toEqual(['Оля', 'Ярослав']);
-    // Ярослав still owes the whole 1000; the 400 came back out of Оля's, taking it below zero.
-    const byName = new Map(split.report!.debts.map((debt) => [debt.name, debt.balance]));
-    expect(byName.get('Ярослав')).toEqual(money(100000, 'UAH'));
-    expect(byName.get('Оля')).toEqual(money(-40000, 'UAH'));
-  });
-
-  it('Every «Борг» transaction is listed with its date, amount and person', () => {
+  it('puts every «Борг» transaction on one рахунок-борг «Борги», asking nothing', () => {
     const state = startWithText(startFlow(), DEBTS);
 
-    // Before any assignment: both listed, both unassigned, each with what the export says.
-    expect(debtRows(state)).toEqual([
-      {
-        transactionId: '1',
-        description: 'борг',
-        date: '2024-11-01',
-        amount: money(100000, 'UAH'),
-        assigned: false,
-      },
-      {
-        transactionId: '2',
-        description: 'борг',
-        date: '2024-11-02',
-        amount: money(40000, 'UAH'),
-        assigned: false,
-      },
+    // Lent 1000 out, 400 came back — one рахунок-борг, and the decisions record is still empty.
+    expect(state.plan!.accounts.filter((a) => a.kind === 'debt')).toEqual([
+      expect.objectContaining({ name: 'Борги', currency: 'UAH' }),
     ]);
-
-    const assigned = assignDescription(state, 'борг', yaroslav);
-
-    // After: both carry the person their money moves to and from, and keep the description they
-    // were assigned by.
-    expect(debtRows(assigned)).toEqual([
-      {
-        transactionId: '1',
-        description: 'борг',
-        date: '2024-11-01',
-        amount: money(100000, 'UAH'),
-        assigned: true,
-        person: 'Ярослав',
-      },
-      {
-        transactionId: '2',
-        description: 'борг',
-        date: '2024-11-02',
-        amount: money(40000, 'UAH'),
-        assigned: true,
-        person: 'Ярослав',
-      },
+    expect(state.report!.debts).toEqual([
+      expect.objectContaining({ name: 'Борги', balance: money(60000, 'UAH') }),
     ]);
-    expect(unassignedDebts(assigned)).toEqual([]);
+    expect(state.decisions).toEqual({});
   });
 
-  it('A рахунок the owner made a вид `debt` brings no false «Борг» rows', () => {
+  it('A рахунок the owner made a вид `debt` is not «Борги»', () => {
     // The ordinary export: a витрата and a переказ, no «Борг» leg anywhere in it.
     const state = startWithText(startFlow(), ORDINARY);
 
     const asDebt = setAccountKind(state, accountKey('готівка', 'UAH'), 'debt');
 
-    // The переказ onto it now lands on a рахунок-борг, but it is still not a «Борг» transaction —
-    // the export says which are, and this one is not among them.
+    // The переказ onto it now lands on a рахунок-борг, but no «Борги» was invented for an export
+    // holding no «Борг» row.
     expect(asDebt.plan!.accounts.some((a) => a.kind === 'debt')).toBe(true);
-    expect(debtRows(asDebt)).toEqual([]);
-  });
-
-  it('A «Борг» transaction can go to a рахунок-борг the owner already has', () => {
-    const existing = existingState({
-      accounts: [existingAccount({ id: 'debt-o', name: 'Оля', kind: 'debt' })],
-    });
-    const state = startWithText(startFlow({ existing }), DEBTS);
-
-    const assigned = assignDescription(state, 'борг', { to: 'account', accountId: 'debt-o' });
-
-    expect(assigned.plan!.complete).toBe(true);
-    // No second рахунок-борг is created; the money lands on the one that is already there.
-    expect(assigned.plan!.accounts.filter((a) => a.kind === 'debt')).toEqual([
-      expect.objectContaining({ existingId: 'debt-o', name: 'Оля' }),
-    ]);
-    expect(debtRows(assigned).every((row) => row.person === 'Оля')).toBe(true);
-  });
-
-  it('An assignment can be undone, and the transaction is unassigned again', () => {
-    const assigned = assignDescription(startWithText(startFlow(), DEBTS), 'борг', yaroslav);
-
-    const undone = assignDescription(assigned, 'борг');
-
-    expect(undone.plan!.complete).toBe(false);
-    expect(unassignedDebts(undone)).toHaveLength(2);
+    expect(asDebt.plan!.accounts.some((a) => a.name === 'Борги')).toBe(false);
   });
 });
 
@@ -467,7 +441,6 @@ describe('the import flow — the report and the pre-commit summary', () => {
       sources: 0,
       transactions: 2,
       droppedRows: 0,
-      unassignedDebts: 0,
     });
   });
 
@@ -527,14 +500,10 @@ describe('the import flow — the report and the pre-commit summary', () => {
         otherType: 'EXPENSES',
       }),
     ]);
-    const state = assignDescription(
-      toStep(startWithText(startFlow(), overRepaid), 'report'),
-      'борг',
-      yaroslav,
-    );
+    const state = toStep(startWithText(startFlow(), overRepaid), 'report');
 
     expect(state.report!.debts).toEqual([
-      expect.objectContaining({ name: 'Ярослав', balance: money(-10000, 'UAH') }),
+      expect.objectContaining({ name: 'Борги', balance: money(-10000, 'UAH') }),
     ]);
     // Visible, and still the owner's to judge: the commit stays on offer.
     expect(canCommit(state)).toBe(true);
@@ -615,242 +584,5 @@ describe('the import flow — the commit gate', () => {
     expect(failed.step).toBe('done');
     expect(failed.outcome).toEqual({ kind: 'failed', reason: 'FOREIGN KEY constraint failed' });
     expect(canCommit(failed)).toBe(false);
-  });
-});
-
-describe('the import flow — proposed merges', () => {
-  const uahKey = (name: string) => accountKey(name, 'UAH');
-
-  /** Two spellings of one card, plus a third account that resembles neither. */
-  const TWO_SPELLINGS = csv([
-    ...pair({
-      id: '1',
-      account: 'mono black',
-      journalType: 'DEBIT',
-      amount: '1000.00',
-      other: 'Initial balance',
-      otherType: 'EQUITY',
-    }),
-    ...pair({
-      id: '2',
-      account: 'Monobank Black',
-      journalType: 'CREDIT',
-      amount: '250.00',
-      other: 'булка',
-      otherType: 'EXPENSES',
-    }),
-    ...pair({
-      id: '3',
-      account: 'готівка',
-      journalType: 'CREDIT',
-      amount: '300.00',
-      other: 'кава',
-      otherType: 'EXPENSES',
-    }),
-  ]);
-
-  it('Scenario: Two spellings of one card are proposed as one рахунок', () => {
-    const state = startWithText(startFlow(), TWO_SPELLINGS);
-    const proposed = mergeSuggestions(state);
-
-    expect(proposed).toEqual([
-      {
-        key: uahKey('Monobank Black'),
-        entryName: 'Monobank Black',
-        onto: { to: 'entry', key: uahKey('mono black') },
-        targetName: 'mono black',
-        ontoExisting: false,
-        reason: 'спільне слово в назві',
-      },
-    ]);
-    // Proposing changes nothing: both entries are still their own рахунок until the owner accepts.
-    expect(accountRows(state).filter((row) => row.mergedInto)).toEqual([]);
-    expect(state.decisions.accountRedirects).toBeUndefined();
-  });
-
-  it('Scenario: A рахунок the owner already keeps wins over another entry', () => {
-    const state = startWithText(
-      startFlow({
-        existing: existingState({
-          accounts: [existingAccount({ id: 'kept', name: 'Monobank Black' })],
-        }),
-      }),
-      TWO_SPELLINGS,
-    );
-
-    // Both spellings land on the рахунок that already holds this card's opening balance and its
-    // транзакції, and neither is proposed onto the other.
-    expect(mergeSuggestions(state).map((s) => [s.key, s.onto])).toEqual([
-      [uahKey('mono black'), { to: 'account', accountId: 'kept' }],
-      [uahKey('Monobank Black'), { to: 'account', accountId: 'kept' }],
-    ]);
-    expect(mergeSuggestions(state).every((s) => s.ontoExisting)).toBe(true);
-  });
-
-  it('Scenario: An equal match proposes nothing', () => {
-    const state = startWithText(
-      startFlow({
-        existing: existingState({
-          accounts: [
-            existingAccount({ id: 'a', name: 'Monobank Black' }),
-            existingAccount({ id: 'b', name: 'Monobank Black стара' }),
-          ],
-        }),
-      }),
-      csv([
-        ...pair({
-          id: '1',
-          account: 'mono black',
-          journalType: 'DEBIT',
-          amount: '1000.00',
-          other: 'Initial balance',
-          otherType: 'EQUITY',
-        }),
-      ]),
-    );
-
-    // «mono black» shares exactly one word with both. Naming one of them would be a coin flip.
-    expect(mergeSuggestions(state)).toEqual([]);
-  });
-
-  it('Scenario: Nothing is proposed across currencies', () => {
-    const state = startWithText(
-      startFlow(),
-      csv([
-        ...pair({
-          id: '1',
-          account: 'mono black',
-          journalType: 'DEBIT',
-          amount: '1000.00',
-          other: 'Initial balance',
-          otherType: 'EQUITY',
-        }),
-        ...pair({
-          id: '2',
-          account: 'mono black',
-          currency: 'USD',
-          journalType: 'DEBIT',
-          amount: '100.00',
-          other: 'Initial balance',
-          otherType: 'EQUITY',
-          otherCurrency: 'USD',
-        }),
-      ]),
-    );
-
-    // The import rejects a cross-currency redirect, so proposing one would be proposing a refusal.
-    expect(mergeSuggestions(state)).toEqual([]);
-  });
-
-  it('Scenario: Proposals never chain', () => {
-    const state = startWithText(
-      startFlow(),
-      csv([
-        ...pair({
-          id: '1',
-          account: 'mono black',
-          journalType: 'DEBIT',
-          amount: '1000.00',
-          other: 'Initial balance',
-          otherType: 'EQUITY',
-        }),
-        ...pair({
-          id: '2',
-          account: 'Monobank Black',
-          journalType: 'CREDIT',
-          amount: '250.00',
-          other: 'булка',
-          otherType: 'EXPENSES',
-        }),
-        ...pair({
-          id: '3',
-          account: 'моно black стара',
-          journalType: 'CREDIT',
-          amount: '50.00',
-          other: 'кава',
-          otherType: 'EXPENSES',
-        }),
-      ]),
-    );
-
-    const proposed = mergeSuggestions(state);
-    expect(proposed.map((s) => s.onto)).toEqual([
-      { to: 'entry', key: uahKey('mono black') },
-      { to: 'entry', key: uahKey('mono black') },
-    ]);
-    // No proposal points at an entry that is itself merging away.
-    const merging = new Set(proposed.map((s) => s.key));
-    for (const suggestion of proposed) {
-      expect(suggestion.onto.to === 'entry' && merging.has(suggestion.onto.key)).toBe(false);
-    }
-  });
-
-  it('Scenario: Accepting the set merges every proposal at once', () => {
-    const state = startWithText(startFlow(), TWO_SPELLINGS);
-    const merged = applyMerges(state, mergeSuggestions(state));
-
-    const rows = accountRows(merged);
-    expect(rows.filter((row) => row.mergedInto).map((row) => row.entry.saldoAccount)).toEqual([
-      'Monobank Black',
-    ]);
-    // Two entries, one рахунок — plus готівка, which nothing matched.
-    expect(new Set(rows.map((row) => row.becomes.id)).size).toBe(2);
-  });
-
-  it('Scenario: A refused proposal is not applied', () => {
-    const state = startWithText(startFlow(), TWO_SPELLINGS);
-    const refusedAll = applyMerges(state, []);
-
-    expect(refusedAll).toBe(state);
-    expect(refusedAll.decisions.accountRedirects).toBeUndefined();
-    expect(accountRows(refusedAll).filter((row) => row.mergedInto)).toEqual([]);
-  });
-
-  it('Scenario: An accepted merge can be undone', () => {
-    const state = startWithText(startFlow(), TWO_SPELLINGS);
-    const merged = applyMerges(state, mergeSuggestions(state));
-    const undone = redirectAccount(merged, uahKey('Monobank Black'));
-
-    expect(accountRows(undone).filter((row) => row.mergedInto)).toEqual([]);
-    // Undone through the path a hand-made merge is undone through: nothing about a proposal is
-    // remembered as a proposal.
-    expect(undone.decisions.accountRedirects).toBeUndefined();
-    expect(new Set(accountRows(undone).map((row) => row.becomes.id)).size).toBe(3);
-  });
-
-  it('Accepting a set leaves the same map as making the merges one at a time', () => {
-    const state = startWithText(startFlow(), TWO_SPELLINGS);
-    const proposed = mergeSuggestions(state);
-
-    const atOnce = applyMerges(state, proposed);
-    const oneByOne = proposed.reduce(
-      (current, suggestion) => redirectAccount(current, suggestion.key, suggestion.onto),
-      state,
-    );
-
-    expect(atOnce.decisions).toEqual(oneByOne.decisions);
-    expect(accountRows(atOnce)).toEqual(accountRows(oneByOne));
-  });
-
-  it('Scenario: Nothing is written by proposing or accepting', () => {
-    const state = startWithText(startFlow(), TWO_SPELLINGS);
-    const merged = applyMerges(state, mergeSuggestions(state));
-
-    // The flow's view of the device is untouched: no рахунок, no транзакція, nothing committed.
-    expect(merged.existing).toEqual(state.existing);
-    expect(merged.existing.accounts).toEqual([]);
-    expect(merged.existing.transactions).toEqual([]);
-    expect(merged.outcome).toBeUndefined();
-  });
-
-  it('A decision the owner already made is never argued with', () => {
-    const state = startWithText(startFlow(), TWO_SPELLINGS);
-    const decided = redirectAccount(state, uahKey('Monobank Black'), {
-      to: 'entry',
-      key: uahKey('готівка'),
-    });
-
-    // Their answer stands, and the entry they answered for is proposed nothing.
-    expect(mergeSuggestions(decided).map((s) => s.key)).not.toContain(uahKey('Monobank Black'));
   });
 });

@@ -1175,3 +1175,238 @@ describe('transactionsRepo references', () => {
     expect(repo.get('ghost-refund')).toBeUndefined();
   });
 });
+
+describe('transactionsRepo search', () => {
+  let storage: TestStorage;
+  let repo: TransactionsRepo;
+
+  const silpo = expenseByDefault({
+    id: 'e-silpo',
+    date: '2026-03-10',
+    accountId: 'card',
+    amount: money(12550, 'UAH'),
+    categoryId: 'food',
+    description: 'СІЛЬПО Київ',
+  });
+  const poshta = expenseByDefault({
+    id: 'e-poshta',
+    date: '2026-03-11',
+    accountId: 'wallet',
+    amount: money(9000, 'UAH'),
+    categoryId: 'clothes',
+    description: 'Нова пошта',
+  });
+  /** No опис at all, so only its категорія can find it. */
+  const bare = expenseByDefault({
+    id: 'e-bare',
+    date: '2026-03-12',
+    accountId: 'card',
+    amount: money(1200, 'UAH'),
+    categoryId: 'food',
+  });
+  const moved = transfer({
+    id: 't-moved',
+    date: '2026-03-13',
+    fromAccountId: 'card',
+    toAccountId: 'wallet',
+    left: money(120000, 'UAH'),
+    arrived: money(120000, 'UAH'),
+  });
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    seedAccounts(storage);
+    repo = transactionsRepo(storage.db);
+    for (const t of [silpo, poshta, bare, moved]) {
+      repo.save(t, storedAt);
+    }
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  const ids = (found: readonly Transaction[]) => found.map((t) => t.id);
+  const page = { limit: 50, offset: 0 };
+  const noLabels = { categoryIds: [], sourceIds: [] };
+
+  it('Scenario: An опис is found by part of it, in any case', () => {
+    // «СІЛЬПО» folds to «сільпо» the way Ukrainian folds, which SQLite's `lower()` cannot do.
+    expect(ids(repo.search({ ...page, match: { ...noLabels, text: 'сільпо' } }))).toEqual([
+      'e-silpo',
+    ]);
+    expect(ids(repo.search({ ...page, match: { ...noLabels, text: 'ПОШТА' } }))).toEqual([
+      'e-poshta',
+    ]);
+    // At any position, not only at the start.
+    expect(ids(repo.search({ ...page, match: { ...noLabels, text: 'київ' } }))).toEqual([
+      'e-silpo',
+    ]);
+  });
+
+  it('Scenario: A сума finds both legs of a переказ', () => {
+    const found = repo.search({
+      ...page,
+      match: { ...noLabels, text: '', amountMinor: 120000 },
+    });
+
+    expect(ids(found)).toEqual(['t-moved']);
+  });
+
+  it('Scenario: A категорія given with the search matches its транзакції', () => {
+    // «e-bare» carries no опис at all; its категорія is the only thing that can find it.
+    const found = repo.search({
+      ...page,
+      match: { text: 'прод', categoryIds: ['food'], sourceIds: [] },
+    });
+
+    expect(ids(found)).toContain('e-bare');
+  });
+
+  it('Scenario: Filters narrow the search', () => {
+    const found = repo.search({
+      ...page,
+      match: { text: '', categoryIds: ['food', 'clothes'], sourceIds: [] },
+      accountId: 'card',
+    });
+
+    // Only the ones on «card»: «e-poshta» is on «wallet».
+    expect(ids(found)).toEqual(['e-bare', 'e-silpo']);
+  });
+
+  it('Scenario: A month bounds the result', () => {
+    const lastOfMarch = expenseByDefault({
+      id: 'e-march',
+      date: '2026-03-31',
+      accountId: 'card',
+      amount: money(5000, 'UAH'),
+      categoryId: 'food',
+      description: 'кава',
+    });
+    const firstOfApril = expenseByDefault({
+      id: 'e-april',
+      date: '2026-04-01',
+      accountId: 'card',
+      amount: money(5000, 'UAH'),
+      categoryId: 'food',
+      description: 'кава',
+    });
+    repo.save(lastOfMarch, storedAt);
+    repo.save(firstOfApril, storedAt);
+
+    const found = repo.search({
+      ...page,
+      match: { ...noLabels, text: 'кава' },
+      month: '2026-03',
+    });
+
+    expect(ids(found)).toEqual(['e-march']);
+  });
+
+  it('Scenario: Pages continue where the previous one ended', () => {
+    // Five matching, newest first by date: t-moved, e-bare, e-poshta, e-silpo — plus one more.
+    const older = expenseByDefault({
+      id: 'e-older',
+      date: '2026-03-01',
+      accountId: 'card',
+      amount: money(100, 'UAH'),
+      categoryId: 'food',
+    });
+    repo.save(older, storedAt);
+
+    const all = repo.search({ limit: 50, offset: 0 });
+    expect(all).toHaveLength(5);
+
+    const second = repo.search({ limit: 2, offset: 2 });
+
+    expect(ids(second)).toEqual(ids(all).slice(2, 4));
+    // In the latest listing's order, and continuing exactly where the first page ended.
+    expect(ids(repo.search({ limit: 2, offset: 0 }))).toEqual(ids(all).slice(0, 2));
+  });
+
+  it('Scenario: Nothing matching returns nothing', () => {
+    expect(repo.search({ ...page, match: { ...noLabels, text: 'щось, чого немає' } })).toEqual([]);
+    // A search naming nothing at all matches nothing rather than everything.
+    expect(repo.search({ ...page, match: { ...noLabels, text: '' } })).toEqual([]);
+  });
+
+  it('No search at all is the whole history, in the latest listing"s order', () => {
+    expect(ids(repo.search({ limit: 50, offset: 0 }))).toEqual([
+      't-moved',
+      'e-bare',
+      'e-poshta',
+      'e-silpo',
+    ]);
+  });
+
+  it('A рахунок filter counts a переказ on either leg', () => {
+    expect(ids(repo.search({ ...page, accountId: 'wallet' }))).toEqual(['t-moved', 'e-poshta']);
+    expect(ids(repo.search({ ...page, accountId: 'card' }))).toEqual([
+      't-moved',
+      'e-bare',
+      'e-silpo',
+    ]);
+  });
+
+  it('A транзакція matching twice is returned once', () => {
+    // «Нова пошта» matches the text, and its категорія is given too.
+    const found = repo.search({
+      ...page,
+      match: { text: 'пошта', categoryIds: ['clothes'], sourceIds: [] },
+    });
+
+    expect(ids(found)).toEqual(['e-poshta']);
+  });
+
+  it('A дохід is found by its джерело', () => {
+    repo.save(income, storedAt);
+
+    const found = repo.search({
+      ...page,
+      match: { text: '', categoryIds: [], sourceIds: ['salary'] },
+    });
+
+    expect(ids(found)).toEqual(['i1']);
+  });
+
+  it('Scenario: Search and filters combine', () => {
+    const also = expenseByDefault({
+      id: 'e-silpo-wallet',
+      date: '2026-03-10',
+      accountId: 'wallet',
+      amount: money(3000, 'UAH'),
+      categoryId: 'food',
+      description: 'СІЛЬПО Поділ',
+    });
+    const april = expenseByDefault({
+      id: 'e-silpo-april',
+      date: '2026-04-02',
+      accountId: 'card',
+      amount: money(4000, 'UAH'),
+      categoryId: 'food',
+      description: 'СІЛЬПО Львів',
+    });
+    repo.save(also, storedAt);
+    repo.save(april, storedAt);
+
+    const found = repo.search({
+      ...page,
+      match: { ...noLabels, text: 'сільпо' },
+      accountId: 'card',
+      month: '2026-03',
+    });
+
+    // Only the one satisfying all three: the text, the рахунок and the місяць.
+    expect(ids(found)).toEqual(['e-silpo']);
+  });
+
+  it('Searching changes nothing stored', () => {
+    const before = repo.listAll();
+
+    repo.search({ ...page, match: { ...noLabels, text: 'сільпо' }, accountId: 'card' });
+    repo.search({ ...page, month: '2026-03' });
+
+    expect(repo.listAll()).toEqual(before);
+  });
+});

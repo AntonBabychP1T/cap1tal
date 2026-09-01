@@ -100,13 +100,25 @@ describe('the setup steps', () => {
 
   it('Scenario: The view says how much of the setup is behind the owner', () => {
     // The unavailable step is not a step the owner is failing at, so it is not in the total.
-    expect(onboardingSummary(steps())).toBe('Готово 0 з 3');
+    expect(onboardingSummary(steps())).toBe('Готово 0/3');
     expect(
       onboardingSummary(steps({ accounts: 1, monobankConfigured: true, saldoImported: true })),
-    ).toBe('Готово 3 з 3');
+    ).toBe('Готово 3/3');
     expect(onboardingSummary(steps({ accounts: 1, notificationAccess: 'granted' }))).toBe(
-      'Готово 2 з 4',
+      'Готово 2/4',
     );
+  });
+
+  it('Scenario: The count cannot be read as a third number', () => {
+    const line = onboardingSummary(steps({ accounts: 1, notificationAccess: 'granted' }));
+
+    expect(line).toBe('Готово 2/4');
+    // The view uppercases this line and spaces its letters, where «З» is a «3». Whatever stands
+    // between the two numbers must not be a letter any casing can turn into a digit.
+    const between = line.slice(line.indexOf('2') + 1, line.lastIndexOf('4'));
+    expect(between).toBe('/');
+    expect(between.toUpperCase()).toBe(between);
+    expect(/[\p{L}\p{N}]/u.test(between)).toBe(false);
   });
 });
 

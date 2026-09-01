@@ -56,9 +56,40 @@
       with a sync boundary" scenario "A proposal can be overridden before it is accepted", and
       "The proposed links are accepted as one reviewed set" scenario "A proposal is not a link".
 
+## 3b. The invariant nothing was holding
+
+- [x] 3b.1 «The clipboard is read only when the owner asks» is a pure negative — never on opening a
+      screen, never on a timer, never in the background — and both its scenarios had no test at
+      all. Task 1.3 excused that with "the screen has no test file"; that excuse expired when
+      `src/ui/onboarding-screen.test.ts` started reading a `.tsx` by path to hold exactly this kind
+      of property. `src/ui/monobank-screen.test.ts` now reads `src/app/manage/monobank.tsx` and
+      asserts that `Clipboard.*` appears exactly twice, that neither occurrence is inside
+      `useFocusEffect`/`useEffect`/`setInterval`/`setTimeout` — matched paren by paren, so an
+      import of the same name cannot stand in for the block that runs — and that every read is fed
+      straight to `tokenCandidate`, so the raw clipboard is never what the bank is asked about.
+      Requirement: «The clipboard is read only when the owner asks», scenarios "Opening the screen
+      reads nothing" and "An unrelated clipboard is not sent to the bank".
+      Mutation-checked: a `Clipboard.getStringAsync()` moved into the focus effect turns both red.
+
 ## 4. Verification
 
 - [x] 4.1 Run `npm run verify` and paste the final lines —
-      `Test Files 58 passed (58) / Tests 927 passed (927)`,
-      `✔ verify passed (9b5012bc2b46f2994999fdb27211a5204e3a9ec8)`
-- [ ] 4.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+      `Test Files 89 passed (89) / Tests 1407 passed (1407)`,
+      `✔ verify passed (66ad4fc4b0eef3dae9726ae5606b48ef1ab3e394)`
+      (was `58 / 927` at `9b5012bc…`, a tree older than task 3b.1's own tests.)
+- [x] 4.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS — first pass FAIL on
+      one CRITICAL («The clipboard is read only when the owner asks» held by nothing), closed by
+      task 3b.1; re-review **PASS (0 critical, 7 warning)** on
+      `✔ verify passed (66ad4fc4b0eef3dae9726ae5606b48ef1ab3e394)`.
+
+## 5. Emulator smoke — outstanding, and why
+
+- [ ] 5.1 **This change may not be archived yet.** Four of its scenarios name the emulator as their
+      closing evidence — «A copied token is offered and validated on return», «Pasting is available
+      while typing», «A proposal is not a link» and «A proposal can be overridden before it is
+      accepted» — and the reviewer added a fifth reason: on Android 10+ the clipboard read fires
+      the moment `WebBrowser.openBrowserAsync` resolves, while focus is still returning from the
+      Custom Tab, so it can answer `''` and send the owner down `CLIPBOARD_NO_TOKEN` even though
+      they did copy a token. That is the change's headline path and only a device shows it.
+      The agent cannot run this smoke: it needs a real monobank token pasted into the app, and
+      entering a credential is not something the agent does. It is the owner's to run.

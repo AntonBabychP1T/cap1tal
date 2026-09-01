@@ -51,7 +51,11 @@ screens. `npm run verify` stays Node-only — it never runs JSX.
    Fix its CRITICAL findings and re-run until `PASS`.
 5. Commit (the commit hook refuses an unverified tree). Push only when the human asks for it —
    `git push` no longer prompts, so the restraint is the agent's; PR merging stays with the human.
-6. `/opsx:archive` only after step 4 passes.
+6. A change that touches a screen is smoke-tested on the emulator before it is archived: run the
+   `smoke-runner` subagent (`scripts/android.sh`, `.claude/rules/android.md`) and fix what it
+   finds. A passing test suite is not evidence that a screen works.
+7. `/opsx:archive` only after step 4 passes and the smoke of step 6 is green or explicitly
+   recorded as not run.
 
 ## Hard rules
 
@@ -75,6 +79,15 @@ screens. `npm run verify` stays Node-only — it never runs JSX.
 
 - `spec-reviewer` — plan review before `/opsx:apply` (read-only, returns READY / NOT READY).
 - `diff-reviewer` — adversarial diff-vs-spec review, runs `verify` itself (returns PASS / FAIL).
+- `task-builder` — implements one batch of ≤3 tasks (or one named defect) in one worktree lane,
+  verifies, ticks its boxes, returns a 15-line report. The workhorse of `auto-work`.
+- `smoke-runner` — drives the app on the emulator through one change's scenarios, reads the
+  screenshots itself, returns a verdict plus defects. Read-only towards the repo.
+
+`auto-work` (`.claude/skills/auto-work/SKILL.md`) is the autonomous version of the workflow
+above: up to three changes at once, each in its own git worktree under `.claude/worktrees/`
+with `node_modules` symlinked from the main tree, integrated one at a time with
+`git merge --squash` + `verify` + commit, then smoke-tested on the emulator.
 
 ## Hooks (in `.claude/settings.json`, scripts in `.claude/hooks/`)
 

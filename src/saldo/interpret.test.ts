@@ -7,7 +7,7 @@ import { interpret, type ImportPlan } from './interpret';
 import {
   accountKey,
   NEW_CATEGORY_PREFIX,
-  NEW_DEBT_PREFIX,
+  debtAccountId,
   NEW_SOURCE_PREFIX,
   survey,
 } from './survey';
@@ -544,136 +544,76 @@ const борг = (input: {
   });
 
 describe('interpret — «Борг»', () => {
-  it('Scenario: Lending lands on the person’s рахунок-борг', () => {
-    const plan = planFrom(
-      борг({ id: '1', description: 'борг яріку', amount: '1000.00', lending: true }),
-      { decisions: { debtPeople: { 'борг яріку': { to: 'person', name: 'Ярослав' } } } },
-    );
-    const person = accountNamed(plan, 'Ярослав');
-    expect(person).toMatchObject({ id: `${NEW_DEBT_PREFIX}Ярослав`, kind: 'debt', currency: 'UAH' });
+  it('Scenario: Lending lands on «Борги»', () => {
+    const plan = planFrom(борг({ id: '1', description: 'борг яріку', amount: '1000.00', lending: true }));
+    const борги = accountNamed(plan, 'Борги');
+    expect(борги).toMatchObject({ id: debtAccountId('UAH'), kind: 'debt', currency: 'UAH' });
     expect(moves(plan)[0]).toMatchObject({
       type: 'transfer',
       fromAccountId: accountNamed(plan, 'Monobank UAH, Black').id,
-      toAccountId: person.id,
+      toAccountId: борги.id,
       left: { amount: 100000, currency: 'UAH' },
       arrived: { amount: 100000, currency: 'UAH' },
     });
-    const рахунокБорг = account({ id: person.id, name: 'Ярослав', kind: 'debt', currency: 'UAH' });
+    const рахунокБорг = account({ id: борги.id, name: 'Борги', kind: 'debt', currency: 'UAH' });
     expect(computeBalance(рахунокБорг, moves(plan))).toEqual({ amount: 100000, currency: 'UAH' });
   });
 
   it('Scenario: A repayment is the переказ back', () => {
-    const plan = planFrom(
-      [
-        ...борг({ id: '1', description: 'борг яріку', amount: '1000.00', lending: true }),
-        ...борг({ id: '2', description: 'ярік борг повернення', amount: '1000.00', lending: false, datetime: '2024-11-05T10:00:00.000' }),
-      ],
-      {
-        decisions: {
-          debtPeople: {
-            'борг яріку': { to: 'person', name: 'Ярослав' },
-            'ярік борг повернення': { to: 'person', name: 'Ярослав' },
-          },
-        },
-      },
-    );
-    const person = accountNamed(plan, 'Ярослав');
+    const plan = planFrom([
+      ...борг({ id: '1', description: 'борг яріку', amount: '1000.00', lending: true }),
+      ...борг({ id: '2', description: 'ярік борг повернення', amount: '1000.00', lending: false, datetime: '2024-11-05T10:00:00.000' }),
+    ]);
+    const борги = accountNamed(plan, 'Борги');
     const black = accountNamed(plan, 'Monobank UAH, Black');
     expect(moves(plan)[1]).toMatchObject({
       type: 'transfer',
-      fromAccountId: person.id,
+      fromAccountId: борги.id,
       toAccountId: black.id,
       left: { amount: 100000, currency: 'UAH' },
     });
-    const рахунокБорг = account({ id: person.id, name: 'Ярослав', kind: 'debt', currency: 'UAH' });
+    const рахунокБорг = account({ id: борги.id, name: 'Борги', kind: 'debt', currency: 'UAH' });
     expect(computeBalance(рахунокБорг, moves(plan))).toEqual({ amount: 0, currency: 'UAH' });
   });
 
-  it('Scenario: An unassigned description leaves the plan incomplete', () => {
-    const plan = planFrom(борг({ id: '1', description: 'борг яріку', amount: '1000.00', lending: true }));
-    expect(plan.transactions).toEqual([]);
-    expect(plan.complete).toBe(false);
-    expect(plan.unresolvedDebts).toEqual([
-      {
-        transactionId: '1',
-        description: 'борг яріку',
-        date: '2024-10-27',
-        amount: { amount: 100000, currency: 'UAH' },
-        row: 1,
-      },
+  it('Scenario: Every «Борг» row lands, whatever its description', () => {
+    const plan = planFrom([
+      ...борг({ id: '1', description: 'борг', amount: '100.00', lending: true }),
+      ...борг({ id: '2', description: 'борг', amount: '200.00', lending: true, datetime: '2024-11-05T10:00:00.000' }),
+      ...борг({ id: '3', description: '', amount: '300.00', lending: true, datetime: '2024-11-06T10:00:00.000' }),
+      ...борг({ id: '4', description: '', amount: '400.00', lending: true, account: 'гаманець', datetime: '2024-11-07T10:00:00.000' }),
     ]);
-    expect(plan.unexplained.filter((r) => r.reason === 'unassigned-debt')[0]).toMatchObject({
-      accountId: accountNamed(plan, 'Monobank UAH, Black').id,
-      effect: { amount: -100000, currency: 'UAH' },
-    });
-  });
-
-  it('Scenario: Two «Борг» transactions with no description go to different people', () => {
-    const plan = planFrom(
-      [
-        ...борг({ id: '71171852', description: '', amount: '400.00', lending: true }),
-        ...борг({ id: '109933531', description: '', amount: '3000.00', lending: true, account: 'гаманець', datetime: '2026-03-16T10:00:00.000' }),
-      ],
-      {
-        decisions: {
-          debtTransactions: {
-            '71171852': { to: 'person', name: 'Ярослав' },
-            '109933531': { to: 'person', name: 'Оля' },
-          },
-        },
-      },
-    );
-    expect(plan.complete).toBe(true);
+    const борги = accountNamed(plan, 'Борги');
+    expect(moves(plan)).toHaveLength(4);
     expect(moves(plan).map((t) => (t.type === 'transfer' ? t.toAccountId : ''))).toEqual([
-      accountNamed(plan, 'Ярослав').id,
-      accountNamed(plan, 'Оля').id,
+      борги.id,
+      борги.id,
+      борги.id,
+      борги.id,
     ]);
+    expect(plan.accounts.filter((a) => a.kind === 'debt')).toHaveLength(1);
+    expect(plan.unexplained).toEqual([]);
   });
 
-  it('Scenario: A transaction assignment overrides its description’s', () => {
-    const plan = planFrom(
-      [
-        ...борг({ id: '1', description: 'борг', amount: '100.00', lending: true }),
-        ...борг({ id: '2', description: 'борг', amount: '200.00', lending: true, datetime: '2024-11-05T10:00:00.000' }),
-      ],
-      {
-        decisions: {
-          debtPeople: { борг: { to: 'person', name: 'Ярослав' } },
-          debtTransactions: { '2': { to: 'person', name: 'Оля' } },
-        },
-      },
-    );
-    expect(moves(plan).map((t) => (t.type === 'transfer' ? t.toAccountId : ''))).toEqual([
-      accountNamed(plan, 'Ярослав').id,
-      accountNamed(plan, 'Оля').id,
+  it('Scenario: Two currencies get two рахунки-борги', () => {
+    const plan = planFrom([
+      ...борг({ id: '1', description: 'борг', amount: '100.00', lending: true }),
+      ...pair({ id: '2', description: 'борг', account: 'валюта моно', journalType: 'CREDIT', amount: '50.00', currency: 'USD', other: 'Борг', otherType: 'EXPENSES', otherCurrency: 'USD' }),
     ]);
+    const борги = plan.accounts.filter((a) => a.kind === 'debt');
+    expect(борги).toHaveLength(2);
+    expect(борги.map((a) => [a.name, a.currency, a.id])).toEqual([
+      ['Борги', 'UAH', debtAccountId('UAH')],
+      ['Борги', 'USD', debtAccountId('USD')],
+    ]);
+    const [uah, usd] = moves(plan);
+    expect(uah).toMatchObject({ type: 'transfer', toAccountId: debtAccountId('UAH'), left: { currency: 'UAH' } });
+    expect(usd).toMatchObject({ type: 'transfer', toAccountId: debtAccountId('USD'), left: { currency: 'USD' } });
   });
 
-  it('lends onto an existing рахунок-борг when the owner points at one', () => {
-    const plan = planFrom(
-      борг({ id: '1', description: 'борг яріку', amount: '1000.00', lending: true }),
-      {
-        decisions: { debtPeople: { 'борг яріку': { to: 'account', accountId: 'yarik' } } },
-        existing: {
-          ...existingState(),
-          accounts: [existingAccount({ id: 'yarik', name: 'Ярослав', kind: 'debt' })],
-        },
-      },
-    );
-    expect(moves(plan)[0]).toMatchObject({ type: 'transfer', toAccountId: 'yarik' });
-    expect(accountNamed(plan, 'Ярослав').existingId).toBe('yarik');
-  });
-
-  it('reports a «Борг» row in a currency the person’s рахунок-борг does not hold', () => {
-    const plan = planFrom(
-      [
-        ...борг({ id: '1', description: 'борг', amount: '100.00', lending: true }),
-        ...pair({ id: '2', description: 'борг', account: 'валюта моно', journalType: 'CREDIT', amount: '50.00', currency: 'USD', other: 'Борг', otherType: 'EXPENSES', otherCurrency: 'USD' }),
-      ],
-      { decisions: { debtPeople: { борг: { to: 'person', name: 'Ярослав' } } } },
-    );
-    expect(moves(plan)).toHaveLength(1);
-    expect(plan.unexplained.filter((r) => r.reason === 'debt-currency-mismatch')).toHaveLength(1);
+  it('Scenario: An export with no «Борг» row creates no рахунок-борг', () => {
+    const plan = planFrom(spend({ id: '1', amount: '10.00', other: 'Groceries' }));
+    expect(plan.accounts.filter((a) => a.kind === 'debt')).toEqual([]);
   });
 });
 
@@ -719,10 +659,7 @@ describe('interpret — unknown shapes', () => {
 
     // And the рахунок-борг of a «Борг» переказ that did not survive is in no plan: the report
     // states a balance for every рахунок-борг it lists, and one nothing explains has none.
-    const zeroDebt = planFrom(
-      борг({ id: '1', description: 'борг', amount: '0.00', lending: true }),
-      { decisions: { debtPeople: { борг: { to: 'person', name: 'Ярослав' } } } },
-    );
+    const zeroDebt = planFrom(борг({ id: '1', description: 'борг', amount: '0.00', lending: true }));
     expect(zeroDebt.transactions).toEqual([]);
     expect(zeroDebt.accounts.filter((a) => a.kind === 'debt')).toEqual([]);
   });

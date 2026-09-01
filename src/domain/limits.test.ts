@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { overLimit, overLimitCategories, type CategoryLimit } from './limits';
+import { overLimit, overLimitBy, overLimitCategories, type CategoryLimit } from './limits';
 import { money } from './money';
 import { categoryBreakdown } from './monthly-picture';
 import { expenseByDefault, refund, type Transaction } from './transaction';
@@ -30,6 +30,36 @@ describe('overLimit', () => {
 
   it('Judging one currency against another is refused, not converted', () => {
     expect(() => overLimit(money(999999, 'USD'), groceriesLimit.amount)).toThrow(/USD/);
+  });
+});
+
+describe('overLimitBy', () => {
+  it('By how much the ліміт is exceeded, in the ліміт’s own currency', () => {
+    expect(overLimitBy(money(260000, 'UAH'), groceriesLimit.amount)).toEqual(money(10000, 'UAH'));
+  });
+
+  it('Spending exactly the ліміт is over it by nothing at all', () => {
+    // Not a сума of zero: a ceiling reached is not a ceiling exceeded, and «перевищено на 0,00»
+    // would be a sentence about an overrun that did not happen.
+    expect(overLimitBy(money(250000, 'UAH'), groceriesLimit.amount)).toBeNull();
+  });
+
+  it('Spending under the ліміт has no overrun', () => {
+    expect(overLimitBy(money(249999, 'UAH'), groceriesLimit.amount)).toBeNull();
+    expect(overLimitBy(money(0, 'UAH'), groceriesLimit.amount)).toBeNull();
+  });
+
+  it('A non-null answer is exactly an over-limit one', () => {
+    for (const spent of [0, 1, 249999, 250000, 250001, 999999]) {
+      const money_ = money(spent, 'UAH');
+      expect(overLimitBy(money_, groceriesLimit.amount) !== null).toBe(
+        overLimit(money_, groceriesLimit.amount),
+      );
+    }
+  });
+
+  it('Judging one currency against another is refused, not converted', () => {
+    expect(() => overLimitBy(money(999999, 'USD'), groceriesLimit.amount)).toThrow(/USD/);
   });
 });
 

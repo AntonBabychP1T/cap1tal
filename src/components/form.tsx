@@ -151,6 +151,19 @@ export function Action({
       ]}>
       <ThemedText
         type="default"
+        // One line, said so — the same guard, and the same defect, as `RowAction`'s below: without
+        // it Android re-measures the label after the keyboard has resized the window and paints it
+        // a word short. «Додати застосунок» on «Сповіщення банків» became «Додати» once the add
+        // form had been opened and cancelled, and stayed «Додати» on every return to the screen.
+        //
+        // `adjustsFontSizeToFit` is what makes the one line non-lossy, and it is not optional
+        // here: the button is as wide as its column, so no title of this app's length overflows
+        // at the default text size — but nothing caps the system font scale, and at 130% the
+        // longest verbs («Так, імпортувати ще раз», «Створити новий рахунок») would ellipsize
+        // where they used to wrap. Shrinking the word beats losing it, and losing it is what the
+        // line above exists to prevent. The same pair is on Місяць's leading сума.
+        numberOfLines={1}
+        adjustsFontSizeToFit
         // The filled action is the loudest thing on its screen; the outline and the destructive
         // verb beside it are a weight quieter.
         style={filled ? styles.actionFilledLabel : styles.actionLabel}
@@ -192,7 +205,13 @@ export function RowAction({
         { borderColor: theme.border },
         pressed && styles.pressed,
       ]}>
+      {/* One line, said so. The pill is sized to the whole title, so nothing here can ellipsize —
+          but without it Android re-measures the label after the keyboard has resized the window
+          and paints it a word short: «Усі транзакції та пошук» became «Усі транзакції та» on
+          Головний, in a box still wide enough for both. An affordance that names half of where it
+          goes is worse than none. */}
       <ThemedText
+        numberOfLines={1}
         type="smallBold"
         themeColor={
           tone === 'accent' ? 'accent' : tone === 'danger' ? 'textDanger' : 'textSecondary'

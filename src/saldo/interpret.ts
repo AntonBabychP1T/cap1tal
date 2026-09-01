@@ -28,7 +28,8 @@ import {
   flattenName,
   isInitialBalance,
   namesToCreate,
-  NEW_DEBT_PREFIX,
+  DEBT_ACCOUNT_NAME,
+  debtAccountId,
   NO_DECISIONS,
   reservedCategoryFor,
   resolveAccountMap,
@@ -36,7 +37,6 @@ import {
   type Decisions,
   type ExistingState,
   type NameProposal,
-  type PersonAssignment,
   type RejectedRedirect,
   type ResolvedAccount,
   type Survey,
@@ -74,8 +74,6 @@ export interface PlannedTransaction {
 
 export type UnexplainedReason =
   | 'unpaired-in-transit'
-  | 'unassigned-debt'
-  | 'debt-currency-mismatch'
   | 'merged-account-move'
   | 'unrecognised-shape'
   | 'dropped-original-amount'
@@ -98,15 +96,6 @@ export interface UnexplainedRow {
   readonly effect?: Money;
 }
 
-/** A «Борг» transaction the owner has attached to no person. */
-export interface UnresolvedDebt {
-  readonly transactionId: string;
-  readonly description: string;
-  readonly date: IsoDate;
-  readonly amount: Money;
-  readonly row: number;
-}
-
 export interface ImportPlan {
   readonly accounts: readonly PlannedAccount[];
   /**
@@ -117,11 +106,8 @@ export interface ImportPlan {
   readonly categories: readonly NameProposal[];
   readonly sources: readonly NameProposal[];
   readonly transactions: readonly PlannedTransaction[];
-  readonly unresolvedDebts: readonly UnresolvedDebt[];
   readonly unexplained: readonly UnexplainedRow[];
   readonly rejectedRedirects: readonly RejectedRedirect[];
-  /** False while any «Борг» transaction is unassigned — the plan is not ready to commit. */
-  readonly complete: boolean;
 }
 
 /** The normalised datetime as a comparable instant. Arithmetic on the text, never a clock read. */
@@ -189,15 +175,12 @@ export function interpret(input: {
     existing.categories,
   );
   const sourceIds = resolveNames(surveyed.sources, decisions.sourceRedirects, existing.sources);
-  const byDescription = decisions.debtPeople ?? {};
-  const byTransaction = decisions.debtTransactions ?? {};
   const existingAccounts = new Map(existing.accounts.map((account) => [account.id, account]));
 
   const placed: Placed[] = [];
   const unexplained: UnexplainedRow[] = [];
-  const unresolvedDebts: UnresolvedDebt[] = [];
   const openingContributions = new Map<string, number>();
-  /** Рахунки-борги the plan needs, by id, in the order the export first reaches for them. */
+  /** The «Борги» рахунки the plan needs, by currency, in the order the export reaches for them. */
   const debtAccounts = new Map<string, ResolvedAccount>();
 
   const accountOf = (leg: SaldoLeg): ResolvedAccount | undefined =>
@@ -458,44 +441,8 @@ export function interpret(input: {
         giveUp(transaction, 'unrecognised-shape', 'a «Борг» transaction on no known рахунок');
         continue;
       }
-      // A transaction's own assignment wins; its description's answers for the whole group.
-      const assignment: PersonAssignment | undefined =
-        byTransaction[transaction.id] ?? byDescription[transaction.description];
-      if (!assignment) {
-        unresolvedDebts.push({
-          transactionId: transaction.id,
-          description: transaction.description,
-          date: transaction.date,
-          amount: real.amount,
-          row: real.row,
-        });
-        note(
-          'unassigned-debt',
-          real,
-          `the «Борг» transaction "${transaction.description}" is attached to no person`,
-          account,
-        );
-        continue;
-      }
-      const person = personFor(assignment, real, debtAccounts, existingAccounts);
-      if (!person) {
-        giveUp(
-          transaction,
-          'unrecognised-shape',
-          'a «Борг» transaction assigned to no known рахунок',
-        );
-        continue;
-      }
-      if (person.currency !== real.amount.currency) {
-        note(
-          'debt-currency-mismatch',
-          real,
-          `the рахунок-борг "${person.name}" is in ${person.currency}, this «Борг» row is in ${real.amount.currency}`,
-          account,
-        );
-        continue;
-      }
-      if (person.id === account.id) {
+      const debts = debtAccountFor(real.amount.currency, debtAccounts);
+      if (debts.id === account.id) {
         giveUp(transaction, 'unrecognised-shape', 'a «Борг» transaction onto its own рахунок');
         continue;
       }
@@ -505,17 +452,16 @@ export function interpret(input: {
         transfer({
           id: `saldo:${transaction.id}`,
           date: transaction.date,
-          fromAccountId: lending ? account.id : person.id,
-          toAccountId: lending ? person.id : account.id,
+          fromAccountId: lending ? account.id : debts.id,
+          toAccountId: lending ? debts.id : account.id,
           left: real.amount,
           arrived: real.amount,
         }),
       );
       if (переказ) {
-        // Existing or new, a рахунок-борг the plan actually moves money onto belongs to the plan:
-        // the report states every one of their balances, so an over-repaid one is visible. One
-        // whose переказ did not survive is not in the plan at all — a рахунок nothing explains.
-        debtAccounts.set(person.id, person);
+        // «Борги» belongs to the plan only once the plan actually moves money onto it: the report
+        // states its balance, and a рахунок no переказ survived for is a рахунок nothing explains.
+        debtAccounts.set(debts.currency, debts);
         add(переказ, [transaction.id], transaction);
       }
       continue;
@@ -715,43 +661,27 @@ export function interpret(input: {
     categories: namesToCreate(surveyed.categories, categoryIds),
     sources: namesToCreate(surveyed.sources, sourceIds),
     transactions: placed.map((entry) => entry.planned),
-    unresolvedDebts,
     unexplained,
     rejectedRedirects: accountMap.rejectedRedirects,
-    complete: unresolvedDebts.length === 0,
   };
 }
 
 /**
- * The рахунок-борг an assignment names: an existing one, or the one the plan is building for that
- * person — created in the currency of the first «Борг» row that reaches it, so a person's debts
- * in two currencies surface as a mismatch instead of a cross-currency переказ.
+ * The «Борги» рахунок of one currency — the single рахунок-борг every «Борг» row of that currency
+ * lands on. One per currency and not one per person: the debts the export carries are closed, so
+ * the fact that money went out and came back is all of them that is worth keeping, and the person
+ * behind a loan of three years ago is a question the owner cannot answer and does not need to.
  */
-function personFor(
-  assignment: PersonAssignment,
-  real: SaldoLeg,
-  debtAccounts: Map<string, ResolvedAccount>,
-  existingAccounts: ReadonlyMap<string, { id: string; name: string; kind: AccountKind; currency: CurrencyCode }>,
-): ResolvedAccount | undefined {
-  if (assignment.to === 'account') {
-    const found = existingAccounts.get(assignment.accountId);
-    return found
-      ? {
-          id: found.id,
-          name: found.name,
-          kind: found.kind,
-          currency: found.currency,
-          existingId: found.id,
-        }
-      : undefined;
-  }
-  const id = `${NEW_DEBT_PREFIX}${assignment.name}`;
+function debtAccountFor(
+  currency: CurrencyCode,
+  debtAccounts: ReadonlyMap<string, ResolvedAccount>,
+): ResolvedAccount {
   return (
-    debtAccounts.get(id) ?? {
-      id,
-      name: assignment.name,
+    debtAccounts.get(currency) ?? {
+      id: debtAccountId(currency),
+      name: DEBT_ACCOUNT_NAME,
       kind: 'debt',
-      currency: real.amount.currency,
+      currency,
     }
   );
 }

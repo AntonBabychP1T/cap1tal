@@ -52,7 +52,11 @@ come straight off the previous screenshot, no ratio to convert.
 - The AVD is `Pixel_10_Pro` by default; override with `CAP1TAL_AVD=<name>`. `emulator -list-avds`
   lists what exists. Creating an AVD is the owner's job (Android Studio → Device Manager).
 - The build is a **debug** APK, so the JS comes from Metro over `adb reverse tcp:8081`: JS edits
-  reload without a rebuild, and only a native/config change needs `scripts/android.sh build` again.
+  reload without a rebuild. A native/config change cannot arrive that way, and `up` no longer
+  trusts the APK on disk — it rebuilds when `package.json`, `app.json` or `plugins/` is newer than
+  the APK, and re-runs `expo prebuild` when `app.json` or `plugins/` is newer than the generated
+  manifest. Before that, `up` reinstalled the stale APK and the app died on launch with
+  `Cannot find native module …` while `verify` stayed green.
 - Gradle needs JDK 21 (the machine default may be newer); the script pins `JAVA_HOME` itself.
   It also builds only the device's own ABI — a four-ABI build is ~4× the work for nothing.
 - `.cache/android/` holds Metro and emulator logs and screenshots; it is gitignored.

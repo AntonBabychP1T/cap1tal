@@ -402,9 +402,10 @@ amount, currency, category, source or monthly number.
 
 ### Requirement: Monobank storage arrives through append-only migrations without a token
 
-The monobank link, progress, imported-id, balance and опис storage SHALL be introduced only by new
-migrations that preserve all existing рахунки, транзакції, категорії, джерела, правила, Saldo
-import state and rate cache. The monobank token SHALL have no column or row in this storage.
+The monobank link, progress, imported-id, balance, опис and last-completed-sync storage SHALL be
+introduced only by new migrations that preserve all existing рахунки, транзакції, категорії,
+джерела, правила, Saldo import state and rate cache. The monobank token SHALL have no column or row
+in this storage.
 
 #### Scenario: Existing financial data survives the migration
 
@@ -412,11 +413,18 @@ import state and rate cache. The monobank token SHALL have no column or row in t
   marker and rates is brought to the current shape
 - **THEN** every existing value loads unchanged and no monobank token exists in the database
 
+#### Scenario: An existing link survives gaining the moment
+
+- **WHEN** a database holding monobank links, imported item ids and bank balances is brought to the
+  current shape
+- **THEN** every link loads unchanged, holding no last-completed-sync moment, and its imported item
+  ids and balance are untouched
+
 #### Scenario: A fresh database supports monobank metadata but not the token
 
 - **WHEN** all committed migrations are applied in order to an empty database
-- **THEN** links, cursors, imported ids, bank balances and transaction описи can be stored, and no
-  storage location for a monobank token exists
+- **THEN** links, cursors, imported ids, bank balances, transaction описи and the moment a link
+  last completed a sync can be stored, and no storage location for a monobank token exists
 
 ### Requirement: A category's ліміт survives a restart
 
@@ -509,3 +517,117 @@ computed from one reading.
 - **WHEN** транзакції are stored in three different months and the whole history is listed
 - **THEN** every stored транзакція is returned exactly once
 
+### Requirement: Watched apps survive a restart
+
+The system SHALL store every watch — the app package with the рахунок it maps to — and SHALL
+load the same set after storage is reopened; a removed watch SHALL stay removed.
+
+#### Scenario: A watch round-trips
+
+- **WHEN** a watch mapping "ua.privatbank.ap24" to a stored рахунок is stored and storage is
+  reopened
+- **THEN** the watch loads with the same package and the same рахунок
+
+#### Scenario: A removed watch stays removed
+
+- **WHEN** a stored watch is removed and storage is reopened
+- **THEN** no watch for that package loads, while every other watch is unchanged
+
+### Requirement: Чернетки survive a restart until settled
+
+The system SHALL store every pending чернетка whole — its рахунок, date, text, and its
+proposal: a витрата of a сума, a дохід of a сума, or raw with no сума and an optional
+original-currency reference — and SHALL load it unchanged after storage is reopened. A settled
+чернетка (confirmed or dismissed) SHALL NOT load as pending again.
+
+#### Scenario: A pending чернетка round-trips whole
+
+- **WHEN** a raw чернетка with text "FOREIGN 10.00 USD" and 1000 minor units USD as its
+  original-currency reference is stored and storage is reopened
+- **THEN** it loads pending on the same рахунок with the same date, text and reference
+
+#### Scenario: A settled чернетка does not return
+
+- **WHEN** a чернетка is settled by confirmation or dismissal and storage is reopened
+- **THEN** it is not among the pending чернетки
+
+### Requirement: Seen fingerprints are remembered independently of чернетки and транзакції
+
+The system SHALL store every seen fingerprint and SHALL keep it after the чернетка it came
+with was confirmed or dismissed and after the транзакція it led to was edited or deleted, so
+the same captured notification can never draft twice.
+
+#### Scenario: A deleted транзакція keeps its fingerprint
+
+- **WHEN** a чернетка was confirmed, its транзакція deleted, and storage is reopened
+- **THEN** the fingerprint is still remembered and the same captured notification yields
+  nothing
+
+### Requirement: A capture outcome commits atomically
+
+The system SHALL store a capture outcome as one unit — the fingerprint together with the
+чернетка it drafted, or together with the auto-confirmed транзакція — and if any part cannot
+be stored, none SHALL change.
+
+#### Scenario: A failed draft stores no fingerprint
+
+- **WHEN** storing a drafted чернетка is rejected
+- **THEN** its fingerprint is not remembered either, so the redelivered capture can draft again
+
+#### Scenario: A committed outcome survives restart whole
+
+- **WHEN** an auto-confirmed витрата commits with its fingerprint and storage is reopened
+- **THEN** the витрата and the remembered fingerprint are both present
+
+### Requirement: Notification storage arrives through append-only migrations
+
+The watch, fingerprint and чернетка storage SHALL be introduced only by new migrations that
+preserve every existing рахунок, транзакція, категорія, джерело, правило, ліміт, ціль,
+monobank and Saldo state and rate cache. No raw capture queue SHALL be stored — the waiting
+queue lives with the capture layer, not in the owner's database.
+
+#### Scenario: Existing data survives the migration
+
+- **WHEN** a database holding every stored shape is brought to the current storage shape
+- **THEN** every existing value loads unchanged, and watches, fingerprints and чернетки can be
+  stored
+
+#### Scenario: A fresh database starts empty of notification state
+
+- **WHEN** all committed migrations are applied in order to an empty database
+- **THEN** no watch, fingerprint or чернетка exists and each can be stored
+
+### Requirement: The moment a link last completed a sync survives a restart
+
+The system SHALL store, per monobank link, the moment at which a sync last completed for it, and
+read it back unchanged after storage is closed and reopened. A link SHALL be storable with no such
+moment — the state of a link that has never synced — and storing a newer moment SHALL replace the
+one held. Removing the link SHALL remove the moment with it, leaving every транзакція, imported-id
+memory, опис and last known баланс банку untouched. The moment SHALL be about the link alone: two
+links SHALL hold their moments independently.
+
+#### Scenario: A stored moment reads back unchanged
+
+- **WHEN** a link is stored with the moment of a completed sync and storage is closed and reopened
+- **THEN** the link reads back with the same moment
+
+#### Scenario: A link that never synced holds no moment
+
+- **WHEN** a link is stored and no sync has completed for it
+- **THEN** it reads back with no moment, and that is distinguishable from a moment of zero
+
+#### Scenario: A newer moment replaces the older one
+
+- **WHEN** a second sync completes for a link that already held a moment
+- **THEN** the link holds only the newer moment
+
+#### Scenario: Two links keep their moments apart
+
+- **WHEN** one link holds the moment of a sync and a second link holds an earlier one
+- **THEN** each reads back with its own moment
+
+#### Scenario: Removing the link removes only the moment
+
+- **WHEN** a link holding a moment is removed
+- **THEN** the moment is gone with it and every транзакція, imported item id, опис and last known
+  баланс банку of that monobank account remains

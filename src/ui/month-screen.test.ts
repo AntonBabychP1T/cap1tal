@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { account, type Account, type AccountKind } from '../domain/account';
@@ -11,10 +13,12 @@ import {
   UNCATEGORISED_CATEGORY_ID,
   type Correction,
   type Expense,
+  type Income,
   type Transaction,
 } from '../domain/transaction';
 import type { MonobankRate } from '../monobank/currency';
 import { monthViewModel } from './month-screen';
+import { prevMonth } from './months';
 
 const acc = (id: string, kind: AccountKind, currency: CurrencyCode, archived = false): Account =>
   account({ id, name: id, kind, currency, archived });
@@ -49,6 +53,20 @@ const expense = (
   categoryId,
 });
 
+const income = (
+  amount: number,
+  currency: CurrencyCode = 'UAH',
+  date = '2026-08-05',
+  accountId = currency === 'USD' ? 'usd-card' : 'card',
+): Income => ({
+  type: 'income',
+  id: nextId(),
+  date,
+  accountId,
+  amount: money(amount, currency),
+  sourceId: 'salary',
+});
+
 const correction = (amount: number, date = '2026-08-12'): Correction => ({
   type: 'correction',
   id: nextId(),
@@ -70,7 +88,18 @@ const view = (
   rates: MonobankRate[] = [],
   month = '2026-08',
   limits: CategoryLimit[] = [],
-) => monthViewModel({ month, accounts, transactions, rates, categoryNames, limits, now: august });
+  previousTransactions: Transaction[] = [],
+) =>
+  monthViewModel({
+    month,
+    accounts,
+    transactions,
+    rates,
+    categoryNames,
+    limits,
+    previousTransactions,
+    now: august,
+  });
 
 const groupOf = (model: ReturnType<typeof view>, currency: CurrencyCode) => {
   const group = model.groups.find((g) => g.currency === currency);
@@ -274,6 +303,202 @@ describe('monthViewModel', () => {
   });
 });
 
+/**
+ * The 1st of a month is an empty screen by construction, while the month that has numbers is one
+ * step away. `previous` is what the screen offers instead of a blank; it is never the history.
+ */
+describe('an empty month and the month before it', () => {
+  // September is empty; August holds the витрати. The clock stays in August — the shown month is
+  // what these read, and the shown month is passed in.
+  const septemberOn = (previousTransactions: Transaction[]) =>
+    view([], [], '2026-09', [], previousTransactions);
+
+  it('Scenario: The first day of a month points at the month that has numbers', () => {
+    const model = septemberOn([expense(2_150_000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-08-10')]);
+
+    expect(model.emptyMessage).toBe('У цьому місяці ще нічого не записано.');
+    expect(model.previous).toEqual({
+      month: '2026-08',
+      label: 'Серпень 2026',
+      spent: [{ key: 'spent', label: 'Витрачено', amount: '21500,00 UAH' }],
+    });
+  });
+
+  it('Scenario: Two empty months in a row offer nothing', () => {
+    const model = septemberOn([]);
+
+    expect(model.emptyMessage).toBe('У цьому місяці ще нічого не записано.');
+    expect(model.previous).toBeNull();
+  });
+
+  it('Scenario: The previous month is stated per currency', () => {
+    const model = septemberOn([
+      expense(2_150_000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-08-10'),
+      expense(10000, 'USD', UNCATEGORISED_CATEGORY_ID, '2026-08-11'),
+    ]);
+
+    // Two sums, each with its own currency; nothing anywhere combines them.
+    expect(model.previous?.spent.map((row) => row.amount)).toEqual([
+      '21500,00 UAH',
+      '100,00 USD',
+    ]);
+  });
+
+  it('Scenario: Taking the offer shows the previous month', () => {
+    const august2026 = [expense(2_150_000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-08-10')];
+    const empty = septemberOn(august2026);
+
+    // The offer names the month the back step writes, and its витрачено is that month's own
+    // number — the same one the screen shows once it is stepped to.
+    expect(empty.previous?.month).toBe(prevMonth('2026-09'));
+    const stepped = view(august2026, [], '2026-08');
+    expect(empty.previous?.spent[0]?.amount).toBe(amountFor(stepped, 'UAH', 'spent'));
+  });
+
+  it('Scenario: Taking the offer shows the previous month — the screen writes that state', () => {
+    // The offer's action is the same state the back arrow writes, so there is one way to be on
+    // August. Structural, like `entry-form.test.ts`'s scroll assertions: `verify` runs no JSX.
+    const screen = readFileSync(new URL('../app/(tabs)/month.tsx', import.meta.url), 'utf8');
+
+    expect(screen).toContain('model.previous.label');
+    expect(screen).toContain('model.previous.spent.map');
+    // One action, writing the same `shown` the back step writes — counted, so a second way to be
+    // on the previous month fails here rather than on a device.
+    expect([...screen.matchAll(/setShown\(prevMonth\(shown\)\)/g)]).toHaveLength(2);
+    // And the month it reads is loaded beside the shown one, not derived on the screen.
+    expect(screen).toContain('transactionsRepo.listMonth(prevMonth(shown))');
+  });
+
+  it('A month that holds only transfers is not empty, and offers nothing', () => {
+    // It has its own sentence already; there is nothing to step back from.
+    const model = view(
+      [
+        transfer({
+          id: 't-cash-sep',
+          date: '2026-09-05',
+          fromAccountId: 'card',
+          toAccountId: 'wallet',
+          left: money(50000, 'UAH'),
+          arrived: money(50000, 'UAH'),
+        }),
+      ],
+      [],
+      '2026-09',
+      [],
+      [expense(2_150_000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-08-10')],
+    );
+
+    expect(model.emptyMessage).toBe('У цьому місяці гроші лише переходили між рахунками.');
+    expect(model.previous).toBeNull();
+  });
+
+  it('A month with numbers of its own offers no previous month', () => {
+    const model = view(
+      [expense(100000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-09-03')],
+      [],
+      '2026-09',
+      [],
+      [expense(2_150_000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-08-10')],
+    );
+
+    expect(model.previous).toBeNull();
+  });
+
+  it('Scenario: A previous month of transfers alone is still named and offered', () => {
+    // August moved no monthly number — card → wallet is neither savings, investment nor debt — so
+    // there is no витрачено to state. It still holds транзакції, and the month it leads to is
+    // where what it holds is said.
+    const model = septemberOn([
+      transfer({
+        id: 't-aug-cash',
+        date: '2026-08-05',
+        fromAccountId: 'card',
+        toAccountId: 'wallet',
+        left: money(50000, 'UAH'),
+        arrived: money(50000, 'UAH'),
+      }),
+    ]);
+
+    expect(model.previous).toEqual({ month: '2026-08', label: 'Серпень 2026', spent: [] });
+    // Stepping to it is what says what it holds.
+    expect(view([], [], '2026-08').emptyMessage).toBe(
+      'У цьому місяці ще нічого не записано.',
+    );
+  });
+
+  it('A currency the previous month only earned in states its витрачено of zero', () => {
+    // The same thing stepping to that month shows for that currency, which is what the offer
+    // promises to be identical to.
+    const august = [
+      expense(2_150_000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-08-10'),
+      income(500000, 'USD', '2026-08-05'),
+    ];
+    const model = septemberOn(august);
+
+    expect(model.previous?.spent.map((row) => row.amount)).toEqual(['21500,00 UAH', '0,00 USD']);
+    expect(amountFor(view(august, [], '2026-08'), 'USD', 'spent')).toBe('0,00 USD');
+  });
+
+  it('Only the previous month counts, whatever else was handed in', () => {
+    // The screen reads one bounded month; a stray older транзакція in that read is not an offer.
+    const model = septemberOn([expense(100000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-07-10')]);
+
+    expect(model.previous).toBeNull();
+  });
+});
+
+/**
+ * Which of the six numbers a currency group leads with. The формула behind залишилось is
+ * untouched — what is decided here is only what is read first, and what the screen says when the
+ * answer is not залишилось.
+ */
+describe('the leading number of a currency group', () => {
+  it('Scenario: A month before its first дохід leads with витрачено', () => {
+    const model = view([expense(265000, 'UAH')]);
+    const group = groupOf(model, 'UAH');
+
+    expect(group.lead).toBe('spent');
+    expect(group.note).toBe('У цьому місяці ще не записано дохід.');
+    // Залишилось is still there, under its own name and with the number the picture computes.
+    expect(amountFor(model, 'UAH', 'left')).toBe('−2650,00 UAH');
+    expect(group.numbers.map((row) => row.key)).toEqual([
+      'spent',
+      'invested',
+      'saved',
+      'lent',
+      'income',
+      'left',
+    ]);
+  });
+
+  it('Scenario: A month with дохід leads with залишилось', () => {
+    const model = view([income(5_000_000, 'UAH'), expense(265000, 'UAH')]);
+    const group = groupOf(model, 'UAH');
+
+    expect(group.lead).toBe('left');
+    expect(group.note).toBeNull();
+    expect(amountFor(model, 'UAH', 'left')).toBe('47350,00 UAH');
+  });
+
+  it('Scenario: Each currency decides its own leading number', () => {
+    const model = view([income(5_000_000, 'UAH'), expense(265000, 'UAH'), expense(10000, 'USD')]);
+
+    expect(groupOf(model, 'UAH').lead).toBe('left');
+    expect(groupOf(model, 'UAH').note).toBeNull();
+    expect(groupOf(model, 'USD').lead).toBe('spent');
+    expect(groupOf(model, 'USD').note).toBe('У цьому місяці ще не записано дохід.');
+  });
+
+  it('It is the дохід number that decides, whatever recorded it', () => {
+    // A positive коригування is дохід in the monthly picture, so the group it lands in leads with
+    // залишилось: the rule reads the number, never the transaction types behind it.
+    const model = view([expense(265000, 'UAH'), correction(300000)]);
+
+    expect(groupOf(model, 'UAH').lead).toBe('left');
+    expect(groupOf(model, 'UAH').note).toBeNull();
+  });
+});
+
 describe('the breakdown reads the editable category list', () => {
   it('Scenario: A renamed category shows its new name', () => {
     const spent = [expense(80000, 'UAH', 'groceries')];
@@ -287,6 +512,7 @@ describe('the breakdown reads the editable category list', () => {
       rates: [],
       categoryNames: renamed,
       limits: [],
+      previousTransactions: [],
       now: august,
     }).groups[0]!.breakdown;
 

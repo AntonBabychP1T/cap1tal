@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
+import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
@@ -49,7 +49,7 @@ export default function CategoryMonthScreen() {
     () => categoryTransactions({ month, categoryId, transactions: stored.transactions }),
     [categoryId, month, stored.transactions],
   );
-  /** The category's own name, and whether it is over its ліміт for the month being shown. */
+  /** The category's own name, its own сума for the month, and its overrun where there is one. */
   const heading = useMemo(
     () =>
       categoryMonthHeading({
@@ -70,6 +70,28 @@ export default function CategoryMonthScreen() {
         danger={heading.overLimit}
         back={() => router.back()}
       />
+
+      {/* The сума this list is a drill-down of, one line per currency, and — when the ліміт was
+          exceeded — by how much. Both are decided in `category-transactions.ts`. */}
+      {heading.spent.length > 0 ? (
+        <Card style={styles.heading}>
+          {heading.spent.map((amount) => (
+            <View key={amount} style={styles.headingLine}>
+              <ThemedText type="small" themeColor="textSecondary">
+                Витрачено
+              </ThemedText>
+              <ThemedText tabular style={styles.amount}>
+                {amount}
+              </ThemedText>
+            </View>
+          ))}
+          {heading.overrun ? (
+            <ThemedText type="small" themeColor="textDanger">
+              {heading.overrun}
+            </ThemedText>
+          ) : null}
+        </Card>
+      ) : null}
 
       {listed.length === 0 ? (
         <ThemedText type="small" themeColor="textSecondary">
@@ -104,6 +126,13 @@ export default function CategoryMonthScreen() {
 }
 
 const styles = StyleSheet.create({
+  heading: { gap: Spacing.two },
+  headingLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    gap: Spacing.two,
+  },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',

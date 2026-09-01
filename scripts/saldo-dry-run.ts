@@ -55,14 +55,6 @@ console.log(`categories to create: ${plan.categories.length}`);
 console.log(`sources to create: ${plan.sources.length}`);
 console.log('');
 
-console.log(`«Борг» transactions with no person: ${plan.unresolvedDebts.length}`);
-for (const debt of plan.unresolvedDebts) {
-  console.log(
-    `  ${debt.date} ${formatMoney(debt.amount)} — "${debt.description}"`,
-  );
-}
-console.log('');
-
 console.log('reconciliation:');
 for (const row of report.accounts) {
   const mark = row.reconciles ? 'ok  ' : 'DIFF';

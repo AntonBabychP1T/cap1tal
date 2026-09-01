@@ -182,7 +182,12 @@ describe('categoryMonthHeading', () => {
     const transactions: Transaction[] = [expense('e1', '2026-08-10', 'food', 260000)];
 
     expect(categoryMonthHeading({ month: '2026-08', categoryId: 'food', transactions, categoryNames: names, limits })).toEqual(
-      { label: 'Groceries', overLimit: true },
+      {
+        label: 'Groceries',
+        overLimit: true,
+        spent: ['2600,00 UAH'],
+        overrun: 'Перевищено ліміт на 100,00 UAH',
+      },
     );
   });
 
@@ -203,6 +208,92 @@ describe('categoryMonthHeading', () => {
 
     expect(
       categoryMonthHeading({ month: '2026-08', categoryId: 'food', transactions, categoryNames: names, limits: [] }),
-    ).toEqual({ label: 'Groceries', overLimit: false });
+    ).toEqual({
+      label: 'Groceries',
+      overLimit: false,
+      spent: ['990000,00 UAH'],
+      overrun: null,
+    });
+  });
+});
+
+/**
+ * The drill-down carried a red title and nothing else: the сума it is a drill-down of was one tap
+ * behind it. It is the breakdown's own number, from the same `categoryBreakdown` the row came from.
+ */
+describe('the category’s own сума and its overrun', () => {
+  const names = namesById([{ id: 'food', name: 'Groceries' }]);
+  const uahLimit: CategoryLimit[] = [{ categoryId: 'food', amount: money(250000, 'UAH') }];
+
+  const heading = (transactions: Transaction[], limits: CategoryLimit[] = uahLimit) =>
+    categoryMonthHeading({
+      month: '2026-08',
+      categoryId: 'food',
+      transactions,
+      categoryNames: names,
+      limits,
+    });
+
+  it('Scenario: The category’s own сума is stated', () => {
+    expect(heading([expense('e1', '2026-08-10', 'food', 260000)], []).spent).toEqual([
+      '2600,00 UAH',
+    ]);
+  });
+
+  it('Scenario: An over-limit category says by how much', () => {
+    const model = heading([expense('e1', '2026-08-10', 'food', 260000)]);
+
+    expect(model.overLimit).toBe(true);
+    expect(model.overrun).toBe('Перевищено ліміт на 100,00 UAH');
+  });
+
+  it('Scenario: Spending at the ліміт states no overrun', () => {
+    const model = heading([expense('e1', '2026-08-10', 'food', 250000)]);
+
+    expect(model.spent).toEqual(['2500,00 UAH']);
+    expect(model.overLimit).toBe(false);
+    expect(model.overrun).toBeNull();
+  });
+
+  it('Scenario: A category with no ліміт states no overrun', () => {
+    const model = heading([expense('e1', '2026-08-10', 'food', 260000)], []);
+
+    expect(model.spent).toEqual(['2600,00 UAH']);
+    expect(model.overrun).toBeNull();
+  });
+
+  it('Scenario: Two currencies are stated apart', () => {
+    const model = heading([
+      expense('e1', '2026-08-10', 'food', 260000),
+      expense('e2', '2026-08-11', 'food', 10000, 'USD'),
+    ]);
+
+    // Two sums, UAH first, neither combined with the other.
+    expect(model.spent).toEqual(['2600,00 UAH', '100,00 USD']);
+    // And one overrun, in the currency the ліміт is judged in.
+    expect(model.overrun).toBe('Перевищено ліміт на 100,00 UAH');
+  });
+
+  it('A month the category has nothing in states no сума', () => {
+    const model = heading([expense('e1', '2026-08-10', 'other', 260000)], []);
+
+    expect(model.spent).toEqual([]);
+    expect(model.overrun).toBeNull();
+  });
+
+  it('An overrun is stated exactly when the category is over its ліміт', () => {
+    for (const amount of [1, 249999, 250000, 250001, 999999]) {
+      const model = heading([expense('e1', '2026-08-10', 'food', amount)]);
+      expect(model.overrun !== null, `${amount} minor units`).toBe(model.overLimit);
+    }
+  });
+
+  it('Spending in another currency alone never states an overrun', () => {
+    // The UAH ліміт was never touched: nothing in it was spent, and no rate exists to convert.
+    const model = heading([expense('e1', '2026-08-11', 'food', 99_000_000, 'USD')]);
+
+    expect(model.spent).toEqual(['990000,00 USD']);
+    expect(model.overLimit).toBe(false);
+    expect(model.overrun).toBeNull();
   });
 });

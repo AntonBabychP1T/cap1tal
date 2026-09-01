@@ -5,6 +5,7 @@ import {
   canStepForward,
   currentMonth,
   monthLabel,
+  monthsOf,
   nextMonth,
   prevMonth,
   shortMonthLabel,
@@ -139,5 +140,17 @@ describe('shortMonthLabel', () => {
   it('Refuses what is not a calendar month, like every other month function here', () => {
     expect(() => shortMonthLabel('2026-13')).toThrow();
     expect(() => shortMonthLabel('серпень')).toThrow();
+  });
+});
+
+describe('monthsOf', () => {
+  it('The місяці the транзакції touch, newest first, each once', () => {
+    const dated = ['2026-03-31', '2026-04-01', '2026-03-01', '2025-12-24'].map((date) => ({ date }));
+
+    expect(monthsOf(dated)).toEqual(['2026-04', '2026-03', '2025-12']);
+  });
+
+  it('Nothing stored touches no місяць', () => {
+    expect(monthsOf([])).toEqual([]);
   });
 });

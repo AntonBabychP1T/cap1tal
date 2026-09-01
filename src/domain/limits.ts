@@ -1,4 +1,4 @@
-import type { CurrencyCode, Money } from './money';
+import { subtract, type CurrencyCode, type Money } from './money';
 
 /**
  * The ліміт of the glossary: an optional monthly ceiling on a category. It colours the category
@@ -27,6 +27,19 @@ export function overLimit(spent: Money, limit: Money): boolean {
     throw new Error(`cannot judge ${spent.currency} spending against a ${limit.currency} ліміт`);
   }
   return spent.amount > limit.amount;
+}
+
+/**
+ * By how much a ліміт is exceeded: `spent − limit` in the ліміт's currency when over it, and
+ * `null` when it is not — under, exactly at, and no ліміт at all are the same answer to "by how
+ * much", and it is not a number.
+ *
+ * It sits beside `overLimit` and asks it, so "is it over" and "by how much" can never drift apart:
+ * a non-null answer here is exactly a `true` there. The same currency rule applies, for the same
+ * reason.
+ */
+export function overLimitBy(spent: Money, limit: Money): Money | null {
+  return overLimit(spent, limit) ? subtract(spent, limit) : null;
 }
 
 /**

@@ -29,6 +29,8 @@ const ACCOUNTS: readonly Account[] = [card, usdCard, wallet, jar, brokerage];
 
 /** A fixed instant in August 2026 — the clock is data these tests control. */
 const august = new Date(2026, 7, 24, 12, 0, 0);
+/** The 1st of the next month: the day the newest month of the span holds nothing at all. */
+const september = new Date(2026, 8, 1, 12, 0, 0);
 
 const names = namesById([
   { id: 'groceries', name: 'Groceries' },
@@ -474,6 +476,53 @@ describe('one month of each chart is spelled out in full', () => {
     expect(model.categoryReadout!.amount).toBe(
       model.categoryChart.find((c) => c.selected)!.amount,
     );
+  });
+
+  it('Scenario: A month that has not started yet is not the one spelled out', () => {
+    // The span always runs to the current month, and the current month holds nothing until its
+    // first транзакція is recorded — which is the state of every 1st.
+    const model = view(threeMonths, { now: september });
+
+    expect(model.history.map((c) => c.month)).toEqual([
+      '2026-06',
+      '2026-07',
+      '2026-08',
+      '2026-09',
+    ]);
+    expect(model.historyReadout!.month).toBe('2026-08');
+    expect(model.historyReadout!.numbers[0]!.amount).toBe('4000,00 UAH');
+    // Marked as the one being read, and September is still drawn beside it.
+    expect(model.history.filter((c) => c.selected).map((c) => c.month)).toEqual(['2026-08']);
+  });
+
+  it('Scenario: An all-zero history still spells out its newest month', () => {
+    // Відкладено is not one of the tab's three numbers, so this UAH history is a chart of zeroes
+    // across its whole span. Blank would be worse than a zero: nothing happened is an answer.
+    const model = view([
+      transfer({
+        id: 's1',
+        date: '2026-06-05',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(200000, 'UAH'),
+        arrived: money(200000, 'UAH'),
+      }),
+    ]);
+
+    expect(model.history.map((c) => c.month)).toEqual(['2026-06', '2026-07', '2026-08']);
+    expect(model.historyReadout!.month).toBe('2026-08');
+    expect(model.historyReadout!.numbers.map((n) => n.amount)).toEqual([
+      '0,00 UAH',
+      '0,00 UAH',
+      '0,00 UAH',
+    ]);
+  });
+
+  it('A picked month the span lost falls back to the month the tab would have opened on', () => {
+    // Not simply the newest of the span: the same choice the tab makes before anything is picked.
+    const model = view(threeMonths, { now: september, chosenMonth: '2020-01' });
+
+    expect(model.historyReadout!.month).toBe('2026-08');
   });
 
   it('A month the span does not hold falls back to the newest', () => {

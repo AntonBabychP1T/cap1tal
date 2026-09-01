@@ -1,4 +1,4 @@
-import { overLimitCategories, type CategoryLimit } from '../domain/limits';
+import { overLimitBy, overLimitCategories, type CategoryLimit } from '../domain/limits';
 import { categoryBreakdown } from '../domain/monthly-picture';
 import {
   CORRECTION_CATEGORY_ID,
@@ -6,6 +6,7 @@ import {
   type Month,
   type Transaction,
 } from '../domain/transaction';
+import { byCurrency, formatMoney } from './amount-input';
 import { categoryLabel } from './labels';
 
 /**
@@ -48,15 +49,34 @@ export function categoryTransactions(input: {
   });
 }
 
+/** What the drill-down says above the транзакції it lists. */
+export interface CategoryMonthHeading {
+  readonly label: string;
+  readonly overLimit: boolean;
+  /**
+   * The category's own витрачено for the month, one сума per currency it moved in and UAH first —
+   * the very numbers the breakdown row that opened this list carries, so the two cannot disagree.
+   * Each сума stands on its own: two currencies are two sums, never one.
+   */
+  readonly spent: readonly string[];
+  /**
+   * «Перевищено ліміт на 100,00 UAH» — by how much the ліміт was exceeded, in the ліміт's own
+   * currency alone. `null` whenever the category is not over one: under it, exactly at it, and
+   * carrying none are the same answer.
+   */
+  readonly overrun: string | null;
+}
+
 /**
- * What the drill-down says it is showing: the category's own name, and whether that category is
- * over its ліміт for the shown month.
+ * What the drill-down says it is showing: the category's own name, its own сума for the shown
+ * month, and whether — and by how much — that category is over its ліміт.
  *
  * The mark lives on the heading rather than on each row because the heading is where this screen
  * names the category — every row below it is that same category, so marking each one would say the
  * same thing many times. It is the same determination the feed and the Місяць breakdown make, from
  * the same month's whole breakdown (main-screen: "wherever a category's month-scoped транзакції
- * are listed").
+ * are listed"), and the overrun is `overLimitBy` over those same two numbers, so "is it over" and
+ * "by how much" are one answer.
  */
 export function categoryMonthHeading(input: {
   month: Month;
@@ -65,11 +85,26 @@ export function categoryMonthHeading(input: {
   transactions: readonly Transaction[];
   categoryNames: ReadonlyMap<string, string>;
   limits: readonly CategoryLimit[];
-}): { readonly label: string; readonly overLimit: boolean } {
+}): CategoryMonthHeading {
   const breakdown = categoryBreakdown({ month: input.month, transactions: input.transactions });
   const over = overLimitCategories({ breakdown, limits: input.limits });
+
+  const spent = [...breakdown.keys()]
+    .sort(byCurrency)
+    .map((currency) => breakdown.get(currency)!.get(input.categoryId))
+    .filter((amount): amount is NonNullable<typeof amount> => amount !== undefined)
+    .map(formatMoney);
+
+  // Only the ліміт's own currency: spending in any other never counted toward it, and converting
+  // toward it would need a rate the domain refuses to have.
+  const limit = input.limits.find((l) => l.categoryId === input.categoryId);
+  const judged = limit && breakdown.get(limit.amount.currency)?.get(input.categoryId);
+  const overrun = limit && judged ? overLimitBy(judged, limit.amount) : null;
+
   return {
     label: categoryLabel(input.categoryId, input.categoryNames),
     overLimit: over.has(input.categoryId),
+    spent,
+    overrun: overrun ? `Перевищено ліміт на ${formatMoney(overrun)}` : null,
   };
 }

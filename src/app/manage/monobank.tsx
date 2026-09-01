@@ -23,7 +23,9 @@ import { suggestLinks } from '@/monobank/link';
 import { syncLinkedAccounts, type SyncProgress, type SyncRun } from '@/monobank/coordinator';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { startOfLocalDayMs, todayIso } from '@/ui/dates';
+import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
+import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
+import { dateOfEpochMs, todayIso } from '@/ui/dates';
 import { newId } from '@/ui/id';
 import { failureMessage, KIND_CHOICES } from '@/ui/labels';
 import {
@@ -33,12 +35,15 @@ import {
   linkChoices,
   linkSetConfirmation,
   MONOBANK_TOKEN_PAGE_URL,
+  lastSyncLine,
   monobankAccountRows,
   newAccountDraft,
   outcomeLabel,
   progressLabel,
   proposalRows,
   removeTokenConfirmation,
+  syncBoundary,
+  syncFailed,
   syncSummary,
   tokenCandidate,
   tokenStateLabel,
@@ -111,8 +116,16 @@ export default function MonobankScreen() {
         monobankAccounts: shown,
         links: stored.links,
         accounts: stored.accounts,
+        // «сьогодні» and «вчора» are read against the moment the screen is drawn, like every other
+        // clock in this app — passed in, never read inside the rule.
+        now: new Date(),
       }),
     [shown, stored.accounts, stored.links],
+  );
+  /** The most recent moment among the linked accounts, or that there has not been one. */
+  const lastSync = useMemo(
+    () => lastSyncLine({ links: stored.links, now: new Date() }),
+    [stored.links],
   );
   const names = useMemo(
     () => new Map(rows.map((row) => [row.monobankAccountId, row.name])),
@@ -296,8 +309,7 @@ export default function MonobankScreen() {
         monobankRepo.link({
           monobankAccountId,
           accountId,
-          syncStartDate: date,
-          cursorMs: startOfLocalDayMs(date),
+          ...syncBoundary(date),
         });
         setLinking(undefined);
         reload();
@@ -331,8 +343,7 @@ export default function MonobankScreen() {
       monobankRepo.createAccountAndLink({
         account: created,
         monobankAccountId: draft.monobankAccountId,
-        syncStartDate: boundary,
-        cursorMs: startOfLocalDayMs(boundary),
+        ...syncBoundary(boundary),
       });
       setDraft(undefined);
       setLinking(undefined);
@@ -385,8 +396,7 @@ export default function MonobankScreen() {
           try {
             monobankRepo.linkMany({
               accepted: entries,
-              syncStartDate: boundary,
-              cursorMs: startOfLocalDayMs(boundary),
+              ...syncBoundary(boundary),
             });
             reload();
           } catch (error) {
@@ -427,7 +437,9 @@ export default function MonobankScreen() {
         rules: () => rulesRepo.list(),
         nowMs: () => Date.now(),
         now: () => new Date(),
-        dateOf: (unixSeconds) => todayIso(new Date(unixSeconds * 1000)),
+        // The statement's own seconds turned into the day the money moved. `dateOfEpochMs` is
+        // shared with the notification drain, so the two importers date a purchase alike.
+        dateOf: (unixSeconds) => dateOfEpochMs(unixSeconds * 1000),
         wait: (ms) =>
           new Promise<void>((resolve) => {
             setTimeout(resolve, ms);
@@ -439,6 +451,12 @@ export default function MonobankScreen() {
       setRun(result);
       setStatus(undefined);
       reload();
+      // A sync outlives the owner's patience for watching it — a minute per request — so this is
+      // the failure they are least likely to be looking at. `attended()` is read now rather than
+      // when the run started, because leaving the app mid-sync is the whole case.
+      await (syncFailed(result)
+        ? raiseAlert('monobank-sync', { attended: attended() }, ALERT_PORTS)
+        : clearAlert('monobank-sync', ALERT_PORTS));
     } finally {
       setBusy(false);
     }
@@ -459,6 +477,9 @@ export default function MonobankScreen() {
       void refresh();
     }, [refresh]),
   );
+
+  /** Opening «monobank» is the owner looking at the failure this section explains (design D6). */
+  useClearAlertOnOpen('monobank-sync');
 
   return (
     <Screen>
@@ -625,6 +646,12 @@ export default function MonobankScreen() {
                     ? `приєднано до «${row.accountName}»${row.syncStartDate ? `, з ${row.syncStartDate}` : ''}`
                     : 'не приєднано — у синхронізації не бере участі'}
                 </ThemedText>
+                {/* When a sync last completed for this account, or plainly that none has. */}
+                {row.lastSync ? (
+                  <ThemedText type="small" themeColor="textMuted">
+                    {row.lastSync}
+                  </ThemedText>
+                ) : null}
 
                 <View style={styles.rowActions}>
                   {row.linked ? (
@@ -718,6 +745,14 @@ export default function MonobankScreen() {
 
       <SectionLabel>Синхронізація</SectionLabel>
       <Card style={styles.card}>
+        {/* When this device last finished one. Said before the result of the run just made, so the
+            screen answers «коли востаннє» whether or not anything was synced this session. Sync
+            itself stays something the owner starts. */}
+        {lastSync ? (
+          <ThemedText type="small" themeColor="textSecondary">
+            {lastSync}
+          </ThemedText>
+        ) : null}
         {summary ? (
           <>
             <ThemedText>{summary.headline}</ThemedText>

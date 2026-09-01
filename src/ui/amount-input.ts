@@ -67,6 +67,23 @@ export function parseOpeningBalance(typed: string, currency: CurrencyCode): Mone
 const TYPED_ZERO = /^0+(?:[.,]0{1,2})?$/;
 
 /**
+ * A фактичний залишок — what the owner counted, typed to be звірено against the розрахунковий
+ * баланс. It obeys exactly the opening balance's rules, sign and zero included: a рахунок can be
+ * at zero, and a card can be in overdraft.
+ *
+ * The one difference is the empty string. `parseOpeningBalance` reads `''` as `0,00`, which is
+ * right for a field the owner may leave alone when creating a рахунок — and exactly wrong here,
+ * where it would turn an untouched field into «I recounted and there is nothing». So an empty
+ * фактичний залишок is refused, in the owner's own words like the other refusals in this module.
+ */
+export function parseActualBalance(typed: string, currency: CurrencyCode): Money {
+  if (typed.trim() === '') {
+    throw new Error('напишіть фактичний залишок — скільки насправді на рахунку');
+  }
+  return parseOpeningBalance(typed, currency);
+}
+
+/**
  * Minor units as the major-unit text an input field shows and can parse back — no currency code,
  * so it round-trips through `parseOpeningBalance` unchanged.
  */
@@ -86,4 +103,26 @@ export function formatMoney(m: Money): string {
   const whole = digits.slice(0, -MINOR_DIGITS);
   const fraction = digits.slice(-MINOR_DIGITS);
   return `${negative ? '−' : ''}${whole},${fraction} ${m.currency}`;
+}
+
+/**
+ * The same amount with its sign always written out: "+30,00 UAH" as well as "−30,00 UAH". Used
+ * where the amount *is* a difference — a коригування named before it is created — and where
+ * reading "30,00 UAH" as "thirty more" rather than "thirty" is the whole question.
+ */
+export function formatSignedMoney(m: Money): string {
+  return m.amount > 0 ? `+${formatMoney(m)}` : formatMoney(m);
+}
+
+/**
+ * The order currencies are listed in wherever more than one is shown: UAH first — the owner's own
+ * currency — then the rest alphabetically, so the sequence never depends on the order rows were
+ * loaded in. One rule, shared by the monthly groups and the account totals; two copies of it would
+ * drift the day a third screen shows money in two currencies.
+ */
+export function byCurrency(a: CurrencyCode, b: CurrencyCode): number {
+  if (a === b) return 0;
+  if (a === 'UAH') return -1;
+  if (b === 'UAH') return 1;
+  return a < b ? -1 : 1;
 }

@@ -54,8 +54,49 @@ ensure_device() {
   say "device $ANDROID_SERIAL ($(adb shell getprop ro.product.model | tr -d '\r'), API $(adb shell getprop ro.build.version.sdk | tr -d '\r'))"
 }
 
+# `expo prebuild` is what carries app.json and plugins/ into android/ — a new permission, a new
+# config plugin or a new native module reaches the manifest no other way. It also rewrites
+# package.json's scripts, which is undone afterwards: with `git stash` semantics, because a plain
+# `git checkout -- package.json` would throw away an uncommitted dependency the change just added.
+prebuild() {
+  say "expo prebuild (android)"
+  local dirty=; git diff --quiet -- package.json 2>/dev/null || dirty=1
+  local keep=$RUN_DIR/package.json.before-prebuild
+  [ -n "$dirty" ] && cp package.json "$keep"
+  npx expo prebuild --platform android --no-install
+  if [ -n "$dirty" ]; then cp "$keep" package.json; rm -f "$keep"
+  else git checkout -- package.json 2>/dev/null || true
+  fi
+}
+
 ensure_native() {
-  [ -d android ] || { say "android/ missing — running expo prebuild"; npx expo prebuild --platform android --no-install; git checkout -- package.json 2>/dev/null || true; }
+  local manifest=android/app/src/main/AndroidManifest.xml
+  if [ ! -d android ] || [ ! -f "$manifest" ]; then
+    say "android/ missing"
+    prebuild
+    return
+  fi
+  # app.json and plugins/ describe the manifest; a change to either is only real once regenerated.
+  if [ -n "$(find app.json plugins -newer "$manifest" 2>/dev/null | head -1)" ]; then
+    say "app.json or plugins/ changed since the manifest"
+    prebuild
+  fi
+}
+
+# The APK carries the native modules and the manifest of the moment it was built. A new dependency
+# or an app.json edit lands in JS instantly and in the APK not at all, so installing yesterday's
+# APK gives a green `verify` and an app that dies on launch — `Cannot find native module …`.
+# These are the inputs that can only reach the device through a rebuild. `modules/` is among them:
+# a new method on a local Expo module, or a line in its own AndroidManifest, reaches the device
+# only through the merge that assembleDebug does — over Metro it simply is not there, and the call
+# fails at runtime while everything else looks right.
+apk_is_stale() {
+  [ -f "$APK" ] || return 0
+  local newer
+  newer=$(find package.json app.json plugins modules -newer "$APK" 2>/dev/null \
+    -not -path 'modules/*/android/build/*' | head -1)
+  [ -n "$newer" ] && { say "$newer is newer than the APK — rebuilding"; return 0; }
+  return 1
 }
 
 build() {
@@ -67,7 +108,8 @@ build() {
 }
 
 install() {
-  [ -f "$APK" ] || build
+  # `if`, not `&&`: under `set -e` a false tail of an `&&` list would end the script.
+  if apk_is_stale; then build; fi
   say "installing $APK"
   adb install -r -d "$APK"
 }

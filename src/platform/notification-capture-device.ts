@@ -23,12 +23,14 @@ import {
  * say so honestly rather than crash on a phone whose listener is missing.
  */
 
-/** The four calls the Kotlin module exposes (`NotificationCaptureModule.kt`). */
+/** The five calls the Kotlin module exposes (`NotificationCaptureModule.kt`). */
 interface NativeNotificationCapture {
   isAccessGranted(): boolean;
   setWatchedPackages(packages: string[]): void;
   collect(): CapturedNotification[];
   acknowledge(count: number): void;
+  /** Which of the named packages `PackageManager` can see. Visibility is declared by name. */
+  installedBankApps(packages: string[]): string[];
 }
 
 /**
@@ -79,6 +81,20 @@ export const notificationCapture: NotificationCapturePort = {
       // A queue that cannot be read is a queue with nothing in it as far as the app is concerned;
       // the records stay on the device and the next collection tries again.
       return [];
+    }
+  },
+
+  async installedAmong(packages: readonly string[]): Promise<readonly string[] | 'unknown'> {
+    const native = nativeNotificationCapture();
+    if (!native) {
+      return 'unknown';
+    }
+    try {
+      return native.installedBankApps([...packages]);
+    } catch {
+      // A phone that will not answer has not answered "none". `'unknown'` is what keeps the whole
+      // list on offer rather than emptying a picker over a failed call.
+      return 'unknown';
     }
   },
 

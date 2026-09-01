@@ -1,6 +1,7 @@
 import type { Href } from 'expo-router';
 
 import type { NotificationAccess } from '../platform/notification-access';
+import { accessSection } from './notification-settings';
 
 /**
  * «Перші кроки» — what the app needs before it can answer either of its two questions, as data
@@ -112,34 +113,40 @@ export function onboardingSteps(input: {
  * on the device and nothing leaves it.
  */
 function notificationStep(access: NotificationAccess): OnboardingStep {
-  const purpose =
-    'Сповіщення інших банків стають чернетками транзакцій. Читається лише на телефоні — нічого прочитаного не залишає пристрій.';
-  if (access === 'unsupported') {
+  // The same explanation and the same offer the «Сповіщення банків» section makes, from the one
+  // place that decides them: two copies of a promise are two promises, and only one of them would
+  // be under test.
+  const section = accessSection(access);
+  if (section.grant === undefined) {
     return {
       id: 'notifications',
       title: 'Читання сповіщень банків',
       // No action at all: this build installs no listener, so the app is not even listed on
       // Android's notification-access screen and sending the owner there would send them
       // looking for a switch that is not there.
-      hint: `${purpose} Поки недоступно в цій збірці.`,
+      hint: `${section.explanation} Поки недоступно в цій збірці.`,
       state: 'unavailable',
     };
   }
   return {
     id: 'notifications',
     title: 'Читання сповіщень банків',
-    hint: purpose,
+    hint: section.explanation,
     state: access === 'granted' ? 'done' : 'todo',
-    action: {
-      kind: 'notification-settings',
-      title: access === 'granted' ? 'Налаштування доступу' : 'Надати доступ',
-    },
+    action: { kind: 'notification-settings', title: section.grant },
   };
 }
 
-/** What the screen says above the list: how much of the setup is behind the owner. */
+/**
+ * What the screen says above the list: how much of the setup is behind the owner.
+ *
+ * The two numbers are separated by «/» and not by a word. The view sets this line in `overline` —
+ * uppercase with the letters spaced apart — where «З» is indistinguishable from «3», so «ГОТОВО 2
+ * З 4» reads as three numbers. A solidus cannot be read as a digit under any casing, and fixing it
+ * here leaves every other section label in the app as it is.
+ */
 export function onboardingSummary(steps: readonly OnboardingStep[]): string {
   const actionable = steps.filter((step) => step.state !== 'unavailable');
   const done = actionable.filter((step) => step.state === 'done').length;
-  return `Готово ${done} з ${actionable.length}`;
+  return `Готово ${done}/${actionable.length}`;
 }

@@ -88,6 +88,7 @@ describe('monobankRepo — accounts and links', () => {
         accountId: 'card',
         syncStartDate: '2026-08-28',
         cursorMs: boundaryMs,
+        lastSyncedAtMs: null,
       },
     ]);
     // The link is what makes the account take part in sync; the boundary is where it starts.
@@ -141,6 +142,7 @@ describe('monobankRepo — accounts and links', () => {
         accountId: 'card',
         syncStartDate: '2026-08-28',
         cursorMs: boundaryMs,
+        lastSyncedAtMs: null,
       },
     ]);
   });
@@ -169,6 +171,7 @@ describe('monobankRepo — accounts and links', () => {
       accountId: 'new-jar',
       syncStartDate: '2026-08-01',
       cursorMs: boundaryMs,
+      lastSyncedAtMs: null,
     });
   });
 
@@ -312,12 +315,157 @@ describe('monobankRepo — across a restart', () => {
           accountId: 'card',
           syncStartDate: '2026-08-01',
           cursorMs,
+          lastSyncedAtMs: null,
         },
       ]);
       expect(repo.getAccount('mono-card')).toEqual({ ...monoCard, obtainedAt });
     } finally {
       reopened.close();
     }
+  });
+
+  it('Scenario: A stored moment reads back unchanged', () => {
+    const path = join(dir, 'synced.db');
+    const syncedAt = new Date('2026-09-01T06:30:00.000Z');
+
+    const first = openFileDb(path);
+    seedReferences(first.db, VOCABULARY);
+    accountsRepo(first.db).save(card);
+    const firstRepo = monobankRepo(first.db);
+    firstRepo.upsertAccounts([monoCard], obtainedAt);
+    firstRepo.link({
+      monobankAccountId: 'mono-card',
+      accountId: 'card',
+      syncStartDate: '2026-08-01',
+      cursorMs: boundaryMs,
+    });
+    firstRepo.markSynced('mono-card', syncedAt);
+    first.close();
+
+    const reopened = openFileDb(path);
+    try {
+      expect(monobankRepo(reopened.db).linkOf('mono-card')?.lastSyncedAtMs).toBe(
+        syncedAt.getTime(),
+      );
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+/**
+ * When a sync last completed, per link. It is not money and it is not in the money transaction —
+ * a statement answer is one page of a paginated sync, so an account rate-limited halfway would
+ * otherwise have committed pages and claimed a finished sync (design D9).
+ */
+describe('monobankRepo — the moment a link last completed a sync', () => {
+  let storage: TestStorage;
+  let repo: MonobankRepo;
+
+  const syncedAt = new Date('2026-09-01T06:30:00.000Z');
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    accountsRepo(storage.db).save(card);
+    accountsRepo(storage.db).save(dollars);
+    repo = monobankRepo(storage.db);
+    repo.upsertAccounts([monoCard, monoJar], obtainedAt);
+    repo.link({
+      monobankAccountId: 'mono-card',
+      accountId: 'card',
+      syncStartDate: '2026-08-01',
+      cursorMs: boundaryMs,
+    });
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: A link that never synced holds no moment', () => {
+    // `null`, and distinguishable from a moment of zero: zero is 1970, which is a sync that
+    // happened, and this one did not.
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBeNull();
+
+    repo.markSynced('mono-card', new Date(0));
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(0);
+  });
+
+  it('Scenario: A newer moment replaces the older one', () => {
+    repo.markSynced('mono-card', syncedAt);
+    const later = new Date('2026-09-01T18:05:00.000Z');
+    repo.markSynced('mono-card', later);
+
+    // One moment, not a history: the screen asks when the last sync was.
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(later.getTime());
+  });
+
+  it('Scenario: Two links keep their moments apart', () => {
+    repo.link({
+      monobankAccountId: 'mono-jar',
+      accountId: 'usd',
+      syncStartDate: '2026-08-01',
+      cursorMs: boundaryMs,
+    });
+    const earlier = new Date('2026-08-30T09:00:00.000Z');
+
+    repo.markSynced('mono-card', syncedAt);
+    repo.markSynced('mono-jar', earlier);
+
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(syncedAt.getTime());
+    expect(repo.linkOf('mono-jar')?.lastSyncedAtMs).toBe(earlier.getTime());
+  });
+
+  it('Scenario: Removing the link removes only the moment', () => {
+    repo.markSynced('mono-card', syncedAt);
+    const items = ['item-1', 'item-2'];
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [
+        expenseByDefault({
+          id: 'imported-1',
+          date: '2026-08-27',
+          accountId: 'card',
+          amount: money(12550, 'UAH'),
+          categoryId: UNCATEGORISED_CATEGORY_ID,
+          description: 'СІЛЬПО Київ',
+        }),
+      ],
+      newlySeenIds: items,
+      bankBalance: money(4_000_00, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs,
+      storedAt,
+    });
+
+    repo.unlink('mono-card');
+
+    // The moment is gone with the link…
+    expect(repo.linkOf('mono-card')).toBeUndefined();
+    // …and the транзакція, the imported item ids, the опис and the last known баланс банку are not.
+    expect(transactionsRepo(storage.db).listAll().map((t) => t.id)).toContain('imported-1');
+    expect(
+      transactionsRepo(storage.db).listAll().find((t) => t.id === 'imported-1')?.description,
+    ).toBe('СІЛЬПО Київ');
+    expect([...repo.importedIds('mono-card')].sort()).toEqual(items);
+    expect(repo.getAccount('mono-card')?.bankBalance).toEqual(money(4_000_00, 'UAH'));
+
+    // And a link made again starts with no moment: it has not synced under its new boundary.
+    repo.link({
+      monobankAccountId: 'mono-card',
+      accountId: 'card',
+      syncStartDate: '2026-08-15',
+      cursorMs: boundaryMs,
+    });
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBeNull();
+  });
+
+  it('Marking an account that has no link changes nothing', () => {
+    repo.markSynced('mono-jar', syncedAt);
+
+    expect(repo.linkOf('mono-jar')).toBeUndefined();
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBeNull();
   });
 });
 
@@ -597,18 +745,21 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         accountId: 'card',
         syncStartDate: '2026-08-01',
         cursorMs: boundaryMs,
+        lastSyncedAtMs: null,
       },
       {
         monobankAccountId: 'mono-jar',
         accountId: 'made-jar',
         syncStartDate: '2026-08-01',
         cursorMs: boundaryMs,
+        lastSyncedAtMs: null,
       },
       {
         monobankAccountId: 'mono-white',
         accountId: 'jar',
         syncStartDate: '2026-08-01',
         cursorMs: boundaryMs,
+        lastSyncedAtMs: null,
       },
     ]);
     // The рахунок a proposal promised to create exists, with the currency the link demands.

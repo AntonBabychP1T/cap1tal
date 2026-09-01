@@ -79,15 +79,21 @@ export const KIND_CHOICES: readonly { readonly value: AccountKind; readonly labe
   ['spending', 'savings', 'investment', 'cash', 'debt'] as const
 ).map((kind) => ({ value: kind, label: kindLabel(kind) }));
 
-/** An account in a picker: its назва plus the currency, since two accounts may share a name. */
-export function accountChoiceLabel(a: Account): string {
+/**
+ * An account in a picker: its назва plus the currency, since two accounts may share a name.
+ *
+ * It takes the two fields rather than an `Account` so the Saldo import's merge list can label a
+ * рахунок that does not exist yet — an entry's `becomes` — in the same breath as one that does.
+ * One format for both halves of that list, so it cannot drift down the middle of one picker.
+ */
+export function accountChoiceLabel(a: Pick<Account, 'name' | 'currency'>): string {
   return `${a.name} · ${a.currency}`;
 }
 
 /**
- * Why the app proposed that two accounts are one, in the owner's words. Shared by the monobank
- * link proposals and the Saldo import's merge proposals, because they propose on the same
- * evidence and must explain it the same way.
+ * Why the app proposed that two accounts are one, in the owner's words — the monobank link
+ * proposals, and nothing else since `saldo-import-merge` withdrew the import's merge proposals.
+ * A proposal the owner cannot see the reason for is one they can only accept on faith.
  */
 const EVIDENCE_LABELS: Readonly<Record<NameEvidence, string>> = {
   digits: 'збігаються останні цифри',
@@ -107,3 +113,32 @@ export function failureMessage(error: unknown): string {
 
 /** The currencies an account can be opened in — FR-A1's set for v1. */
 export const OFFERED_CURRENCIES = ['UAH', 'EUR', 'USD'] as const;
+
+/**
+ * The Ukrainian three-form plural, in one place: 1 and anything ending in 1 take the singular,
+ * 2–4 the few form, everything else the many form — and 11–14 take the many form whatever they
+ * end in. Written once because two hand-rolled two-form guesses in one app is how «2 рахунків»
+ * happens. It lives here, and not on the first screen that needed it, because the second one
+ * («Бекап») counts the same two things.
+ */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const lastTwo = Math.abs(n) % 100;
+  const last = lastTwo % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) {
+    return many;
+  }
+  if (last === 1) {
+    return one;
+  }
+  return last >= 2 && last <= 4 ? few : many;
+}
+
+/** 1 транзакція, 2–4 транзакції, 5 and the rest транзакцій, with the teens exempt. */
+export function transactionCount(n: number): string {
+  return `${n} ${plural(n, 'транзакція', 'транзакції', 'транзакцій')}`;
+}
+
+/** The same three forms for «рахунок». */
+export function accountCount(n: number): string {
+  return `${n} ${plural(n, 'рахунок', 'рахунки', 'рахунків')}`;
+}

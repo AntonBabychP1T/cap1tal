@@ -1,10 +1,12 @@
 /**
  * What makes two account names the same account.
  *
- * Two flows ask the question — monobank proposing which рахунок a card is, and the Saldo import
- * proposing which map entries are one рахунок — and they must answer it the same way. Two
- * slightly different notions of "same name" is the kind of divergence nobody notices until one
- * of them is wrong, and the import writes history.
+ * One flow asks it: monobank proposing which рахунок a card is. The Saldo import used to be the
+ * second, and `saldo-import-merge` withdrew its merge *proposals* — every one they made on the
+ * owner's real export was wrong — so the import now offers the targets and proposes nothing. The
+ * definition stays here rather than beside `validateLink` because "same name" is a question about
+ * names, not about monobank, and the next flow that asks it should find one answer already written
+ * rather than write a second.
  *
  * Pure and total: names in, evidence or nothing out. Balances are deliberately not part of this
  * and never should be — two accounts holding the same amount is a coincidence, and a proposal

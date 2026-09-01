@@ -1,4 +1,4 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -9,6 +9,7 @@ import {
   Screen,
   SectionLabel,
 } from '@/components/surfaces';
+import { RowAction } from '@/components/form';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
@@ -18,9 +19,8 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
+import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { fetchMonobankRates } from '@/monobank/currency';
-import { shouldRefreshRates } from '@/ui/approx-uah';
 import { monthViewModel } from '@/ui/month-screen';
 import { currentMonth, prevMonth, stepForward } from '@/ui/months';
 
@@ -55,6 +55,10 @@ export default function MonthScreen() {
         // since been archived, and classifying it needs its вид (design decision 8).
         accounts: accountsRepo.list(),
         transactions: transactionsRepo.listMonth(shown),
+        // One more bounded month, so an empty screen can name the month that has numbers. Read
+        // unconditionally rather than in a second effect: it is one month, and the alternative is
+        // a reload the owner would watch happen.
+        previousTransactions: transactionsRepo.listMonth(prevMonth(shown)),
         rates: ratesRepo.all(),
         // Every category, archived included: a month keeps showing the categories its витрати
         // already carry, and an archived one appears there like any other.
@@ -66,50 +70,7 @@ export default function MonthScreen() {
     ),
   );
 
-  /**
-   * The rate refresh, and the only network this screen touches. It runs while rendering the
-   * numbers, never before them: nothing on the screen except the «≈» line depends on it, and
-   * every failure path — offline, a 429, a body that is not JSON — returns no rows and leaves the
-   * screen exactly as it was. Whatever was cached keeps serving the approximation.
-   *
-   * Asked at most once per focus, and deliberately **not** from `stored.rates`. This effect writes
-   * to the rate cache and then calls `reload()`; if the freshly read cache were a dependency, its
-   * own success would re-arm it. That is harmless when the answer covers every currency — the
-   * second pass finds nothing stale — but a partial answer (monobank drops EUR, or a row is
-   * malformed and the parser skips it) leaves EUR stale forever, so the effect would fetch, store,
-   * re-arm, and fetch again with nothing but the endpoint's 429 to stop it. `design.md` promises
-   * no retry loop anywhere, and `use-reload-on-focus.ts` warns about exactly this shape.
-   *
-   * So the cache is read straight from storage here — synchronous SQLite, the same read the rest
-   * of the screen does — and the deps hold only `reload`, whose identity survives its own call.
-   */
-  useFocusEffect(
-    useCallback(() => {
-      let left = false;
-      // Per currency, not off the newest row: a fresh USD rate must not keep a stale EUR one.
-      if (shouldRefreshRates(ratesRepo.all(), new Date())) {
-        void fetchMonobankRates(fetch).then((obtained) => {
-          if (obtained.length === 0) {
-            return;
-          }
-          // Stored even when the screen has been left in the meantime: the requirement is to store
-          // what was obtained, the write is synchronous SQLite touching no React state, and
-          // throwing a rate away would only mean asking monobank for it again. Only the re-render
-          // is skipped — that is what `left` is for.
-          const now = new Date();
-          for (const rate of obtained) {
-            ratesRepo.upsert(rate, now);
-          }
-          if (!left) {
-            reload();
-          }
-        });
-      }
-      return () => {
-        left = true;
-      };
-    }, [reload]),
-  );
+  useCurrentRates(reload);
 
   const model = useMemo(
     () =>
@@ -120,6 +81,7 @@ export default function MonthScreen() {
         rates: stored.rates,
         categoryNames: namesById(stored.categories),
         limits: stored.limits,
+        previousTransactions: stored.previousTransactions,
         now: new Date(),
       }),
     [shown, stored],
@@ -140,27 +102,60 @@ export default function MonthScreen() {
       </View>
 
       {model.emptyMessage ? (
-        <Card>
+        <Card style={styles.empty}>
           <ThemedText>{model.emptyMessage}</ThemedText>
+          {/* The month before it, when that one has something to read: its витрачено and one way
+              to get there — the same state the back arrow writes, so there is one way to be on it. */}
+          {model.previous ? (
+            <>
+              <Divider />
+              <ThemedText type="small" themeColor="textSecondary">
+                {model.previous.label}
+              </ThemedText>
+              {model.previous.spent.map((row) => (
+                <View key={row.amount} style={styles.line}>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {row.label}
+                  </ThemedText>
+                  <ThemedText type="small" tabular style={styles.amount}>
+                    {row.amount}
+                  </ThemedText>
+                </View>
+              ))}
+              <View style={styles.previousAction}>
+                <RowAction
+                  title={`Показати ${model.previous.label}`}
+                  onPress={() => setShown(prevMonth(shown))}
+                />
+              </View>
+            </>
+          ) : null}
         </Card>
       ) : null}
 
       {model.groups.map((group) => {
-        const left = group.numbers.find((row) => row.key === 'left');
-        const rest = group.numbers.filter((row) => row.key !== 'left');
+        const leading = group.numbers.find((row) => row.key === group.lead);
+        const rest = group.numbers.filter((row) => row.key !== group.lead);
         return (
           <Fragment key={group.currency}>
             <Card style={styles.numbers}>
               <ThemedText type="overline">{group.currency}</ThemedText>
-              {/* One number leads the card — what is left is the answer the month is opened for. */}
-              {left ? (
+              {/* One number leads the card. Which one is the model's decision, tested there: the
+                  screen adds none of its own, and every one of the six is shown either way. */}
+              {leading ? (
                 <View style={styles.hero}>
                   <ThemedText type="small" themeColor="textSecondary">
-                    {left.label}
+                    {leading.label}
                   </ThemedText>
                   <ThemedText type="title" numberOfLines={1} adjustsFontSizeToFit>
-                    {left.amount}
+                    {leading.amount}
                   </ThemedText>
+                  {/* Why залишилось is not the number above, when it is not. */}
+                  {group.note ? (
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {group.note}
+                    </ThemedText>
+                  ) : null}
                 </View>
               ) : null}
               <Divider />
@@ -249,6 +244,8 @@ export default function MonthScreen() {
 
 const styles = StyleSheet.create({
   stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  empty: { gap: Spacing.two },
+  previousAction: { flexDirection: 'row' },
   numbers: { gap: Spacing.three },
   hero: { gap: Spacing.half },
   numberRows: { gap: Spacing.two + Spacing.half },

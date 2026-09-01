@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
@@ -15,19 +16,16 @@ import { ThemedView } from '@/components/themed-view';
 import {
   accounts as accountsRepo,
   monobank as monobankRepo,
+  rates as ratesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
-import {
-  account,
-  computeBalance,
-  reconcile,
-  type Account,
-  type AccountKind,
-} from '@/domain/account';
+import { computeBalance, reconcile, type Account } from '@/domain/account';
 import type { Money } from '@/domain/money';
+import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { accountFromDraft, blankDraft, type AccountDraft } from '@/ui/account-form';
 import { accountRows, groupAccountsByKind, reconcileConfirmation } from '@/ui/account-groups';
-import { formatMinorUnits, parseOpeningBalance } from '@/ui/amount-input';
+import { accountTotals, approximateTotals, totalsLine } from '@/ui/account-totals';
 import { todayIso } from '@/ui/dates';
 import { newId } from '@/ui/id';
 import { failureMessage, kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/ui/labels';
@@ -35,9 +33,12 @@ import { failureMessage, kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/u
 import { Radius, Spacing, TouchTarget } from '@/constants/theme';
 
 /**
- * Рахунки — every account under its вид with its розрахунковий баланс, and the place accounts are
- * created, renamed and archived. No delete action exists: an account is archived, never deleted,
- * so its history keeps explaining the balances it took part in.
+ * Рахунки — every account under its вид with its розрахунковий баланс, how much money there is in
+ * total, and the place a рахунок is created. Renaming, the opening balance and archiving live on
+ * the рахунок's own рухи (`src/app/account/[id].tsx`), which is where the tap on a row goes: the
+ * most natural gesture on this screen shows the money's movements, not a form. No delete action
+ * exists anywhere — an account is archived, never deleted, so its history keeps explaining the
+ * balances it took part in.
  *
  * A рахунок a monobank account feeds also shows the latest known баланс банку beside its own
  * computed one, and offers «Звірити» when the two differ. Neither number is ever written over the
@@ -47,18 +48,8 @@ import { Radius, Spacing, TouchTarget } from '@/constants/theme';
 
 const CURRENCY_CHOICES = OFFERED_CURRENCIES.map((c) => ({ value: c, label: c }));
 
-/** An account being created, or an existing one being edited. */
-interface Draft {
-  readonly editing?: Account;
-  name: string;
-  kind: AccountKind;
-  currency: string;
-  opening: string;
-}
-
-const blankDraft = (): Draft => ({ name: '', kind: 'spending', currency: 'UAH', opening: '' });
-
 export default function AccountsScreen() {
+  const router = useRouter();
   const [stored, reload] = useReloadOnFocus(
     useCallback(() => {
       const all = accountsRepo.list();
@@ -74,11 +65,28 @@ export default function AccountsScreen() {
           bankBalances.set(link.accountId, bankAccount.bankBalance);
         }
       }
-      return { all, balances, bankBalances };
+      return { all, balances, bankBalances, rates: ratesRepo.all() };
     }, []),
   );
 
+  // The «≈ … грн» beside the totals is the only reason this screen touches the network, and its
+  // absence changes nothing else here.
+  useCurrentRates(reload);
+
   const groups = useMemo(() => groupAccountsByKind(stored.all), [stored.all]);
+  /**
+   * «Скільки всього грошей», decided in `src/ui/account-totals.ts`: a total per вид and one across
+   * every unarchived рахунок, per currency. The archived group gets none — it is not a вид, and an
+   * archived рахунок counts toward nothing.
+   */
+  const totals = useMemo(
+    () => accountTotals(stored.all, stored.balances),
+    [stored.all, stored.balances],
+  );
+  const approximate = useMemo(
+    () => approximateTotals(totals.total, stored.rates),
+    [stored.rates, totals.total],
+  );
   const rowsById = useMemo(
     () =>
       new Map(
@@ -89,55 +97,18 @@ export default function AccountsScreen() {
       ),
     [stored.all, stored.balances, stored.bankBalances],
   );
-  const [draft, setDraft] = useState<Draft | undefined>();
-
-  const edit = useCallback((a: Account) => {
-    setDraft({
-      editing: a,
-      name: a.name,
-      kind: a.kind,
-      currency: a.currency,
-      // Shown in major units so the owner edits what they see; 0 stays empty rather than "0,00".
-      opening: a.openingBalance.amount === 0 ? '' : formatMinorUnits(a.openingBalance.amount),
-    });
-  }, []);
+  const [draft, setDraft] = useState<AccountDraft | undefined>();
 
   const save = useCallback(() => {
     if (!draft) return;
     try {
-      if (draft.name.trim() === '') {
-        throw new Error('рахунок потребує назви');
-      }
-      const opening = parseOpeningBalance(draft.opening, draft.currency);
-      accountsRepo.save(
-        account({
-          id: draft.editing?.id ?? newId(),
-          name: draft.name.trim(),
-          kind: draft.kind,
-          currency: draft.currency,
-          openingBalance: opening,
-          archived: draft.editing?.archived ?? false,
-        }),
-      );
+      accountsRepo.save(accountFromDraft(draft, newId()));
       setDraft(undefined);
       reload();
     } catch (error) {
       Alert.alert('Не збережено', failureMessage(error));
     }
   }, [draft, reload]);
-
-  const setArchived = useCallback(
-    (a: Account, archived: boolean) => {
-      try {
-        accountsRepo.save(account({ ...a, archived }));
-        setDraft(undefined);
-        reload();
-      } catch (error) {
-        Alert.alert('Не збережено', failureMessage(error));
-      }
-    },
-    [reload],
-  );
 
   /**
    * «Звірити»: the owner confirms the exact signed difference, and what is then written is the
@@ -197,6 +168,22 @@ export default function AccountsScreen() {
         }
       />
 
+      {/* The money held, above the рахунки it is the sum of. Named, so it is never read as the
+          month's «Залишилось» — that number lives on Місяць and nowhere else. */}
+      {totals.total.length > 0 ? (
+        <Card style={styles.totals}>
+          <ThemedText type="overline">Усього грошей</ThemedText>
+          <ThemedText type="subtitle" tabular>
+            {totalsLine(totals.total)}
+          </ThemedText>
+          {approximate ? (
+            <ThemedText type="small" themeColor="textSecondary" tabular>
+              {approximate}
+            </ThemedText>
+          ) : null}
+        </Card>
+      ) : null}
+
       {groups.length === 0 && !draft ? (
         <Card>
           <ThemedText>Ще жодного рахунку. Створіть перший.</ThemedText>
@@ -206,7 +193,16 @@ export default function AccountsScreen() {
 
       {groups.map((group) => (
         <Fragment key={group.kind}>
-          <SectionLabel>{kindLabel(group.kind)}</SectionLabel>
+          {/* The вид's own total on its heading — what is in hand, saved, invested or lent, kept
+              apart. The архів carries none. */}
+          <SectionLabel
+            note={
+              group.kind === 'archived'
+                ? undefined
+                : totalsLine(totals.perKind.get(group.kind) ?? [])
+            }>
+            {kindLabel(group.kind)}
+          </SectionLabel>
           <ListCard>
             {group.accounts.map((a, index) => {
               const row = rowsById.get(a.id);
@@ -215,7 +211,11 @@ export default function AccountsScreen() {
                   key={a.id}
                   last={index === group.accounts.length - 1}
                   style={styles.accountRow}>
-                  <Pressable onPress={() => edit(a)} style={styles.accountBody}>
+                  {/* The tap opens the рахунок's рухи — what the owner is reaching for. Renaming
+                      and archiving are actions on that screen, not consequences of this gesture. */}
+                  <Pressable
+                    onPress={() => router.push(`/account/${a.id}`)}
+                    style={styles.accountBody}>
                     <View style={styles.line}>
                       <ThemedText numberOfLines={1} style={styles.name}>
                         {a.name}
@@ -256,9 +256,7 @@ export default function AccountsScreen() {
 
       {draft ? (
         <Card style={styles.form}>
-          <ThemedText type="overline">
-            {draft.editing ? 'Редагувати рахунок' : 'Новий рахунок'}
-          </ThemedText>
+          <ThemedText type="overline">Новий рахунок</ThemedText>
           <Field
             label="Назва"
             value={draft.name}
@@ -270,20 +268,13 @@ export default function AccountsScreen() {
             choices={KIND_CHOICES}
             selected={draft.kind}
             onSelect={(kind) => setDraft({ ...draft, kind })}
-            disabled={Boolean(draft.editing)}
           />
           <Choices
             label="Валюта"
             choices={CURRENCY_CHOICES}
             selected={draft.currency}
             onSelect={(currency) => setDraft({ ...draft, currency })}
-            disabled={Boolean(draft.editing)}
           />
-          {draft.editing ? (
-            <ThemedText type="small" themeColor="textSecondary">
-              Вид і валюту після створення змінити не можна.
-            </ThemedText>
-          ) : null}
           <Field
             label="Початковий залишок"
             value={draft.opening}
@@ -293,13 +284,6 @@ export default function AccountsScreen() {
             hint={`${draft.currency} — необовʼязково`}
           />
           <Action title="Зберегти" onPress={save} />
-          {draft.editing ? (
-            <Action
-              variant="secondary"
-              title={draft.editing.archived ? 'Повернути з архіву' : 'До архіву'}
-              onPress={() => setArchived(draft.editing!, !draft.editing!.archived)}
-            />
-          ) : null}
           <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
         </Card>
       ) : null}
@@ -316,6 +300,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   form: { gap: Spacing.three },
+  totals: { gap: Spacing.two - Spacing.half },
   accountRow: { gap: Spacing.two },
   accountBody: { gap: Spacing.two - Spacing.half },
   line: {

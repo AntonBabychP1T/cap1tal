@@ -3,20 +3,19 @@
 ## Purpose
 
 The one-time move out of Saldo as the owner experiences it: choosing the export file, confirming
-which рахунок each Saldo account becomes and which person each «Борг» transaction belongs to,
+which рахунок each Saldo account becomes,
 reading the proof that the розрахункові баланси come out right, and only then letting the history
 be written to the device. What the import makes of any given export row is the `saldo-import`
 capability's truth and is not restated here; this capability is about what the flow shows, what it
 refuses to do before the owner has decided, and what committing writes.
-
 ## Requirements
-
 ### Requirement: The import shows what it would do before it does anything
 
 The system SHALL offer a one-time «Імпорт Saldo» flow that reads the chosen export, builds the
 import plan from the owner's decisions and displays it, and SHALL write nothing to storage until
 the owner commits. Leaving the flow before committing SHALL leave the owner's рахунки,
-категорії, джерела and транзакції exactly as they were.
+категорії, джерела and транзакції exactly as they were. Confirming the account map SHALL lead
+straight to the verification report; the flow SHALL ask nothing about debts.
 
 #### Scenario: Leaving before the commit stores nothing
 
@@ -26,9 +25,15 @@ the owner commits. Leaving the flow before committing SHALL leave the owner's р
 
 #### Scenario: The plan is shown before it is committed
 
-- **WHEN** an export is chosen and every «Борг» transaction is assigned
+- **WHEN** an export is chosen and the account map confirmed
 - **THEN** the flow shows how many транзакції the plan holds and how many рахунки, категорії and
   джерела it would create, before the commit is offered
+
+#### Scenario: The map step leads straight to the звірка
+
+- **WHEN** the owner has confirmed the account map of an export holding «Борг» transactions
+- **THEN** the next step of the flow is the verification report, and the commit is offered from
+  it without any debt having been assigned
 
 ### Requirement: The export file is chosen, and a rejected file says why
 
@@ -52,7 +57,9 @@ another file. Nothing SHALL be imported from a refused file.
 
 The flow SHALL show every entry of the account map with the рахунок it proposes — its name, its
 вид and its currency — and SHALL let the owner change an entry's вид, redirect an entry onto
-another entry's рахунок or onto an existing рахунок, and undo either. A redirect the import
+another entry's рахунок or onto an existing рахунок, and undo either. The redirect targets SHALL
+be offered on the entry's own row as a list to choose from, naming each candidate рахунок with
+its currency; the owner SHALL NOT have to select a second entry elsewhere on the screen. A redirect the import
 rejects — onto a рахунок of another currency — SHALL be shown as rejected with its reason, and
 the map SHALL stay as it was.
 
@@ -61,6 +68,12 @@ the map SHALL stay as it was.
 - **WHEN** the owner redirects the entry "mono black" (UAH) onto the entry "Monobank UAH, Black"
   (UAH)
 - **THEN** the map shows one рахунок receiving both, and the plan holds one рахунок for them
+
+#### Scenario: The targets are offered on the row
+
+- **WHEN** the owner chooses to merge the entry "mono black" (UAH)
+- **THEN** the other entries and the owner's existing unarchived рахунки are offered by name and
+  currency on that entry's row, and picking one applies the redirect
 
 #### Scenario: Changing a вид changes what the month counts
 
@@ -83,30 +96,6 @@ SHALL create no new row.
 - **WHEN** the plan proposes creating the category "булка" and the owner redirects it onto the
   existing category «Продукти»
 - **THEN** no category "булка" is proposed any more and those витрати carry «Продукти»
-
-### Requirement: Every «Борг» transaction is assigned to a person before the import can commit
-
-The flow SHALL list every «Борг» description and every «Борг» transaction with its date and
-amount, and SHALL let the owner assign a person's рахунок-борг — a new one by name or an existing
-one — to a description, and to a single transaction where its description is not enough. While
-the plan reports itself incomplete, the flow SHALL show which «Борг» transactions are still
-unassigned and SHALL NOT offer the commit.
-
-#### Scenario: An unassigned «Борг» transaction blocks the commit
-
-- **WHEN** one «Борг» transaction is assigned to nobody
-- **THEN** the flow lists it as unassigned and offers no commit
-
-#### Scenario: Assigning the last one opens the commit
-
-- **WHEN** the owner assigns that transaction to the person "Ярослав"
-- **THEN** the flow reports the plan complete and offers the commit
-
-#### Scenario: One transaction goes to a different person than its description
-
-- **WHEN** the description "борг" is assigned to "Ярослав" and the owner assigns one of the two
-  transactions carrying it to "Оля"
-- **THEN** the flow shows that transaction going to "Оля" and the other to "Ярослав"
 
 ### Requirement: The verification report is shown before the commit
 
@@ -178,3 +167,4 @@ confirmation beyond the ordinary one. Without that confirmation nothing SHALL be
 
 - **WHEN** an import was already committed and the owner gives the extra confirmation
 - **THEN** the second plan is stored and the marker holds the moment of this second import
+

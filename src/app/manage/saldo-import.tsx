@@ -2,9 +2,9 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet } from 'react-native';
 
-import { Action, Choices, Field } from '@/components/form';
+import { Action, Choices } from '@/components/form';
 import { Banner, Card, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -15,29 +15,27 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { formatMoney } from '@/ui/amount-input';
-import { accountChoiceLabel, failureMessage, KIND_CHOICES } from '@/ui/labels';
-import type { AccountRedirect } from '@/saldo/survey';
+import { failureMessage, KIND_CHOICES } from '@/ui/labels';
 import {
   accountRows,
-  applyMerges,
-  assignDescription,
-  assignTransaction,
   canCommit,
-  debtRows,
   commitFailed,
   committed,
-  mergeSuggestions,
   confirmSecondImport,
+  mergeTargets,
   planSummary,
   redirectAccount,
   redirectName,
   setAccountKind,
   startFlow,
   startWithText,
+  targetOf,
   toStep,
-  unassignedDebts,
   type FlowState,
 } from '@/ui/saldo-import';
+
+import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
+import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
 
 import { Spacing } from '@/constants/theme';
 
@@ -64,28 +62,8 @@ export default function SaldoImportScreen() {
       ...(importsRepo.committedAt() ? { previouslyCommittedAt: importsRepo.committedAt() } : {}),
     }),
   );
-  const [person, setPerson] = useState('');
-  /** Proposals the owner has waved off. Refusing one changes no decision and writes nothing. */
-  const [refusedMerges, setRefusedMerges] = useState<ReadonlySet<string>>(() => new Set<string>());
-
   const rows = useMemo(() => accountRows(flow), [flow]);
-  /**
-   * What the app thinks is one рахунок written twice, recomputed from the map as it now stands —
-   * a proposal is never remembered, so accepting one simply leaves one proposal fewer.
-   */
-  const proposedMerges = useMemo(() => mergeSuggestions(flow), [flow]);
-  const acceptedMerges = useMemo(
-    () => proposedMerges.filter((suggestion) => !refusedMerges.has(suggestion.key)),
-    [proposedMerges, refusedMerges],
-  );
   const summary = useMemo(() => planSummary(flow), [flow]);
-  const unassigned = useMemo(() => unassignedDebts(flow), [flow]);
-  const rowsOfDebts = useMemo(() => debtRows(flow), [flow]);
-  /** The рахунки-борги the owner already has — a person they lent to before, not a new name. */
-  const debtAccounts = useMemo(
-    () => flow.existing.accounts.filter((a) => a.kind === 'debt' && !a.archived),
-    [flow.existing.accounts],
-  );
 
   const choose = useCallback(async () => {
     try {
@@ -103,60 +81,24 @@ export default function SaldoImportScreen() {
     try {
       const written = importsRepo.commit(flow.plan, new Date());
       setFlow((current) => committed(current, written));
+      void clearAlert('saldo-import', ALERT_PORTS);
     } catch (error) {
       setFlow((current) => commitFailed(current, failureMessage(error)));
+      // A commit runs while the owner walks away from a long import; the screen says why in its
+      // own words either way, and only an owner who is not reading them is told again.
+      void raiseAlert('saldo-import', { attended: attended() }, ALERT_PORTS);
     }
   }, [flow.plan]);
 
-  /** Every standing proposal at once — one transition, so the engine runs once over the map. */
-  const acceptMerges = useCallback(() => {
-    setFlow((current) => applyMerges(current, acceptedMerges));
-  }, [acceptedMerges]);
-
-  const toggleRefusedMerge = useCallback((key: string) => {
-    setRefusedMerges((current) => {
-      const next = new Set(current);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
-  }, []);
+  /** Opening «Імпорт Saldo» is the owner looking at the failure it explains (design D6). */
+  useClearAlertOnOpen('saldo-import');
 
   /**
-   * The рахунки already on the device, offered as merge targets. Archived ones are left out for
-   * the same reason every other picker leaves them out: an archived рахунок takes no new money.
+   * What each row could merge into. The list itself is `mergeTargets` in `src/ui/saldo-import.ts`,
+   * where `verify` can reach it — which entries and рахунки are offered, and how each is named, is
+   * the whole of the requirement, and none of it is a drawing decision.
    */
-  const existingAccounts = useMemo(
-    () => flow.existing.accounts.filter((a) => !a.archived),
-    [flow.existing.accounts],
-  );
-
-  /**
-   * Everything one entry could merge into, by name: the other entries that are still рахунки of
-   * their own, and the рахунки the owner already keeps. An entry that is itself merging away is
-   * not offered — merging onto it would make a chain nobody displayed.
-   *
-   * The currency rides every label because it is the one thing that can turn a redirect into a
-   * refusal, and the owner should see it before they pick rather than after.
-   */
-  const mergeTargets = useCallback(
-    (key: string) => [
-      ...rows
-        .filter((row) => row.key !== key && !row.mergedInto && !row.ontoExisting)
-        .map((row) => ({
-          value: `entry:${row.key}`,
-          label: `${row.becomes.name} · ${row.entry.currency}`,
-        })),
-      ...existingAccounts.map((a) => ({
-        value: `account:${a.id}`,
-        label: `${accountChoiceLabel(a)} — наявний`,
-      })),
-    ],
-    [existingAccounts, rows],
-  );
+  const targetsFor = useCallback((key: string) => mergeTargets(flow, key), [flow]);
 
   return (
     <Screen>
@@ -180,41 +122,6 @@ export default function SaldoImportScreen() {
 
       {flow.step === 'accounts' && summary ? (
         <>
-          {proposedMerges.length > 0 ? (
-            <>
-              <SectionLabel>Схоже на дублі</SectionLabel>
-              <Card style={styles.row}>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Застосунок звірив назви й пропонує об’єднати ці записи. Нічого не змінюється, доки
-                  ви не підтвердите, і кожне об’єднання можна скасувати нижче.
-                </ThemedText>
-                {proposedMerges.map((suggestion) => {
-                  const skipped = refusedMerges.has(suggestion.key);
-                  return (
-                    <View key={suggestion.key} style={styles.row}>
-                      <ThemedText type="smallBold">{suggestion.entryName}</ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {skipped
-                          ? '→ не об’єднувати'
-                          : `→ ${suggestion.ontoExisting ? 'наявний рахунок ' : ''}«${suggestion.targetName}» · ${suggestion.reason}`}
-                      </ThemedText>
-                      <Action
-                        variant="secondary"
-                        title={skipped ? 'Повернути' : 'Пропустити'}
-                        onPress={() => toggleRefusedMerge(suggestion.key)}
-                      />
-                    </View>
-                  );
-                })}
-                <Action
-                  title={`Об’єднати все (${acceptedMerges.length})`}
-                  onPress={acceptMerges}
-                  disabled={acceptedMerges.length === 0}
-                />
-              </Card>
-            </>
-          ) : null}
-
           <SectionLabel>Рахунки</SectionLabel>
           <ThemedText type="small" themeColor="textSecondary">
             Перевірте вид кожного рахунку; дублі однієї картки об’єднайте.
@@ -258,7 +165,7 @@ export default function SaldoImportScreen() {
                   <Choices
                     label="Об’єднати з"
                     selected={undefined}
-                    choices={mergeTargets(row.key)}
+                    choices={targetsFor(row.key)}
                     onSelect={(value) =>
                       setFlow((c) => redirectAccount(c, row.key, targetOf(value)))
                     }
@@ -285,58 +192,6 @@ export default function SaldoImportScreen() {
               onPick={(id) => setFlow((c) => redirectName(c, 'sources', proposal.saldoName, id))}
             />
           ))}
-          <Action title="Далі — борги" onPress={() => setFlow((c) => toStep(c, 'debts'))} />
-        </>
-      ) : null}
-
-      {flow.step === 'debts' ? (
-        <>
-          <SectionLabel>Борги</SectionLabel>
-          <ThemedText type="small" themeColor="textSecondary">
-            Кожен запис «Борг» має належати людині. Поки хоч один без людини, імпорт не відбудеться.
-          </ThemedText>
-          <Field label="Ім’я людини" value={person} onChangeText={setPerson} />
-
-          <SectionLabel>За описом</SectionLabel>
-          {(flow.survey?.debtDescriptions ?? []).map((debt) => (
-            <Card key={debt.description} style={styles.row}>
-              <ThemedText type="smallBold">{debt.description || '(без опису)'}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {`${debt.transactionIds.length} запис(ів)`}
-              </ThemedText>
-              <PersonPick
-                person={person}
-                existing={debtAccounts}
-                onAssign={(to) => setFlow((c) => assignDescription(c, debt.description, to))}
-              />
-            </Card>
-          ))}
-
-          {/* A description is a convenience, not an identity: two «Борг» transactions may
-              share one, and two of the owner's carry none at all. So every transaction is
-              here too, with what it is and where it is going. */}
-          <SectionLabel>Кожен запис окремо</SectionLabel>
-          {rowsOfDebts.map((row) => (
-            <Card key={row.transactionId} style={styles.row}>
-              <ThemedText type="smallBold">{`${row.date} · ${formatMoney(row.amount)}`}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {row.assigned ? `→ ${row.person}` : 'без людини'}
-                {row.description ? ` · «${row.description}»` : ''}
-              </ThemedText>
-              <PersonPick
-                person={person}
-                existing={debtAccounts}
-                onAssign={(to) => setFlow((c) => assignTransaction(c, row.transactionId, to))}
-              />
-            </Card>
-          ))}
-
-          {unassigned.length > 0 ? <Warning>{`Без людини: ${unassigned.length}`}</Warning> : null}
-          <Action
-            variant="secondary"
-            title="Назад — рахунки"
-            onPress={() => setFlow((c) => toStep(c, 'accounts'))}
-          />
           <Action title="Далі — звірка" onPress={() => setFlow((c) => toStep(c, 'report'))} />
         </>
       ) : null}
@@ -365,6 +220,11 @@ export default function SaldoImportScreen() {
           {flow.report.debts.length > 0 ? (
             <>
               <SectionLabel>Борги після імпорту</SectionLabel>
+              {/* Every debt the export carries is closed, so 0 is what this should read; anything
+                  else is a «Борг» row whose other half did not pair. */}
+              <ThemedText type="small" themeColor="textSecondary">
+                Усі борги з експорту закриті — тут має бути 0.
+              </ThemedText>
               {flow.report.debts.map((debt) => (
                 <ThemedText key={debt.accountId} type="small" themeColor="textSecondary">
                   {`${debt.name}: ${formatMoney(debt.balance)}`}
@@ -392,16 +252,10 @@ export default function SaldoImportScreen() {
             </ThemedText>
           ) : null}
 
-          {unassigned.length > 0 ? (
-            <Warning>{`Спершу призначте людину для ${unassigned.length} запис(ів) «Борг».`}</Warning>
-          ) : null}
-
-          {/* The report is where the owner learns a «Борг» row is still unassigned, so it is
-              also where they need the way back to assign it. */}
           <Action
             variant="secondary"
-            title="Назад — борги"
-            onPress={() => setFlow((c) => toStep(c, 'debts'))}
+            title="Назад — рахунки"
+            onPress={() => setFlow((c) => toStep(c, 'accounts'))}
           />
 
           {flow.previouslyCommittedAt && !flow.secondImportConfirmed ? (
@@ -432,51 +286,9 @@ export default function SaldoImportScreen() {
 }
 
 /**
- * Who a «Борг» transaction belongs to: the name typed above — a new рахунок-борг — or one of the
- * рахунки-борги the owner already has, which is what keeps a person from getting two.
- */
-function PersonPick({
-  person,
-  existing,
-  onAssign,
-}: {
-  person: string;
-  existing: readonly { id: string; name: string }[];
-  onAssign: (to: { to: 'person'; name: string } | { to: 'account'; accountId: string }) => void;
-}) {
-  return (
-    <>
-      <Action
-        title={`Це ${person.trim() || '…'}`}
-        onPress={() => person.trim() && onAssign({ to: 'person', name: person.trim() })}
-      />
-      {existing.length > 0 ? (
-        <Choices
-          label="Або наявний рахунок-борг"
-          selected={undefined}
-          choices={existing.map((a) => ({ value: a.id, label: a.name }))}
-          onSelect={(accountId) => onAssign({ to: 'account', accountId })}
-        />
-      ) : null}
-    </>
-  );
-}
-
-/**
- * The value a merge choice carries back, decoded. Two kinds of target live in one list, and the
- * prefix is what keeps «an entry of this import» and «a рахунок the owner already has» apart —
- * they are indistinguishable by name, and very different decisions.
- */
-function targetOf(value: string): AccountRedirect {
-  return value.startsWith('account:')
-    ? { to: 'account', accountId: value.slice('account:'.length) }
-    : { to: 'entry', key: value.slice('entry:'.length) };
-}
-
-/**
  * Something the owner has to read before going on — the app's one red, on the surface that goes
- * with it. Every one of these says a state that stops something: an import already run, a «Борг»
- * with nobody behind it, a file that cannot be read.
+ * with it. Every one of these says a state that stops something: an import already run, a file
+ * that cannot be read, a redirect the import refused.
  */
 function Warning({ children }: { children: string }) {
   return <Banner tone="danger">{children}</Banner>;

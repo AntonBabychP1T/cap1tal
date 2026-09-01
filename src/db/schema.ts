@@ -279,6 +279,17 @@ export const monobankLinks = sqliteTable(
      * the next run may see the item exactly here again — the imported ids make that harmless.
      */
     cursorMs: integer('cursor_ms', { mode: 'timestamp_ms' }).notNull(),
+    /**
+     * When a sync last *completed* for this link, or nothing at all for a link that has never
+     * synced — which is what every existing row reads back as, and what is true of what the device
+     * can prove. Nullable rather than defaulted: a moment of zero is 1970, and a link that has
+     * never synced has no moment, not an ancient one.
+     *
+     * Not `monobank_accounts.obtained_at`, which a client-info fetch moves as well and therefore
+     * answers "when the bank last told us a баланс". On the link, so unlinking takes it away: a
+     * link is the thing that syncs, and a relinked account has not synced under its new boundary.
+     */
+    lastSyncedAt: integer('last_synced_at', { mode: 'timestamp_ms' }),
   },
   (t) => [
     check(
@@ -372,3 +383,173 @@ export type CategoryLimitRow = typeof categoryLimits.$inferSelect;
 export type NewCategoryLimitRow = typeof categoryLimits.$inferInsert;
 export type GoalRow = typeof goals.$inferSelect;
 export type NewGoalRow = typeof goals.$inferInsert;
+
+/**
+ * One app the owner opted into reading, and the рахунок its notifications land on. The package
+ * name is the key: one app maps to exactly one рахунок, and a second watch on it would leave a
+ * notification with two places it could land (`addWatch` says the same in the domain's words).
+ *
+ * No currency column, deliberately. A watch's currency is the рахунок's, and the repository joins
+ * `accounts` on read — so the `Watch.currency` the engine decides сума in cannot drift from the
+ * рахунок the money actually sits on. `onDelete: 'restrict'` like every other reference to a
+ * рахунок: рахунки archive rather than delete, and an archived one keeps its watch.
+ */
+export const notificationWatches = sqliteTable('notification_watches', {
+  packageName: text('package_name').primaryKey(),
+  accountId: text('account_id')
+    .notNull()
+    .references(() => accounts.id, { onDelete: 'restrict' }),
+});
+
+/**
+ * Every captured notification this device has already decided, by the engine's fingerprint — the
+ * plain joined string `fingerprintOf` builds, stored verbatim (bank-notifications design D3).
+ *
+ * It is the whole of "this notification never yields twice", and it deliberately references
+ * nothing: not the чернетка it drafted, not the транзакція it became. Confirming, dismissing,
+ * editing or deleting what came of it leaves the row exactly where it is, so Android re-posting
+ * an updated notification can never double the owner's money.
+ */
+export const notificationFingerprints = sqliteTable('notification_fingerprints', {
+  fingerprint: text('fingerprint').primaryKey(),
+});
+
+/**
+ * A чернетка awaiting the owner's word: what a captured notification proposed, on the рахунок its
+ * watch names. Only pending ones are ever stored — confirming or dismissing deletes the row, and
+ * the fingerprint above is what makes a settled чернетка stay settled.
+ *
+ * `currency` is the рахунок's, carried on the row like every other amount's currency, so a сума
+ * the owner supplies for a raw чернетка can land in no other money. The `original` pair is the
+ * amount a foreign notification named, information a confirmed витрата keeps.
+ */
+export const notificationDrafts = sqliteTable(
+  'notification_drafts',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+    currency: text('currency').notNull(),
+    /** The domain's `IsoDate` verbatim, TEXT 'YYYY-MM-DD', as every other calendar date column. */
+    date: text('date').notNull(),
+    /** The parse input: the notification's title and text joined, whitespace collapsed. */
+    text: text('text').notNull(),
+    /** 'expense' | 'income' | 'raw' — the DraftProposal's own three shapes. */
+    kind: text('kind').notNull(),
+    /** Minor units in `currency`; NULL exactly when the proposal is raw. */
+    amount: integer('amount'),
+    /** What a foreign notification named, in its own currency. Only a raw чернетка carries one. */
+    originalAmount: integer('original_amount'),
+    originalCurrency: text('original_currency'),
+    /**
+     * Storage metadata, not domain: when the чернетка was drafted. It is what "newest first" on
+     * Головний orders by — a чернетка's own date is the day the money moved, which a bank can
+     * post about a day late.
+     */
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    check('notification_drafts_kind_known', sql`${t.kind} IN ('expense', 'income', 'raw')`),
+    check(
+      'notification_drafts_date_iso',
+      sql`${t.date} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+    check(
+      'notification_drafts_original_paired',
+      sql`(${t.originalAmount} IS NULL) = (${t.originalCurrency} IS NULL)`,
+    ),
+    check(
+      'notification_drafts_shape',
+      sql`CASE ${t.kind}
+        WHEN 'raw' THEN ${t.amount} IS NULL
+        ELSE ${t.amount} IS NOT NULL AND ${t.originalAmount} IS NULL
+      END`,
+    ),
+  ],
+);
+
+export type NotificationWatchRow = typeof notificationWatches.$inferSelect;
+export type NotificationDraftRow = typeof notificationDrafts.$inferSelect;
+export type NewNotificationDraftRow = typeof notificationDrafts.$inferInsert;
+
+/**
+ * Whether the daily нагадування is on and the time of day the owner set it for. One row, keyed
+ * `'reminder'` — the single-row shape `saldo_import` already keeps, CHECK and all.
+ *
+ * No row means «never asked»: off, and with no time the owner chose. That is why `hour` and
+ * `minute` are `NOT NULL` rather than nullable — a row exists only once the owner has set one, so
+ * there is no state where the setting exists and the time does not, and the section's 21:00 is a
+ * suggestion in `src/reminders/time.ts` rather than a value on the device.
+ *
+ * A wall-clock hour and minute, never an instant: the нагадування must arrive at the hour the
+ * owner chose in whatever zone the phone is in, so storing a moment would be storing the wrong
+ * thing (design D12).
+ */
+export const dailyReminder = sqliteTable(
+  'daily_reminder',
+  {
+    /** Always `'reminder'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull(),
+    hour: integer('hour').notNull(),
+    minute: integer('minute').notNull(),
+  },
+  (t) => [
+    check('daily_reminder_single_row', sql`${t.id} = 'reminder'`),
+    check('daily_reminder_hour_of_day', sql`${t.hour} BETWEEN 0 AND 23`),
+    check('daily_reminder_minute_of_hour', sql`${t.minute} BETWEEN 0 AND 59`),
+  ],
+);
+
+/**
+ * The сповіщення про збій standing right now: one row per action that failed, with the moment it
+ * was first raised. The primary key *is* «одна невдача — одне сповіщення»: raising an action
+ * already outstanding writes nothing, and clearing one deletes only its own row.
+ *
+ * `kind` deliberately carries no CHECK, against this schema's usual habit and for one stated
+ * reason: committed migrations are immutable, the set of kinds grows (the Drive backup of step 12
+ * adds one), and widening a CHECK in SQLite means rebuilding the table in a new migration for the
+ * sake of one string. The enumeration lives in `src/reminders/notices.ts`, where the words and the
+ * route already are, and `reminders-repo` refuses a kind that is not in it (design D7).
+ *
+ * Nothing else is stored. Not the message, not a сума, not a line of a captured notification — the
+ * action that failed and the moment it did is the whole row, which is also why this table cannot
+ * leak anything into a бекап even if it travelled in one. It does not: see `src/backup/format.ts`.
+ */
+export const alerts = sqliteTable('alerts', {
+  /** One of `src/reminders/notices.ts`'s `AlertKind` values; see above for why SQL does not know. */
+  kind: text('kind').primaryKey(),
+  raisedAt: integer('raised_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+/**
+ * What the entry form on Головний opens on: the рахунок of the owner's most recent hand-recorded
+ * транзакція. One row, `'entry'`, the same single-row idiom `daily_reminder` and `saldo_import`
+ * keep, CHECK and all — remembering a second рахунок replaces the first rather than adding to it.
+ *
+ * A preference, not money. Nothing derives a balance or a monthly number from it, and no row at
+ * all is the ordinary state of a device that has never recorded by hand: the form then opens with
+ * nothing chosen and refuses to record until the owner picks a рахунок, exactly as before.
+ *
+ * `onDelete: 'restrict'` like every other reference to a рахунок — рахунки archive rather than
+ * disappear, so nothing here can be orphaned. An archived one is still a valid row: it is the
+ * screen that stops offering it as the default, not storage that forgets it.
+ */
+export const entryDefaults = sqliteTable(
+  'entry_defaults',
+  {
+    /** Always `'entry'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+  },
+  (t) => [check('entry_defaults_single_row', sql`${t.id} = 'entry'`)],
+);
+
+export type DailyReminderRow = typeof dailyReminder.$inferSelect;
+export type NewDailyReminderRow = typeof dailyReminder.$inferInsert;
+export type AlertRow = typeof alerts.$inferSelect;
+export type EntryDefaultsRow = typeof entryDefaults.$inferSelect;
+export type NewEntryDefaultsRow = typeof entryDefaults.$inferInsert;

@@ -1,11 +1,14 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
 import { money } from '../domain/money';
 import type { MonobankLink } from '../monobank/link';
+import { accountCount, transactionCount } from './labels';
 import {
   boundaryConfirmation,
   CLIPBOARD_NO_TOKEN,
+  lastSyncLine,
   linkChoices,
   linkSetConfirmation,
   MONOBANK_TOKEN_PAGE_URL,
@@ -14,11 +17,11 @@ import {
   progressLabel,
   proposalRows,
   removeTokenConfirmation,
-  accountCount,
+  syncBoundary,
+  syncFailed,
   syncSummary,
   tokenCandidate,
   tokenStateLabel,
-  transactionCount,
   unlinkConfirmation,
   type MonobankAccountView,
 } from './monobank-screen';
@@ -68,12 +71,16 @@ const linkedBlack: MonobankLink & { syncStartDate: string } = {
   syncStartDate: '2026-08-01',
 };
 
+/** 1 September 2026, 10:15 local — the clock these tests hand in. */
+const now = new Date(2026, 8, 1, 10, 15, 0);
+
 describe('monobankAccountRows', () => {
   it('Scenario: Linked and unlinked accounts are both present', () => {
     const rows = monobankAccountRows({
       monobankAccounts: [blackCard, whiteCard, holidayJar],
       links: [linkedBlack],
       accounts: [card, cash, dollars],
+      now,
     });
 
     // All three are shown, in Ukrainian name order — Cyrillic titles ahead of Latin ones.
@@ -101,6 +108,7 @@ describe('monobankAccountRows', () => {
       monobankAccounts: [blackCard, holidayJar],
       links: [],
       accounts: [],
+      now,
     });
 
     expect(rows.map((row) => row.bankBalance)).toEqual(['1234,50 USD', '3000,00 UAH']);
@@ -113,6 +121,7 @@ describe('monobankAccountRows', () => {
       monobankAccounts: [blackCard],
       links: [linkedBlack],
       accounts: [],
+      now,
     });
 
     expect(rows[0]).toMatchObject({ linked: true, accountName: 'card' });
@@ -123,9 +132,91 @@ describe('monobankAccountRows', () => {
       monobankAccounts: [{ ...blackCard, bankBalance: money(-45_00, 'UAH') }],
       links: [],
       accounts: [],
+      now,
     });
 
     expect(rows[0]?.bankBalance).toBe('−45,00 UAH');
+  });
+});
+
+/**
+ * When each linked account last synced, and the screen's own answer for all of them. Only a
+ * completed run moves a moment — that is the coordinator's rule, proven there; what is proven here
+ * is that the screen says the moment it is given, and says its absence rather than showing a gap.
+ */
+describe('when a sync last completed', () => {
+  const syncedYesterday = { ...linkedBlack, lastSyncedAtMs: new Date(2026, 7, 31, 18, 5).getTime() };
+  const linkedWhite: MonobankLink & { syncStartDate: string } = {
+    monobankAccountId: 'mono-white',
+    accountId: 'cash',
+    syncStartDate: '2026-08-01',
+  };
+
+  it('Scenario: A completed sync is dated on the screen', () => {
+    const rows = monobankAccountRows({
+      monobankAccounts: [blackCard],
+      links: [syncedYesterday],
+      accounts: [card],
+      now,
+    });
+
+    expect(rows[0]?.lastSync).toBe('Синхронізовано вчора о 18:05');
+    // And the screen states the same moment as its own last sync.
+    expect(lastSyncLine({ links: [syncedYesterday], now })).toBe(
+      'Остання синхронізація — вчора о 18:05',
+    );
+  });
+
+  it('Scenario: A never-synced account says so', () => {
+    const rows = monobankAccountRows({
+      monobankAccounts: [blackCard],
+      links: [linkedBlack],
+      accounts: [card],
+      now,
+    });
+
+    // Said, not left empty: an empty moment and a moment nobody looked up read the same.
+    expect(rows[0]?.lastSync).toBe('Ще не синхронізовано');
+  });
+
+  it('Scenario: No linked account has ever synced', () => {
+    expect(lastSyncLine({ links: [linkedBlack, linkedWhite], now })).toBe(
+      'Синхронізації на цьому пристрої ще не було',
+    );
+  });
+
+  it('Scenario: The screen’s last sync is the most recent of the accounts', () => {
+    const august30 = { ...linkedBlack, lastSyncedAtMs: new Date(2026, 7, 30, 9, 0).getTime() };
+    const september1 = { ...linkedWhite, lastSyncedAtMs: new Date(2026, 8, 1, 9, 30).getTime() };
+
+    expect(lastSyncLine({ links: [august30, september1], now })).toBe(
+      'Остання синхронізація — сьогодні о 09:30',
+    );
+    // The order the links come in changes nothing: it is the newest moment, not the last one seen.
+    expect(lastSyncLine({ links: [september1, august30], now })).toBe(
+      'Остання синхронізація — сьогодні о 09:30',
+    );
+    // And an account that has never synced does not drag the screen's answer down with it.
+    expect(lastSyncLine({ links: [september1, linkedBlack], now })).toBe(
+      'Остання синхронізація — сьогодні о 09:30',
+    );
+  });
+
+  it('An unlinked account has no moment at all — sync does not visit it', () => {
+    const rows = monobankAccountRows({
+      monobankAccounts: [blackCard, whiteCard],
+      links: [syncedYesterday],
+      accounts: [card],
+      now,
+    });
+
+    expect(rows.find((row) => row.monobankAccountId === 'mono-white')).not.toHaveProperty(
+      'lastSync',
+    );
+  });
+
+  it('A device with no link has nothing to say about syncing', () => {
+    expect(lastSyncLine({ links: [], now })).toBeNull();
   });
 });
 
@@ -502,5 +593,152 @@ describe('the review list of proposals', () => {
     // The two things the owner must know before five links are made at once.
     expect(sentence).toContain('включно');
     expect(sentence).toContain('Saldo');
+  });
+});
+
+describe('whether a finished sync is a failure the owner has to hear about', () => {
+  it('Scenario: A sync that fails after the owner left the app raises a сповіщення', () => {
+    // Транзакції did not arrive, so «залишилось» is now too large in the one direction that
+    // matters — and nothing else says so while the owner is not on this screen.
+    expect(
+      syncFailed({
+        kind: 'ran',
+        imported: 0,
+        accounts: [{ monobankAccountId: 'mono-card', accountId: 'card', outcome: 'unavailable', imported: 0 }],
+      }),
+    ).toBe(true);
+    expect(syncFailed({ kind: 'storage-unavailable' })).toBe(true);
+  });
+
+  it('counts an account that failed beside ones that finished', () => {
+    // A partial run is still a run whose money is missing: the completed cards do not excuse it.
+    expect(
+      syncFailed({
+        kind: 'ran',
+        imported: 4,
+        accounts: [
+          { monobankAccountId: 'a', accountId: 'card', outcome: 'complete', imported: 4 },
+          { monobankAccountId: 'b', accountId: 'jar', outcome: 'rate-limited', imported: 0 },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it('is not a failure when every account finished', () => {
+    expect(
+      syncFailed({
+        kind: 'ran',
+        imported: 3,
+        accounts: [{ monobankAccountId: 'a', accountId: 'card', outcome: 'complete', imported: 3 }],
+      }),
+    ).toBe(false);
+    expect(syncFailed({ kind: 'ran', imported: 0, accounts: [] })).toBe(false);
+  });
+
+  it('is not a failure when the owner stopped the run themselves', () => {
+    // Calling that «збій» would blame the bank for the owner's own decision, which is the reason
+    // `AccountOutcome` keeps `cancelled` apart from `unavailable` in the first place.
+    expect(
+      syncFailed({
+        kind: 'ran',
+        imported: 1,
+        accounts: [
+          { monobankAccountId: 'a', accountId: 'card', outcome: 'complete', imported: 1 },
+          { monobankAccountId: 'b', accountId: 'jar', outcome: 'cancelled', imported: 0 },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it('is not a failure when there was nothing set up to sync', () => {
+    // Nothing was attempted and nothing silently stopped arriving: a сповіщення here would be the
+    // app complaining about work the owner never asked for.
+    expect(syncFailed({ kind: 'not-configured' })).toBe(false);
+    expect(syncFailed({ kind: 'no-links' })).toBe(false);
+  });
+});
+
+/**
+ * Two properties of `src/app/manage/monobank.tsx` that `verify` cannot execute — it never runs a
+ * screen — held by reading its source instead. Weaker than executing it, and it catches exactly
+ * the edit that would break each: a clipboard read moved into an effect, and a date going to the
+ * database unparsed. Same arrangement, and the same reason, as `onboarding-screen.test.ts`; the
+ * test lives here and never under `src/app/`, which expo-router bundles into the app.
+ */
+const screen = readFileSync(new URL('../app/manage/monobank.tsx', import.meta.url), 'utf8');
+
+describe('the clipboard is read only when the owner asks', () => {
+  it('Scenario: Opening the screen reads nothing', () => {
+    // Two reads exist and no more: one behind «Отримати токен», one behind «Вставити».
+    const reads = [...screen.matchAll(/Clipboard\.\w+/g)].map(([m]) => m);
+    expect(reads).toEqual(['Clipboard.getStringAsync', 'Clipboard.getStringAsync']);
+
+    // Neither is inside anything that runs on its own. `useFocusEffect` is what the screen uses to
+    // refresh on return, and a read placed there would turn opening the screen into a read.
+    // The call's own argument list is what is examined, matched paren by paren — an import of the
+    // same name, or a later call, must not stand in for the block that actually runs.
+    const callBodies = (name: string) => {
+      const bodies: string[] = [];
+      for (const m of screen.matchAll(new RegExp(`\\b${name}\\(`, 'g'))) {
+        let depth = 0;
+        let i = m.index + m[0].length - 1;
+        const from = i;
+        for (; i < screen.length; i += 1) {
+          if (screen[i] === '(') depth += 1;
+          else if (screen[i] === ')') {
+            depth -= 1;
+            if (depth === 0) break;
+          }
+        }
+        bodies.push(screen.slice(from, i + 1));
+      }
+      return bodies;
+    };
+    // The hooks are really there, so this is not a test that passes by finding nothing.
+    expect(callBodies('useFocusEffect')).toHaveLength(1);
+    for (const name of ['useFocusEffect', 'useEffect', 'setInterval', 'setTimeout']) {
+      for (const body of callBodies(name)) {
+        expect(body).not.toContain('Clipboard.');
+      }
+    }
+  });
+
+  it('Scenario: An unrelated clipboard is not sent to the bank', () => {
+    // Every read is handed to `tokenCandidate` before anything else looks at it, so what the bank
+    // is asked about is never the raw clipboard.
+    for (const line of screen.split('\n')) {
+      if (line.includes('Clipboard.getStringAsync')) {
+        expect(line).toMatch(/tokenCandidate\(/);
+      }
+    }
+  });
+});
+
+describe('the sync boundary is a typed дата like any other', () => {
+  it('Scenario: A дата in the wrong shape is refused in Ukrainian', () => {
+    // The шлях this closes: «31.12.2026» used to reach `startOfLocalDayMs` and answer
+    // `date must be YYYY-MM-DD, got "31.12.2026"` inside a «Не приєднано» alert.
+    expect(() => syncBoundary('31.12.2026')).toThrow(/дата пишеться як РРРР-ММ-ДД/);
+    expect(() => syncBoundary('31.12.2026')).toThrow(/«31\.12\.2026»/);
+    expect(() => syncBoundary('31.12.2026')).not.toThrow(/YYYY-MM-DD/);
+  });
+
+  it('Scenario: A day that does not exist is refused in Ukrainian', () => {
+    expect(() => syncBoundary('2026-02-30')).toThrow(/такого дня немає в календарі/);
+    expect(() => syncBoundary('2026-02-30')).not.toThrow(/not a calendar date/);
+  });
+
+  it('gives a link both of its stored fields from one parse', () => {
+    const boundary = syncBoundary(' 2026-08-31 ');
+    expect(boundary.syncStartDate).toBe('2026-08-31');
+    // The cursor starts at the local start of that day, so nothing before the boundary is imported.
+    expect(boundary.cursorMs).toBe(new Date('2026-08-31T00:00:00').getTime());
+  });
+
+  it('every link path goes through it, so none can store an unparsed date', () => {
+    // The refusal is worth nothing if one of the three paths still hands the raw field to the
+    // database — this is what keeps the boundary parsed exactly once, in one place.
+    expect(screen).not.toContain('startOfLocalDayMs');
+    expect([...screen.matchAll(/syncBoundary\(/g)]).toHaveLength(3);
   });
 });

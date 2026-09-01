@@ -1,4 +1,4 @@
-import { monthOf, type Month } from '../domain/transaction';
+import { monthOf, type IsoDate, type Month } from '../domain/transaction';
 import { todayIso } from './dates';
 
 /**
@@ -118,4 +118,16 @@ const SHORT_MONTH_NAMES: readonly string[] = [
 export function shortMonthLabel(month: Month): string {
   const { year, month: m } = partsOf(month);
   return `${SHORT_MONTH_NAMES[m - 1]} ${year}`;
+}
+
+/**
+ * The місяці the stored транзакції actually touch, newest first — what «Транзакції» offers as its
+ * місяць narrowing. Derived from the data and never from the calendar: a month the owner has
+ * nothing in is a filter that can only ever produce «нічого не знайдено», and a month older than
+ * any fixed window would be unreachable.
+ */
+export function monthsOf(transactions: readonly { readonly date: IsoDate }[]): Month[] {
+  return [...new Set(transactions.map((t) => monthOf(t.date)))].sort((a, b) =>
+    a < b ? 1 : a > b ? -1 : 0,
+  );
 }

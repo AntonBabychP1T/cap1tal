@@ -7,10 +7,10 @@ import {
   type MonthlyNumbers,
 } from '../domain/monthly-picture';
 import type { Month, Transaction } from '../domain/transaction';
-import { formatMinorUnits, formatMoney } from './amount-input';
+import { byCurrency, formatMinorUnits, formatMoney } from './amount-input';
 import { approximatePicture } from './approx-uah';
 import { categoryLabel } from './labels';
-import { canStepForward, monthLabel } from './months';
+import { canStepForward, monthLabel, prevMonth } from './months';
 import type { MonobankRate } from '../monobank/currency';
 
 /**
@@ -21,7 +21,7 @@ import type { MonobankRate } from '../monobank/currency';
 /** The six numbers, in the order the screen reads them. */
 const NUMBER_KEYS = ['spent', 'invested', 'saved', 'lent', 'income', 'left'] as const;
 
-type NumberKey = (typeof NUMBER_KEYS)[number];
+export type NumberKey = (typeof NUMBER_KEYS)[number];
 
 /** The glossary's words, as headings. */
 const NUMBER_LABELS: Readonly<Record<NumberKey, string>> = {
@@ -65,7 +65,23 @@ export interface MonthCurrencyGroup {
   readonly currency: CurrencyCode;
   readonly numbers: readonly MonthNumberRow[];
   readonly breakdown: readonly MonthBreakdownRow[];
+  /**
+   * Which of the six numbers is read first. Залишилось while this currency's дохід is above zero,
+   * витрачено while it is not: before the first дохід of a month залишилось is structurally
+   * negative — the month's витрати with nothing yet set against them — and leading with it teaches
+   * the owner to distrust the one number they have to trust. Every one of the six is still shown,
+   * under its own name and with its own сума; only what is read first moves.
+   *
+   * Per currency, because the numbers are: a month with UAH дохід and only USD витрати is honestly
+   * two different situations in one screen.
+   */
+  readonly lead: NumberKey;
+  /** Says no дохід is recorded for the month yet — exactly when витрачено leads, `null` otherwise. */
+  readonly note: string | null;
 }
+
+/** Why залишилось is not leading. Shown under витрачено, so the reason is on the screen. */
+const NO_INCOME_NOTE = 'У цьому місяці ще не записано дохід.';
 
 /** The secondary «≈ … грн» line for one monthly number, across every currency of that number. */
 export interface MonthApproximateRow {
@@ -73,6 +89,18 @@ export interface MonthApproximateRow {
   readonly label: string;
   /** Marked as approximate in the string itself, so no caller can drop the mark. */
   readonly amount: string;
+}
+
+/**
+ * The month before an empty one, when that month has something to read. Its витрачено alone: that
+ * is the number Місяць is opened for, and six numbers of a month the owner is not on would re-ask
+ * the very question this line answers.
+ */
+export interface PreviousMonth {
+  readonly month: Month;
+  /** «Серпень 2026». */
+  readonly label: string;
+  readonly spent: readonly MonthNumberRow[];
 }
 
 export interface MonthViewModel {
@@ -88,14 +116,13 @@ export interface MonthViewModel {
   readonly approximate: readonly MonthApproximateRow[] | null;
   /** What to say instead of an empty gap, or `null` when there are groups to show. */
   readonly emptyMessage: string | null;
-}
-
-/** UAH first — the owner's own currency — then the rest alphabetically, so the order is stable. */
-function byCurrency(a: CurrencyCode, b: CurrencyCode): number {
-  if (a === b) return 0;
-  if (a === 'UAH') return -1;
-  if (b === 'UAH') return 1;
-  return a < b ? -1 : 1;
+  /**
+   * The previous calendar month, to be offered — non-null only when the shown month holds no
+   * транзакція and that one holds at least one. On the 1st of a month the shown month is empty by
+   * construction, and the month the owner wants is one tap away; two empty months in a row are no
+   * offer at all.
+   */
+  readonly previous: PreviousMonth | null;
 }
 
 /**
@@ -134,6 +161,12 @@ export function monthViewModel(input: {
   categoryNames: ReadonlyMap<string, string>;
   /** The ліміти as the screen loaded them; an empty list marks nothing. */
   limits: readonly CategoryLimit[];
+  /**
+   * The transactions of the calendar month before the shown one — one more bounded read, so an
+   * empty month can name the month that has numbers. Never the whole history: a month-shaped gap
+   * is not the case this answers.
+   */
+  previousTransactions: readonly Transaction[];
   now: Date;
 }): MonthViewModel {
   const picture = monthlyPicture({
@@ -173,10 +206,14 @@ export function monthViewModel(input: {
         overLimit: over.get(categoryId) === currency,
         share: largest > 0 ? Math.max(0, amount / largest) : 0,
       }));
+      const numbers = picture.get(currency)!;
+      const lead: NumberKey = numbers.income.amount > 0 ? 'left' : 'spent';
       return {
         currency,
-        numbers: numbersOf(picture.get(currency)!),
+        numbers: numbersOf(numbers),
         breakdown: rows,
+        lead,
+        note: lead === 'spent' ? NO_INCOME_NOTE : null,
       };
     });
 
@@ -198,6 +235,38 @@ export function monthViewModel(input: {
     groups,
     approximate,
     emptyMessage: emptyMessageFor(groups.length, inMonth),
+    previous: inMonth
+      ? null
+      : previousMonthOf({
+          month: prevMonth(input.month),
+          accounts: input.accounts,
+          transactions: input.previousTransactions,
+        }),
+  };
+}
+
+/**
+ * The previous month as one line of витрачено per currency, or `null` when it holds no транзакція
+ * of its own. The numbers come from the same `monthlyPicture` the screen would show after stepping
+ * back, so the offer and what it leads to can never disagree.
+ */
+function previousMonthOf(input: {
+  month: Month;
+  accounts: readonly Account[];
+  transactions: readonly Transaction[];
+}): PreviousMonth | null {
+  if (!input.transactions.some((t) => t.date.startsWith(`${input.month}-`))) {
+    return null;
+  }
+  const picture = monthlyPicture(input);
+  return {
+    month: input.month,
+    label: monthLabel(input.month),
+    spent: [...picture.keys()].sort(byCurrency).map((currency) => ({
+      key: 'spent' as const,
+      label: NUMBER_LABELS.spent,
+      amount: formatMoney(picture.get(currency)!.spent),
+    })),
   };
 }
 

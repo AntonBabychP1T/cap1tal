@@ -7,16 +7,17 @@ The «Налаштування» tab — the one place the owner configures the 
 ### Requirement: The Налаштування tab hosts the management sections
 
 The app SHALL offer a «Налаштування» tab, last after Головний, Місяць, Рахунки and Звіти.
-Opening it SHALL offer the sections «Категорії», «Джерела» and «Правила», each opening its
-management list, «Ліміти», which opens limit management, «Цілі», which opens goal management,
-«Імпорт Saldo», which opens the one-time import flow, and «monobank», which opens token, account
-linking and sync management.
+Opening it SHALL offer «Перші кроки», which opens the setup view, and the sections «Категорії»,
+«Джерела» and «Правила», each opening its management list, «Ліміти», which opens limit
+management, «Цілі», which opens goal management, «Імпорт Saldo», which opens the one-time import
+flow, «monobank», which opens token, account linking and sync management, and
+«Сповіщення банків», which opens notification access and watched apps management.
 
 #### Scenario: The tab opens on its sections
 
 - **WHEN** the owner opens «Налаштування»
-- **THEN** the sections «Категорії», «Джерела», «Правила», «Ліміти», «Цілі», «Імпорт Saldo» and
-  «monobank» are offered
+- **THEN** the sections «Перші кроки», «Категорії», «Джерела», «Правила», «Ліміти», «Цілі»,
+  «Імпорт Saldo», «monobank» and «Сповіщення банків» are offered
 
 #### Scenario: The import section opens the import flow
 
@@ -27,6 +28,17 @@ linking and sync management.
 
 - **WHEN** the owner opens «monobank»
 - **THEN** token state, monobank accounts, links and sync state are available in one flow
+
+#### Scenario: The first-steps section opens the setup view
+
+- **WHEN** the owner opens «Перші кроки»
+- **THEN** the setup view opens with every step and its current state
+
+#### Scenario: The bank-notifications section opens access and watches
+
+- **WHEN** the owner opens «Сповіщення банків»
+- **THEN** the notification access state and the watched apps management are available in one
+  flow
 
 ### Requirement: The Категорії and Джерела sections manage the lists
 
@@ -73,6 +85,11 @@ cleared. It SHALL offer setting, changing and clearing a ліміт per the limi
 сума entered in major units the way an amount is entered when recording, with the ліміт's
 currency chosen from the same currencies a рахунок can be created in, defaulting to UAH.
 
+WHILE the editor of a category's ліміт is open, the device's own back gesture SHALL close that
+editor and leave the section open, discarding what was typed and storing nothing; only with no
+editor open SHALL it leave the section. The editor is what the owner opened last, so it is what
+the back gesture undoes first.
+
 #### Scenario: A set ліміт appears with its category
 
 - **WHEN** the owner sets a ліміт of "2500" in UAH on Groceries in the «Ліміти» section
@@ -96,12 +113,28 @@ currency chosen from the same currencies a рахунок can be created in, def
 - **THEN** the «Ліміти» section shows Pets visibly set apart, its ліміт clearable, while an
   archived category without a ліміт is not listed
 
+#### Scenario: The back gesture closes an open ліміт editor
+
+- **WHEN** the owner opens the ліміт editor on Groceries, types "2500" and uses the device's back
+  gesture
+- **THEN** the editor closes, the «Ліміти» section is still open, and Groceries' ліміт is
+  unchanged
+
+#### Scenario: The back gesture leaves the section when no editor is open
+
+- **WHEN** the owner uses the device's back gesture on «Ліміти» with no editor open
+- **THEN** the «Ліміти» section is left, exactly as its own way back does
+
 ### Requirement: The Цілі section manages the цілі
 
 The «Цілі» section SHALL list every ціль with its назва, target, дата and linked рахунок, and
 SHALL offer creating, editing and deleting per the goals capability, deletion after
 confirmation. Linking SHALL offer the unarchived рахунки; a ціль whose рахунок was archived
 SHALL stay listed and editable.
+
+WHILE the form of a ціль is open, the device's own back gesture SHALL close that form and leave
+the section open, discarding what was typed and storing nothing; only with no form open SHALL it
+leave the section — the same rule the «Ліміти» section carries, for the same reason.
 
 #### Scenario: A created ціль appears in the list
 
@@ -119,4 +152,10 @@ SHALL stay listed and editable.
 - **WHEN** the owner creates a ціль while a рахунок is archived
 - **THEN** that рахунок is not among the offered рахунки, while an existing ціль linked to it
   stays listed
+
+#### Scenario: The back gesture closes an open ціль form
+
+- **WHEN** the owner opens the form of a new ціль, fills in its назва and uses the device's back
+  gesture
+- **THEN** the form closes, the «Цілі» section is still open, and no ціль has been created
 

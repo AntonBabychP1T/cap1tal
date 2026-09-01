@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { money } from '../domain/money';
 import { expenseByDefault, isoDate } from '../domain/transaction';
-import { accountKey } from './survey';
+import { accountKey, debtAccountId } from './survey';
 import {
   existingAccount,
   existingState,
@@ -112,11 +112,10 @@ describe('verify', () => {
       ...pair({ id: '1', description: 'борг', account: 'Monobank UAH, Black', journalType: 'CREDIT', amount: '1000.00', other: 'Борг', otherType: 'EXPENSES' }),
       ...pair({ id: '2', description: 'борг', account: 'Monobank UAH, Black', journalType: 'DEBIT', amount: '1100.00', other: 'Борг', otherType: 'EXPENSES', datetime: '2024-11-05T10:00:00.000' }),
     ];
-    const options = { decisions: { debtPeople: { борг: { to: 'person' as const, name: 'Ярослав' } } } };
-    expect(report(rows, options).debts).toEqual([
+    expect(report(rows).debts).toEqual([
       {
-        accountId: expect.stringContaining('Ярослав'),
-        name: 'Ярослав',
+        accountId: debtAccountId('UAH'),
+        name: 'Борги',
         balance: { amount: -10000, currency: 'UAH' },
       },
     ]);
@@ -144,7 +143,7 @@ describe('verify', () => {
     expect(reconciliationOf(rows, 'гаманець').reconciles).toBe(true);
   });
 
-  it('lists the zero-only pair, the dropped повернення amount and the unresolved «Борг»', () => {
+  it('lists the zero-only pair and the dropped повернення amount, and interprets the «Борг»', () => {
     const rows: FixtureRow[] = [
       ...pair({ id: '1', account: 'валюта моно', journalType: 'DEBIT', amount: '100.00', currency: 'USD', other: 'Initial balance', otherType: 'EQUITY' }),
       ...pair({ id: '2', account: 'валюта моно', journalType: 'DEBIT', amount: '0.00', other: 'Initial balance', otherType: 'EQUITY' }),
@@ -154,11 +153,14 @@ describe('verify', () => {
     const built = report(rows);
     expect(built.droppedRows.map((row) => row.reason).sort()).toEqual([
       'dropped-original-amount',
-      'unassigned-debt',
       'zero-only-pair',
     ]);
-    expect(built.unresolvedDebts.map((debt) => debt.transactionId)).toEqual(['4']);
-    expect(built.reconciles).toBe(false);
+    // The «Борг» row is not among them: it needs no decision, so it becomes a переказ and the
+    // Black рахунок reconciles on it.
+    expect(built.debts).toEqual([
+      { accountId: debtAccountId('UAH'), name: 'Борги', balance: { amount: 100000, currency: 'UAH' } },
+    ]);
+    expect(built.reconciles).toBe(true);
   });
 
   it('reports a rejected redirect rather than swallowing it', () => {
@@ -206,6 +208,7 @@ describe('verify', () => {
       const sum = row.explanations.reduce((total, e) => total + e.amount.amount, 0);
       expect(sum).toBe(row.difference.amount);
     }
-    expect(built.accounts[0]?.difference).toEqual({ amount: 11300, currency: 'UAH' });
+    // The unknown shape the plan skipped, less the витрата the рахунок already held by hand.
+    expect(built.accounts[0]?.difference).toEqual({ amount: 1300, currency: 'UAH' });
   });
 });

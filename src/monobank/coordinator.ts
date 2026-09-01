@@ -36,6 +36,8 @@ export interface SyncStorage {
   importedIds(monobankAccountId: string): Set<string>;
   upsertAccounts(accounts: readonly MonobankAccount[], obtainedAt: Date): void;
   commitStatementAnswer(answer: StatementAnswer): void;
+  /** Records that a sync completed for this link. Called for a `complete` account and no other. */
+  markSynced(monobankAccountId: string, at: Date): void;
 }
 
 export interface SyncPorts {
@@ -171,6 +173,14 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
 
   const results: AccountResult[] = [];
   const finish = (link: StoredMonobankLink, outcome: AccountOutcome, imported: number): void => {
+    // Only a completed account moves its moment. An account that ends invalid-token, rate-limited,
+    // unavailable or cancelled keeps whatever moment it had, so the screen never dates a sync that
+    // did not happen. Here rather than inside `commitStatementAnswer`: that call is one page of a
+    // paginated sync, and an account stopped halfway would otherwise have committed pages and
+    // claimed a finished sync (design D9).
+    if (outcome === 'complete') {
+      ports.storage.markSynced(link.monobankAccountId, ports.now());
+    }
     const result: AccountResult = {
       monobankAccountId: link.monobankAccountId,
       accountId: link.accountId,

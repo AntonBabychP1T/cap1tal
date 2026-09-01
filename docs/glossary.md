@@ -109,6 +109,30 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Gain / loss** (прибуток / збиток) — for an investment account: hand-entered current value
   minus money put in.
 
+## Keeping the data
+
+- **Backup** (бекап) — one file holding everything the owner has: every рахунок with its opening
+  balance, every категорія, джерело, правило, ліміт and ціль, every транзакція, and what the app
+  has already imported. It never holds the monobank token, the чернетки awaiting a word, or the
+  text of the notifications behind them. It is not encrypted: whoever holds the file can read the
+  money in it.
+- **Restore** (відновлення) — putting a бекап back. It **replaces** everything now on the phone —
+  it never merges, and there is no undo — so the app shows what the бекап holds beside what is on
+  the phone, and asks, before anything changes. It either lands whole or does not happen.
+
+## What the app says first
+
+- **Reminder** (нагадування) — one notification the phone posts once a day, at a time the owner
+  chose, inviting them to record the day's витрати and answer the чернетки waiting. It is off
+  until they turn it on, and it says nothing else: no сума, no рахунок, no категорія. Tapping it
+  opens Головний.
+- **Failure alert** (сповіщення про збій) — one notification saying that work the app was doing on
+  its own did not succeed: collecting the sms/push сповіщення of other banks, a monobank sync, the
+  Saldo імпорт, saving a транзакція, or a бекап. It names the action and nothing more, and leads
+  to the screen where the reason is written and the retry is offered. One failed action is one
+  сповіщення however often it fails; it goes when that action next succeeds, or when the owner
+  opens the screen it leads to. A failure whose screen the owner is already looking at raises none.
+
 ## Distinctions the owner drew
 
 | This | is not that | because |
@@ -125,3 +149,6 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 | Bank balance | Computed balance | the bank's number is shown for comparison; the computed one is the truth until a correction explains the gap |
 | Original-currency amount | The expense | the expense is the UAH the bank charged **[PROPOSED]** |
 | Draft (чернетка) | Transaction | it only proposes; nothing counts it until the owner confirms it |
+| Restore (відновлення) | Import (імпорт) | an import adds to what is there; a restore replaces all of it with the бекап's |
+| Reminder (нагадування) | Failure alert (сповіщення про збій) | the нагадування asks the owner to do something; the сповіщення says the app failed to |
+| Failure alert (сповіщення про збій) | Bank notification (сповіщення банку) | one the app posts about itself; the other is what another bank's app posted and this app read |

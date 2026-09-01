@@ -4,6 +4,8 @@ import { money } from '../domain/money';
 import {
   formatMinorUnits,
   formatMoney,
+  formatSignedMoney,
+  parseActualBalance,
   parseAmount,
   parseOpeningBalance,
 } from './amount-input';
@@ -155,5 +157,45 @@ describe('formatMinorUnits', () => {
   it('Carries no currency code, unlike formatMoney', () => {
     expect(formatMinorUnits(12550)).toBe('125,50');
     expect(formatMoney(money(12550, 'UAH'))).toBe('125,50 UAH');
+  });
+});
+
+describe('parseActualBalance', () => {
+  it('Scenario: A rejected entry writes nothing', () => {
+    // Neither reaches `reconcile`, so no коригування can be built from either.
+    expect(() => parseActualBalance('', 'UAH')).toThrow(/фактичний залишок/);
+    expect(() => parseActualBalance('   ', 'UAH')).toThrow(/фактичний залишок/);
+    expect(() => parseActualBalance('abc', 'UAH')).toThrow(/це не сума/);
+  });
+
+  it('A recount may be zero — a рахунок can be empty', () => {
+    expect(parseActualBalance('0', 'UAH')).toEqual(money(0, 'UAH'));
+    expect(parseActualBalance('0,00', 'UAH')).toEqual(money(0, 'UAH'));
+  });
+
+  it('A recount may be negative — a card can be in overdraft', () => {
+    expect(parseActualBalance('-1250,75', 'UAH')).toEqual(money(-125075, 'UAH'));
+  });
+
+  it('The digits obey the same rules as any other amount', () => {
+    expect(parseActualBalance('450,00', 'UAH')).toEqual(money(45000, 'UAH'));
+    expect(parseActualBalance('450.00', 'UAH')).toEqual(money(45000, 'UAH'));
+    expect(() => parseActualBalance('12.345', 'UAH')).toThrow();
+  });
+
+  it('Unlike an opening balance, an untouched field is not a recount to zero', () => {
+    expect(parseOpeningBalance('', 'UAH')).toEqual(money(0, 'UAH'));
+    expect(() => parseActualBalance('', 'UAH')).toThrow();
+  });
+});
+
+describe('formatSignedMoney', () => {
+  it('A difference says which way it goes', () => {
+    expect(formatSignedMoney(money(3000, 'UAH'))).toBe('+30,00 UAH');
+    expect(formatSignedMoney(money(-2000, 'UAH'))).toBe('−20,00 UAH');
+  });
+
+  it('Zero carries no sign', () => {
+    expect(formatSignedMoney(money(0, 'UAH'))).toBe('0,00 UAH');
   });
 });

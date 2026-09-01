@@ -13,7 +13,46 @@ describe('the Налаштування sections', () => {
       'Цілі',
       'Імпорт Saldo',
       'monobank',
+      'Сповіщення банків',
+      'Нагадування',
+      'Бекап',
     ]);
+  });
+
+  it('Scenario: The reminders section opens the reminder and its time', () => {
+    const reminders = SETTINGS_SECTIONS.find((section) => section.title === 'Нагадування')!;
+
+    // One flow, not three: the permission, the switch with its time, and what the app announces
+    // all live behind the same row.
+    expect(reminders.href).toBe('/manage/reminders');
+    expect(reminders.hint).toContain('нагадування');
+    expect(reminders.hint).toContain('повідомляє');
+    // Beside «Сповіщення банків», which is the incoming direction of the same subject, and above
+    // «Бекап».
+    const titles = SETTINGS_SECTIONS.map((section) => section.title);
+    expect(titles.indexOf('Нагадування')).toBe(titles.indexOf('Сповіщення банків') + 1);
+    expect(titles.indexOf('Нагадування')).toBe(titles.indexOf('Бекап') - 1);
+  });
+
+  it('Scenario: The backup section opens saving and restoring', () => {
+    const backup = SETTINGS_SECTIONS.find((section) => section.title === 'Бекап')!;
+
+    // One flow, not two: saving the whole state to a file and restoring it from one live behind
+    // the same row.
+    expect(backup.href).toBe('/manage/backup');
+    expect(backup.hint).toContain('файл');
+    expect(backup.hint).toContain('відновити');
+  });
+
+  it('Scenario: The bank-notifications section opens access and watches', () => {
+    const notifications = SETTINGS_SECTIONS.find(
+      (section) => section.title === 'Сповіщення банків',
+    )!;
+
+    // One flow, not two: the access state and the watched apps live behind the same row.
+    expect(notifications.href).toBe('/manage/notifications');
+    expect(notifications.hint).toContain('Доступ');
+    expect(notifications.hint).toContain('застосунки');
   });
 
   it('Scenario: The monobank section opens connection management', () => {
