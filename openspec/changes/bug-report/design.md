@@ -180,10 +180,12 @@ way.
 
 The option is project-wide, so the guard it removes is replaced rather than dropped:
 `no-restricted-imports` on `react-native/*` in `eslint.config.js` moves that guard into
-`npm run verify`, where it is a gate rather than a banner, and the one deliberate exception is
-waived on its own line beside the existing `no-require-imports` disable. Coverage strictly
-improves: `@typescript-eslint/no-require-imports` catches only the `require` form, and only as a
-warning, while `import … from 'react-native/…'` is today caught by nothing at all.
+`npm run verify`, where it is a gate rather than a banner. It needs no exception beside the
+existing `no-require-imports` disable: the rule listens on `import`/`export` syntax only, never
+on a `require()` call, so the one deliberate deep import — which is a `require()` — never trips
+it. Coverage strictly improves: `@typescript-eslint/no-require-imports` catches only the
+`require` form, and only as a warning, while `import … from 'react-native/…'` was caught by
+nothing at all before this rule.
 
 **D5. Storage: three tables, one migration, all outside the бекап.** `journal(id text pk, at
 integer ms, kind text, name text, detail text null)` — pruned and read in insertion order, `at`
