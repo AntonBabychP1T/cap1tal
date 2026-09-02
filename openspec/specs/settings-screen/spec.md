@@ -11,14 +11,15 @@ Opening it SHALL offer «Перші кроки», which opens the setup view, an
 «Джерела» and «Правила», each opening its management list, «Ліміти», which opens limit
 management, «Цілі», which opens goal management, «Імпорт Saldo», which opens the one-time import
 flow, «monobank», which opens token, account linking and sync management,
-«Сповіщення банків», which opens notification access and watched apps management, and «Бекап»,
-which opens saving the whole state to one file and restoring it from one.
+«Сповіщення банків», which opens notification access and watched apps management, «Бекап»,
+which opens saving the whole state to one file and restoring it from one, and «Репорти про
+помилки», which opens the list of репорти and filing a new one.
 
 #### Scenario: The tab opens on its sections
 
 - **WHEN** the owner opens «Налаштування»
 - **THEN** the sections «Перші кроки», «Категорії», «Джерела», «Правила», «Ліміти», «Цілі»,
-  «Імпорт Saldo», «monobank», «Сповіщення банків» and «Бекап» are offered
+  «Імпорт Saldo», «monobank», «Сповіщення банків», «Бекап» and «Репорти про помилки» are offered
 
 #### Scenario: The import section opens the import flow
 
@@ -45,6 +46,11 @@ which opens saving the whole state to one file and restoring it from one.
 
 - **WHEN** the owner opens «Бекап»
 - **THEN** saving the whole state to one file and restoring it from one are available in one flow
+
+#### Scenario: The bug-reports section opens the list
+
+- **WHEN** the owner opens «Репорти про помилки»
+- **THEN** the list of saved репорти and «Повідомити про помилку» are available in one flow
 
 ### Requirement: The Категорії and Джерела sections manage the lists
 
