@@ -16,6 +16,7 @@ import {
   FEES_CATEGORY_ID,
   INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
   type Correction,
   type Income,
   type Transaction,
@@ -32,7 +33,7 @@ import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
  */
 const VOCABULARY = {
   categories: ['food', 'clothes', 'electronics', UNCATEGORISED_CATEGORY_ID, FEES_CATEGORY_ID],
-  sources: ['salary'],
+  sources: ['salary', UNSOURCED_SOURCE_ID],
 } as const;
 
 const card = account({
@@ -1408,5 +1409,115 @@ describe('transactionsRepo search', () => {
     repo.search({ ...page, month: '2026-03' });
 
     expect(repo.listAll()).toEqual(before);
+  });
+});
+
+/**
+ * The count behind «Потребує уваги» on Головний. It is a read of what «Без категорії» already is —
+ * no new state, and nothing stored to produce it — so what is worth proving is its scope: it looks
+ * past the стрічка's ceiling, and it counts витрати and nothing else.
+ */
+describe('transactionsRepo uncategorised count', () => {
+  let storage: TestStorage;
+  let repo: TransactionsRepo;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    seedAccounts(storage);
+    repo = transactionsRepo(storage.db);
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('An empty database has nothing waiting', () => {
+    expect(repo.countUncategorised()).toBe(0);
+  });
+
+  it('Scenario: The count is of everything stored, not of the latest ones', () => {
+    // Seven uncategorised витрати, older than the five the стрічка shows: the newest five carry a
+    // категорія, so counting what the screen holds would answer nothing waiting at all.
+    for (let day = 1; day <= 7; day += 1) {
+      repo.save(
+        expenseByDefault({
+          id: `u-${day}`,
+          date: `2026-08-${String(day).padStart(2, '0')}`,
+          accountId: 'card',
+          amount: money(1000 * day, 'UAH'),
+        }),
+        storedAt,
+      );
+    }
+    for (let day = 20; day <= 24; day += 1) {
+      repo.save(
+        expenseByDefault({
+          id: `c-${day}`,
+          date: `2026-08-${day}`,
+          accountId: 'card',
+          amount: money(5000, 'UAH'),
+          categoryId: 'food',
+        }),
+        storedAt,
+      );
+    }
+
+    expect(repo.listLatest(5).every((t) => t.id.startsWith('c-'))).toBe(true);
+    expect(repo.countUncategorised()).toBe(7);
+  });
+
+  it('Scenario: A дохід «Без джерела» is not counted', () => {
+    const income: Income = {
+      id: 'i-1',
+      type: 'income',
+      date: '2026-08-24',
+      accountId: 'card',
+      amount: money(500000, 'UAH'),
+      sourceId: UNSOURCED_SOURCE_ID,
+    };
+    repo.save(income, storedAt);
+
+    expect(repo.countUncategorised()).toBe(0);
+  });
+
+  it('A переказ and a коригування count toward nothing either', () => {
+    repo.save(
+      transfer({
+        id: 't-1',
+        date: '2026-08-24',
+        fromAccountId: 'card',
+        toAccountId: 'wallet',
+        left: money(10000, 'UAH'),
+        arrived: money(10000, 'UAH'),
+      }),
+      storedAt,
+    );
+    const correction: Correction = {
+      id: 'k-1',
+      type: 'correction',
+      date: '2026-08-24',
+      accountId: 'card',
+      amount: money(-3000, 'UAH'),
+    };
+    repo.save(correction, storedAt);
+
+    expect(repo.countUncategorised()).toBe(0);
+  });
+
+  it('Categorising one lowers the count under the same id', () => {
+    const uncategorised = expenseByDefault({
+      id: 'e-1',
+      date: '2026-08-24',
+      accountId: 'card',
+      amount: money(8000, 'UAH'),
+    });
+    repo.save(uncategorised, storedAt);
+    expect(repo.countUncategorised()).toBe(1);
+
+    repo.save({ ...uncategorised, categoryId: 'food' }, storedAt);
+
+    expect(repo.countUncategorised()).toBe(0);
+    expect(repo.listAll()).toHaveLength(1);
   });
 });

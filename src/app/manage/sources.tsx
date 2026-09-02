@@ -14,6 +14,7 @@ export default function SourcesScreen() {
   return (
     <ManageListScreen
       title="Джерела"
+      where="sources"
       hint="Звідки прийшли гроші. Архівне джерело лишається на своїх доходах, але його більше не пропонують."
       load={useCallback(() => manageSources(sourcesRepo.list()), [])}
       create={useCallback((name: string) => {

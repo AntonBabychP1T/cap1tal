@@ -26,8 +26,10 @@ import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
 import { dateOfEpochMs, todayIso } from '@/ui/dates';
+import { failureAlert } from '@/ui/failure-alert';
+import { journal } from '@/ui/journal';
 import { newId } from '@/ui/id';
-import { failureMessage, KIND_CHOICES } from '@/ui/labels';
+import { KIND_CHOICES } from '@/ui/labels';
 import {
   boundaryConfirmation,
   CLIPBOARD_NO_TOKEN,
@@ -85,6 +87,14 @@ interface Draft {
 
 export default function MonobankScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const [stored, reload] = useReloadOnFocus(
     useCallback(
       () => ({
@@ -247,11 +257,20 @@ export default function MonobankScreen() {
   const submit = useCallback(async () => {
     const typed = candidate.trim();
     if (typed === '') {
-      Alert.alert('Не збережено', 'Вставте токен із monobank API');
+      // A refusal in a dialog like any other, and journaled like any other: the app's own words,
+      // which carry nothing of the token because there was none to carry.
+      Alert.alert(
+        ...failureAlert({
+          title: 'Не збережено',
+          where: 'monobank-token',
+          error: 'Вставте токен із monobank API',
+          report: reportBug,
+        }),
+      );
       return;
     }
     await submitToken(typed);
-  }, [candidate, submitToken]);
+  }, [candidate, reportBug, submitToken]);
 
   /**
    * The whole of "get a token": monobank's own page opens in the in-app browser, and closing it
@@ -314,10 +333,12 @@ export default function MonobankScreen() {
         setLinking(undefined);
         reload();
       } catch (error) {
-        Alert.alert('Не приєднано', failureMessage(error));
+        Alert.alert(
+          ...failureAlert({ title: 'Не приєднано', where: 'monobank-link', error, report: reportBug }),
+        );
       }
     },
-    [reload],
+    [reload, reportBug],
   );
 
   /** The owner confirms the boundary before the link exists; declining leaves nothing behind. */
@@ -349,9 +370,11 @@ export default function MonobankScreen() {
       setLinking(undefined);
       reload();
     } catch (error) {
-      Alert.alert('Не приєднано', failureMessage(error));
+      Alert.alert(
+        ...failureAlert({ title: 'Не приєднано', where: 'monobank-link-new-account', error, report: reportBug }),
+      );
     }
-  }, [boundary, draft, reload]);
+  }, [boundary, draft, reload, reportBug]);
 
   /**
    * The whole reviewed set, accepted at once: every proposal still standing becomes a link, and
@@ -400,12 +423,14 @@ export default function MonobankScreen() {
             });
             reload();
           } catch (error) {
-            Alert.alert('Не приєднано', failureMessage(error));
+            Alert.alert(
+              ...failureAlert({ title: 'Не приєднано', where: 'monobank-link-many', error, report: reportBug }),
+            );
           }
         },
       },
     ]);
-  }, [accepted, boundary, reload]);
+  }, [accepted, boundary, reload, reportBug]);
 
   const unlink = useCallback(
     (monobankAccountId: string, name: string) => {
@@ -454,9 +479,14 @@ export default function MonobankScreen() {
       // A sync outlives the owner's patience for watching it — a minute per request — so this is
       // the failure they are least likely to be looking at. `attended()` is read now rather than
       // when the run started, because leaving the app mid-sync is the whole case.
-      await (syncFailed(result)
-        ? raiseAlert('monobank-sync', { attended: attended() }, ALERT_PORTS)
-        : clearAlert('monobank-sync', ALERT_PORTS));
+      if (syncFailed(result)) {
+        // Shown in place on this screen, like the бекап's: no dialog, so no offer — but the
+        // журнал holds it with the same words the summary says, and the section reports it.
+        journal.failure('monobank-sync', syncSummary(result, names).headline);
+        await raiseAlert('monobank-sync', { attended: attended() }, ALERT_PORTS);
+      } else {
+        await clearAlert('monobank-sync', ALERT_PORTS);
+      }
     } finally {
       setBusy(false);
     }

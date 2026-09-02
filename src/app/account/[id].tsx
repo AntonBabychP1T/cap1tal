@@ -28,8 +28,9 @@ import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountFromDraft, draftFrom, type AccountDraft } from '@/ui/account-form';
 import { accountMovements, reconcileTyped } from '@/ui/account-movements';
 import { todayIso } from '@/ui/dates';
+import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
-import { failureMessage, kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/ui/labels';
+import { kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/ui/labels';
 import {
   accountsById,
   feedSubtitle,
@@ -56,6 +57,14 @@ const CURRENCY_CHOICES = OFFERED_CURRENCIES.map((c) => ({ value: c, label: c }))
 
 export default function AccountMovementsScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const [stored, reload] = useReloadOnFocus(
@@ -123,9 +132,11 @@ export default function AccountMovementsScreen() {
       setDraft(undefined);
       reload();
     } catch (error) {
-      Alert.alert('Не збережено', failureMessage(error));
+      Alert.alert(
+        ...failureAlert({ title: 'Не збережено', where: 'account-save', error, report: reportBug }),
+      );
     }
-  }, [draft, reload]);
+  }, [draft, reload, reportBug]);
 
   const setArchived = useCallback(
     (archived: boolean) => {
@@ -135,10 +146,12 @@ export default function AccountMovementsScreen() {
         setDraft(undefined);
         reload();
       } catch (error) {
-        Alert.alert('Не збережено', failureMessage(error));
+        Alert.alert(
+          ...failureAlert({ title: 'Не збережено', where: 'account-archive', error, report: reportBug }),
+        );
       }
     },
-    [reload, stored.account],
+    [reload, reportBug, stored.account],
   );
 
   /**
@@ -173,15 +186,19 @@ export default function AccountMovementsScreen() {
               setActual('');
               reload();
             } catch (error) {
-              Alert.alert('Не збережено', failureMessage(error));
+              Alert.alert(
+                ...failureAlert({ title: 'Не збережено', where: 'account-reconcile-save', error, report: reportBug }),
+              );
             }
           },
         },
       ]);
     } catch (error) {
-      Alert.alert('Не звірено', failureMessage(error));
+      Alert.alert(
+        ...failureAlert({ title: 'Не звірено', where: 'account-reconcile', error, report: reportBug }),
+      );
     }
-  }, [actual, movements, reload, stored.account]);
+  }, [actual, movements, reload, reportBug, stored.account]);
 
   // A рахунок that has been deleted from under the screen — or an id that never named one — says
   // so rather than rendering a blank list of someone else's money.

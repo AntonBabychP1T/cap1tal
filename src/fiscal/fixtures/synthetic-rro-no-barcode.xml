@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC, not an observed receipt. Hand-built from the ФСКО packet format: all eight <P>
+     rows of rro-real-grocery-8-items.xml carry CD and most carry PRC, so "a row without a unit
+     price stays without one" and "a barcode is absent when not present" had no fixture in this
+     dialect. Row 2 carries neither CD nor PRC nor Q — the shape a registrar prints when the
+     quantity is one. -->
+<RQ NDv="DATECS FP-T88" PrV="5.03" V="1"><DAT DI="678663" DT="0" FN="3000909908" TN="ПН 000000000000" V="1" ZN="ZN00000000"><C AT_V="2" T="0"><P AT_TL="0" C="12" N="2" NM="Послуга без штрихкоду" SM="4500" TX="1"></P><P AT_TL="0" AT_TM="шт" C="13" CD="4820000000031" N="3" NM="Товар зі штрихкодом" PRC="1500" Q="2000" SM="3000" TX="1"></P><E AT_NS="596" CS="15" FN="3000909908" N="4" NO="696584" SM="7500" TS="20260430111500"></E></C><TS>20260430111500</TS></DAT><MAC DI="0" NT="0">AAAA</MAC></RQ>

@@ -210,6 +210,17 @@
       hand, screenshot the version list, the named confirmation, and the restored Головний and
       Рахунки matching what was backed up — the whole point of the change, proven once.
 
+## 12. Note from `fiscal-receipts` (2026-09-02)
+
+- [ ] 12.1 «The tab tells the truth about what leaves the phone» must name a third outbound
+      connection. `fiscal-receipts` landed in the tree on 2026-09-02 and added one: the lookup of
+      a фіскальний чек by its реквізити at the tax service (`cabinet.tax.gov.ua`), made only on the
+      owner's explicit tap. Its own spec could not amend a requirement that is still in flight
+      here, so the amendment belongs to whichever of the two changes archives second — this note
+      is that change's reminder. Add the чек lookup to the requirement's sentence and to both of
+      its scenarios («… the monobank requests **and the чек lookups the owner asks for**»), and to
+      the section's text on «Налаштування».
+
 ## 11. Verification
 
 - [ ] 11.1 Run `npm run verify` and paste the final lines

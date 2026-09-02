@@ -9,7 +9,8 @@ the UI. Terms are defined in [glossary.md](glossary.md).
 
 ## 1. Who it is for and the problem
 
-- One person, one primary phone. Data is not shared with anyone. The database remains local-first;
+- One person, one primary phone. Data is not shared with anyone, except one file the owner
+  themselves hands to an app they pick (§17). **[PROPOSED]** The database remains local-first;
   the owner may opt into a private daily backup in their own Google Drive for recovery on a new
   phone. This is backup synchronisation, not a shared account or live multi-device editing.
 - Other people may install the app for themselves, so nothing personal is hardcoded into it.
@@ -25,8 +26,10 @@ the UI. Terms are defined in [glossary.md](glossary.md).
 
 ## 3. What the user needs first
 
-- On opening the app: add a transaction, and see the latest transactions. Everything else lives
-  elsewhere and is one step away.
+- On opening the app: read the state of the month in a few seconds — how much is left of it, what
+  it has cost, what is waiting for an answer — and see the latest transactions. Adding a
+  transaction is one tap away, behind the «+»: the app is opened to look far more often than to
+  record, and the form used to stand between the owner and everything worth reading.
 
 ## 4. Core entities and their boundaries
 
@@ -151,6 +154,15 @@ Not in v1: forecasts ("at this pace you will have X left").
 - The phone's database is the primary truth and the app works offline. Outbound connections are
   limited to the monobank API and exchange rate, plus Google Drive only after the owner explicitly
   connects it for backup. There is no analytics and no cap1tal server account.
+- An AI-аналіз hands a file of already computed numbers to an app the owner picks in the phone's
+  own chooser. That is the owner's hand-off, not a connection the app makes; the app never reads
+  an answer back, and nothing about the file, the run or the answer is stored. **[PROPOSED]**
+- A репорт про помилку is the app's own record of a bug — what the owner wrote, the build, the
+  device, the журнал and any screenshots they attached — kept on the phone and handed to an app
+  the owner picks, one file at a time, exactly like an AI-аналіз. It carries no сума, назва, опис,
+  bank text or token; the one thing it quotes is the app's own refusal, which the owner reads whole
+  before handing it over. The app sends none of it anywhere on its own, and there is no service to
+  send it to. **[PROPOSED]**
 - Bank notifications are captured and parsed on the device. Raw notification payloads and the local
   capture queue never enter the Google Drive backup and are never sent to a server.
 - Backup has one versioned file format. The owner can export/import that file manually. When Google
@@ -166,7 +178,7 @@ Not in v1: forecasts ("at this pace you will have X left").
 ## 13. Reminders and operational notifications
 
 - The owner may enable one local daily reminder at a chosen time to record and review expenses.
-  Tapping it opens the place where a transaction can be added and pending drafts can be checked.
+  Tapping it opens Головний, where the pending drafts wait and the «+» records the day's expenses.
 - cap1tal may send a local notification when an action failed and needs attention: import, save,
   local or Google Drive backup, or notification capture/processing. The notification says only what
   action failed, exposes no bank text or secret on the lock screen, and leads to details and retry.
@@ -218,3 +230,11 @@ Still open, to be decided when relevant:
 
 - Whether the monthly picture should also show the approximate-UAH totals per account kind, or only
   the grand total.
+
+## 17. AI-аналіз **[PROPOSED]**
+
+The app may explain its numbers with the help of a language model — an assistant the owner already
+has, or later a model on the phone. The model is never a source of truth: every number it sees is
+computed by the app, per currency; it interprets, and it changes nothing. By default it sees
+aggregates only; описи and individual транзакції leave the phone only when the owner switches them
+on for that run.

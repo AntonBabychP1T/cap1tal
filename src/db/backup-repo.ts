@@ -11,12 +11,14 @@ import {
   categoryLimits,
   dailyReminder,
   entryDefaults,
+  fiscalReceipts,
   goals,
   monobankAccounts,
   monobankImportedItems,
   monobankLinks,
   notificationDrafts,
   notificationWatches,
+  receiptItems,
   rules,
   saldoImport,
   sources,
@@ -148,6 +150,53 @@ export function backupRepo(db: Storage): BackupStore {
           .orderBy(asc(notificationWatches.packageName))
           .all()
           .map((row) => ({ packageName: row.packageName, accountId: row.accountId })),
+        // Every чек with its снапшот, and every позиція — by id, like everything else here, so
+        // two reads of one unchanged device produce the same бекап byte for byte.
+        receipts: db
+          .select()
+          .from(fiscalReceipts)
+          .orderBy(asc(fiscalReceipts.id))
+          .all()
+          .map((row) => ({
+            id: row.id,
+            transactionId: row.transactionId,
+            registrarNumber: row.registrarNumber,
+            fiscalNumber: row.fiscalNumber,
+            issuedDate: row.issuedDate,
+            issuedTime: row.issuedTime,
+            dialect: row.dialect === 'rro' ? ('rro' as const) : ('prro' as const),
+            kind: row.kind === 'return' ? ('return' as const) : ('sale' as const),
+            total: money(row.totalAmount, row.totalCurrency),
+            // Absent, never `null`: what is read back has to equal what was written.
+            ...(row.sellerName === null ? {} : { sellerName: row.sellerName }),
+            ...(row.pointName === null ? {} : { pointName: row.pointName }),
+            acquisition: 'qr_scan' as const,
+            fetchedAtMs: row.fetchedAt.getTime(),
+            snapshot: row.snapshot,
+          })),
+        receiptItems: db
+          .select()
+          .from(receiptItems)
+          .orderBy(asc(receiptItems.id))
+          .all()
+          .map((row) => ({
+            id: row.id,
+            receiptId: row.receiptId,
+            line: row.line,
+            rawName: row.rawName,
+            quantityThousandths: row.quantityThousandths,
+            ...(row.unit === null ? {} : { unit: row.unit }),
+            ...(row.unitPriceAmount === null || row.unitPriceCurrency === null
+              ? {}
+              : { unitPrice: money(row.unitPriceAmount, row.unitPriceCurrency) }),
+            lineTotal: money(row.lineTotalAmount, row.lineTotalCurrency),
+            ...(row.discountAmount === null || row.discountCurrency === null
+              ? {}
+              : { discount: money(row.discountAmount, row.discountCurrency) }),
+            ...(row.barcode === null ? {} : { barcode: row.barcode }),
+            ...(row.uktzed === null ? {} : { uktzed: row.uktzed }),
+            ...(row.code === null ? {} : { code: row.code }),
+          })),
         // The one setting a бекап carries about the app's own voice, and only when the owner has
         // ever set it: an absent one restores as off rather than as somebody else's 21:00.
         ...(reminder
@@ -178,6 +227,7 @@ export function backupRepo(db: Storage): BackupStore {
       for (const entry of state.transactions) isoDate(entry.transaction.date);
       for (const goal of state.goals) isoDate(goal.deadline);
       for (const link of state.monobankLinks) isoDate(link.syncStartDate);
+      for (const receipt of state.receipts) isoDate(receipt.issuedDate);
 
       db.transaction((tx) => {
         // Deleted in reference order: nothing is removed while something still points at it.
@@ -190,6 +240,11 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(notificationDrafts).run();
         tx.delete(entryDefaults).run();
         tx.delete(notificationWatches).run();
+        // The чек rows go before the транзакції they hang under. The cascade would take them
+        // anyway, but this file deletes in reference order and says so — a restore that leaned on
+        // a cascade would be one `PRAGMA foreign_keys = OFF` away from leaving orphans behind.
+        tx.delete(receiptItems).run();
+        tx.delete(fiscalReceipts).run();
         tx.delete(goals).run();
         tx.delete(categoryLimits).run();
         tx.delete(rules).run();
@@ -204,7 +259,11 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(sources).run();
         // `monobank_rates`, `notification_fingerprints` and `alerts` are untouched, deliberately:
         // a cache, the memory that stops an already-decided notification drafting twice, and what
-        // this phone is currently failing at — none of which is the owner's money.
+        // this phone is currently failing at — none of which is the owner's money. `journal`,
+        // `bug_reports` and `bug_report_screenshots` join them for the same reason and one more:
+        // they are this phone's memory of its own bugs, and a відновлення that wiped them would
+        // take the evidence of the bug the owner is in the middle of reporting — restoring a бекап
+        // is exactly the kind of thing they might be doing when it goes wrong.
 
         // Inserted in dependency order: what is pointed at exists before what points at it.
         for (const a of state.accounts) {
@@ -290,6 +349,49 @@ export function backupRepo(db: Storage): BackupStore {
         for (const watch of state.watches) {
           tx.insert(notificationWatches)
             .values({ packageName: watch.packageName, accountId: watch.accountId })
+            .run();
+        }
+        // After the транзакції they point at, and the позиції after their чек.
+        for (const receipt of state.receipts) {
+          tx.insert(fiscalReceipts)
+            .values({
+              id: receipt.id,
+              transactionId: receipt.transactionId,
+              registrarNumber: receipt.registrarNumber,
+              fiscalNumber: receipt.fiscalNumber,
+              issuedDate: receipt.issuedDate,
+              issuedTime: receipt.issuedTime,
+              dialect: receipt.dialect,
+              kind: receipt.kind,
+              totalAmount: receipt.total.amount,
+              totalCurrency: receipt.total.currency,
+              sellerName: receipt.sellerName ?? null,
+              pointName: receipt.pointName ?? null,
+              acquisition: receipt.acquisition,
+              fetchedAt: new Date(receipt.fetchedAtMs),
+              snapshot: receipt.snapshot,
+            })
+            .run();
+        }
+        for (const item of state.receiptItems) {
+          tx.insert(receiptItems)
+            .values({
+              id: item.id,
+              receiptId: item.receiptId,
+              line: item.line,
+              rawName: item.rawName,
+              quantityThousandths: item.quantityThousandths,
+              unit: item.unit ?? null,
+              unitPriceAmount: item.unitPrice?.amount ?? null,
+              unitPriceCurrency: item.unitPrice?.currency ?? null,
+              lineTotalAmount: item.lineTotal.amount,
+              lineTotalCurrency: item.lineTotal.currency,
+              discountAmount: item.discount?.amount ?? null,
+              discountCurrency: item.discount?.currency ?? null,
+              barcode: item.barcode ?? null,
+              uktzed: item.uktzed ?? null,
+              code: item.code ?? null,
+            })
             .run();
         }
         if (state.saldoImportCommittedAtMs !== undefined) {

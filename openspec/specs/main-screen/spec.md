@@ -1,9 +1,12 @@
 # main-screen Specification
 
 ## Purpose
-The Головний screen — what the owner sees on opening the app: recording a transaction by hand
-with the minimum of fields, and the latest transactions with editing one tap away. It is the
-first answer to "where did the money go": nothing can be answered until spending can be recorded.
+The Головний screen — what the owner sees on opening the app: the month's залишилось as its
+figure, what the рахунки hold beneath it, what is waiting on the owner, and the latest транзакції
+with editing one tap away. Recording is behind the «+» over its corner, on a screen of its own,
+with the minimum of fields. It carries both product questions at their shortest: where the money
+went, and how much of the month is left — and nothing can be answered until spending can be
+recorded, which is what the «+» is for.
 ## Requirements
 ### Requirement: Opening the app shows quick entry and the latest transactions
 

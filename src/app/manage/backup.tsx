@@ -9,6 +9,7 @@ import { backup as backupRepo } from '@/db/repos';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
+import { journal } from '@/ui/journal';
 import { backupFiles } from '@/platform/backup-file-device';
 import {
   backOut,
@@ -55,6 +56,9 @@ export default function BackupScreen() {
   const settle = useCallback((next: BackupScreenState) => {
     setState(next);
     if (next.kind === 'failed') {
+      // Shown on the screen rather than in a dialog, so there is no button to hang «Повідомити
+      // про помилку» on — the журнал still gets it, and the owner reports it from the section.
+      journal.failure('backup', next.message);
       void raiseAlert('backup', { attended: attended() }, ALERT_PORTS);
       return;
     }

@@ -111,7 +111,7 @@ describe('monobankAccountRows', () => {
       now,
     });
 
-    expect(rows.map((row) => row.bankBalance)).toEqual(['1234,50 USD', '3000,00 UAH']);
+    expect(rows.map((row) => row.bankBalance)).toEqual(['1 234,50 USD', '3 000,00 UAH']);
     // No combined or converted figure exists to replace either one.
     expect(rows.map((row) => row.currency).sort()).toEqual(['UAH', 'USD']);
   });

@@ -116,7 +116,7 @@ describe('approximateTotals', () => {
     );
 
     // 20000 × 41,2534 = 825068 kopiykas, plus the 705000 already in UAH.
-    expect(approximate).toBe('≈ 15300,68 грн');
+    expect(approximate).toBe('≈ 15 300,68 грн');
   });
 
   it('Scenario: An unknown rate hides the approximation, not the totals', () => {
@@ -137,15 +137,18 @@ describe('approximateTotals', () => {
     expect(approximateTotals([], [usdRate])).toBeNull();
   });
 
-  it('A negative total keeps its sign', () => {
-    expect(approximateTotals([money(-20000, 'USD')], [usdRate])).toBe('≈ -8250,68 грн');
+  it('A negative total keeps its sign, and it is the same minus the amounts wear', () => {
+    // The typographic «−» of `formatMoney`, not the hyphen an input field round-trips: this line
+    // is read beside the per-currency amounts, and two different minus signs in one card is the
+    // kind of detail that makes a screen look assembled rather than designed.
+    expect(approximateTotals([money(-20000, 'USD')], [usdRate])).toBe('≈ −8 250,68 грн');
   });
 });
 
 describe('totalsLine', () => {
   it('Two currencies read as two amounts, never as one', () => {
     expect(totalsLine([money(705000, 'UAH'), money(20000, 'USD')])).toBe(
-      '7050,00 UAH · 200,00 USD',
+      '7 050,00 UAH · 200,00 USD',
     );
   });
 

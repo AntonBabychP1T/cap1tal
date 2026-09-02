@@ -1,0 +1,15 @@
+{
+  "check": "<base64>",
+  "fn": "4000146829",
+  "name": null,
+  "addressGo": null,
+  "typeGo": null,
+  "tins": null,
+  "xml": true,
+  "sign": true,
+  "qr": false,
+  "resultCode": null,
+  "resultText": "",
+  "checkXml": "<base64>",
+  "checkP7s": "<base64>"
+}

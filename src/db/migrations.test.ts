@@ -15,11 +15,15 @@ import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mapp
 import {
   accounts,
   alerts,
+  bugReportScreenshots,
+  bugReports,
   categories,
   categoryLimits,
   dailyReminder,
   entryDefaults,
+  fiscalReceipts,
   goals,
+  journal,
   monobankAccounts,
   monobankImportedItems,
   monobankLinks,
@@ -27,6 +31,7 @@ import {
   notificationDrafts,
   notificationFingerprints,
   notificationWatches,
+  receiptItems,
   rules,
   saldoImport,
   sources,
@@ -1696,6 +1701,371 @@ describe('migrations — the moment a link last completed a sync', () => {
       expect(staged.db.select().from(monobankLinks).get()?.lastSyncedAt).toEqual(new Date(0));
     } finally {
       staged.close();
+    }
+  });
+});
+
+/**
+ * The чек tables. Their own describe for the reason the import marker and the monobank links have
+ * one: what matters on the owner's phone is that a database already full of their money gains two
+ * empty tables and is otherwise exactly as it was.
+ */
+describe('migrations — фіскальні чеки', () => {
+  /** Every migration but the чек one, so «before» is a real device from the previous release. */
+  const BEFORE_RECEIPTS = 11;
+
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    storage.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+  });
+
+  afterEach(() => storage.close());
+
+  const insertReceipt = (db: TestStorage['db'], over: Record<string, unknown> = {}) =>
+    db
+      .insert(fiscalReceipts)
+      .values({
+        id: 'r1',
+        transactionId: 'e1',
+        registrarNumber: '3000909908',
+        fiscalNumber: '696582',
+        issuedDate: '2026-04-29',
+        issuedTime: '22:20:06',
+        dialect: 'rro',
+        kind: 'sale',
+        totalAmount: 43740,
+        totalCurrency: 'UAH',
+        acquisition: 'qr_scan',
+        fetchedAt: new Date('2026-04-29T19:30:00.000Z'),
+        snapshot: '<RQ/>',
+        ...over,
+      })
+      .run();
+
+  it('Scenario: A fresh database starts empty of чеки', () => {
+    expect(storage.db.select().from(fiscalReceipts).all()).toEqual([]);
+    expect(storage.db.select().from(receiptItems).all()).toEqual([]);
+
+    storage.db.insert(transactions).values(toTransactionRow(oneOfEachType[0] as Transaction)).run();
+    insertReceipt(storage.db);
+    storage.db
+      .insert(receiptItems)
+      .values({
+        id: 'i1',
+        receiptId: 'r1',
+        line: 5,
+        rawName: 'ВодаНегазованаМиргородська1,5',
+        quantityThousandths: 1000,
+        lineTotalAmount: 2340,
+        lineTotalCurrency: 'UAH',
+      })
+      .run();
+
+    expect(storage.db.select().from(fiscalReceipts).all()).toHaveLength(1);
+    expect(storage.db.select().from(receiptItems).all()).toHaveLength(1);
+  });
+
+  it('Scenario: Existing data survives the migration', () => {
+    const staged = openTestDbMigratedTo(BEFORE_RECEIPTS);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      for (const t of oneOfEachType) {
+        staged.db.insert(transactions).values(toTransactionRow(t)).run();
+      }
+      staged.db.insert(categoryLimits).values({ categoryId: 'food', amount: 250000, currency: 'UAH' }).run();
+      staged.db
+        .insert(goals)
+        .values({ id: 'g1', name: 'Авто', amount: 500000, currency: 'UAH', deadline: '2027-01-01', accountId: 'jar' })
+        .run();
+      staged.db.insert(saldoImport).values({ id: 'saldo', committedAt: new Date(1) }).run();
+      staged.db.insert(notificationWatches).values({ packageName: 'ua.mono', accountId: 'card' }).run();
+      staged.db.insert(notificationFingerprints).values({ fingerprint: 'f1' }).run();
+      staged.db.insert(dailyReminder).values({ id: 'reminder', enabled: true, hour: 21, minute: 0 }).run();
+      staged.db.insert(alerts).values({ kind: 'monobank-sync', raisedAt: new Date(2) }).run();
+      staged.db.insert(monobankRates).values({ currency: 'USD', rateMillionths: 41_000_000, obtainedAt: new Date(3) }).run();
+      const before = staged.db.select().from(transactions).all().map(toTransaction);
+
+      staged.migrateToLatest();
+
+      // Every existing value loads unchanged...
+      expect(staged.db.select().from(transactions).all().map(toTransaction)).toEqual(before);
+      expect(staged.db.select().from(accounts).all().map(toAccount)).toHaveLength(2);
+      expect(staged.db.select().from(categoryLimits).all()).toHaveLength(1);
+      expect(staged.db.select().from(goals).all()).toHaveLength(1);
+      expect(staged.db.select().from(saldoImport).all()).toHaveLength(1);
+      expect(staged.db.select().from(notificationWatches).all()).toHaveLength(1);
+      expect(staged.db.select().from(notificationFingerprints).all()).toHaveLength(1);
+      expect(staged.db.select().from(dailyReminder).all()).toHaveLength(1);
+      expect(staged.db.select().from(alerts).all()).toHaveLength(1);
+      expect(staged.db.select().from(monobankRates).all()).toHaveLength(1);
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+
+      // ...no транзакція holds a чек...
+      expect(staged.db.select().from(fiscalReceipts).all()).toEqual([]);
+
+      // ...and a чек with its позиції can be stored.
+      insertReceipt(staged.db);
+      staged.db
+        .insert(receiptItems)
+        .values({
+          id: 'i1',
+          receiptId: 'r1',
+          line: 9,
+          rawName: 'Снек Кіндер Мілк Слайс 28г',
+          quantityThousandths: 2000,
+          unit: 'шт',
+          unitPriceAmount: 2590,
+          unitPriceCurrency: 'UAH',
+          lineTotalAmount: 5180,
+          lineTotalCurrency: 'UAH',
+          barcode: '40084725',
+        })
+        .run();
+      expect(staged.db.select().from(receiptItems).all()).toHaveLength(1);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('The migrated shape keeps a second чек off one транзакція, and one identity to one чек', () => {
+    storage.db.insert(transactions).values(toTransactionRow(oneOfEachType[0] as Transaction)).run();
+    storage.db.insert(transactions).values(toTransactionRow(oneOfEachType[1] as Transaction)).run();
+    insertReceipt(storage.db);
+
+    // A транзакція carries at most one чек — the constraint, not a rule a repository remembers.
+    expect(() => insertReceipt(storage.db, { id: 'r2', fiscalNumber: '999' })).toThrow();
+    // And two чеки of one identity are one чек, whatever транзакція the second names.
+    expect(() =>
+      insertReceipt(storage.db, { id: 'r3', transactionId: oneOfEachType[1]?.id as string }),
+    ).toThrow();
+  });
+
+  it('The migrated shape keeps a чек from outliving its транзакція', () => {
+    storage.db.insert(transactions).values(toTransactionRow(oneOfEachType[0] as Transaction)).run();
+    insertReceipt(storage.db);
+    storage.db
+      .insert(receiptItems)
+      .values({ id: 'i1', receiptId: 'r1', line: 1, rawName: 'Молоко', quantityThousandths: 1000, lineTotalAmount: 4720, lineTotalCurrency: 'UAH' })
+      .run();
+
+    storage.db.delete(transactions).where(eq(transactions.id, 'e1')).run();
+
+    // Cascade both ways down: the чек goes with its транзакція, the позиції with their чек.
+    expect(storage.db.select().from(fiscalReceipts).all()).toEqual([]);
+    expect(storage.db.select().from(receiptItems).all()).toEqual([]);
+  });
+
+  it('The migrated shape keeps an amount from existing without its currency', () => {
+    storage.db.insert(transactions).values(toTransactionRow(oneOfEachType[0] as Transaction)).run();
+    insertReceipt(storage.db);
+    const item = {
+      id: 'i1',
+      receiptId: 'r1',
+      line: 1,
+      rawName: 'Молоко',
+      quantityThousandths: 1000,
+      lineTotalAmount: 4720,
+      lineTotalCurrency: 'UAH',
+    };
+
+    expect(() =>
+      storage.db.insert(receiptItems).values({ ...item, unitPriceAmount: 4720 }).run(),
+    ).toThrow();
+    expect(() =>
+      storage.db.insert(receiptItems).values({ ...item, discountCurrency: 'UAH' }).run(),
+    ).toThrow();
+    // Both halves together are fine, and so is neither.
+    storage.db
+      .insert(receiptItems)
+      .values({ ...item, unitPriceAmount: 4720, unitPriceCurrency: 'UAH' })
+      .run();
+    expect(storage.db.select().from(receiptItems).all()).toHaveLength(1);
+  });
+
+  it('The migrated shape keeps a чек from being anything but a sale or a return', () => {
+    storage.db.insert(transactions).values(toTransactionRow(oneOfEachType[0] as Transaction)).run();
+
+    expect(() => insertReceipt(storage.db, { kind: 'shift' })).toThrow();
+    expect(() => insertReceipt(storage.db, { dialect: 'edi' })).toThrow();
+    expect(() => insertReceipt(storage.db, { acquisition: 'monobank_auto' })).toThrow();
+    expect(() => insertReceipt(storage.db, { issuedDate: '29.04.2026' })).toThrow();
+    expect(() => insertReceipt(storage.db, { issuedTime: '22:20' })).toThrow();
+  });
+
+  it('No чек reaches a транзакція: the транзакція table gains no column', () => {
+    const columns = storage.db
+      .all<{ name: string }>(sql`SELECT name FROM pragma_table_info('transactions')`)
+      .map((row) => row.name);
+
+    for (const name of columns) {
+      expect(name).not.toContain('receipt');
+      expect(name).not.toContain('fiscal');
+    }
+  });
+});
+
+/**
+ * The журнал and the репорти про помилки: three tables that hold what the app did and what the
+ * owner wrote about a bug, and no money at all.
+ *
+ * The device shape they arrive on is a real one — every migration before this change — so «before»
+ * is a phone the owner has been using, and the three tables appear beside its data rather than
+ * instead of it.
+ */
+describe('migrations — the журнал and the репорти про помилки', () => {
+  /** Every migration but this change's, so «before» is a real device from the previous release. */
+  const BEFORE_REPORTING = 12;
+
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    storage.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+  });
+
+  afterEach(() => storage.close());
+
+  const entry = (over: Record<string, unknown> = {}) => ({
+    id: 'j1',
+    at: new Date('2026-09-02T14:00:00.000Z'),
+    kind: 'screen',
+    name: '/(tabs)/accounts',
+    detail: null,
+    ...over,
+  });
+
+  const report = (over: Record<string, unknown> = {}) => ({
+    id: 'r1',
+    createdAt: new Date('2026-09-02T14:05:00.000Z'),
+    route: '/(tabs)/accounts',
+    did: 'натиснув Записати',
+    happened: null,
+    expected: null,
+    promptingJson: null,
+    buildJson: '{"version":"0.0.0","commit":"3df8103","dirty":true,"builtAt":"x"}',
+    deviceJson: '{"platform":"android","systemVersion":"16","model":"Pixel 7"}',
+    countsJson: '{"accounts":2,"transactions":0,"categories":5,"rules":0,"drafts":0}',
+    journalJson: '[]',
+    migrationsApplied: 13,
+    handedOverAt: null,
+    ...over,
+  });
+
+  it('A fresh install has the three tables, with the shape the design pins', () => {
+    expect(storage.db.select().from(journal).all()).toEqual([]);
+    expect(storage.db.select().from(bugReports).all()).toEqual([]);
+    expect(storage.db.select().from(bugReportScreenshots).all()).toEqual([]);
+
+    storage.db.insert(journal).values(entry()).run();
+    storage.db
+      .insert(journal)
+      .values(entry({ id: 'j2', kind: 'failure', name: 'local-save', detail: 'Оберіть рахунок' }))
+      .run();
+    storage.db.insert(bugReports).values(report()).run();
+    storage.db
+      .insert(bugReportScreenshots)
+      .values({ reportId: 'r1', name: 'shot-1.png', addedAt: new Date('2026-09-02T14:06:00.000Z') })
+      .run();
+
+    const stored = storage.db.select().from(journal).all();
+    expect(stored).toHaveLength(2);
+    // Instants come back as Dates, not numbers — `timestamp_ms` on both halves of every моment.
+    expect(stored.map((row) => row.at instanceof Date)).toEqual([true, true]);
+    expect(stored.map((row) => row.detail)).toEqual([null, 'Оберіть рахунок']);
+    expect(storage.db.select().from(bugReports).all()[0]?.createdAt).toBeInstanceOf(Date);
+    expect(storage.db.select().from(bugReportScreenshots).all()).toHaveLength(1);
+    expect(storage.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+  });
+
+  it('A device that predates the репорти keeps everything and gains the three tables', () => {
+    const staged = openTestDbMigratedTo(BEFORE_REPORTING);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      for (const t of oneOfEachType) {
+        staged.db.insert(transactions).values(toTransactionRow(t)).run();
+      }
+      staged.db.insert(dailyReminder).values({ id: 'reminder', enabled: true, hour: 21, minute: 0 }).run();
+      staged.db.insert(alerts).values({ kind: 'monobank-sync', raisedAt: new Date(2) }).run();
+      const before = staged.db.select().from(transactions).all().map(toTransaction);
+
+      staged.migrateToLatest();
+
+      expect(staged.db.select().from(transactions).all().map(toTransaction)).toEqual(before);
+      expect(staged.db.select().from(accounts).all()).toHaveLength(2);
+      expect(staged.db.select().from(dailyReminder).all()).toHaveLength(1);
+      expect(staged.db.select().from(alerts).all()).toHaveLength(1);
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+
+      // ...and the three tables are there, empty, ready for the first entry.
+      expect(staged.db.select().from(journal).all()).toEqual([]);
+      staged.db.insert(journal).values(entry()).run();
+      staged.db.insert(bugReports).values(report()).run();
+      expect(staged.db.select().from(bugReports).all()).toHaveLength(1);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('The migrated shape keeps a screenshot from outliving its репорт', () => {
+    storage.db.insert(bugReports).values(report()).run();
+    storage.db
+      .insert(bugReportScreenshots)
+      .values([
+        { reportId: 'r1', name: 'shot-1.png', addedAt: new Date(1) },
+        { reportId: 'r1', name: 'shot-2.png', addedAt: new Date(2) },
+      ])
+      .run();
+
+    // A screenshot of a репорт that does not exist cannot be stored at all...
+    expect(() =>
+      storage.db
+        .insert(bugReportScreenshots)
+        .values({ reportId: 'nope', name: 'shot-3.png', addedAt: new Date(3) })
+        .run(),
+    ).toThrow();
+    // ...nor can one репорт hold two files of one name...
+    expect(() =>
+      storage.db
+        .insert(bugReportScreenshots)
+        .values({ reportId: 'r1', name: 'shot-1.png', addedAt: new Date(4) })
+        .run(),
+    ).toThrow();
+
+    storage.db.delete(bugReports).where(eq(bugReports.id, 'r1')).run();
+
+    // ...and removing the репорт takes its screenshots with it, by the cascade and not by a rule
+    // a repository has to remember.
+    expect(storage.db.select().from(bugReportScreenshots).all()).toEqual([]);
+  });
+
+  it('The migrated shape keeps a репорт from existing without what the owner wrote', () => {
+    // `did` is the one line the form requires, and storage says so too.
+    expect(() =>
+      storage.db.insert(bugReports).values(report({ did: null as unknown as string })).run(),
+    ).toThrow();
+    // The two optional lines are genuinely optional.
+    storage.db.insert(bugReports).values(report({ happened: 'впав', expected: null })).run();
+    expect(storage.db.select().from(bugReports).all()).toHaveLength(1);
+  });
+
+  it('No репорт reaches the owner`s money: neither table gains a money column', () => {
+    for (const table of ['journal', 'bug_reports', 'bug_report_screenshots']) {
+      const columns = storage.db
+        .all<{ name: string }>(sql`SELECT name FROM pragma_table_info(${table})`)
+        .map((row) => row.name);
+
+      for (const name of columns) {
+        expect(name).not.toContain('amount');
+        expect(name).not.toContain('currency');
+        expect(name).not.toContain('balance');
+        expect(name).not.toContain('token');
+      }
     }
   });
 });

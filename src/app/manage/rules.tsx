@@ -10,8 +10,8 @@ import { namesById } from '@/domain/category';
 import type { Rule } from '@/domain/rules';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { expenseCategoryChoices } from '@/ui/category-choices';
+import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
-import { failureMessage } from '@/ui/labels';
 import { ruleFromDraft, ruleLine, type RuleDraft } from '@/ui/list-management';
 
 import { Spacing } from '@/constants/theme';
@@ -29,6 +29,14 @@ const EMPTY: RuleDraft = { merchant: '', mcc: '', categoryId: undefined };
 
 export default function RulesScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const [stored, reload] = useReloadOnFocus(
     useCallback(() => ({ rules: rulesRepo.list(), categories: categoriesRepo.list() }), []),
   );
@@ -58,9 +66,11 @@ export default function RulesScreen() {
       setDraft(undefined);
       reload();
     } catch (error) {
-      Alert.alert('Не збережено', failureMessage(error));
+      Alert.alert(
+        ...failureAlert({ title: 'Не збережено', where: 'rule-save', error, report: reportBug }),
+      );
     }
-  }, [draft, reload]);
+  }, [draft, reload, reportBug]);
 
   const remove = useCallback(
     (rule: Rule) => {

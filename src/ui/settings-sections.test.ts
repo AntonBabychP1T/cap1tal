@@ -16,7 +16,22 @@ describe('the Налаштування sections', () => {
       'Сповіщення банків',
       'Нагадування',
       'Бекап',
+      'Репорти про помилки',
     ]);
+  });
+
+  it('Scenario: The bug-reports section opens the list', () => {
+    const reports = SETTINGS_SECTIONS.find(
+      (section) => section.title === 'Репорти про помилки',
+    )!;
+
+    // One flow: the list of saved репорти and «Повідомити про помилку» live behind the same row.
+    expect(reports.href).toBe('/manage/bug-reports');
+    expect(reports.hint).toContain('записати');
+    expect(reports.hint).toContain('передати');
+    // Last, because it is about the app rather than about the owner's money.
+    const titles = SETTINGS_SECTIONS.map((section) => section.title);
+    expect(titles[titles.length - 1]).toBe('Репорти про помилки');
   });
 
   it('Scenario: The reminders section opens the reminder and its time', () => {

@@ -45,7 +45,7 @@ scripts/android.sh reset   # wipe app data: the "no рахунок yet" first-ru
 scripts/android.sh shot f  # PNG screenshot, so a smoke test can be looked at and attached
 scripts/android.sh tap X Y # tap at device pixels — screenshot pixels are the same pixels
 scripts/android.sh text S  # type into the focused field;  key back|enter|del  for key events
-scripts/android.sh logs    # ReactNativeJS + AndroidRuntime logcat
+scripts/android.sh logs N  # the last N (default 200) ReactNativeJS + AndroidRuntime lines, then exits
 scripts/android.sh stop    # stop Metro and the Gradle daemon
 ```
 
@@ -56,14 +56,26 @@ come straight off the previous screenshot, no ratio to convert.
   lists what exists. Creating an AVD is the owner's job (Android Studio → Device Manager).
 - The build is a **debug** APK, so the JS comes from Metro over `adb reverse tcp:8081`: JS edits
   reload without a rebuild. A native/config change cannot arrive that way, and `up` no longer
-  trusts the APK on disk — it rebuilds when `package.json`, `app.json`, `plugins/` or `modules/`
-  is newer than the APK (ignoring `modules/*/android/build/`), and re-runs `expo prebuild` when
-  `app.json` or `plugins/` is newer than the generated manifest. Before that, `up` reinstalled the
-  stale APK and the app died on launch with `Cannot find native module …` while `verify` stayed
-  green.
+  trusts the APK on disk — it rebuilds when `package.json`, `app.json`, `app.config.js`,
+  `plugins/` or `modules/` is newer than the APK (ignoring `modules/*/android/build/`), and
+  re-runs `expo prebuild` when `app.json` or `plugins/` is newer than the generated manifest.
+  Before that, `up` reinstalled the stale APK and the app died on launch with `Cannot find native
+  module …` while `verify` stayed green.
+- **`Constants.expoConfig` comes from the APK, not from Metro.** expo-constants embeds the
+  resolved config as `assets/app.config` at build time, so even a change that touches nothing but
+  `extra` reaches the device only through a rebuild. A smoke run found this the expensive way: a
+  репорт про помилку filed against a reused APK named «Коміт: unknown» while `npx expo config
+  --type public` resolved the real commit. That is why `app.config.js` is in the trigger above,
+  and why a репорт from a *development* build names the commit the APK was built at while its JS
+  may be newer.
 - Gradle needs JDK 21 (the machine default may be newer); the script pins `JAVA_HOME` itself.
   It also builds only the device's own ABI — a four-ABI build is ~4× the work for nothing.
 - `.cache/android/` holds Metro and emulator logs and screenshots; it is gitignored.
+- **Every subcommand terminates.** `logs` dumps the buffer and exits (plain `adb logcat`
+  follows the device forever, and an agent that ran it waited for hours), and the Metro
+  wait inside `up` gives up after 90s with the log tail. Metro is the one thing left
+  running, in the background, and `stop` ends it. Never add a following/streaming command
+  here, and never run one by hand from a session.
 - A screenshot from this loop is the evidence a manual-smoke task needs. Attach or describe what
   was seen; a build that merely compiles is not a smoke test.
 

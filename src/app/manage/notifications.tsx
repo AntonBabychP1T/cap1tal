@@ -17,10 +17,11 @@ import { accounts as accountsRepo, notifications as notificationsRepo } from '@/
 import { useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { useOnForeground } from '@/hooks/use-on-foreground';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { failureAlert } from '@/ui/failure-alert';
 import { notificationAccess } from '@/platform/notification-access-device';
 import { notificationCapture } from '@/platform/notification-capture-device';
 import type { NotificationAccess } from '@/platform/notification-access';
-import { accountChoiceLabel, failureMessage } from '@/ui/labels';
+import { accountChoiceLabel } from '@/ui/labels';
 import { accountChoicesFor } from '@/ui/account-choices';
 import {
   accessSection,
@@ -49,6 +50,14 @@ import { Spacing } from '@/constants/theme';
 
 export default function NotificationsScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const [stored, reload] = useReloadOnFocus(
     useCallback(
       () => ({
@@ -154,10 +163,12 @@ export default function NotificationsScreen() {
           ),
         );
       } catch (error) {
-        Alert.alert('Не додано', failureMessage(error));
+        Alert.alert(
+          ...failureAlert({ title: 'Не додано', where: 'watch-add', error, report: reportBug }),
+        );
       }
     },
-    [accountId, settle, stored.accounts, stored.watches],
+    [accountId, reportBug, settle, stored.accounts, stored.watches],
   );
 
   const remove = useCallback(
@@ -174,12 +185,21 @@ export default function NotificationsScreen() {
               { capture: notificationCapture, storage: notificationsRepo },
             )
               .then(settle)
-              .catch((error: unknown) => Alert.alert('Не змінено', failureMessage(error)));
+              .catch((error: unknown) =>
+                Alert.alert(
+                  ...failureAlert({
+                    title: 'Не змінено',
+                    where: 'watch-remove',
+                    error,
+                    report: reportBug,
+                  }),
+                ),
+              );
           },
         },
       ]);
     },
-    [settle, stored.watches],
+    [reportBug, settle, stored.watches],
   );
 
   return (

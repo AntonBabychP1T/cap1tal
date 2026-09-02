@@ -121,7 +121,7 @@ describe('goalRows', () => {
       {
         id: 'g-car',
         name: 'Авто',
-        target: '200000,00 UAH',
+        target: '200 000,00 UAH',
         deadline: '2026-12-31',
         accountName: 'Подушка',
         accountArchived: false,

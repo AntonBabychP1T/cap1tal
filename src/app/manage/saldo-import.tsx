@@ -15,7 +15,9 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { formatMoney } from '@/ui/amount-input';
-import { failureMessage, KIND_CHOICES } from '@/ui/labels';
+import { failureAlert } from '@/ui/failure-alert';
+import { reportFailure } from '@/ui/journal';
+import { KIND_CHOICES } from '@/ui/labels';
 import {
   accountRows,
   canCommit,
@@ -51,6 +53,14 @@ import { Spacing } from '@/constants/theme';
 
 export default function SaldoImportScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const [flow, setFlow] = useState<FlowState>(() =>
     startFlow({
       existing: {
@@ -72,9 +82,11 @@ export default function SaldoImportScreen() {
       const text = await new File(picked.assets[0].uri).text();
       setFlow((current) => startWithText(current, text));
     } catch (error) {
-      Alert.alert('Не вдалося прочитати файл', failureMessage(error));
+      Alert.alert(
+        ...failureAlert({ title: 'Не вдалося прочитати файл', where: 'saldo-file-read', error, report: reportBug }),
+      );
     }
-  }, []);
+  }, [reportBug]);
 
   const commit = useCallback(() => {
     if (!flow.plan) return;
@@ -83,7 +95,9 @@ export default function SaldoImportScreen() {
       setFlow((current) => committed(current, written));
       void clearAlert('saldo-import', ALERT_PORTS);
     } catch (error) {
-      setFlow((current) => commitFailed(current, failureMessage(error)));
+      // The one refusal in the app that feeds a screen state rather than a dialog: same journal,
+      // same text, no dialog to hang an offer on — this one is reported from the section.
+      setFlow((current) => commitFailed(current, reportFailure('saldo-import', error)));
       // A commit runs while the owner walks away from a long import; the screen says why in its
       // own words either way, and only an owner who is not reading them is told again.
       void raiseAlert('saldo-import', { attended: attended() }, ALERT_PORTS);

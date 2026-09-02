@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC, not an observed receipt. Hand-built from check01.xsd: no real ПРРО document in
+     research/ carries a <BARCODE>, so "a barcode is kept when present and absent when not" has
+     nothing to be proven against. Row 1 carries BARCODE and UKTZED, row 2 carries neither. -->
+<CHECK xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="check01.xsd">
+  <CHECKHEAD>
+    <DOCTYPE>0</DOCTYPE>
+    <DOCSUBTYPE>0</DOCSUBTYPE>
+    <UID>00000000-0000-0000-0000-000000000000</UID>
+    <TIN>0000000000</TIN>
+    <ORGNM>ТОВ "ПРОДАВЕЦЬ"</ORGNM>
+    <POINTNM>магазин "ТОЧКА"</POINTNM>
+    <POINTADDR>м. Київ, вул. Прикладна, 1</POINTADDR>
+    <ORDERDATE>29042026</ORDERDATE>
+    <ORDERTIME>222006</ORDERTIME>
+    <ORDERNUM>77</ORDERNUM>
+    <CASHDESKNUM>1</CASHDESKNUM>
+    <CASHREGISTERNUM>4000146829</CASHREGISTERNUM>
+    <CASHIER>Касир</CASHIER>
+    <VER>1</VER>
+    <ORDERTAXNUM>696582</ORDERTAXNUM>
+  </CHECKHEAD>
+  <CHECKTOTAL>
+    <SUM>93.10</SUM>
+  </CHECKTOTAL>
+  <CHECKBODY>
+    <ROW ROWNUM="1">
+      <CODE>1178</CODE>
+      <UKTZED>1806903100</UKTZED>
+      <NAME>Снек Кіндер Мілк Слайс 28г</NAME>
+      <UNITCD>2009</UNITCD>
+      <UNITNM>шт</UNITNM>
+      <AMOUNT>2.000</AMOUNT>
+      <PRICE>25.90</PRICE>
+      <COST>51.80</COST>
+      <BARCODE>40084725</BARCODE>
+    </ROW>
+    <ROW ROWNUM="2">
+      <NAME>Пакет</NAME>
+      <AMOUNT>1.000</AMOUNT>
+      <PRICE>41.30</PRICE>
+      <COST>41.30</COST>
+    </ROW>
+  </CHECKBODY>
+</CHECK>

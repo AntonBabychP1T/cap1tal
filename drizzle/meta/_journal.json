@@ -78,6 +78,20 @@
       "when": 1788274085691,
       "tag": "0010_white_wraith",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1788340264028,
+      "tag": "0011_glorious_ultragirl",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1788360030085,
+      "tag": "0012_empty_omega_sentinel",
+      "breakpoints": true
     }
   ]
 }

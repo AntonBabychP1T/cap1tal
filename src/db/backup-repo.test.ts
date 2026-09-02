@@ -8,6 +8,7 @@ import {
   restoreBackup,
   saveBackup,
 } from '../backup/backup';
+import { canonicalJson, crc32 } from '../backup/canonical';
 import type { BackupState } from '../backup/format';
 import { account } from '../domain/account';
 import { money } from '../domain/money';
@@ -27,7 +28,9 @@ import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
 import { notificationsRepo } from './notifications-repo';
 import { ratesRepo } from './rates-repo';
+import { receiptsRepo } from './receipts-repo';
 import { remindersRepo } from './reminders-repo';
+import { reportingRepo } from './reporting-repo';
 import { rulesRepo } from './rules-repo';
 import {
   monobankRates,
@@ -136,6 +139,55 @@ function seedWorld(db: TestDb): void {
   monobank.markSynced('mono-card', SYNCED_AT);
 
   notificationsRepo(db).addWatch({ packageName: 'ua.privatbank.ap24', accountId: 'card' });
+
+  receiptsRepo(db).attach(
+    {
+      id: 'rc-1',
+      transactionId: 't-expense',
+      registrarNumber: '3000909908',
+      fiscalNumber: '696582',
+      issuedDate: '2026-08-01',
+      issuedTime: '22:20:06',
+      dialect: 'rro',
+      kind: 'sale',
+      total: money(12_000, 'UAH'),
+      sellerName: 'ТОВ "ПРОДАВЕЦЬ"',
+      acquisition: 'qr_scan',
+      fetchedAt: Date.UTC(2026, 7, 1, 19, 30),
+      snapshot: '<RQ><DAT/></RQ>',
+    },
+    [
+      {
+        id: 'ri-1',
+        receiptId: 'rc-1',
+        line: 1,
+        rawName: 'Молоко 2.5%',
+        quantityThousandths: 1000,
+        lineTotal: money(4_720, 'UAH'),
+        barcode: '4820000431026',
+      },
+      {
+        id: 'ri-2',
+        receiptId: 'rc-1',
+        line: 2,
+        rawName: 'Хліб житній',
+        quantityThousandths: 1000,
+        lineTotal: money(3_890, 'UAH'),
+      },
+      {
+        id: 'ri-3',
+        receiptId: 'rc-1',
+        line: 3,
+        rawName: 'Coca-Cola 2L',
+        quantityThousandths: 2000,
+        unit: 'шт',
+        unitPrice: money(1_695, 'UAH'),
+        lineTotal: money(3_390, 'UAH'),
+        discount: money(100, 'UAH'),
+        uktzed: '2202100000',
+      },
+    ],
+  );
 }
 
 /** All five types, and the distinctions the glossary keeps between them. */
@@ -294,6 +346,27 @@ describe('the whole stored state as one snapshot', () => {
     ]);
     expect(snapshot.monobankImportedItems.map((i) => i.itemId)).toEqual(['item-1', 'item-2']);
     expect(snapshot.watches).toEqual([{ packageName: 'ua.privatbank.ap24', accountId: 'card' }]);
+    // The чек, once, with its снапшот — and its three позиції, once each, absent values absent.
+    expect(snapshot.receipts).toHaveLength(1);
+    expect(snapshot.receipts[0]).toMatchObject({
+      id: 'rc-1',
+      transactionId: 't-expense',
+      registrarNumber: '3000909908',
+      fiscalNumber: '696582',
+      issuedDate: '2026-08-01',
+      dialect: 'rro',
+      kind: 'sale',
+      total: money(12_000, 'UAH'),
+      snapshot: '<RQ><DAT/></RQ>',
+    });
+    expect(snapshot.receiptItems.map((i) => i.rawName)).toEqual([
+      'Молоко 2.5%',
+      'Хліб житній',
+      'Coca-Cola 2L',
+    ]);
+    expect(new Set(snapshot.receiptItems.map((i) => i.id)).size).toBe(3);
+    expect('unitPrice' in (snapshot.receiptItems[0] as object)).toBe(false);
+    expect(snapshot.receiptItems[2]?.discount).toEqual(money(100, 'UAH'));
   });
 
   it('Scenario: The snapshot leaves out the cache and the captures', () => {
@@ -372,6 +445,40 @@ describe('the whole stored state replaced by a snapshot, as one unit', () => {
       monobankLinks: [],
       monobankImportedItems: [],
       watches: [],
+      receipts: [
+        {
+          id: 'rc-new',
+          transactionId: 'n0',
+          registrarNumber: '4000146829',
+          fiscalNumber: '1384600901',
+          issuedDate: '2026-08-01',
+          issuedTime: '14:54:54',
+          dialect: 'prro',
+          kind: 'sale',
+          total: money(9_999, 'UAH'),
+          acquisition: 'qr_scan',
+          fetchedAtMs: Date.UTC(2026, 7, 1, 12),
+          snapshot: '<CHECK/>',
+        },
+      ],
+      receiptItems: [
+        {
+          id: 'ri-new-1',
+          receiptId: 'rc-new',
+          line: 1,
+          rawName: 'Оплата за послуги',
+          quantityThousandths: 1000,
+          lineTotal: money(9_999, 'UAH'),
+        },
+        {
+          id: 'ri-new-2',
+          receiptId: 'rc-new',
+          line: 2,
+          rawName: 'Пакет',
+          quantityThousandths: 1000,
+          lineTotal: money(0, 'UAH'),
+        },
+      ],
     };
   }
 
@@ -391,6 +498,11 @@ describe('the whole stored state replaced by a snapshot, as one unit', () => {
     expect(after.saldoImportCommittedAtMs).toBeUndefined();
     // The чернетка went with the world it named: it proposed money on a рахунок that is gone.
     expect(notificationsRepo(storage.db).pendingDrafts()).toEqual([]);
+    // Exactly the бекап's чек with its two позиції — the five the device held are gone with the
+    // транзакції they hung under.
+    expect(after.receipts.map((r) => r.id)).toEqual(['rc-new']);
+    expect(after.receiptItems.map((i) => i.id)).toEqual(['ri-new-1', 'ri-new-2']);
+    expect(receiptsRepo(storage.db).forTransaction('n0')?.receipt.fiscalNumber).toBe('1384600901');
   });
 
   it('Scenario: A replacement that fails partway stores nothing', () => {
@@ -419,6 +531,53 @@ describe('the whole stored state replaced by a snapshot, as one unit', () => {
 
     // Everything, unchanged — not "roughly the same": the whole snapshot compares equal.
     expect(repo.snapshot()).toEqual(before);
+    // Named separately because it is the point of the scenario for this change: the чек the
+    // device held is among the rows that must survive a rolled-back restore, with its позиції.
+    expect(repo.snapshot().receipts.map((r) => r.id)).toEqual(['rc-1']);
+    expect(repo.snapshot().receiptItems).toHaveLength(3);
+    expect(receiptsRepo(storage.db).forTransaction('t-expense')?.items).toHaveLength(3);
+  });
+
+  it('Scenario: A restore leaves them in place', () => {
+    // The журнал and the репорти про помилки are this phone's memory of its own bugs. A
+    // відновлення replaces the owner's money and says nothing about them — least of all because
+    // restoring a бекап is exactly the kind of thing the owner might be doing when it goes wrong.
+    const reporting = reportingRepo(storage.db);
+    for (let i = 0; i < 300; i += 1) {
+      reporting.append({
+        id: `j${i}`,
+        at: new Date(OBTAINED_AT.getTime() + i),
+        kind: 'screen',
+        name: `/route/${i}`,
+      });
+    }
+    for (const id of ['r1', 'r2']) {
+      reporting.create({
+        id,
+        createdAt: OBTAINED_AT,
+        did: `написав про ${id}`,
+        happened: null,
+        expected: null,
+        route: '/manage/backup',
+        build: { version: '0.0.0', commit: 'abc1234', dirty: false, builtAt: 'x' },
+        device: { platform: 'android', systemVersion: '16', model: 'Pixel 7' },
+        migrationsApplied: 13,
+        counts: { accounts: 1, transactions: 1, categories: 1, rules: 0, drafts: 0 },
+        journal: reporting.tail(),
+        prompting: null,
+      });
+    }
+    reporting.addScreenshot('r1', 'shot-1.png', OBTAINED_AT);
+    const journalBefore = reporting.tail();
+    const reportsBefore = reporting.list();
+
+    repo.replaceAll(smallState());
+
+    expect(reporting.tail()).toEqual(journalBefore);
+    expect(reporting.tail()).toHaveLength(300);
+    expect(reporting.list()).toEqual(reportsBefore);
+    expect(reporting.list().map((r) => r.id)).toEqual(['r2', 'r1']);
+    expect(reporting.get('r1')?.screenshots.map((shot) => shot.name)).toEqual(['shot-1.png']);
   });
 
   it('Scenario: The rate cache and the fingerprints survive a replacement', () => {
@@ -578,6 +737,8 @@ describe('the round trip a бекап promises', () => {
         monobankLinks: [],
         monobankImportedItems: [],
         watches: [],
+        receipts: [],
+        receiptItems: [],
       },
       MADE_AT,
     ).bytes;
@@ -601,6 +762,55 @@ describe('the round trip a бекап promises', () => {
     expect(after.goals).toEqual([]);
     expect(after.watches).toEqual([]);
     expect(after.saldoImportCommittedAtMs).toBeUndefined();
+  });
+
+  it('Scenario: A чек comes back under its транзакція without the tax service', async () => {
+    // The point of the source snapshot (design D7): the file is the only thing that travels, and
+    // no lookup happens on the way back. Nothing in this test can reach a network — `restoreBackup`
+    // takes a repository and bytes, and the чек comes out of the bytes.
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+
+    const restored = receiptsRepo(target.db).forTransaction('t-expense');
+    expect(restored?.receipt).toMatchObject({
+      id: 'rc-1',
+      registrarNumber: '3000909908',
+      fiscalNumber: '696582',
+      issuedDate: '2026-08-01',
+      total: money(12_000, 'UAH'),
+      snapshot: '<RQ><DAT/></RQ>',
+    });
+    expect(restored?.items.map((i) => i.rawName)).toEqual([
+      'Молоко 2.5%',
+      'Хліб житній',
+      'Coca-Cola 2L',
+    ]);
+    // The barcode included, and the позиція that carried none still carries none.
+    expect(restored?.items[0]?.barcode).toBe('4820000431026');
+    expect(restored?.items[1]?.barcode).toBeUndefined();
+    expect(restored?.items[2]?.discount).toEqual(money(100, 'UAH'));
+  });
+
+  it('Scenario: A бекап written before чеки existed restores without them', async () => {
+    // A file from the previous release: it names no чек at all. The транзакції come back and none
+    // of them carries one.
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const body = JSON.parse(snapshot.bytes) as {
+      data: Record<string, unknown>;
+      checksum: string;
+    };
+    delete body.data.receipts;
+    delete body.data.receiptItems;
+    // Re-checksummed, so the file is a genuine older бекап rather than a damaged current one.
+    body.checksum = crc32(canonicalJson(body.data));
+    const older = JSON.stringify(body);
+
+    expect(await restoreBackup(backupRepo(target.db), older)).toBe('ok');
+
+    expect(backupRepo(target.db).snapshot().receipts).toEqual([]);
+    expect(receiptsRepo(target.db).forTransaction('t-expense')).toBeUndefined();
+    expect(backupRepo(target.db).snapshot().transactions).toHaveLength(10);
   });
 
   it('Scenario: Restoring the same бекап twice changes nothing the second time', async () => {
@@ -689,6 +899,8 @@ describe('the round trip a бекап promises', () => {
         ],
         monobankImportedItems: [],
         watches: [],
+        receipts: [],
+        receiptItems: [],
       },
       MADE_AT,
     ).bytes;
@@ -801,6 +1013,51 @@ describe('the нагадування travels; this phone`s failures do not', () 
       enabled: false,
       time: { hour: 9, minute: 30 },
     });
+  });
+
+  it('Scenario: A бекап carries no репорт', async () => {
+    const reporting = reportingRepo(source.db);
+    reporting.append({
+      id: 'j1',
+      at: OBTAINED_AT,
+      kind: 'failure',
+      name: 'backup-save',
+      detail: 'ZZ-JOURNAL-LINE',
+    });
+    for (const id of ['r1', 'r2']) {
+      reporting.create({
+        id,
+        createdAt: OBTAINED_AT,
+        did: `ZZ-DID-${id}`,
+        happened: null,
+        expected: null,
+        route: '/manage/backup',
+        build: { version: '0.0.0', commit: 'abc1234', dirty: false, builtAt: 'x' },
+        device: { platform: 'android', systemVersion: '16', model: 'Pixel 7' },
+        migrationsApplied: 13,
+        counts: { accounts: 1, transactions: 1, categories: 1, rules: 0, drafts: 0 },
+        journal: reporting.tail(),
+        prompting: null,
+      });
+    }
+    reporting.addScreenshot('r1', 'ZZ-SHOT.png', OBTAINED_AT);
+
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+
+    // Not one of them is in the file, nor is the snapshot even shaped to hold them.
+    expect(snapshot.bytes).not.toContain('ZZ-JOURNAL-LINE');
+    expect(snapshot.bytes).not.toContain('ZZ-DID-');
+    expect(snapshot.bytes).not.toContain('ZZ-SHOT.png');
+    expect(snapshot.bytes).not.toContain('backup-save');
+    const keys = Object.keys(backupRepo(source.db).snapshot());
+    expect(keys).not.toContain('journal');
+    expect(keys).not.toContain('reports');
+    expect(keys).not.toContain('bugReports');
+
+    // And the restoring phone keeps its own, untouched.
+    await roundTrip();
+    expect(reportingRepo(target.db).list()).toEqual([]);
+    expect(reportingRepo(source.db).list().map((r) => r.id)).toEqual(['r2', 'r1']);
   });
 
   it('Scenario: Another phone`s failures do not arrive', async () => {

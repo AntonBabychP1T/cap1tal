@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, lte, or, sql, type SQL } from 'drizzle-orm';
 
-import { isoDate, type Month, type Transaction } from '../domain/transaction';
+import { isoDate, UNCATEGORISED_CATEGORY_ID, type Month, type Transaction } from '../domain/transaction';
 import { toTransaction, toTransactionRow } from './mappers';
 import { transactions } from './schema';
 import type { Storage } from './storage';
@@ -175,6 +175,25 @@ export function transactionsRepo(db: Storage) {
 
       const matched = match ? narrowed.filter((t) => satisfies(t, match)) : narrowed;
       return matched.slice(input.offset, input.offset + input.limit);
+    },
+
+    /**
+     * How many stored витрати still carry «Без категорії» — the one number the «Потребує уваги»
+     * section on Головний is built from. A `COUNT(*)` rather than a listing: the screen names the
+     * count and leads to «Транзакції» for the транзакції themselves, and counting in TypeScript
+     * over the five latest would answer a different question.
+     *
+     * Витрати only. A повернення is never stored without a категорія and a дохід carries a
+     * джерело, not a категорія — «Без джерела» is a different reserved row, and naming it here
+     * would ask the owner to fix something this section never leads to.
+     */
+    countUncategorised(): number {
+      const row = db.get<{ n: number }>(
+        sql`select count(*) as n from ${transactions}
+            where ${transactions.type} = 'expense'
+              and ${transactions.categoryId} = ${UNCATEGORISED_CATEGORY_ID}`,
+      );
+      return row?.n ?? 0;
     },
 
     /** Everything touching the account, transfers included on either leg. */

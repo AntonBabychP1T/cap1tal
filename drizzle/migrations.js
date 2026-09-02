@@ -12,6 +12,8 @@ import m0007 from './0007_overconfident_hellcat.sql';
 import m0008 from './0008_sturdy_steve_rogers.sql';
 import m0009 from './0009_aromatic_retro_girl.sql';
 import m0010 from './0010_white_wraith.sql';
+import m0011 from './0011_glorious_ultragirl.sql';
+import m0012 from './0012_empty_omega_sentinel.sql';
 
   export default {
     journal,
@@ -26,7 +28,9 @@ m0006,
 m0007,
 m0008,
 m0009,
-m0010
+m0010,
+m0011,
+m0012
     }
   }
   

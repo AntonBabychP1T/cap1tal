@@ -117,7 +117,7 @@ describe('monthViewModel', () => {
     const model = view([expense(100000, 'UAH'), expense(10000, 'USD')]);
 
     expect(model.groups.map((g) => g.currency)).toEqual(['UAH', 'USD']);
-    expect(amountFor(model, 'UAH', 'spent')).toBe('1000,00 UAH');
+    expect(amountFor(model, 'UAH', 'spent')).toBe('1 000,00 UAH');
     expect(amountFor(model, 'USD', 'spent')).toBe('100,00 USD');
     // No primary number anywhere combines the two.
     for (const group of model.groups) {
@@ -174,7 +174,7 @@ describe('monthViewModel', () => {
         categoryId: UNCATEGORISED_CATEGORY_ID,
         label: 'Без категорії',
         currency: 'UAH',
-        amount: '1000,00 UAH',
+        amount: '1 000,00 UAH',
         overLimit: false,
         share: 1,
       },
@@ -204,7 +204,7 @@ describe('monthViewModel', () => {
       correction(-3000),
     ]);
 
-    expect(amountFor(model, 'UAH', 'spent')).toBe('1035,00 UAH');
+    expect(amountFor(model, 'UAH', 'spent')).toBe('1 035,00 UAH');
   });
 
   it('A refunded category sorts as the small number it is, not as the biggest', () => {
@@ -217,9 +217,9 @@ describe('monthViewModel', () => {
     // clothes is −2000,00: it must come last, not first. `formatMoney` writes a typographic minus,
     // so an ordering that read the formatted string would put it at the top.
     expect(groupOf(model, 'UAH').breakdown.map((r) => r.amount)).toEqual([
-      '1000,00 UAH',
+      '1 000,00 UAH',
       '10,00 UAH',
-      '−2000,00 UAH',
+      '−2 000,00 UAH',
     ]);
   });
 
@@ -236,7 +236,7 @@ describe('monthViewModel', () => {
     ]);
 
     // The account is archived; the transfer is still відкладено, because the вид decides.
-    expect(amountFor(model, 'UAH', 'saved')).toBe('2000,00 UAH');
+    expect(amountFor(model, 'UAH', 'saved')).toBe('2 000,00 UAH');
     expect(groupOf(model, 'UAH').breakdown).toEqual([]);
   });
 
@@ -246,7 +246,7 @@ describe('monthViewModel', () => {
     expect(model.approximate).not.toBeNull();
     const spent = model.approximate?.find((row) => row.key === 'spent');
     // 100000 UAH + 10000 USD × 41.25 = 512500 kopiykas.
-    expect(spent?.amount).toBe('≈ 5125,00 грн');
+    expect(spent?.amount).toBe('≈ 5 125,00 грн');
     expect(spent?.label).toBe('Витрачено');
     for (const row of model.approximate ?? []) {
       expect(row.amount.startsWith('≈ ')).toBe(true);
@@ -266,7 +266,7 @@ describe('monthViewModel', () => {
     const model = view([expense(100000, 'UAH'), expense(10000, 'USD')], []);
 
     expect(model.approximate).toBeNull();
-    expect(amountFor(model, 'UAH', 'spent')).toBe('1000,00 UAH');
+    expect(amountFor(model, 'UAH', 'spent')).toBe('1 000,00 UAH');
     expect(amountFor(model, 'USD', 'spent')).toBe('100,00 USD');
     expect(groupOf(model, 'USD').breakdown).toHaveLength(1);
   });
@@ -275,7 +275,7 @@ describe('monthViewModel', () => {
     const model = view([expense(100000, 'UAH')], [USD_RATE]);
 
     expect(model.approximate).toBeNull();
-    expect(amountFor(model, 'UAH', 'spent')).toBe('1000,00 UAH');
+    expect(amountFor(model, 'UAH', 'spent')).toBe('1 000,00 UAH');
   });
 
   it('Only the shown month reaches the screen', () => {
@@ -285,8 +285,8 @@ describe('monthViewModel', () => {
       expense(300000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-09-01'),
     ];
 
-    expect(amountFor(view(transactions), 'UAH', 'spent')).toBe('2000,00 UAH');
-    expect(amountFor(view(transactions, [], '2026-07'), 'UAH', 'spent')).toBe('1000,00 UAH');
+    expect(amountFor(view(transactions), 'UAH', 'spent')).toBe('2 000,00 UAH');
+    expect(amountFor(view(transactions, [], '2026-07'), 'UAH', 'spent')).toBe('1 000,00 UAH');
   });
 
   it('All six numbers are shown, each under its glossary name', () => {
@@ -320,7 +320,7 @@ describe('an empty month and the month before it', () => {
     expect(model.previous).toEqual({
       month: '2026-08',
       label: 'Серпень 2026',
-      spent: [{ key: 'spent', label: 'Витрачено', amount: '21500,00 UAH' }],
+      spent: [{ key: 'spent', label: 'Витрачено', amount: '21 500,00 UAH' }],
     });
   });
 
@@ -339,7 +339,7 @@ describe('an empty month and the month before it', () => {
 
     // Two sums, each with its own currency; nothing anywhere combines them.
     expect(model.previous?.spent.map((row) => row.amount)).toEqual([
-      '21500,00 UAH',
+      '21 500,00 UAH',
       '100,00 USD',
     ]);
   });
@@ -435,7 +435,7 @@ describe('an empty month and the month before it', () => {
     ];
     const model = septemberOn(august);
 
-    expect(model.previous?.spent.map((row) => row.amount)).toEqual(['21500,00 UAH', '0,00 USD']);
+    expect(model.previous?.spent.map((row) => row.amount)).toEqual(['21 500,00 UAH', '0,00 USD']);
     expect(amountFor(view(august, [], '2026-08'), 'USD', 'spent')).toBe('0,00 USD');
   });
 
@@ -460,7 +460,7 @@ describe('the leading number of a currency group', () => {
     expect(group.lead).toBe('spent');
     expect(group.note).toBe('У цьому місяці ще не записано дохід.');
     // Залишилось is still there, under its own name and with the number the picture computes.
-    expect(amountFor(model, 'UAH', 'left')).toBe('−2650,00 UAH');
+    expect(amountFor(model, 'UAH', 'left')).toBe('−2 650,00 UAH');
     expect(group.numbers.map((row) => row.key)).toEqual([
       'spent',
       'invested',
@@ -477,7 +477,7 @@ describe('the leading number of a currency group', () => {
 
     expect(group.lead).toBe('left');
     expect(group.note).toBeNull();
-    expect(amountFor(model, 'UAH', 'left')).toBe('47350,00 UAH');
+    expect(amountFor(model, 'UAH', 'left')).toBe('47 350,00 UAH');
   });
 
   it('Scenario: Each currency decides its own leading number', () => {

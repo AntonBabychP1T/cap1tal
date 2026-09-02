@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 
 /**
  * A faithful projection of the domain types — no shape is invented here.
@@ -553,3 +553,211 @@ export type NewDailyReminderRow = typeof dailyReminder.$inferInsert;
 export type AlertRow = typeof alerts.$inferSelect;
 export type EntryDefaultsRow = typeof entryDefaults.$inferSelect;
 export type NewEntryDefaultsRow = typeof entryDefaults.$inferInsert;
+
+/**
+ * A фіскальний чек: the composition of a purchase, beneath the транзакція that paid for it.
+ *
+ * `transaction_id` is UNIQUE — «a транзакція carries at most one чек» is the constraint, not a
+ * rule a repository remembers — and it is the one place `.claude/rules/database.md` allows
+ * `onDelete: 'cascade'`: a чек without its транзакція means nothing, and the spec says outright
+ * that deleting the транзакція deletes the чек with it. Every other reference in this schema is
+ * `restrict`, because everything else it points at archives rather than disappears.
+ *
+ * The identity — реєстратор, фіскальний номер чека and the date issued — is UNIQUE for the reason
+ * the spec gives: two чеки with those three values are one чек, so storage refuses the second
+ * rather than leaving the app to notice. The date is part of it because a registrar restarts its
+ * numbering; without it, чек 45 of two different days would collide.
+ *
+ * `snapshot` is the decoded document, kept whole and never rewritten (design D7): the tax service
+ * is undocumented and a чек findable today may be gone tomorrow, so what it served is what makes
+ * a stored чек independent of it, and re-parsable offline by a later, better parser.
+ */
+export const fiscalReceipts = sqliteTable(
+  'fiscal_receipts',
+  {
+    id: text('id').primaryKey(),
+    transactionId: text('transaction_id')
+      .notNull()
+      .unique()
+      .references(() => transactions.id, { onDelete: 'cascade' }),
+    /** `fn` — the фіскальний номер реєстратора, from the реквізити the чек was looked up with. */
+    registrarNumber: text('registrar_number').notNull(),
+    /** `id` — the фіскальний номер чека, likewise from the реквізити (design D2a). */
+    fiscalNumber: text('fiscal_number').notNull(),
+    /** The domain's `IsoDate` verbatim, as every other calendar-date column. */
+    issuedDate: text('issued_date').notNull(),
+    /** 'HH:mm:ss' — the time of day the document states, beside the calendar date it belongs to. */
+    issuedTime: text('issued_time').notNull(),
+    /** 'prro' | 'rro' — which dialect the tax service served, so a re-parse knows what to read. */
+    dialect: text('dialect').notNull(),
+    /** 'sale' | 'return'. A service or shift document is neither and never becomes a чек. */
+    kind: text('kind').notNull(),
+    totalAmount: integer('total_amount').notNull(),
+    totalCurrency: text('total_currency').notNull(),
+    sellerName: text('seller_name'),
+    pointName: text('point_name'),
+    /** How the чек arrived. One value today; a later change adds its own with its own migration. */
+    acquisition: text('acquisition').notNull(),
+    fetchedAt: integer('fetched_at', { mode: 'timestamp_ms' }).notNull(),
+    /** The decoded document, immutable. No screen reads it; see the module comment above. */
+    snapshot: text('snapshot').notNull(),
+  },
+  (t) => [
+    check('fiscal_receipts_dialect_known', sql`${t.dialect} IN ('prro', 'rro')`),
+    check('fiscal_receipts_kind_known', sql`${t.kind} IN ('sale', 'return')`),
+    check('fiscal_receipts_acquisition_known', sql`${t.acquisition} IN ('qr_scan')`),
+    check(
+      'fiscal_receipts_issued_date_iso',
+      sql`${t.issuedDate} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+    check(
+      'fiscal_receipts_issued_time_of_day',
+      sql`${t.issuedTime} GLOB '[0-2][0-9]:[0-5][0-9]:[0-5][0-9]'`,
+    ),
+    unique('fiscal_receipts_identity').on(t.registrarNumber, t.fiscalNumber, t.issuedDate),
+  ],
+);
+
+/**
+ * One позиція чека, as the document printed it.
+ *
+ * Its own `id` rather than `(receipt_id, line)` as the key, deliberately: the next change
+ * (`product-classification`) hangs a classification off a позиція, and a stable id is what it will
+ * reference. `UNIQUE(receipt_id, line)` keeps document order honest all the same.
+ *
+ * The money pairs follow the schema's rule: `line_total` is NOT NULL on both halves, and the two
+ * optional pairs — the unit price and the line discount — are held together by CHECKs, since an
+ * amount without its currency beside it must be impossible even where the column may be NULL.
+ * `unit_price` is absent, not zero, when the document names none: the parsers invent nothing, and
+ * a zero here would be a price the seller never printed.
+ */
+export const receiptItems = sqliteTable(
+  'receipt_items',
+  {
+    id: text('id').primaryKey(),
+    receiptId: text('receipt_id')
+      .notNull()
+      .references(() => fiscalReceipts.id, { onDelete: 'cascade' }),
+    /** The document's own row number, which is not always 1..n — a till numbers its free text too. */
+    line: integer('line').notNull(),
+    /** The product name verbatim. Nothing renames, cleans, groups or classifies it. */
+    rawName: text('raw_name').notNull(),
+    /** Quantity × 1000; 1000 when the document names none. */
+    quantityThousandths: integer('quantity_thousandths').notNull(),
+    unit: text('unit'),
+    unitPriceAmount: integer('unit_price_amount'),
+    unitPriceCurrency: text('unit_price_currency'),
+    lineTotalAmount: integer('line_total_amount').notNull(),
+    lineTotalCurrency: text('line_total_currency').notNull(),
+    discountAmount: integer('discount_amount'),
+    discountCurrency: text('discount_currency'),
+    barcode: text('barcode'),
+    uktzed: text('uktzed'),
+    /** The seller's internal code for the product. */
+    code: text('code'),
+  },
+  (t) => [
+    check(
+      'receipt_items_unit_price_paired',
+      sql`(${t.unitPriceAmount} IS NULL) = (${t.unitPriceCurrency} IS NULL)`,
+    ),
+    check(
+      'receipt_items_discount_paired',
+      sql`(${t.discountAmount} IS NULL) = (${t.discountCurrency} IS NULL)`,
+    ),
+    check('receipt_items_quantity_positive', sql`${t.quantityThousandths} > 0`),
+    unique('receipt_items_line').on(t.receiptId, t.line),
+    // For `product-classification`, which will look позиції up by what the packet printed on them.
+    index('receipt_items_barcode_idx').on(t.barcode),
+  ],
+);
+
+export type FiscalReceiptRow = typeof fiscalReceipts.$inferSelect;
+export type NewFiscalReceiptRow = typeof fiscalReceipts.$inferInsert;
+export type ReceiptItemRow = typeof receiptItems.$inferSelect;
+export type NewReceiptItemRow = typeof receiptItems.$inferInsert;
+
+/**
+ * The журнал: the app's own bounded record of what it did, kept so a bug met on the phone can be
+ * reproduced at the laptop. `src/reporting/journal.ts` owns what an entry may carry and why.
+ *
+ * There is deliberately no CHECK on `kind`. It is `alerts`'s trade, for `alerts`'s reason: the
+ * enumeration lives in TypeScript (`JournalKind`), where the label and the rendering already are,
+ * a fifth kind would otherwise cost a migration, and committed migrations are immutable. The
+ * repository refuses an unknown kind instead.
+ *
+ * No index on `at`: the whole table is 500 rows, every read of it is the whole tail, and the only
+ * write is one append. An index would be a second structure to keep true for no measured gain.
+ *
+ * Never in a бекап, and a відновлення leaves it alone — see `backup-repo.ts`, which names it among
+ * the untouched.
+ */
+export const journal = sqliteTable('journal', {
+  id: text('id').primaryKey(),
+  at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+  /** One of `src/reporting/journal.ts`'s `JournalKind` values; see above for why SQL does not know. */
+  kind: text('kind').notNull(),
+  /** A route, an action's kind or an `AlertKind` — never anything the owner typed. */
+  name: text('name').notNull(),
+  /** The refusal text the owner was shown, or a crash's message and stack. */
+  detail: text('detail'),
+});
+
+/**
+ * One репорт про помилку: what the owner wrote, and what the app attached at the moment it was
+ * created.
+ *
+ * **The attached context is JSON, and that is the point.** `build_json`, `device_json`,
+ * `counts_json`, `journal_json` and `prompting_json` are snapshots, not references — the live
+ * журнал keeps rolling (every screen change is an entry, and 500 is a day or two), so a репорт
+ * that pointed at it would in time forget the very crash it was filed about. There is deliberately
+ * no foreign key from `prompting_json` to `journal`: a pointer the pruning would null is a репорт
+ * that forgets its own reason. The columns are read back through `src/reporting/report.ts`'s types
+ * and by nothing else; no query filters or aggregates over them.
+ *
+ * `handed_over_at` is the only field that changes after creation — the moment the file was handed
+ * to the phone's chooser, or NULL while it never has been.
+ */
+export const bugReports = sqliteTable('bug_reports', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  /** The route of the screen it was filed from, derived from the журнал (design D9). */
+  route: text('route').notNull(),
+  /** «Що я робив» — the one line the form requires. */
+  did: text('did').notNull(),
+  happened: text('happened'),
+  expected: text('expected'),
+  /** The `JournalEntry` that prompted it, as JSON; NULL when the owner filed it on their own. */
+  promptingJson: text('prompting_json'),
+  buildJson: text('build_json').notNull(),
+  deviceJson: text('device_json').notNull(),
+  countsJson: text('counts_json').notNull(),
+  journalJson: text('journal_json').notNull(),
+  migrationsApplied: integer('migrations_applied').notNull(),
+  handedOverAt: integer('handed_over_at', { mode: 'timestamp_ms' }),
+});
+
+/**
+ * One screenshot the owner attached to a saved репорт, kept on the phone beside it.
+ *
+ * The row is the name and the moment; the image itself is a file under
+ * `<documentDirectory>/bug-reports/<report id>/`, reached through `bug-report-files.ts`. The key
+ * is `(report_id, name)` because one репорт cannot hold two files of one name, and the cascade is
+ * how «removing a репорт removes its screenshots» stops being a rule someone has to remember —
+ * the same shape `receipt_items` hangs on its чек by.
+ */
+export const bugReportScreenshots = sqliteTable(
+  'bug_report_screenshots',
+  {
+    reportId: text('report_id')
+      .notNull()
+      .references(() => bugReports.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    addedAt: integer('added_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.reportId, t.name] })],
+);
+
+export type JournalRow = typeof journal.$inferSelect;
+export type BugReportRow = typeof bugReports.$inferSelect;
+export type BugReportScreenshotRow = typeof bugReportScreenshots.$inferSelect;

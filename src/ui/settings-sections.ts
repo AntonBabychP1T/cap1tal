@@ -36,4 +36,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     hint: 'Щоденне нагадування і що застосунок повідомляє',
   },
   { href: '/manage/backup', title: 'Бекап', hint: 'Зберегти все у файл і відновити з нього' },
+  {
+    href: '/manage/bug-reports',
+    title: 'Репорти про помилки',
+    hint: 'Що пішло не так — записати і передати',
+  },
 ];

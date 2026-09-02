@@ -27,7 +27,7 @@ scripts/android.sh reset     wipe app data: the "no рахунок yet" first-ru
 scripts/android.sh shot F    screenshot into F
 scripts/android.sh tap X Y   tap at device pixels — the screenshot's own pixels
 scripts/android.sh text S    type into the focused field;  key back|enter|del
-scripts/android.sh logs      ReactNativeJS + AndroidRuntime logcat
+scripts/android.sh logs N    the last N (default 200) ReactNativeJS + AndroidRuntime lines
 ```
 
 A screenshot is 1:1 with tap coordinates: read the PNG, take the coordinates straight off

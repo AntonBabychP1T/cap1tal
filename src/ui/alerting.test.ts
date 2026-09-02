@@ -9,7 +9,21 @@ import {
   type LocalNotificationsDouble,
 } from '../platform/local-notifications';
 import { ALERT_NOTICES } from '../reminders/notices';
+import type { JournalEntry } from '../reporting/journal';
 import { clear, raise, reportCollection, type AlertPorts } from './alerting';
+import { bindJournal, resetJournalForTests } from './journal';
+
+/** Binds the журнал to a list this test can read, and hands back a look at it. */
+function bindTestJournal(): () => readonly JournalEntry[] {
+  const entries: JournalEntry[] = [];
+  resetJournalForTests();
+  bindJournal({
+    append: (entry) => entries.push(entry),
+    tail: () => entries,
+    byId: (id) => entries.find((entry) => entry.id === id) ?? null,
+  });
+  return () => entries;
+}
 
 const failedAt = new Date('2026-08-28T08:00:00.000Z');
 const laterAt = new Date('2026-08-28T09:30:00.000Z');
@@ -22,6 +36,7 @@ describe('raising and clearing a сповіщення про збій', () => {
   let now: Date;
 
   beforeEach(() => {
+    resetJournalForTests();
     storage = openTestDb();
     repo = remindersRepo(storage.db);
     phone = inMemoryLocalNotifications();
@@ -29,7 +44,10 @@ describe('raising and clearing a сповіщення про збій', () => {
     ports = { notifications: phone, storage: repo, now: () => now };
   });
 
-  afterEach(() => storage.close());
+  afterEach(() => {
+    resetJournalForTests();
+    storage.close();
+  });
 
   it('Scenario: A failed collection raises a сповіщення', async () => {
     await raise('collection', { attended: false }, ports);
@@ -82,6 +100,35 @@ describe('raising and clearing a сповіщення про збій', () => {
 
     expect(repo.outstandingKinds()).toEqual(['monobank-sync']);
     expect(phone.showing()).toEqual(['alert:monobank-sync']);
+  });
+
+  it('Scenario: A сповіщення про збій is an entry even when nothing is posted', async () => {
+    // The second failure of a kind whose сповіщення already stands posts nothing — and it is very
+    // often exactly the one the owner files a репорт about, so the журнал keeps it all the same.
+    const written = bindTestJournal();
+    await raise('monobank-sync', { attended: false }, ports);
+    await raise('monobank-sync', { attended: false }, ports);
+    await raise('backup', { attended: true }, ports);
+
+    expect(phone.posted()).toEqual(['alert:monobank-sync']);
+    expect(written().map((entry) => [entry.kind, entry.name])).toEqual([
+      ['alert', 'monobank-sync'],
+      ['alert', 'monobank-sync'],
+      ['alert', 'backup'],
+    ]);
+  });
+
+  it('Scenario: Taking a сповіщення back is an entry', async () => {
+    await raise('backup', { attended: false }, ports);
+    const written = bindTestJournal();
+
+    await clear('backup', ports);
+    // A clear of a kind that was not standing changes nothing, so it writes nothing.
+    await clear('collection', ports);
+
+    expect(written().map((entry) => [entry.kind, entry.name, entry.detail])).toEqual([
+      ['alert', 'backup', 'знято'],
+    ]);
   });
 
   it('Scenario: A failure the owner is looking at raises nothing', async () => {
@@ -176,6 +223,23 @@ describe('what one pass of the drain announces', () => {
     expect(repo.outstandingKinds()).toEqual(['collection']);
   });
 
+  it('Scenario: A collection failure carries no bank text', async () => {
+    // The real path a captured сповіщення's failure travels: `drainCaptures` answers with a value,
+    // the root layout passes `failed: true` — a boolean — and nothing but the kind reaches the
+    // журнал. `privacy.test.ts` asserts the same over a fixture; this asserts it over the code
+    // that actually runs.
+    const written = bindTestJournal();
+
+    await reportCollection({ access: 'granted', watched: true, failed: true }, ports);
+
+    expect(written().map((entry) => [entry.kind, entry.name, entry.detail])).toEqual([
+      ['alert', 'collection', undefined],
+    ]);
+    // No entry carries anything but the kind — there is no argument here that could hold a bank's
+    // text, and `reportCollection`'s own input type has no field for one.
+    expect(written().every((entry) => entry.detail === undefined)).toBe(true);
+  });
+
   it('Scenario: Withdrawn access with nothing watched announces nothing', async () => {
     await reportCollection({ access: 'denied', watched: false, failed: false }, ports);
 
@@ -262,6 +326,8 @@ describe('the five places a failure is already a value', () => {
   const saldo = source('../app/manage/saldo-import.tsx');
   const backup = source('../app/manage/backup.tsx');
   const main = source('../app/(tabs)/index.tsx');
+  /** Recording moved off Головний to its own screen, and the raise around a store moved with it. */
+  const entryScreen = source('../app/transaction/new.tsx');
   const notifications = source('../app/manage/notifications.tsx');
 
   it('raises each kind where that work already produces its failure', () => {
@@ -277,6 +343,9 @@ describe('the five places a failure is already a value', () => {
       [monobank, 'monobank-sync'],
       [saldo, 'saldo-import'],
       [backup, 'backup'],
+      // Both places a транзакція is stored by hand: the entry form, and confirming a чернетка on
+      // Головний. One kind of сповіщення, raised wherever that work fails.
+      [entryScreen, 'local-save'],
       [main, 'local-save'],
     ] as const) {
       expect(screen, kind).toContain(`raiseAlert('${kind}', { attended: attended() }, ALERT_PORTS)`);
@@ -296,18 +365,27 @@ describe('the five places a failure is already a value', () => {
     expect(monobank).toContain("clearAlert('monobank-sync', ALERT_PORTS)");
     expect(saldo).toContain("clearAlert('saldo-import', ALERT_PORTS)");
     expect(backup).toContain("clearAlert('backup', ALERT_PORTS)");
-    expect(main).toContain("clearAlert('local-save', ALERT_PORTS)");
+    // Storing a транзакція is what makes the last failure to store untrue, and that store is on
+    // the entry screen now.
+    expect(entryScreen).toContain("clearAlert('local-save', ALERT_PORTS)");
   });
 
   it('changed none of the words those screens already said about a failure', () => {
     // Every one of these is the screen's own report, in its own words, and it is what the owner
     // reads when they are there. The сповіщення is the second copy for when they are not, and it
     // may not have replaced or reworded any of them.
-    expect(monobank).toContain("Alert.alert('Не приєднано', failureMessage(error))");
-    expect(saldo).toContain('setFlow((current) => commitFailed(current, failureMessage(error)))');
-    expect(saldo).toContain("Alert.alert('Не вдалося прочитати файл', failureMessage(error))");
-    expect(main).toContain("Alert.alert('Не записано', failureMessage(error))");
-    expect(main).toContain("Alert.alert('Не підтверджено', failureMessage(error))");
+    //
+    // `bug-report` moved the *message* behind `failureAlert`, which returns exactly what
+    // `failureMessage` used to and adds «Повідомити про помилку» beside «Закрити». The titles are
+    // the assertion, unchanged, and the second button is what is new — the words the owner reads
+    // are still these.
+    expect(monobank).toContain("title: 'Не приєднано'");
+    expect(saldo).toContain(
+      "setFlow((current) => commitFailed(current, reportFailure('saldo-import', error)))",
+    );
+    expect(saldo).toContain("title: 'Не вдалося прочитати файл'");
+    expect(entryScreen).toContain("title: 'Не записано'");
+    expect(main).toContain("title: 'Не підтверджено'");
     // «Бекап» reports through its own state, and the banner still shows that state's message.
     expect(backup).toContain('{message ? <Banner>{message}</Banner> : null}');
   });

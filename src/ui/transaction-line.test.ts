@@ -71,7 +71,7 @@ describe('transactionLine', () => {
     );
     expect(line).toMatchObject({
       type: 'переказ',
-      amount: '1000,00 UAH',
+      amount: '1 000,00 UAH',
       accounts: 'mono black → банка',
     });
     expect(line.category).toBeUndefined();
@@ -90,7 +90,7 @@ describe('transactionLine', () => {
       byId,
       names,
     );
-    expect(line.amount).toBe('4100,00 UAH → 100,00 USD');
+    expect(line.amount).toBe('4 100,00 UAH → 100,00 USD');
     expect(line.accounts).toBe('mono black → долари');
   });
 
@@ -105,7 +105,7 @@ describe('transactionLine', () => {
     };
     expect(transactionLine(income, byId, names)).toMatchObject({
       type: 'дохід',
-      amount: '50000,00 UAH',
+      amount: '50 000,00 UAH',
     });
     expect(
       transactionLine(

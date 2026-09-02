@@ -8,7 +8,7 @@ import { ThemedText } from '@/components/themed-text';
 import { categories as categoriesRepo, limits as limitsRepo } from '@/db/repos';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { failureMessage } from '@/ui/labels';
+import { failureAlert } from '@/ui/failure-alert';
 import {
   DEFAULT_LIMIT_CURRENCY,
   LIMIT_CURRENCIES,
@@ -31,6 +31,14 @@ const CURRENCY_CHOICES = LIMIT_CURRENCIES.map((currency) => ({ value: currency, 
 
 export default function LimitsScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const [stored, reload] = useReloadOnFocus(
     useCallback(
       () => ({ categories: categoriesRepo.list(), limits: limitsRepo.list() }),
@@ -57,9 +65,11 @@ export default function LimitsScreen() {
       setEditing(undefined);
       reload();
     } catch (error) {
-      Alert.alert('Не збережено', failureMessage(error));
+      Alert.alert(
+        ...failureAlert({ title: 'Не збережено', where: 'limit-save', error, report: reportBug }),
+      );
     }
-  }, [editing, reload]);
+  }, [editing, reload, reportBug]);
 
   const clear = useCallback(
     (categoryId: string, name: string) => {

@@ -1,8 +1,9 @@
+import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { Choices } from '@/components/form';
-import { Card, Screen, ScreenHeader } from '@/components/surfaces';
+import { Card, Chevron, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
@@ -174,6 +175,7 @@ function HistoryNumbers({ readout }: { readout: HistoryReadout }) {
 }
 
 export default function ReportsScreen() {
+  const router = useRouter();
   const [stored] = useReloadOnFocus(
     useCallback(
       () => ({
@@ -353,6 +355,21 @@ export default function ReportsScreen() {
           ))
         )}
       </Card>
+
+      {/* The way in to «AI-аналіз», and nothing more: showing it computes nothing, builds no
+          пакет and hands nothing to any app. It is offered on an empty history too — the
+          AI-аналіз screen is the one that says there is nothing to analyse yet. */}
+      <Pressable onPress={() => router.push('/ai-analysis')} accessibilityRole="button">
+        <Card style={styles.chartCard}>
+          <View style={styles.row}>
+            <ThemedText type="overline">AI-аналіз</ThemedText>
+            <Chevron />
+          </View>
+          <ThemedText type="small" themeColor="textSecondary">
+            Передати ці числа застосунку, який ви оберете, щоб він їх пояснив
+          </ThemedText>
+        </Card>
+      </Pressable>
     </Screen>
   );
 }

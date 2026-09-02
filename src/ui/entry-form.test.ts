@@ -717,13 +717,13 @@ describe('defaultAccountId', () => {
  */
 describe('who may remember a рахунок', () => {
   const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
-  const main = source('../app/(tabs)/index.tsx');
+  const entryScreen = source('../app/transaction/new.tsx');
 
   it('Scenario: An import does not move the memory', () => {
     // Every screen in the app, walked rather than listed — a list goes stale the next time a
-    // screen is added, and this assertion is only worth having if it asks all of them. Only
-    // Головний's hand-entry path may name `remember`, so nothing that stores транзакції on the
-    // owner's behalf can move it.
+    // screen is added, and this assertion is only worth having if it asks all of them. Only the
+    // hand-entry screen may name `remember`, so nothing that stores транзакції on the owner's
+    // behalf can move it.
     const dir = fileURLToPath(new URL('../app/', import.meta.url));
     const screens = readdirSync(dir, { recursive: true, encoding: 'utf8' })
       .filter((name) => name.endsWith('.tsx'))
@@ -735,12 +735,12 @@ describe('who may remember a рахунок', () => {
     // The walk found the app and not an empty directory.
     expect(screens).toContain(join('(tabs)', 'index.tsx'));
     expect(screens.length).toBeGreaterThan(15);
-    expect(callers).toEqual([join('(tabs)', 'index.tsx')]);
+    expect(callers).toEqual([join('transaction', 'new.tsx')]);
   });
 
   it('The form opens on what was remembered, resolved against what is offered', () => {
-    expect(main).toContain('defaultAccountId(stored.rememberedAccountId');
-    expect(main).toContain('entryDefaultsRepo.remembered()');
+    expect(entryScreen).toContain('defaultAccountId(stored.rememberedAccountId');
+    expect(entryScreen).toContain('entryDefaultsRepo.remembered()');
   });
 });
 
@@ -753,14 +753,17 @@ describe('Головний shows itself from its top', () => {
   const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
   const main = source('../app/(tabs)/index.tsx');
 
-  it('Scenario: Coming back lands at the start of the entry form', () => {
-    // The column is scrolled by the screen that owns it, from a navigation focus.
-    expect(main).toContain('<Screen scrollRef={scrollRef}>');
+  it("Scenario: Coming back lands on the month's status", () => {
+    // The column is scrolled by the screen that owns it, from a navigation focus. The ref is
+    // still Головний's own — the «+» rides the same `Screen` in its overlay slot, outside the
+    // column, which is why it does not scroll away with it.
+    expect(main).toMatch(/<Screen\s+scrollRef=\{scrollRef\}/);
+    expect(main).toContain('overlay={<Fab');
     expect(main).toContain('useFocusEffect');
     expect(main).toMatch(/scrollRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\)/);
   });
 
-  it('Scenario: Scrolling within the screen is untouched', () => {
+  it('Scenario: Scrolling within Головний is untouched', () => {
     // Nothing binds the reset to scrolling itself, and the feed is read exactly as before.
     expect(main).not.toContain('onScroll');
     expect(main).not.toContain('scrollEnabled');
@@ -778,6 +781,56 @@ describe('Головний shows itself from its top', () => {
     ].filter((path) => /scrollRef=/.test(source(path)));
 
     expect(askers).toEqual(['../app/(tabs)/index.tsx']);
+  });
+});
+
+/**
+ * What a store leaves the entry screen in. Wiring `verify` never runs, so the assertion is
+ * structural like the ones above: the confirmation is shown where the owner is looking, and the
+ * form is left ready for the next транзакція rather than closed under them.
+ */
+describe('the entry screen after a store', () => {
+  const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+  const entryScreen = source('../app/transaction/new.tsx');
+
+  it('Scenario: The form is ready for the next транзакція', () => {
+    const clear = entryScreen.slice(entryScreen.indexOf('const clear = useCallback'));
+    const body = clear.slice(0, clear.indexOf('const store = useCallback'));
+
+    // Cleared: what belonged to the транзакція just stored.
+    expect(body).toContain("setAmount('')");
+    expect(body).toContain("setArrived('')");
+    expect(body).toContain("setDescription('')");
+    expect(body).toContain('setCategoryId(undefined)');
+    expect(body).toContain('setSourceId(undefined)');
+    expect(body).toContain('setDate(todayIso(new Date()))');
+    // Kept: the type and the рахунок — the рахунок being the one the store has just remembered.
+    expect(body).not.toContain('setEntry(');
+    expect(body).not.toContain('setFromId(');
+  });
+
+  it('Scenario: With no рахунок nothing can be recorded yet', () => {
+    // The whole form is inside the else of this guard: with nothing to record onto there is no
+    // сума field to fill and no «Записати» to tap, only the sentence and the way to Рахунки.
+    expect(entryScreen).toContain('{offered.length === 0 ? (');
+    const guard = entryScreen.slice(entryScreen.indexOf('{offered.length === 0 ? ('));
+    const refusal = guard.slice(0, guard.indexOf(') : ('));
+    expect(refusal).toContain('Спершу створіть рахунок');
+    expect(refusal).toContain('title="До Рахунків"');
+    expect(refusal).toContain("router.push('/accounts')");
+    expect(refusal).not.toContain('title="Записати"');
+    // And `offered` is the unarchived рахунки, so «every one archived» is the same case.
+    expect(entryScreen).toContain('activeAccounts(stored.accounts)');
+  });
+
+  it('The confirmation is what the store leaves behind, and no navigation is', () => {
+    const store = entryScreen.slice(entryScreen.indexOf('const store = useCallback'));
+    const body = store.slice(0, store.indexOf('const record = useCallback'));
+
+    expect(body).toContain('setConfirmation(');
+    expect(body).toContain('recordedConfirmation(written');
+    // The owner leaves with «Назад»; a store that navigated would take the confirmation with it.
+    expect(body).not.toContain('router.');
   });
 });
 
@@ -808,7 +861,7 @@ describe('recordedConfirmation', () => {
     );
 
     expect(recordedConfirmation([written], names)).toBe(
-      'Записано: витрата 1200,00 UAH — Groceries.',
+      'Записано: витрата 1 200,00 UAH — Groceries.',
     );
   });
 
@@ -853,9 +906,9 @@ describe('recordedConfirmation', () => {
       { id: 't1', accounts },
     );
 
-    expect(recordedConfirmation([income], names)).toBe('Записано: дохід 5000,00 UAH — Salary.');
+    expect(recordedConfirmation([income], names)).toBe('Записано: дохід 5 000,00 UAH — Salary.');
     expect(recordedConfirmation([moved], names)).toBe(
-      'Записано: переказ 1000,00 UAH з «mono black» на «банка».',
+      'Записано: переказ 1 000,00 UAH з «mono black» на «банка».',
     );
   });
 

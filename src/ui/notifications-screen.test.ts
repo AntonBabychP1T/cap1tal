@@ -127,21 +127,33 @@ describe('Головний shows чернетки only while some are pending', 
 
 
   it('Scenario: No pending чернетки, no surface', () => {
-    // The block, its title and its rows sit inside one guard on a non-empty list — no branch
-    // renders a heading or a placeholder over nothing.
+    // The чернетки rows sit inside one guard on a non-empty list, and the heading over them —
+    // «Потребує уваги», which they share with the transactions still without a категорія — inside
+    // the guard that says something is waiting at all. No branch renders a heading or a
+    // placeholder over nothing.
     expect(main).toContain('{drafts.length > 0 ? (');
-    const block = main.slice(main.indexOf('{drafts.length > 0 ? ('));
-    const guarded = block.slice(0, block.indexOf('<SectionLabel>Останні транзакції</SectionLabel>'));
-    expect(guarded).toContain('DRAFTS_SECTION_TITLE');
-    expect(guarded).toContain('drafts.map(');
-    // The block's whole else-branch is nothing at all.
-    expect(guarded).toContain(') : null}');
+    const rows = main.slice(main.indexOf('{drafts.length > 0 ? ('));
+    const guardedRows = rows.slice(0, rows.indexOf('Останні транзакції'));
+    expect(guardedRows).toContain('drafts.map(');
+    expect(guardedRows).toContain(') : null}');
+
+    // The heading is inside the section's own guard, and the чернетки are inside that section.
+    expect(main).toContain('{model.attention.present ? (');
+    const section = main.slice(main.indexOf('{model.attention.present ? ('));
+    const guardedSection = section.slice(0, section.indexOf('Останні транзакції'));
+    expect(guardedSection).toContain('ATTENTION_TITLE');
+    expect(guardedSection).toContain('{drafts.length > 0 ? (');
+    expect(guardedSection).toContain(') : null}');
+
+    // And what puts the section on the screen counts the pending чернетки, so one pending is one
+    // section — never a heading over an empty block.
+    expect(main).toContain('pendingDrafts: drafts.length');
   });
 
   it('Scenario: Dismissing a чернетка is confirmed first', () => {
     // The gesture deletion uses everywhere else: the call sits inside the Alert's own button.
     const dismiss = main.slice(main.indexOf('const dismissDraftLine'));
-    const handler = dismiss.slice(0, dismiss.indexOf('const accountChoices'));
+    const handler = dismiss.slice(0, dismiss.indexOf('  return ('));
     expect(handler).toContain('Alert.alert(');
     expect(handler).toContain('dismissConfirmation(line)');
     expect(handler.indexOf('Alert.alert(')).toBeLessThan(handler.indexOf('dismissPendingDraft('));

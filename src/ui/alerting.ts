@@ -2,6 +2,7 @@ import type { LocalNotificationsPort } from '../platform/local-notifications';
 import type { NotificationAccess } from '../platform/notification-access';
 import { decideAlert, decideClear } from '../reminders/alerts';
 import type { AlertKind } from '../reminders/notices';
+import { journal } from './journal';
 
 /**
  * Raising and clearing a сповіщення про збій: the effectful half of `src/reminders/alerts.ts`.
@@ -45,6 +46,11 @@ export async function raise(
   options: { readonly attended: boolean },
   ports: AlertPorts,
 ): Promise<void> {
+  // Journaled first, before anything is decided. A failure that posts no сповіщення — because one
+  // of that kind already stands, or because the owner is looking at the screen that explains it —
+  // is still a failure that happened, and the second one is very often exactly the one the owner
+  // files a репорт about.
+  journal.record('alert', kind);
   const decision = decideAlert({
     kind,
     outstanding: ports.storage.outstandingKinds(),
@@ -67,6 +73,10 @@ export async function clear(kind: AlertKind, ports: AlertPorts): Promise<void> {
   if (decision === 'nothing-outstanding') {
     return;
   }
+  // Only what actually changed: a clear of a kind that was not standing is a no-op, and an entry
+  // for it would be noise in a журнал whose whole value is that every line means something. The
+  // kind stays the name — «знято» is what happened to it, not a sixth kind of сповіщення.
+  journal.record('alert', kind, 'знято');
   ports.storage.clear(kind);
   await ports.notifications.clear(decision.dismiss.id);
 }

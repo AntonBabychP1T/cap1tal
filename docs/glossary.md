@@ -55,6 +55,11 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Original-currency amount** (сума в оригінальній валюті) **[PROPOSED]** — for a foreign
   purchase from a hryvnia card, the amount in the merchant's currency; kept for information. The
   expense itself is the UAH the bank charged.
+- **Description** (опис) — the text the bank sent with an imported транзакція — «СІЛЬПО»,
+  «Uklon» — kept on it for information. Nothing computes with it: no total, no баланс and no
+  категорія is decided by an опис, and it survives every edit and retype, so a витрата retyped
+  into a переказ still says where it came from. Manual entry never asks for one. It is the bank's
+  words about the owner, which is why it leaves the phone only under «Продавці» (see AI).
 - **Uncategorised** (без категорії) — an imported transaction no rule recognised. Still an
   expense, still counted as spent, highlighted for one-tap categorisation.
 - **Unsourced** (без джерела) — the income half of "uncategorised": the джерело an imported
@@ -93,6 +98,10 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 ## The month
 
 - **Month** (місяць) **[PROPOSED]** — the calendar month; the period every number below is about.
+- **Monthly picture** (місячна картина) — the six numbers below taken together for one
+  calendar month, per currency: витрачено, дохід, інвестовано, відкладено, позичено and
+  залишилось. The term the code has used since `monthly-picture`. It is computed from the
+  транзакції of the month and never entered.
 - **Spent** (витрачено) — expenses in the month (including uncategorised, negative corrections,
   fees), net of refunds.
 - **Invested** (інвестовано) — net transfers into investment accounts in the month; money coming
@@ -112,13 +121,40 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 ## Keeping the data
 
 - **Backup** (бекап) — one file holding everything the owner has: every рахунок with its opening
-  balance, every категорія, джерело, правило, ліміт and ціль, every транзакція, and what the app
-  has already imported. It never holds the monobank token, the чернетки awaiting a word, or the
-  text of the notifications behind them. It is not encrypted: whoever holds the file can read the
+  balance, every категорія, джерело, правило, ліміт and ціль, every транзакція, what the app has
+  already imported, and every фіскальний чек with its позиції and the source document the tax
+  service served — so a restored phone shows a чек without asking the tax service again. It never
+  holds the monobank token, the чернетки awaiting a word, or the text of the notifications behind
+  them. It is not encrypted: whoever holds the file can read the
   money in it.
 - **Restore** (відновлення) — putting a бекап back. It **replaces** everything now on the phone —
   it never merges, and there is no undo — so the app shows what the бекап holds beside what is on
   the phone, and asks, before anything changes. It either lands whole or does not happen.
+
+## The fiscal receipt
+
+- **Фіскальний чек** (fiscal receipt) — what the seller's registrar registered with the tax
+  service for one purchase: the позиції bought, their prices, the total, the seller and the moment.
+  The app fetches it by the реквізити printed as a QR code on the paper чек, and keeps it as
+  detail **beneath** a транзакція. It moves no money: no розрахунковий баланс, no number of the
+  місячна картина, no ліміт, ціль or звіт changes because a чек was attached.
+- **Позиція чека** (receipt line) — one line of a чек: the product name exactly as printed, the
+  quantity with its unit, the unit price and the line total where the чек names them, a line
+  discount, and the barcode and УКТЗЕД code where it carries them. A позиція is never a
+  транзакція, carries no категорія, and nothing renames, cleans, groups or classifies it.
+- **Реквізити чека** (receipt particulars) — what the QR carries and the lookup needs: the
+  фіскальний номер чека, the фіскальний номер реєстратора, the date, the time and the сума.
+- **Реєстратор** (registrar, РРО/ПРРО) — the seller's cash register, hardware (РРО) or software
+  (ПРРО), which registers each чек with the tax service. The two serve documents in two different
+  formats; the app reads both.
+- **Фіскальний номер чека** — the number the tax service gave this чек. **Фіскальний номер
+  реєстратора** — the number it gave the registrar that issued it. Together with the date issued
+  they are the чек's identity: two чеки with those three values are one чек.
+- **Прикріпити чек** (attach) / **відкріпити чек** (detach) — putting a чек under a транзакція and
+  taking it away again. Attaching stores the чек, its позиції and the source document as one unit,
+  and only after the owner has seen what it holds. Detaching deletes them and leaves the
+  транзакція exactly as it was. A транзакція holds at most one чек; a чек hangs on at most one
+  транзакція.
 
 ## What the app says first
 
@@ -132,6 +168,56 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   to the screen where the reason is written and the retry is offered. One failed action is one
   сповіщення however often it fails; it goes when that action next succeeds, or when the owner
   opens the screen it leads to. A failure whose screen the owner is already looking at raises none.
+
+## AI
+
+- **AI-аналіз** (AI analysis) — an explanation, by a language model, of numbers the app has
+  already computed: an assistant the owner already has, or later a model on the phone. The model
+  is never a source of truth and changes nothing — it reads out what the app computed and the app
+  is not touched by what it says. A kind of AI-аналіз is named by the glossary term it reads —
+  «Місячна картина» now, «Інвестиції» later — and never «бюджет», which vision §9 uses for ліміти.
+- **Пакет для аналізу** (analysis package) — the versioned, deterministic bundle of numbers the
+  app builds locally for one AI-аналіз: per currency, never mixed, every сума exact, from the
+  stored транзакції alone. It carries no identifier, no назва of a рахунок, no secret and no text
+  a bank sent. Описи and individual транзакції are in it only by the owner's explicit choice for
+  that one run.
+- **Файл для аналізу** (analysis file) — the пакет rendered as one self-contained text: the
+  instructions to the assistant, the context that defines the terms, a readable summary and the
+  пакет itself. It is what an assistant answers from with nothing added by the owner.
+- **Передати** (hand over) — giving one file the app made — a файл для аналізу, a репорт про
+  помилку — to an app the owner picks in the phone's own chooser; on the AI-аналіз screen the
+  action reads «Поділитися з AI». It is the owner's act, not a connection the app makes: the app
+  names no recipient, opens no app of its own, and never learns what the chosen app did with the
+  file — so whatever is handed over, it says only that the file was handed to the system.
+- **Продавець** (merchant) — the опис of a витрата, folded and trimmed, as the пакет groups
+  витрати by it. An опис that a confirmed чернетка left on its транзакція is an опис like any
+  other — the bank's own text — and leaves the phone only under «Продавці», the switch that lets
+  описи into a пакет at all.
+- **Тренди** (trends) — the month-over-month figures of a пакет: the changes of the six numbers,
+  the averages before the period, the largest категорії and their changes, the notable витрати and
+  the recurring candidates. Every one of them is computed by the app, deterministically, before
+  any assistant sees the пакет — never by the assistant.
+
+## Keeping the app honest
+
+- **Журнал** (journal) — the app's own bounded record of what it has been doing lately, kept on
+  the phone for one purpose: so a bug met on the phone can be reproduced at the laptop. It holds
+  an entry per moment for every screen opened (by its route), every action that failed with the
+  exact text the owner was shown, every сповіщення про збій raised or cleared, and every crash
+  with its message and stack. It keeps the most recent 500 entries and drops the oldest beyond
+  that. It never holds a сума, a назва, an опис, the text of a bank's сповіщення or the monobank
+  token — an action is named by its kind, a screen by its route, a failure by the app's own words.
+  Where the app's own refusal quotes what the owner typed into the refused field, the quote lives
+  in that one entry and nowhere else. It leaves the phone only inside a репорт про помилку the
+  owner hands over, and it is never in a бекап.
+- **Репорт про помилку** (bug report) — what the owner wrote down after something went wrong —
+  what they did (required), what happened, what they expected — together with what the app
+  attaches by itself at that moment: its version and build, the platform, the device, the number
+  of migrations applied, the route of the screen it was filed from, the moment, the whole журнал,
+  the failure or crash that prompted it, and counts of what the phone holds as numbers only; plus
+  any screenshots the owner adds afterwards. It is stored on the phone and read there whole, and
+  it leaves only when the owner hands it over («Передати») or copies its text. It is never in a
+  бекап, and a відновлення leaves репорти and the журнал untouched.
 
 ## Distinctions the owner drew
 
@@ -152,3 +238,6 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 | Restore (відновлення) | Import (імпорт) | an import adds to what is there; a restore replaces all of it with the бекап's |
 | Reminder (нагадування) | Failure alert (сповіщення про збій) | the нагадування asks the owner to do something; the сповіщення says the app failed to |
 | Failure alert (сповіщення про збій) | Bank notification (сповіщення банку) | one the app posts about itself; the other is what another bank's app posted and this app read |
+| Фіскальний чек | Квитанція | the чек is what the seller's реєстратор registered with the tax service and names the позиції; a квитанція (monobank's `receiptId`, check.gov.ua) only proves a payment happened and names no product — it cannot be used to find a чек |
+| Позиція чека | Транзакція | a позиція is detail under one транзакція; it has no категорія, no рахунок and no effect on any number the app computes |
+| Репорт про помилку | Сповіщення про збій | the репорт is what the owner writes for the developer; the сповіщення is what the app posts to the owner |

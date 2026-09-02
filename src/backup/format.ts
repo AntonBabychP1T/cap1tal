@@ -1,4 +1,5 @@
 import type { Account, AccountKind } from '../domain/account';
+import { identityKey, receiptIdentity } from '../domain/fiscal-receipt';
 import type { Category, Source } from '../domain/category';
 import type { CategoryLimit } from '../domain/limits';
 import type { Goal } from '../domain/goals';
@@ -31,7 +32,7 @@ export const BACKUP_FORMAT_VERSION = 1;
  * breaks `verify` until someone opens this file and asks whether a бекап still holds everything it
  * should. A бекап naming a higher one is refused; a lower one is restored (design D5).
  */
-export const BACKUP_SCHEMA_VERSION = 11;
+export const BACKUP_SCHEMA_VERSION = 13;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -48,9 +49,14 @@ export const BACKUP_KIND = 'backup';
  * `notification_drafts` are чернетки the owner has not confirmed — a бекап holds what they have
  * confirmed as their money, not what the phone has merely overheard; and `alerts` is what *this*
  * phone last failed at, which says nothing about the owner's money and would be a lie on a device
- * that never failed at anything. The monobank token is in no table at all: it lives in the
- * device's secure storage (`src/platform/monobank-token.ts`), which is what makes FR-B2 a property
- * of the code and not a promise.
+ * that never failed at anything. `journal`, `bug_reports` and `bug_report_screenshots` are the
+ * app's memory of its own bugs — what it did, what the owner wrote about it, and screenshots of
+ * this phone's screen. They are facts about a device and a build, not about the owner's money, and
+ * a репорт filed on one phone would say nothing true on another; the репорт leaves by the owner's
+ * «Передати» and by no other road, least of all inside a бекап the owner made for a different
+ * reason. The monobank token is in no table at all: it lives in the device's secure storage
+ * (`src/platform/monobank-token.ts`), which is what makes FR-B2 a property of the code and not a
+ * promise.
  *
  * `daily_reminder` is here: FR-B1's «налаштування без секретів», so a restored phone reminds the
  * owner as the old one did (design D8).
@@ -75,6 +81,14 @@ export const BACKUP_TABLES: readonly string[] = [
   'monobank_imported_items',
   'notification_watches',
   'daily_reminder',
+  // A чек is the owner's own record of what they bought, and the tax service is not guaranteed to
+  // serve it again — so a restore must reproduce it without the network. The снапшот travels with
+  // it for the same reason (design D7), which also means the бекап now carries whatever the
+  // registrar printed: a masked card number, a cashier's name, a loyalty line. That is the same
+  // class of data as an опис, it stays in the file the owner controls, and the бекап screen's
+  // existing warning that whoever holds this file reads the owner's money covers it.
+  'fiscal_receipts',
+  'receipt_items',
 ];
 
 /** A правило, with the `createdAt` that breaks ties between two equally specific ones as epoch ms. */
@@ -148,6 +162,45 @@ export interface BackupWatch {
 }
 
 /**
+ * A фіскальний чек, with the source snapshot that makes it independent of the tax service. Its
+ * позиції travel beside it in their own list rather than nested, mirroring the two tables — which
+ * is what lets a позиція naming a чек the бекап does not hold be named as a contradiction instead
+ * of being silently impossible to express.
+ */
+export interface BackupReceipt {
+  readonly id: string;
+  readonly transactionId: string;
+  readonly registrarNumber: string;
+  readonly fiscalNumber: string;
+  readonly issuedDate: IsoDate;
+  readonly issuedTime: string;
+  readonly dialect: 'prro' | 'rro';
+  readonly kind: 'sale' | 'return';
+  readonly total: Money;
+  readonly sellerName?: string;
+  readonly pointName?: string;
+  readonly acquisition: 'qr_scan';
+  readonly fetchedAtMs: number;
+  readonly snapshot: string;
+}
+
+/** One позиція чека, exactly as the чек printed it. */
+export interface BackupReceiptItem {
+  readonly id: string;
+  readonly receiptId: string;
+  readonly line: number;
+  readonly rawName: string;
+  readonly quantityThousandths: number;
+  readonly unit?: string;
+  readonly unitPrice?: Money;
+  readonly lineTotal: Money;
+  readonly discount?: Money;
+  readonly barcode?: string;
+  readonly uktzed?: string;
+  readonly code?: string;
+}
+
+/**
  * The owner's whole state, in the shape a бекап carries and storage restores. Every instant is
  * epoch milliseconds rather than a `Date`, because this value is written to a file and read back
  * from one: a shape that survives `JSON.parse` unchanged needs no second mapping layer to be the
@@ -169,6 +222,9 @@ export interface BackupState {
   readonly watches: readonly BackupWatch[];
   /** The daily нагадування; absent on a device where it was never set. */
   readonly reminder?: BackupReminder;
+  /** Every фіскальний чек, with its снапшот. Empty on a бекап written before чеки existed. */
+  readonly receipts: readonly BackupReceipt[];
+  readonly receiptItems: readonly BackupReceiptItem[];
 }
 
 /** The whole file: the marker, the versions, the moment, the integrity value and the contents. */
@@ -470,6 +526,61 @@ function reminderAt(value: unknown, at: string): BackupReminder {
   return { enabled: booleanAt(row.enabled, `${at}.enabled`), time: { hour, minute } };
 }
 
+/** An optional сума: absent stays absent, exactly as `optionalString` keeps an absent name away. */
+function optionalMoney(row: Record<string, unknown>, key: string, at: string): Record<string, Money> {
+  const value = row[key];
+  return value === undefined || value === null ? {} : { [key]: moneyAt(value, `${at}.${key}`) };
+}
+
+function receiptAt(value: unknown, at: string): BackupReceipt {
+  const row = objectAt(value, at);
+  if (row.dialect !== 'prro' && row.dialect !== 'rro') {
+    fail(`${at}.dialect не є діалектом фіскального документа`);
+  }
+  if (row.kind !== 'sale' && row.kind !== 'return') {
+    fail(`${at}.kind не є ні чеком продажу, ні чеком повернення`);
+  }
+  // The only way a чек arrives in this version. A бекап naming another is from a version that
+  // knows something this one does not, and is refused in words rather than by a CHECK.
+  if (row.acquisition !== 'qr_scan') {
+    fail(`${at}.acquisition не є способом, яким цей застосунок отримує чек`);
+  }
+  return {
+    id: stringAt(row.id, `${at}.id`),
+    transactionId: stringAt(row.transactionId, `${at}.transactionId`),
+    registrarNumber: stringAt(row.registrarNumber, `${at}.registrarNumber`),
+    fiscalNumber: stringAt(row.fiscalNumber, `${at}.fiscalNumber`),
+    issuedDate: dateAt(row.issuedDate, `${at}.issuedDate`),
+    issuedTime: stringAt(row.issuedTime, `${at}.issuedTime`),
+    dialect: row.dialect,
+    kind: row.kind,
+    total: moneyAt(row.total, `${at}.total`),
+    ...optionalString(row, 'sellerName', at),
+    ...optionalString(row, 'pointName', at),
+    acquisition: 'qr_scan',
+    fetchedAtMs: integerAt(row.fetchedAtMs, `${at}.fetchedAtMs`),
+    snapshot: stringAt(row.snapshot, `${at}.snapshot`),
+  };
+}
+
+function receiptItemAt(value: unknown, at: string): BackupReceiptItem {
+  const row = objectAt(value, at);
+  return {
+    id: stringAt(row.id, `${at}.id`),
+    receiptId: stringAt(row.receiptId, `${at}.receiptId`),
+    line: integerAt(row.line, `${at}.line`),
+    rawName: stringAt(row.rawName, `${at}.rawName`),
+    quantityThousandths: integerAt(row.quantityThousandths, `${at}.quantityThousandths`),
+    ...optionalString(row, 'unit', at),
+    ...optionalMoney(row, 'unitPrice', at),
+    lineTotal: moneyAt(row.lineTotal, `${at}.lineTotal`),
+    ...optionalMoney(row, 'discount', at),
+    ...optionalString(row, 'barcode', at),
+    ...optionalString(row, 'uktzed', at),
+    ...optionalString(row, 'code', at),
+  };
+}
+
 function watchAt(value: unknown, at: string): BackupWatch {
   const row = objectAt(value, at);
   return {
@@ -505,6 +616,10 @@ export function parseState(value: unknown): BackupState {
     ...(data.reminder === undefined || data.reminder === null
       ? {}
       : { reminder: reminderAt(data.reminder, 'reminder') }),
+    // A бекап written before чеки existed names neither list, and comes back with none — the same
+    // way `watches` already do (design D5).
+    receipts: listAt(data, 'receipts', receiptAt),
+    receiptItems: listAt(data, 'receiptItems', receiptItemAt),
   };
 }
 
@@ -580,6 +695,40 @@ export function checkConsistent(state: BackupState): void {
       fail(
         `імпортований елемент «${item.itemId}» посилається на рахунок monobank, якого в бекапі немає`,
       );
+    }
+  }
+
+  // The чек contradictions. Each is a constraint storage would also refuse — the point of naming
+  // them here is that the owner reads *which* чек is wrong before anything local is touched,
+  // rather than watching a restore roll back on a foreign key.
+  const transactionIds = new Set(state.transactions.map((entry) => entry.transaction.id));
+  const receipts = new Set<string>();
+  const onTransaction = new Set<string>();
+  const identities = new Set<string>();
+  for (const receipt of state.receipts) {
+    const what = `чек «${receipt.fiscalNumber}»`;
+    if (!transactionIds.has(receipt.transactionId)) {
+      fail(`${what} посилається на транзакцію, якої в бекапі немає`);
+    }
+    if (onTransaction.has(receipt.transactionId)) {
+      fail(`${what} — другий чек на одній транзакції`);
+    }
+    // Through the domain's own key, not a second copy of it: «what makes a чек one чек» is
+    // decided in `fiscal-receipt.ts` and read here.
+    const identity = identityKey(receiptIdentity(receipt));
+    if (identities.has(identity)) {
+      fail(`${what} записаний двічі під тими самими реквізитами`);
+    }
+    if (receipt.total.currency !== 'UAH') {
+      fail(`${what} має суму не в гривнях`);
+    }
+    onTransaction.add(receipt.transactionId);
+    identities.add(identity);
+    receipts.add(receipt.id);
+  }
+  for (const item of state.receiptItems) {
+    if (!receipts.has(item.receiptId)) {
+      fail(`позиція «${item.rawName}» посилається на чек, якого в бекапі немає`);
     }
   }
 }

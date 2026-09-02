@@ -27,8 +27,9 @@ import { accountFromDraft, blankDraft, type AccountDraft } from '@/ui/account-fo
 import { accountRows, groupAccountsByKind, reconcileConfirmation } from '@/ui/account-groups';
 import { accountTotals, approximateTotals, totalsLine } from '@/ui/account-totals';
 import { todayIso } from '@/ui/dates';
+import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
-import { failureMessage, kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/ui/labels';
+import { kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/ui/labels';
 
 import { Radius, Spacing, TouchTarget } from '@/constants/theme';
 
@@ -50,6 +51,14 @@ const CURRENCY_CHOICES = OFFERED_CURRENCIES.map((c) => ({ value: c, label: c }))
 
 export default function AccountsScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const [stored, reload] = useReloadOnFocus(
     useCallback(() => {
       const all = accountsRepo.list();
@@ -106,9 +115,11 @@ export default function AccountsScreen() {
       setDraft(undefined);
       reload();
     } catch (error) {
-      Alert.alert('Не збережено', failureMessage(error));
+      Alert.alert(
+        ...failureAlert({ title: 'Не збережено', where: 'account-save', error, report: reportBug }),
+      );
     }
-  }, [draft, reload]);
+  }, [draft, reload, reportBug]);
 
   /**
    * «Звірити»: the owner confirms the exact signed difference, and what is then written is the
@@ -139,13 +150,15 @@ export default function AccountsScreen() {
               }
               reload();
             } catch (error) {
-              Alert.alert('Не збережено', failureMessage(error));
+              Alert.alert(
+                ...failureAlert({ title: 'Не збережено', where: 'account-reconcile', error, report: reportBug }),
+              );
             }
           },
         },
       ]);
     },
-    [reload, rowsById, stored.balances, stored.bankBalances],
+    [reload, reportBug, rowsById, stored.balances, stored.bankBalances],
   );
 
   return (

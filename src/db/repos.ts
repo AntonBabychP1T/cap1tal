@@ -9,7 +9,9 @@ import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
 import { notificationsRepo } from './notifications-repo';
 import { ratesRepo } from './rates-repo';
+import { receiptsRepo } from './receipts-repo';
 import { remindersRepo } from './reminders-repo';
+import { reportingRepo } from './reporting-repo';
 import { rulesRepo } from './rules-repo';
 import { sourcesRepo } from './sources-repo';
 import { transactionsRepo } from './transactions-repo';
@@ -36,9 +38,13 @@ export const limits = limitsRepo(db);
 export const goals = goalsRepo(db);
 /** What bank notifications have come to: the watched apps, the fingerprints, the чернетки. */
 export const notifications = notificationsRepo(db);
+/** The фіскальні чеки beneath транзакції, with their позиції. Nothing here moves any money. */
+export const receipts = receiptsRepo(db);
 /** The whole state as one snapshot, and the atomic replacement a відновлення is. */
 export const backup = backupRepo(db);
 /** The daily нагадування's setting, and the сповіщення про збій still outstanding. */
 export const reminders = remindersRepo(db);
 /** The рахунок the entry form opens on — written by Головний's hand-entry path and nothing else. */
 export const entryDefaults = entryDefaultsRepo(db);
+/** The журнал and the репорти про помилки — what the app did, and what the owner wrote about it. */
+export const reporting = reportingRepo(db);

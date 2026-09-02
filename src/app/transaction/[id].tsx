@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { askAboutTransfer } from '@/components/transfer-dialog';
 import { Action, Choices, Field } from '@/components/form';
@@ -9,17 +9,20 @@ import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
+  receipts as receiptsRepo,
   sources as sourcesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
 import type { Account } from '@/domain/account';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { failureAlert } from '@/ui/failure-alert';
 import { accountChoicesFor, legsOf } from '@/ui/account-choices';
 import { formatMinorUnits } from '@/ui/amount-input';
 import { categoryChoicesFor, sourceChoicesFor } from '@/ui/category-choices';
 import { buildEntry, normaliseDescription, type EntryType } from '@/ui/entry-form';
-import { accountChoiceLabel, failureMessage, transactionTypeLabel } from '@/ui/labels';
+import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
+import { receiptOffer } from '@/ui/receipt-screen';
 import { labelsAfterRetype, shapesFor } from '@/ui/retype';
 
 import { Spacing } from '@/constants/theme';
@@ -28,7 +31,7 @@ import { Spacing } from '@/constants/theme';
  * Editing one transaction: its сума, дата, рахунок(и), its category or джерело, retyping under
  * the same id, and deleting it after a confirmation.
  *
- * What a filled form stores is `buildEntry` — the same function the Головний entry form uses, so
+ * What a filled form stores is `buildEntry` — the same function «Нова транзакція» uses, so
  * recording and editing cannot drift apart, and giving it the original's id is all that makes
  * this an edit rather than a new transaction. What a retype carries over is `labelsAfterRetype`.
  * Both are pure and under `verify`; this file is the wiring.
@@ -39,6 +42,14 @@ import { Spacing } from '@/constants/theme';
 
 export default function EditTransactionScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const [stored] = useReloadOnFocus(
@@ -48,6 +59,7 @@ export default function EditTransactionScreen() {
         transaction: transactionsRepo.get(id),
         categories: categoriesRepo.list(),
         sources: sourcesRepo.list(),
+        receipt: receiptsRepo.forTransaction(id),
       }),
       [id],
     ),
@@ -177,9 +189,11 @@ export default function EditTransactionScreen() {
       }
       store(built);
     } catch (error) {
-      Alert.alert('Не збережено', failureMessage(error));
+      Alert.alert(
+        ...failureAlert({ title: 'Не збережено', where: 'transaction-save', error, report: reportBug }),
+      );
     }
-  }, [form, original, store, stored.accounts]);
+  }, [form, original, reportBug, store, stored.accounts]);
 
   const remove = useCallback(() => {
     if (!original) return;
@@ -216,6 +230,12 @@ export default function EditTransactionScreen() {
           </ThemedText>
           <StoredDescription of={original} />
         </Card>
+        <ReceiptLine
+          transaction={original}
+          receipt={stored.receipt}
+          onScan={() => router.push({ pathname: '/transaction/scan', params: { id: original.id } })}
+          onOpen={() => router.push({ pathname: '/transaction/receipt', params: { id: original.id } })}
+        />
         <Action variant="destructive" title="Видалити транзакцію" onPress={remove} />
       </Screen>
     );
@@ -307,11 +327,58 @@ export default function EditTransactionScreen() {
           />
         ) : null}
       </Card>
+      <ReceiptLine
+        transaction={original}
+        receipt={stored.receipt}
+        onScan={() => router.push({ pathname: '/transaction/scan', params: { id: original.id } })}
+        // The чек is found by its транзакція — one транзакція carries at most one — so its own
+        // id is not passed and not read.
+        onOpen={() => router.push({ pathname: '/transaction/receipt', params: { id: original.id } })}
+      />
       {/* The one accent fill on this screen, and the destructive verb under it as text alone —
           deleting is never the loudest thing here. */}
       <Action title="Зберегти" onPress={apply} />
       <Action variant="destructive" title="Видалити транзакцію" onPress={remove} />
     </Screen>
+  );
+}
+
+/**
+ * Where the фіскальний чек goes on this form: «Сканувати QR чека» while there is none, or the чек
+ * line that opens its позиції once there is one.
+ *
+ * What is shown is `receiptOffer`'s answer and nothing this file decides — the prominence, the
+ * label and the «no scan for a переказ» rule are all proven in `src/ui/receipt-screen.test.ts`.
+ */
+function ReceiptLine({
+  transaction,
+  receipt,
+  onScan,
+  onOpen,
+}: {
+  transaction: Transaction;
+  receipt: ReturnType<typeof receiptsRepo.forTransaction>;
+  onScan: () => void;
+  onOpen: () => void;
+}) {
+  const offer = receiptOffer({ transaction, ...(receipt ? { receipt } : {}) });
+  if (offer.kind === 'none') {
+    return null;
+  }
+  if (offer.kind === 'attached') {
+    return <Action variant="secondary" title={offer.label} onPress={onOpen} />;
+  }
+  // Two weights, and neither is the accent fill: «Зберегти» is this screen's one filled action
+  // (`components/form.tsx` — «the filled action is the loudest thing on its screen»), and a scan
+  // offer shouting as loudly as the form's own verb is what the emulator showed on 2026-09-02.
+  // A витрата in the seeded groceries category gets the outlined button, which stands out from
+  // the fields above it; every other category gets the same offer as a link, a weight quieter.
+  return offer.prominent ? (
+    <Action variant="secondary" title={offer.label} onPress={onScan} />
+  ) : (
+    <Pressable onPress={onScan} style={styles.receiptLink} accessibilityRole="button">
+      <ThemedText type="link">{offer.label}</ThemedText>
+    </Pressable>
   );
 }
 
@@ -382,4 +449,7 @@ function initialForm(t: Transaction | undefined): Form | undefined {
 const styles = StyleSheet.create({
   form: { gap: Spacing.three },
   field: { gap: Spacing.one },
+  // The quieter scan offer: a link with a button's tap target, so it is no harder to hit than
+  // the outlined one it stands in for.
+  receiptLink: { alignItems: 'center', paddingVertical: Spacing.two },
 });

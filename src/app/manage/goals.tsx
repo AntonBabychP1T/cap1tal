@@ -19,8 +19,9 @@ import {
   targetAfterRelink,
   type GoalDraft,
 } from '@/ui/goals-section';
+import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
-import { accountChoiceLabel, failureMessage } from '@/ui/labels';
+import { accountChoiceLabel } from '@/ui/labels';
 
 import { Spacing } from '@/constants/theme';
 
@@ -35,6 +36,14 @@ import { Spacing } from '@/constants/theme';
 
 export default function GoalsScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const [stored, reload] = useReloadOnFocus(
     useCallback(
       // Every рахунок, archived included: the picker filters, but a ціль already linked to an
@@ -88,9 +97,11 @@ export default function GoalsScreen() {
       setDraft(undefined);
       reload();
     } catch (error) {
-      Alert.alert('Не збережено', failureMessage(error));
+      Alert.alert(
+        ...failureAlert({ title: 'Не збережено', where: 'goal-save', error, report: reportBug }),
+      );
     }
-  }, [draft, reload, stored.accounts]);
+  }, [draft, reload, reportBug, stored.accounts]);
 
   const remove = useCallback(
     (goal: Goal) => {

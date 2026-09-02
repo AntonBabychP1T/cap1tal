@@ -88,9 +88,9 @@ describe('the Звіти history chart', () => {
       'Інвестовано',
     ]);
     expect(model.history.map((c) => c.bars[0]!.amount)).toEqual([
-      '1000,00 UAH',
-      '2000,00 UAH',
-      '4000,00 UAH',
+      '1 000,00 UAH',
+      '2 000,00 UAH',
+      '4 000,00 UAH',
     ]);
     // Bars are measured against the largest of the chart, so the biggest month is full height.
     expect(model.history.map((c) => c.bars[0]!.size)).toEqual([0.25, 0.5, 1]);
@@ -110,7 +110,7 @@ describe('the Звіти history chart', () => {
 
     const invested = view([back]).history.at(-1)!.bars.find((b) => b.key === 'invested')!;
 
-    expect(invested.amount).toBe('−1500,00 UAH');
+    expect(invested.amount).toBe('−1 500,00 UAH');
     expect(invested.negative).toBe(true);
     // Its height is its size, which is never negative — the flag is what puts it below the line.
     expect(invested.size).toBe(1);
@@ -200,7 +200,7 @@ describe('the Звіти category chart', () => {
     expect(model.chosenCategoryLabel).toBe('Groceries');
     expect(model.categoryChart.map((c) => [c.month, c.amount])).toEqual([
       ['2026-07', '0,00 UAH'],
-      ['2026-08', '3000,00 UAH'],
+      ['2026-08', '3 000,00 UAH'],
     ]);
     // Nothing chosen, nothing charted — the chooser is a question, not a default.
     expect(view(history).categoryChart).toEqual([]);
@@ -214,7 +214,7 @@ describe('the Звіти category chart', () => {
     ];
 
     expect(view(both, { chosenCategoryId: 'groceries' }).categoryChart.map((c) => c.amount)).toEqual([
-      '3000,00 UAH',
+      '3 000,00 UAH',
     ]);
     expect(
       view(both, { chosenCategoryId: 'groceries', shownCurrency: 'USD' }).categoryChart.map(
@@ -260,7 +260,7 @@ describe('the Звіти category chart', () => {
 
     expect(chart.map((c) => [c.amount, c.negative, c.size])).toEqual([
       ['−600,00 UAH', true, 0.5],
-      ['1200,00 UAH', false, 1],
+      ['1 200,00 UAH', false, 1],
     ]);
     expect(view(transactions, { chosenCategoryId: 'groceries' }).categoryChartHasNegative).toBe(true);
     expect(view(history, { chosenCategoryId: 'groceries' }).categoryChartHasNegative).toBe(false);
@@ -283,9 +283,9 @@ describe('the Звіти цілі', () => {
       {
         id: 'g-car',
         name: 'Авто',
-        target: '200000,00 UAH',
+        target: '200 000,00 UAH',
         deadline: '2026-12-31',
-        progress: '50000,00 UAH',
+        progress: '50 000,00 UAH',
         reached: false,
         overdue: false,
       },
@@ -324,7 +324,7 @@ describe('the Звіти цілі', () => {
       arrived: money(1000000, 'UAH'),
     });
 
-    expect(view([arrival], { goals: [car] }).goals[0]!.progress).toBe('60000,00 UAH');
+    expect(view([arrival], { goals: [car] }).goals[0]!.progress).toBe('60 000,00 UAH');
   });
 
   it('Scenario: No цілі is said plainly', () => {
@@ -342,7 +342,7 @@ describe('every chart states its scale', () => {
       spend('e2', '2026-08-10', 4500000),
     ]);
 
-    expect(model.historyAxis).toEqual({ top: '45000,00 UAH', zero: '0,00 UAH', bottom: null });
+    expect(model.historyAxis).toEqual({ top: '45 000,00 UAH', zero: '0,00 UAH', bottom: null });
     // The top of the scale is what a full-height bar stands for, so the two agree by construction.
     const tallest = model.history.flatMap((c) => c.bars).find((b) => b.size === 1)!;
     expect(tallest.amount).toBe(model.historyAxis!.top);
@@ -369,9 +369,9 @@ describe('every chart states its scale', () => {
 
     expect(model.historyHasNegative).toBe(true);
     expect(model.historyAxis).toEqual({
-      top: '45000,00 UAH',
+      top: '45 000,00 UAH',
       zero: '0,00 UAH',
-      bottom: '−45000,00 UAH',
+      bottom: '−45 000,00 UAH',
     });
   });
 
@@ -381,7 +381,7 @@ describe('every chart states its scale', () => {
       spend('e2', '2026-08-11', 5000, 'groceries', 'USD'),
     ];
 
-    expect(view(transactions).historyAxis!.top).toBe('1000,00 UAH');
+    expect(view(transactions).historyAxis!.top).toBe('1 000,00 UAH');
     expect(view(transactions, { shownCurrency: 'USD' }).historyAxis!.top).toBe('50,00 USD');
     // And the category chart is scaled in the same currency, never in the other one.
     expect(
@@ -420,7 +420,7 @@ describe('one month of each chart is spelled out in full', () => {
     expect(model.historyReadout!.month).toBe('2026-08');
     expect(model.historyReadout!.label).toBe('Сер 2026');
     expect(model.historyReadout!.numbers).toEqual([
-      { key: 'spent', label: 'Витрачено', amount: '4000,00 UAH' },
+      { key: 'spent', label: 'Витрачено', amount: '4 000,00 UAH' },
       { key: 'income', label: 'Дохід', amount: '0,00 UAH' },
       { key: 'invested', label: 'Інвестовано', amount: '0,00 UAH' },
     ]);
@@ -431,7 +431,7 @@ describe('one month of each chart is spelled out in full', () => {
     const model = view(threeMonths, { chosenMonth: '2026-06' });
 
     expect(model.historyReadout!.month).toBe('2026-06');
-    expect(model.historyReadout!.numbers[0]!.amount).toBe('1000,00 UAH');
+    expect(model.historyReadout!.numbers[0]!.amount).toBe('1 000,00 UAH');
     expect(model.history.filter((c) => c.selected).map((c) => c.month)).toEqual(['2026-06']);
   });
 
@@ -442,7 +442,7 @@ describe('one month of each chart is spelled out in full', () => {
     expect(model.categoryReadout).toEqual({
       month: '2026-06',
       label: 'Чер 2026',
-      amount: '1000,00 UAH',
+      amount: '1 000,00 UAH',
     });
     expect(model.categoryChart.filter((c) => c.selected).map((c) => c.month)).toEqual(['2026-06']);
   });
@@ -490,7 +490,7 @@ describe('one month of each chart is spelled out in full', () => {
       '2026-09',
     ]);
     expect(model.historyReadout!.month).toBe('2026-08');
-    expect(model.historyReadout!.numbers[0]!.amount).toBe('4000,00 UAH');
+    expect(model.historyReadout!.numbers[0]!.amount).toBe('4 000,00 UAH');
     // Marked as the one being read, and September is still drawn beside it.
     expect(model.history.filter((c) => c.selected).map((c) => c.month)).toEqual(['2026-08']);
   });
@@ -577,5 +577,33 @@ describe('the Звіти tab draws what this model decided', () => {
   it('No сума is formatted on the screen — every one of them comes from here', () => {
     expect(screen).not.toContain('amount-input');
     expect(screen).not.toContain('formatMoney');
+  });
+
+  it('Scenario: The offer says nothing about the data', () => {
+    // «Звіти» offers AI-аналіз as a way in and nothing more. It builds no пакет — the whole of
+    // `src/analysis` is unreachable from this tab — and it renders no count, no preview and no
+    // файл: the AI-аналіз screen is the one that computes, once it is open.
+    expect(screen).toContain("router.push('/ai-analysis')");
+    expect(screen).toContain('AI-аналіз');
+    expect(screen).not.toContain('src/analysis');
+    expect(screen).not.toContain('@/analysis');
+    expect(screen).not.toContain('@/ui/ai-analysis-screen');
+    for (const built of ['buildAnalysisPackage', 'renderDocument', 'aiAnalysisModel', 'analysisShare']) {
+      expect(screen, `«Звіти» reaches ${built}`).not.toContain(built);
+    }
+  });
+
+  it('the offer is shown on an empty history too', () => {
+    // The card sits outside the `emptyHistoryMessage` branch, so a device with nothing stored
+    // still has the way in — and the AI-аналіз screen says there is nothing to analyse yet.
+    const start = screen.indexOf('model.emptyHistoryMessage ?');
+    const end = screen.indexOf(') : (', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    // What an empty history renders instead of the charts holds no way in of its own …
+    expect(screen.slice(start, end)).not.toContain('/ai-analysis');
+    // … because the offer sits after the whole ternary, and so is drawn either way.
+    expect(screen.indexOf('/ai-analysis')).toBeGreaterThan(end);
   });
 });

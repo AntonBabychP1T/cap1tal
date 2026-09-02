@@ -22,11 +22,12 @@ Android first (iOS must stay possible).
 ## Layout
 
 ```
-docs/            product-vision.md, glossary.md, tech-task.md — why, vocabulary, build plan
+docs/            product-vision.md, glossary.md, tech-task.md — why, vocabulary, build plan;
+                 app-overview.md — the map of what exists today, with screenshots (screens/)
 BACKLOG.md       the owner's priority queue; what `auto-work` takes its next wave from
 openspec/        specs/<capability>/spec.md (truth), changes/<name>/ (work in flight), config.yaml
 src/app/         expo-router screens: (tabs)/ = Головний, Місяць, Рахунки, Звіти, Налаштування;
-                 pushed over them: transaction/[id], transactions (search), account/[id]
+                 pushed over them: transaction/[id], transactions (search), ai-analysis, account/[id]
                  (movements), category/…, onboarding («Перші кроки»), manage/ (the lists)
 src/domain/      pure TypeScript: money, entities, monthly picture, rules, limits, goals, reports
                                                                         → .claude/rules/domain.md
@@ -36,6 +37,8 @@ src/monobank/    the bank: the tokenless currency endpoint, plus the personal AP
                  sync and connection — the token reaches them through a port, never a global
 src/notifications/  another bank's push → fingerprint → чернетка (pure; the device half is platform/)
 src/saldo/       the one-time CSV import: parse → interpret → survey → verify
+src/analysis/    the AI-аналіз: the пакет (period, months, categories, trends, goals, details,
+                 exact decimal text and basis points) and the файл (prompt, context, summary, data)
 src/backup/      the backup file: canonical shape, versioned format, restore plan
 src/reminders/   the daily нагадування and the failure alerts (pure: schedule, notices, alerts)
 src/platform/    the device behind one port each (the port is what `verify` tests, the adapter

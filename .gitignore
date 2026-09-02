@@ -37,6 +37,10 @@ secrets/
 saldo_export*.csv
 data/private/
 
+# the DOCX build of docs/app-overview.md — 3 MB of binary that duplicates the Markdown.
+# Rebuild it with `node scripts/build-overview-docx.mjs`; the Markdown is the source.
+docs/*.docx
+
 # verify stamp and hook state
 .cache/
 

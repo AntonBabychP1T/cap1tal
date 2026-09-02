@@ -14,6 +14,7 @@ export default function CategoriesScreen() {
   return (
     <ManageListScreen
       title="Категорії"
+      where="categories"
       hint="Куди пішли гроші. Архівна категорія лишається на своїх транзакціях, але її більше не пропонують."
       load={useCallback(() => manageCategories(categoriesRepo.list()), [])}
       create={useCallback((name: string) => {

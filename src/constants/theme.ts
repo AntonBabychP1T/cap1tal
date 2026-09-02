@@ -15,8 +15,14 @@ export const Colors = {
     background: '#F7F4EE',
     backgroundElement: '#FFFDF8',
     backgroundSelected: '#ECE5D8',
-    /** Hairline inside a card. The app groups by tone, so borders live only there. */
+    /** Hairline inside a card — the rule between two rows. */
     border: '#E2DACB',
+    /**
+     * The edge around a card. On the dark theme the page is black and a card only a few steps off
+     * it, so the card needs an outline to read as an object rather than as a patch of lighter
+     * paint; on the light theme the same edge is quieter than the rule inside.
+     */
+    cardEdge: '#EAE3D5',
     textSecondary: '#6B6459',
     /** Placeholder and archived text — not meant to be read, so it need not carry contrast. */
     textMuted: '#918878',
@@ -39,6 +45,7 @@ export const Colors = {
     backgroundElement: '#1A1714',
     backgroundSelected: '#26221D',
     border: '#2B2721',
+    cardEdge: '#2F2A23',
     textSecondary: '#9C948A',
     textMuted: '#6B645B',
     accent: '#D9A441',
@@ -52,12 +59,16 @@ export const Colors = {
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
-/** Chip, button and banner, card, bottom sheet. No shadows anywhere — the tone is the layer. */
+/**
+ * Chip, button and banner, card, bottom sheet, and the fully round pill a count or the «+» wears.
+ * No shadows anywhere — the tone and a hairline are what say which layer a surface is on.
+ */
 export const Radius = {
   chip: 9,
   control: 12,
-  card: 14,
+  card: 16,
   sheet: 22,
+  pill: 999,
 } as const;
 
 export const Fonts = Platform.select({

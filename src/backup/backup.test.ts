@@ -22,6 +22,8 @@ function state(over: Partial<BackupState> = {}): BackupState {
     monobankLinks: [],
     monobankImportedItems: [],
     watches: [],
+    receipts: [],
+    receiptItems: [],
     ...over,
   };
 }
@@ -136,6 +138,25 @@ describe('a бекап is one versioned file holding the whole state', () => {
     if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
     expect(read.state.transactions[0]?.storedAtMs).toBe(1_700_000_000_456);
     expect(read.state.rules[0]?.createdAtMs).toBe(1_699_000_000_123);
+  });
+});
+
+describe('what a бекап is not asked to carry', () => {
+  it('Scenario: A бекап carries no репорт', () => {
+    // The type-level half of the exclusion, beside `format.test.ts`'s table-level half: a
+    // `BackupState` has no field a журнал entry or a репорт про помилку could sit in, so no
+    // future mapper can put one there by accident and no reader can expect one.
+    const keys = Object.keys(state()).sort();
+    for (const absent of ['journal', 'reports', 'bugReports', 'screenshots']) {
+      expect(keys).not.toContain(absent);
+    }
+
+    // And the written file says nothing of them either — the whole of what a бекап is, is these
+    // thirteen collections.
+    const bytes = makeBackup(smallState(), MADE_AT).bytes;
+    expect(bytes).not.toContain('journal');
+    expect(bytes).not.toContain('bug_report');
+    expect(bytes).not.toContain('"did"');
   });
 });
 

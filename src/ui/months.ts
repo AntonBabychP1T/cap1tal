@@ -95,6 +95,36 @@ export function monthLabel(month: Month): string {
 }
 
 /**
+ * The twelve in the locative, as a month is named *in* it: «у вересні». The nominative list above
+ * cannot be bent into this by rule — Ukrainian changes the stem («Березень» → «березні»,
+ * «Листопад» → «листопаді») — so the forms are written out, like the two lists around them.
+ */
+const MONTH_NAMES_IN: readonly string[] = [
+  'січні',
+  'лютому',
+  'березні',
+  'квітні',
+  'травні',
+  'червні',
+  'липні',
+  'серпні',
+  'вересні',
+  'жовтні',
+  'листопаді',
+  'грудні',
+];
+
+/**
+ * «у вересні» — the month as part of a sentence about it, for the Головний heading «Залишилось у
+ * вересні». No year: Головний shows the current month and nothing else, and «у вересні 2026» in a
+ * heading reads like a report about a month that is over.
+ */
+export function monthInLabel(month: Month): string {
+  const { month: m } = partsOf(month);
+  return `у ${MONTH_NAMES_IN[m - 1]}`;
+}
+
+/**
  * The same twelve, shortened — the standard three-letter Ukrainian abbreviations. A chart puts a
  * label under every month of a whole history, and «Серпень 2026» under each of twenty-four of them
  * is a wall of text rather than a time axis.

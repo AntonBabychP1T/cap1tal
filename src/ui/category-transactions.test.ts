@@ -185,7 +185,7 @@ describe('categoryMonthHeading', () => {
       {
         label: 'Groceries',
         overLimit: true,
-        spent: ['2600,00 UAH'],
+        spent: ['2 600,00 UAH'],
         overrun: 'Перевищено ліміт на 100,00 UAH',
       },
     );
@@ -211,7 +211,7 @@ describe('categoryMonthHeading', () => {
     ).toEqual({
       label: 'Groceries',
       overLimit: false,
-      spent: ['990000,00 UAH'],
+      spent: ['990 000,00 UAH'],
       overrun: null,
     });
   });
@@ -236,7 +236,7 @@ describe('the category’s own сума and its overrun', () => {
 
   it('Scenario: The category’s own сума is stated', () => {
     expect(heading([expense('e1', '2026-08-10', 'food', 260000)], []).spent).toEqual([
-      '2600,00 UAH',
+      '2 600,00 UAH',
     ]);
   });
 
@@ -250,7 +250,7 @@ describe('the category’s own сума and its overrun', () => {
   it('Scenario: Spending at the ліміт states no overrun', () => {
     const model = heading([expense('e1', '2026-08-10', 'food', 250000)]);
 
-    expect(model.spent).toEqual(['2500,00 UAH']);
+    expect(model.spent).toEqual(['2 500,00 UAH']);
     expect(model.overLimit).toBe(false);
     expect(model.overrun).toBeNull();
   });
@@ -258,7 +258,7 @@ describe('the category’s own сума and its overrun', () => {
   it('Scenario: A category with no ліміт states no overrun', () => {
     const model = heading([expense('e1', '2026-08-10', 'food', 260000)], []);
 
-    expect(model.spent).toEqual(['2600,00 UAH']);
+    expect(model.spent).toEqual(['2 600,00 UAH']);
     expect(model.overrun).toBeNull();
   });
 
@@ -269,7 +269,7 @@ describe('the category’s own сума and its overrun', () => {
     ]);
 
     // Two sums, UAH first, neither combined with the other.
-    expect(model.spent).toEqual(['2600,00 UAH', '100,00 USD']);
+    expect(model.spent).toEqual(['2 600,00 UAH', '100,00 USD']);
     // And one overrun, in the currency the ліміт is judged in.
     expect(model.overrun).toBe('Перевищено ліміт на 100,00 UAH');
   });
@@ -292,7 +292,7 @@ describe('the category’s own сума and its overrun', () => {
     // The UAH ліміт was never touched: nothing in it was spent, and no rate exists to convert.
     const model = heading([expense('e1', '2026-08-11', 'food', 99_000_000, 'USD')]);
 
-    expect(model.spent).toEqual(['990000,00 USD']);
+    expect(model.spent).toEqual(['990 000,00 USD']);
     expect(model.overLimit).toBe(false);
     expect(model.overrun).toBeNull();
   });

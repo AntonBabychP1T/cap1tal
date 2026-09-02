@@ -1,7 +1,7 @@
 import type { Account, AccountKind } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
 import type { MonobankRate } from '../monobank/currency';
-import { byCurrency, formatMinorUnits, formatMoney } from './amount-input';
+import { byCurrency, formatMinorUnitsGrouped, formatMoney } from './amount-input';
 import { approximateUah } from './approx-uah';
 
 /**
@@ -101,7 +101,7 @@ export function approximateTotals(
       return null;
     }
   }
-  return `≈ ${formatMinorUnits(sum)} грн`;
+  return `≈ ${formatMinorUnitsGrouped(sum)} грн`;
 }
 
 /**

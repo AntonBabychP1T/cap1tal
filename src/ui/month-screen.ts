@@ -7,7 +7,7 @@ import {
   type MonthlyNumbers,
 } from '../domain/monthly-picture';
 import type { Month, Transaction } from '../domain/transaction';
-import { byCurrency, formatMinorUnits, formatMoney } from './amount-input';
+import { byCurrency, formatMinorUnitsGrouped, formatMoney } from './amount-input';
 import { approximatePicture } from './approx-uah';
 import { categoryLabel } from './labels';
 import { canStepForward, monthLabel, prevMonth } from './months';
@@ -80,8 +80,12 @@ export interface MonthCurrencyGroup {
   readonly note: string | null;
 }
 
-/** Why залишилось is not leading. Shown under витрачено, so the reason is on the screen. */
-const NO_INCOME_NOTE = 'У цьому місяці ще не записано дохід.';
+/**
+ * Why залишилось is not leading. Shown under витрачено, so the reason is on the screen. Exported
+ * because Головний says the same thing about the same month — one sentence for one situation,
+ * rather than two screens wording it differently.
+ */
+export const NO_INCOME_NOTE = 'У цьому місяці ще не записано дохід.';
 
 /** The secondary «≈ … грн» line for one monthly number, across every currency of that number. */
 export interface MonthApproximateRow {
@@ -222,7 +226,7 @@ export function monthViewModel(input: {
     ? NUMBER_KEYS.map((key) => ({
         key,
         label: NUMBER_LABELS[key],
-        amount: `≈ ${formatMinorUnits(approximatePic[key].amount)} грн`,
+        amount: `≈ ${formatMinorUnitsGrouped(approximatePic[key].amount)} грн`,
       }))
     : null;
 
@@ -274,8 +278,10 @@ function previousMonthOf(input: {
  * A month with nothing recorded says so. A month that holds only transfers between рахунки that
  * move no monthly number — card to wallet, say — would otherwise be an equally blank screen while
  * being a different situation, so it gets its own sentence rather than the wrong one.
+ *
+ * Exported for Головний, which faces the same two situations in its month status.
  */
-function emptyMessageFor(groupCount: number, hasTransactions: boolean): string | null {
+export function emptyMessageFor(groupCount: number, hasTransactions: boolean): string | null {
   if (groupCount > 0) {
     return null;
   }

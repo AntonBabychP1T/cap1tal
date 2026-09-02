@@ -56,15 +56,15 @@ is now in.
   opened there
 - **THEN** exactly one нагадування is arranged, for 21:00 in the zone the phone is now in
 
-### Requirement: Tapping the нагадування opens where a транзакція is recorded
+### Requirement: Tapping the нагадування opens where the day is recorded
 
-Tapping the нагадування SHALL open Головний — where a транзакція is added and pending чернетки
-wait — whether the app was running or not.
+Tapping the нагадування SHALL open Головний — where the «+» records a транзакція and pending
+чернетки wait — whether the app was running or not.
 
 #### Scenario: A tap while the app is closed opens Головний
 
 - **WHEN** the app is not running and the owner taps the нагадування
-- **THEN** the app opens on Головний, showing quick entry and any pending чернетки
+- **THEN** the app opens on Головний, showing the «+» that records and any pending чернетки
 
 #### Scenario: A tap while the app is running opens Головний
 

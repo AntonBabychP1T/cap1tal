@@ -94,13 +94,47 @@ export function formatMinorUnits(amount: number): string {
 }
 
 /**
- * Minor units back to text for display: "12550 UAH" reads as "125,50 UAH". A negative amount
- * keeps its sign — a correction below zero is shown as it is stored.
+ * The thousands separator: a no-break space, as Ukrainian writes one — «120 425,99». No-break so
+ * a сума can never be split across two lines with its thousands left behind on the first.
+ *
+ * Grouping is a display decision and lives only on the display side: `formatMinorUnits` above
+ * fills input fields and must round-trip through `parseOpeningBalance`, which reads digits and a
+ * comma and nothing else.
+ */
+const THOUSANDS = '\u00A0';
+
+function grouped(whole: string): string {
+  let out = '';
+  for (let i = 0; i < whole.length; i += 1) {
+    // Every three digits counted from the right, and never a separator before the first digit.
+    if (i > 0 && (whole.length - i) % 3 === 0) {
+      out += THOUSANDS;
+    }
+    out += whole[i];
+  }
+  return out;
+}
+
+/**
+ * Minor units as text for display, grouped and without a currency: "120425990" reads as
+ * "1 204 259,90". For the «≈ … грн» line and nothing that has to be parsed back.
+ */
+export function formatMinorUnitsGrouped(amount: number): string {
+  const negative = amount < 0;
+  const digits = String(Math.abs(amount)).padStart(MINOR_DIGITS + 1, '0');
+  return `${negative ? '−' : ''}${grouped(digits.slice(0, -MINOR_DIGITS))},${digits.slice(-MINOR_DIGITS)}`;
+}
+
+/**
+ * Minor units back to text for display: "12550 UAH" reads as "125,50 UAH", and "12042599 UAH" as
+ * "120 425,99 UAH" — the thousands grouped, because this is the number the owner reads off a card
+ * rather than one they type. A negative amount keeps its sign — a correction below zero is shown
+ * as it is stored.
  */
 export function formatMoney(m: Money): string {
   const negative = m.amount < 0;
   const digits = String(Math.abs(m.amount)).padStart(MINOR_DIGITS + 1, '0');
-  const whole = digits.slice(0, -MINOR_DIGITS);
+  const whole = grouped(digits.slice(0, -MINOR_DIGITS));
   const fraction = digits.slice(-MINOR_DIGITS);
   return `${negative ? '−' : ''}${whole},${fraction} ${m.currency}`;
 }

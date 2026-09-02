@@ -2,22 +2,24 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, View, type ScrollView } from 'react-native';
 
-import { askAboutTransfer } from '@/components/transfer-dialog';
 import { Action, Choices, Field, RowAction } from '@/components/form';
 import {
   Card,
+  CardGlow,
+  Chevron,
+  Divider,
+  Fab,
   ListCard,
   ListRow,
   Mark,
   Screen,
-  ScreenHeader,
   SectionLabel,
+  Wordmark,
 } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
-  entryDefaults as entryDefaultsRepo,
   limits as limitsRepo,
   notifications as notificationsRepo,
   rates as ratesRepo,
@@ -25,40 +27,27 @@ import {
   sources as sourcesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
-import { activeAccounts, computeBalance } from '@/domain/account';
+import { computeBalance } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { accountTotals, approximateTotals, totalsLine } from '@/ui/account-totals';
-import {
-  expenseCategoryChoices,
-  recentlyUsed,
-  recentRows,
-  sourceChoices,
-} from '@/ui/category-choices';
-import { todayIso } from '@/ui/dates';
+import { raise as raiseAlert } from '@/ui/alerting';
 import {
   confirmPendingDraft,
   dismissConfirmation,
   dismissPendingDraft,
   draftLines,
-  DRAFTS_SECTION_TITLE,
   type DraftAnswer,
 } from '@/ui/drafts-section';
-import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
-import { onCapturesStored } from '@/ui/notification-drain';
-import {
-  buildEntry,
-  defaultAccountId,
-  normaliseDescription,
-  recordedConfirmation,
-  type EntryType,
-} from '@/ui/entry-form';
+import { expenseCategoryChoices } from '@/ui/category-choices';
+import { homeViewModel } from '@/ui/home-screen';
+import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
+import { currentMonth } from '@/ui/months';
+import { onCapturesStored } from '@/ui/notification-drain';
 import { firstRun } from '@/ui/onboarding';
-import { accountChoiceLabel, failureMessage, transactionTypeLabel } from '@/ui/labels';
 import { recategorise } from '@/ui/retype';
 import {
   accountsById,
@@ -71,21 +60,18 @@ import {
 import { Spacing } from '@/constants/theme';
 
 /**
- * Головний — the screen the app opens on: record a transaction, and the стрічка of the latest
- * ones with editing one tap away. Everything that can be decided without JSX lives in
- * `src/domain` and `src/ui` and is under `verify` — `buildEntry` decides what a filled form
- * stores, `expenseCategoryChoices` what a picker offers, `transactionLine` what a row reads and
- * whether it is «Без категорії»; this file is the wiring. See design.md §6.
+ * Головний — the short daily overview the app opens on: how the month is going, what the рахунки
+ * hold, what is waiting for an answer, and the five latest транзакції. Recording is behind the «+»
+ * over the bottom-right corner, on its own screen (`transaction/new.tsx`).
+ *
+ * Everything the screen says is decided in `src/ui` and under `verify` — `homeViewModel` decides
+ * the month status, the money-held line and whether «Потребує уваги» exists at all, `draftLines`
+ * what a чернетка reads as, `transactionLine` what a row reads and whether it is «Без категорії».
+ * This file is the wiring. See design.md §6 and this change's design §D3, §D5, §D6.
  */
 
-const FEED_SIZE = 50;
-
-/**
- * How many recently used категорії (and джерела) the shortcut row holds. Five is a row that fits
- * under the thumb without becoming a second full list — a number to tune after the emulator pass,
- * not a rule, which is why it is here and not in `category-choices.ts`.
- */
-const RECENT_SIZE = 5;
+/** How many транзакції the стрічка shows. The rest are one tap away, in «Транзакції». */
+const FEED_SIZE = 5;
 
 /**
  * Whether this launch has already been handed to «Перші кроки». Module state on purpose: the
@@ -107,28 +93,37 @@ const DRAFT_PORTS = {
   now: () => new Date(),
 };
 
-/** The order the vision names them in; the words themselves are the glossary's, via `labels`. */
-const ENTRY_CHOICES: readonly { value: EntryType; label: string }[] = (
-  ['expense', 'transfer', 'income', 'refund'] as const
-).map((value) => ({ value, label: transactionTypeLabel(value) }));
+/** The heading over everything that is waiting on the owner. Nothing waiting, no heading. */
+const ATTENTION_TITLE = 'Потребує уваги';
 
 export default function MainScreen() {
   const router = useRouter();
+
+  /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({ pathname: '/manage/bug-reports/new', params: { prompt: entryId } }),
+    [router],
+  );
+
   const [stored, reload] = useReloadOnFocus(
     useCallback(() => {
       const accounts = accountsRepo.list();
+      const month = currentMonth(new Date());
       return {
+        month,
         accounts,
-        // The розрахунковий баланс of each рахунок, so «Усього грошей» is the sum of the same
+        // The розрахунковий баланс of each рахунок, so «На рахунках» is the sum of the same
         // numbers Рахунки shows — computed from транзакції, never stored.
         balances: new Map(
           accounts.map((a) => [a.id, computeBalance(a, transactionsRepo.listByAccount(a.id))]),
         ),
+        // The month behind the status: the same bounded read Місяць does for the same month.
+        monthTransactions: transactionsRepo.listMonth(month),
         rates: ratesRepo.all(),
-        // The рахунок the entry form opens on. Written by `store()` below and by nothing else in
-        // the app, so a sync, an import and a confirmed чернетка leave it as the owner left it.
-        rememberedAccountId: entryDefaultsRepo.remembered(),
         feed: transactionsRepo.listLatest(FEED_SIZE),
+        // Everything stored that still carries «Без категорії» — counted, not listed.
+        uncategorised: transactionsRepo.countUncategorised(),
         // Every row, archived included: pickers filter, but a feed line still shows the name of a
         // category that has since been archived.
         categories: categoriesRepo.list(),
@@ -141,14 +136,14 @@ export default function MainScreen() {
     }, []),
   );
 
-  // The «≈ … грн» beside «Усього грошей»; its absence changes nothing else on the screen.
+  // The «≈ … грн» beside the money held; its absence changes nothing else on the screen.
   useCurrentRates(reload);
 
   /**
-   * Opening Головний again shows it from its top — the money and the entry form. Restoring the
-   * scroll position drops the owner who came back to record something into the middle of the form
-   * they came back to use. Scrolling within the screen is untouched: this fires on focus and on
-   * nothing else, and what the feed holds is not touched at all.
+   * Opening Головний again shows it from its top — the month's status. Restoring the scroll
+   * position drops the owner who came back to read the month into the middle of the стрічка.
+   * Scrolling within the screen is untouched: this fires on focus and on nothing else, and what
+   * the стрічка holds is not touched at all.
    */
   const scrollRef = useRef<ScrollView | null>(null);
   useFocusEffect(
@@ -158,17 +153,18 @@ export default function MainScreen() {
   );
 
   /**
-   * Opening Головний is the owner looking at where a транзакція is recorded — which is where a
-   * failure to store one is explained and retried, so it clears that сповіщення (design D6). It
-   * is also where a tapped нагадування lands.
+   * The «Не вдалося зберегти транзакцію» сповіщення leads here (`src/reminders/notices.ts`), so
+   * opening Головний clears it (design D6) — the recording itself now happens one screen further
+   * on, and that screen raises and clears the same сповіщення around its own store. It is also
+   * where a tapped нагадування lands.
    */
   useClearAlertOnOpen('local-save');
 
   /**
    * A device with no рахунок and no транзакція is a device on which this screen can do nothing —
-   * the «+» refuses every entry without a рахунок. So the first launch of such a device opens on
-   * «Перші кроки» instead. Once anything exists, or once the owner has left the checklist, this
-   * never fires again.
+   * the entry form refuses every entry without a рахунок. So the first launch of such a device
+   * opens on «Перші кроки» instead. Once anything exists, or once the owner has left the
+   * checklist, this never fires again.
    */
   const setupNeeded = firstRun({
     accounts: stored.accounts.length,
@@ -190,65 +186,13 @@ export default function MainScreen() {
    */
   useEffect(() => onCapturesStored(reload), [reload]);
 
-  const offered = useMemo(() => activeAccounts(stored.accounts), [stored.accounts]);
-  /**
-   * «Усього грошей» — what the рахунки hold, decided in `src/ui/account-totals.ts`. Deliberately
-   * not the month's «Залишилось»: that number lives on Місяць, under its own name, and this screen
-   * shows no monthly number at all so the two can never be confused.
-   */
-  const totals = useMemo(
-    () => accountTotals(stored.accounts, stored.balances),
-    [stored.accounts, stored.balances],
-  );
-  const approximate = useMemo(
-    () => approximateTotals(totals.total, stored.rates),
-    [stored.rates, totals.total],
-  );
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
-  // The джерела by id too: an imported дохід carries «Без джерела», and the feed has to name it.
+  // The джерела by id too: an imported дохід carries «Без джерела», and the стрічка has to name it.
   const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
   const categoryPicks = useMemo(
     () => expenseCategoryChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
     [stored.categories],
-  );
-  const sourcePicks = useMemo(
-    () => sourceChoices(stored.sources).map((s) => ({ value: s.id, label: s.name })),
-    [stored.sources],
-  );
-  /**
-   * What the owner reached for last, read off the стрічка already loaded — never counted, never
-   * stored. Resolved against the same offered lists, so an archived категорія is not resurrected
-   * by having been used and «Без джерела» is not offered by having been imported onto.
-   */
-  const recent = useMemo(() => recentlyUsed(stored.feed, RECENT_SIZE), [stored.feed]);
-  const recentCategoryPicks = useMemo(
-    () => recentRows(recent.categories, expenseCategoryChoices(stored.categories)).map((c) => ({
-      value: c.id,
-      label: c.name,
-    })),
-    [recent.categories, stored.categories],
-  );
-  const recentSourcePicks = useMemo(
-    () => recentRows(recent.sources, sourceChoices(stored.sources)).map((s) => ({
-      value: s.id,
-      label: s.name,
-    })),
-    [recent.sources, stored.sources],
-  );
-  /**
-   * Which categories are over their ліміт, per month of the loaded feed. The feed holds the latest
-   * транзакції, not whole months, so each month it touches — one or two, typically — is read in
-   * full for its breakdown. `overLimitByMonth` decides everything; this is the read it needs.
-   */
-  const overLimit = useMemo(
-    () =>
-      overLimitByMonth({
-        feed: stored.feed,
-        limits: stored.limits,
-        monthTransactions: (month) => transactionsRepo.listMonth(month),
-      }),
-    [stored.feed, stored.limits],
   );
 
   /** The pending чернетки as lines; an empty list is no block at all, not an empty state. */
@@ -262,163 +206,45 @@ export default function MainScreen() {
     [sourceNames, stored.accounts, stored.drafts],
   );
 
-  const [entry, setEntry] = useState<EntryType>('expense');
   /**
-   * The form opens on the рахунок last recorded on by hand — an offer, freely changed before
-   * recording. A remembered рахунок that has since been archived pre-chooses nothing, and
-   * `defaultAccountId` is what decides that; read once, at mount, because only `store()` moves it
-   * and `store()` is recording on this very screen.
+   * Everything the screen says about the month, the money held and what is waiting. No number is
+   * computed here: `homeViewModel` reads `monthlyPicture` and `accountTotals`, which are the same
+   * calculations Місяць and Рахунки read.
    */
-  const [fromId, setFromId] = useState<string | undefined>(() =>
-    defaultAccountId(stored.rememberedAccountId, activeAccounts(stored.accounts)),
+  const model = useMemo(
+    () =>
+      homeViewModel({
+        month: stored.month,
+        accounts: stored.accounts,
+        transactions: stored.monthTransactions,
+        balances: stored.balances,
+        rates: stored.rates,
+        uncategorised: stored.uncategorised,
+        pendingDrafts: drafts.length,
+      }),
+    [drafts.length, stored],
   );
-  const [toId, setToId] = useState<string>();
-  const [amount, setAmount] = useState('');
-  const [arrived, setArrived] = useState('');
-  const [date, setDate] = useState(() => todayIso(new Date()));
-  const [categoryId, setCategoryId] = useState<string>();
-  const [sourceId, setSourceId] = useState<string>();
-  /** The опис, optional for every type. Empty is the normal case and stores nothing. */
-  const [description, setDescription] = useState('');
+
   /**
-   * What the last recording stored, in the owner's words, where they are already looking. Cleared
-   * by the next recording and by the next change to any field, so it can never describe a form
-   * that has since moved on. No timer: nothing to race in a smoke test, and nothing that
-   * disappears before the owner looks up (design D11).
+   * Which categories are over their ліміт, per month of the loaded стрічка. The стрічка holds the
+   * latest транзакції, not whole months, so each month it touches — one or two, typically — is
+   * read in full for its breakdown. `overLimitByMonth` decides everything; this is the read it
+   * needs.
    */
-  const [confirmation, setConfirmation] = useState<string>();
+  const overLimit = useMemo(
+    () =>
+      overLimitByMonth({
+        feed: stored.feed,
+        limits: stored.limits,
+        monthTransactions: (month) => transactionsRepo.listMonth(month),
+      }),
+    [stored.feed, stored.limits],
+  );
+
   /** The «Без категорії» line whose one-tap picker is open, if any. */
   const [categorising, setCategorising] = useState<string>();
 
-  const from = offered.find((a) => a.id === fromId);
-  const to = offered.find((a) => a.id === toId);
-  const crossCurrency = Boolean(from && to && from.currency !== to.currency);
-
-  /**
-   * Choosing an account of another currency clears the сума touching it: an amount is entered in
-   * its account's currency, and keeping the digits would reinterpret 125,50 UAH as 125,50 USD.
-   */
-  const chooseFrom = useCallback(
-    (nextId: string) => {
-      const next = offered.find((a) => a.id === nextId);
-      if (next && from && next.currency !== from.currency) {
-        setAmount('');
-      }
-      setFromId(nextId);
-      setConfirmation(undefined);
-    },
-    [from, offered],
-  );
-
-  const chooseTo = useCallback(
-    (nextId: string) => {
-      const next = offered.find((a) => a.id === nextId);
-      if (next && to && next.currency !== to.currency) {
-        setArrived('');
-      }
-      setToId(nextId);
-      setConfirmation(undefined);
-    },
-    [offered, to],
-  );
-
-  /**
-   * Switching the type drops the label picked for the previous one. A повернення and a дохід take
-   * no default, so carrying a category picked while recording a витрата over into a повернення
-   * would be exactly the default the spec forbids.
-   */
-  const chooseEntry = useCallback((next: EntryType) => {
-    setEntry(next);
-    setCategoryId(undefined);
-    setSourceId(undefined);
-    setConfirmation(undefined);
-  }, []);
-
-  const clear = useCallback(() => {
-    setAmount('');
-    setArrived('');
-    setDate(todayIso(new Date()));
-    setCategoryId(undefined);
-    setSourceId(undefined);
-    setDescription('');
-    reload();
-  }, [reload]);
-
-  const store = useCallback(
-    (...written: Transaction[]) => {
-      const now = new Date();
-      for (const t of written) {
-        transactionsRepo.save(t, now);
-      }
-      // Recording by hand is the one thing that moves the memory — for a переказ, the рахунок the
-      // money left, which is the one this picker names. Nothing else in the app calls `remember`.
-      if (fromId) {
-        entryDefaultsRepo.remember(fromId);
-      }
-      clear();
-      setConfirmation(
-        recordedConfirmation(written, { accounts: byId, categoryNames, sourceNames }),
-      );
-      // Storing worked, so whatever the last failure to store was is no longer true.
-      void clearAlert('local-save', ALERT_PORTS);
-    },
-    [byId, categoryNames, clear, fromId, sourceNames],
-  );
-
-  const record = useCallback(() => {
-    try {
-      const built = buildEntry(
-        {
-          type: entry,
-          accountId: fromId,
-          toAccountId: toId,
-          amount,
-          arrived,
-          date,
-          categoryId,
-          sourceId,
-          description: normaliseDescription(description),
-        },
-        { id: newId(), accounts: offered },
-      );
-      // Only a переказ can propose anything on top of itself, and the owner decides whether it is.
-      if (built.type === 'transfer') {
-        // The рахунок the money left decides what may be proposed, and its stored транзакції are
-        // what says how much that person still owed before this переказ.
-        askAboutTransfer(
-          built,
-          {
-            accounts: offered,
-            sourceTransactions: transactionsRepo.listByAccount(built.fromAccountId),
-          },
-          store,
-        );
-        return;
-      }
-      store(built);
-    } catch (error) {
-      setConfirmation(undefined);
-      Alert.alert('Не записано', failureMessage(error));
-      // The Alert above is the report, and it is on the screen the owner is standing on — so this
-      // almost always answers «attended» and posts nothing. It is here for the case that is not:
-      // a store that fails as they leave (design D5).
-      void raiseAlert('local-save', { attended: attended() }, ALERT_PORTS);
-    }
-  }, [
-    amount,
-    arrived,
-    categoryId,
-    date,
-    description,
-    entry,
-    fromId,
-    offered,
-    sourceId,
-    store,
-    toId,
-  ]);
-
-  /** One tap from the feed: the same transaction under the same id, now carrying the pick. */
+  /** One tap from the стрічка: the same transaction under the same id, now carrying the pick. */
   const categorise = useCallback(
     (t: Transaction, picked: string) => {
       try {
@@ -426,10 +252,12 @@ export default function MainScreen() {
         setCategorising(undefined);
         reload();
       } catch (error) {
-        Alert.alert('Не збережено', failureMessage(error));
+        Alert.alert(
+          ...failureAlert({ title: 'Не збережено', where: 'transaction-recategorise', error, report: reportBug }),
+        );
       }
     },
-    [reload],
+    [reload, reportBug],
   );
 
   /** What the owner has typed as the сума of a raw чернетка, per чернетка. */
@@ -438,14 +266,17 @@ export default function MainScreen() {
   const settleDraft = useCallback(
     (draftId: string, answer: DraftAnswer) => {
       if (answer.kind === 'amount-required' || answer.kind === 'rejected') {
-        // Nothing was stored and the чернетка still awaits — the parser's own words say why.
-        Alert.alert('Не підтверджено', answer.message);
+        // Nothing was stored and the чернетка still awaits — the parser's own words say why, and
+        // they go into the журнал as the failure they are, offer to report included.
+        Alert.alert(
+          ...failureAlert({ title: 'Не підтверджено', where: 'draft-confirm', error: answer.message, report: reportBug }),
+        );
         return;
       }
       setDraftAmounts(({ [draftId]: _answered, ...rest }) => rest);
       reload();
     },
-    [reload],
+    [reload, reportBug],
   );
 
   const confirmDraftLine = useCallback(
@@ -464,11 +295,13 @@ export default function MainScreen() {
           ),
         );
       } catch (error) {
-        Alert.alert('Не підтверджено', failureMessage(error));
+        Alert.alert(
+          ...failureAlert({ title: 'Не підтверджено', where: 'draft-confirm', error, report: reportBug }),
+        );
         void raiseAlert('local-save', { attended: attended() }, ALERT_PORTS);
       }
     },
-    [draftAmounts, settleDraft, stored.drafts],
+    [draftAmounts, reportBug, settleDraft, stored.drafts],
   );
 
   const dismissDraftLine = useCallback(
@@ -487,223 +320,197 @@ export default function MainScreen() {
             try {
               settleDraft(line.id, dismissPendingDraft(draft, DRAFT_PORTS));
             } catch (error) {
-              Alert.alert('Не відхилено', failureMessage(error));
+              Alert.alert(
+                ...failureAlert({ title: 'Не відхилено', where: 'draft-dismiss', error, report: reportBug }),
+              );
             }
           },
         },
       ]);
     },
-    [settleDraft, stored.drafts],
+    [reportBug, settleDraft, stored.drafts],
   );
 
-  const accountChoices = offered.map((a) => ({ value: a.id, label: accountChoiceLabel(a) }));
-
-  /**
-   * Any change to any field ends the confirmation: it named what was recorded from the form as it
-   * then stood, and a form that has moved on must not still be wearing that sentence.
-   */
-  const changing =
-    <T,>(set: (value: T) => void) =>
-    (value: T) => {
-      setConfirmation(undefined);
-      set(value);
-    };
-
   return (
-    <Screen scrollRef={scrollRef}>
-      <ScreenHeader title="Головний" />
+    <Screen
+      scrollRef={scrollRef}
+      overlay={<Fab onPress={() => router.push('/transaction/new')} />}>
+      {/* The app's own name, not the tab's — the tab bar below already says which screen this is,
+          and the reference reads as a product rather than as a form because of it. */}
+      <View style={styles.brand}>
+        <Wordmark />
+      </View>
 
-      {/* Money first: the screen opens on what the рахунки hold, above the form that spends it.
-          A device with no рахунок shows none and keeps inviting the first one. */}
-      {totals.total.length > 0 ? (
-        <Card style={styles.totals}>
-          <ThemedText type="overline">Усього грошей</ThemedText>
-          <ThemedText type="subtitle" tabular>
-            {totalsLine(totals.total)}
-          </ThemedText>
-          {approximate ? (
-            <ThemedText type="small" themeColor="textSecondary" tabular>
-              {approximate}
-            </ThemedText>
-          ) : null}
+      {/* The month first, and it is the screen's figure: how much of it is left, what it has cost.
+          The same numbers Місяць shows for the same month, which is where the card leads. */}
+      <Pressable onPress={() => router.push('/month')} accessibilityRole="button">
+        <Card style={styles.status}>
+          <CardGlow />
+          <View style={styles.statusHead}>
+            <ThemedText type="overline">{model.status.title}</ThemedText>
+            <Chevron />
+          </View>
+          {model.status.emptyMessage ? (
+            <ThemedText themeColor="textSecondary">{model.status.emptyMessage}</ThemedText>
+          ) : (
+            <>
+              {/* One line, shrunk rather than wrapped: two currencies must not push the figure
+                  into a second row and the card into a different height. */}
+              <ThemedText type="title" tabular numberOfLines={1} adjustsFontSizeToFit>
+                {model.status.left}
+              </ThemedText>
+              <View style={styles.statusFoot}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {model.status.spentLabel}
+                </ThemedText>
+                <ThemedText type="smallBold" themeColor="text" tabular numberOfLines={1}>
+                  {model.status.spent}
+                </ThemedText>
+              </View>
+              {/* Why залишилось may be negative — the reason on the screen rather than guessed. */}
+              {model.status.note ? (
+                <ThemedText type="small" themeColor="textMuted">
+                  {model.status.note}
+                </ThemedText>
+              ) : null}
+            </>
+          )}
         </Card>
+      </Pressable>
+
+      {/* The money held, its own card and a quieter one: what the рахунки hold is not the month's
+          залишилось, and at a glance the size of the two figures is what says so. */}
+      {model.held ? (
+        <Pressable onPress={() => router.push('/accounts')} accessibilityRole="button">
+          <Card style={styles.held}>
+            <View style={styles.heldText}>
+              <ThemedText type="small" themeColor="textSecondary">
+                На рахунках
+              </ThemedText>
+              {/* Two lines rather than one shrunk to a hairline: three currencies is a normal
+                  amount of money to hold, and «120 425,99 UAH · 1 355,22 EUR · 3 361,76 USD» read
+                  at 60 % of the size is worse than read on two lines. */}
+              <ThemedText type="default" tabular numberOfLines={2} style={styles.heldAmount}>
+                {model.held.line}
+              </ThemedText>
+              {model.held.approximate ? (
+                <ThemedText type="small" themeColor="textMuted" tabular>
+                  {model.held.approximate}
+                </ThemedText>
+              ) : null}
+            </View>
+            <Chevron />
+          </Card>
+        </Pressable>
       ) : null}
 
-      {offered.length === 0 ? (
+      {/* Nothing to record on: the invitation stays on Головний, and the latest транзакції below
+          still show whatever is stored. */}
+      {model.held === null ? (
         <Card>
           <ThemedText>Спершу створіть рахунок — без нього нічого записати.</ThemedText>
           <Action title="До Рахунків" onPress={() => router.push('/accounts')} />
         </Card>
-      ) : (
-        <Card style={styles.form}>
-          <Choices label="Тип" choices={ENTRY_CHOICES} selected={entry} onSelect={chooseEntry} />
-          <Choices
-            label={entry === 'transfer' ? 'Звідки' : 'Рахунок'}
-            choices={accountChoices}
-            selected={fromId}
-            onSelect={chooseFrom}
-          />
-          {entry === 'transfer' ? (
-            <Choices label="Куди" choices={accountChoices} selected={toId} onSelect={chooseTo} />
-          ) : null}
-          <Field
-            label={entry === 'transfer' ? 'Скільки пішло' : 'Сума'}
-            value={amount}
-            onChangeText={changing(setAmount)}
-            keyboardType="decimal-pad"
-            placeholder="0,00"
-            hint={from ? from.currency : undefined}
-          />
-          {entry === 'transfer' && from && to ? (
-            <Field
-              label="Скільки прийшло"
-              value={arrived}
-              onChangeText={changing(setArrived)}
-              keyboardType="decimal-pad"
-              placeholder={crossCurrency ? '0,00' : 'стільки ж'}
-              hint={
-                crossCurrency ? to.currency : `${to.currency} — залиште порожнім, якщо без комісії`
-              }
-            />
-          ) : null}
-          <Field
-            label="Дата"
-            value={date}
-            onChangeText={changing(setDate)}
-            autoCapitalize="none"
-            placeholder="РРРР-ММ-ДД"
-          />
-          {/* A витрата arrives carrying «Без категорії» and the owner may pick another; a
-              повернення has no default and is not stored until one is picked. */}
-          {entry === 'expense' || entry === 'refund' ? (
-            <>
-              {/* The shortcut above the full list, not instead of it: a категорія may stand in
-                  both, and it is marked selected in both. */}
-              {recentCategoryPicks.length > 0 ? (
-                <Choices
-                  label="Нещодавні"
-                  choices={recentCategoryPicks}
-                  selected={
-                    entry === 'expense' ? (categoryId ?? UNCATEGORISED_CATEGORY_ID) : categoryId
-                  }
-                  onSelect={changing(setCategoryId)}
-                />
-              ) : null}
-              <Choices
-                label={entry === 'refund' ? 'До якої категорії' : 'Категорія'}
-                choices={categoryPicks}
-                selected={
-                  entry === 'expense' ? (categoryId ?? UNCATEGORISED_CATEGORY_ID) : categoryId
-                }
-                onSelect={changing(setCategoryId)}
-              />
-            </>
-          ) : null}
-          {entry === 'income' ? (
-            <>
-              {recentSourcePicks.length > 0 ? (
-                <Choices
-                  label="Нещодавні"
-                  choices={recentSourcePicks}
-                  selected={sourceId}
-                  onSelect={changing(setSourceId)}
-                />
-              ) : null}
-              <Choices
-                label="Джерело"
-                choices={sourcePicks}
-                selected={sourceId}
-                onSelect={changing(setSourceId)}
-              />
-            </>
-          ) : null}
-          {/* The опис: optional for every type, and information only — it moves no total, no
-              balance and no classification. Left empty, nothing is stored and the feed shows no
-              empty row for it. */}
-          <Field
-            label="Опис"
-            value={description}
-            onChangeText={changing(setDescription)}
-            placeholder="напр. шини на зиму"
-            hint="необовʼязково"
-          />
-          <Action title="Записати" onPress={record} />
-          {/* Where the owner is already looking, without scrolling: what was just recorded, and
-              what was stored alongside it. A refusal shows its own words and no confirmation. */}
-          {confirmation ? (
-            <ThemedText type="small" themeColor="textPositive">
-              {confirmation}
-            </ThemedText>
-          ) : null}
-        </Card>
-      )}
+      ) : null}
 
-      {/* The чернетки the phone's notifications left, above the feed because they are the one
-          thing on this screen still waiting on the owner. No pending ones, no block. */}
-      {drafts.length > 0 ? (
+      {/* What is waiting on the owner: the транзакції still without a категорія, counted, and the
+          чернетки the phone's notifications left, answered in place. Neither, and this whole
+          section is absent — no heading, no empty state. */}
+      {model.attention.present ? (
         <>
-          <SectionLabel>{DRAFTS_SECTION_TITLE}</SectionLabel>
-          <ListCard>
-            {drafts.map((line, index) => (
-              <ListRow key={line.id} last={index === drafts.length - 1} style={styles.row}>
-                <View style={styles.rowTop}>
-                  <View style={styles.rowLabel}>
-                    <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {`${line.accountName} · ${line.date}`}
+          {model.attention.rows.length > 0 ? (
+            <Card tone="accent" style={styles.attention}>
+              <View style={styles.attentionHead}>
+                <Mark />
+                <ThemedText type="overline" themeColor="accent">
+                  {ATTENTION_TITLE}
+                </ThemedText>
+              </View>
+              {model.attention.rows.map((row, index) => (
+                <View key={row}>
+                  {index > 0 ? <Divider /> : null}
+                  <Pressable
+                    onPress={() => router.push('/transactions')}
+                    accessibilityRole="button"
+                    style={styles.attentionRow}>
+                    <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+                      {row}
                     </ThemedText>
-                    <ThemedText type="small" themeColor="textMuted">
-                      {line.text}
+                    <ThemedText type="link" themeColor="accent">
+                      Переглянути
                     </ThemedText>
-                    {/* The foreign сума the notification named: information, never a proposal. */}
-                    {line.original ? (
+                    <Chevron />
+                  </Pressable>
+                </View>
+              ))}
+            </Card>
+          ) : (
+            <SectionLabel>{ATTENTION_TITLE}</SectionLabel>
+          )}
+          {drafts.length > 0 ? (
+            <ListCard>
+              {drafts.map((line, index) => (
+                <ListRow key={line.id} last={index === drafts.length - 1} style={styles.row}>
+                  <View style={styles.rowTop}>
+                    <View style={styles.rowLabel}>
+                      <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {`${line.accountName} · ${line.date}`}
+                      </ThemedText>
                       <ThemedText type="small" themeColor="textMuted">
-                        {line.original}
+                        {line.text}
+                      </ThemedText>
+                      {/* The foreign сума the notification named: information, never a proposal. */}
+                      {line.original ? (
+                        <ThemedText type="small" themeColor="textMuted">
+                          {line.original}
+                        </ThemedText>
+                      ) : null}
+                    </View>
+                    {line.amount ? (
+                      <ThemedText tabular style={styles.amount}>
+                        {line.amount}
                       </ThemedText>
                     ) : null}
                   </View>
-                  {line.amount ? (
-                    <ThemedText tabular style={styles.amount}>
-                      {line.amount}
-                    </ThemedText>
+
+                  {/* A raw чернетка has no сума of its own; it confirms only with one the owner
+                      supplies, in the рахунок's currency and under the manual-entry rules. */}
+                  {line.needsAmount ? (
+                    <Field
+                      label="Сума"
+                      value={draftAmounts[line.id] ?? ''}
+                      onChangeText={(typed: string) =>
+                        setDraftAmounts((current) => ({ ...current, [line.id]: typed }))
+                      }
+                      keyboardType="decimal-pad"
+                      placeholder="0,00"
+                      hint={line.currency}
+                    />
                   ) : null}
-                </View>
 
-                {/* A raw чернетка has no сума of its own; it confirms only with one the owner
-                    supplies, in the рахунок's currency and under the manual-entry rules. */}
-                {line.needsAmount ? (
-                  <Field
-                    label="Сума"
-                    value={draftAmounts[line.id] ?? ''}
-                    onChangeText={(typed: string) =>
-                      setDraftAmounts((current) => ({ ...current, [line.id]: typed }))
-                    }
-                    keyboardType="decimal-pad"
-                    placeholder="0,00"
-                    hint={line.currency}
-                  />
-                ) : null}
-
-                <View style={styles.rowActions}>
-                  <RowAction
-                    title="Підтвердити"
-                    onPress={() => confirmDraftLine(line.id, line.needsAmount)}
-                  />
-                  <RowAction title="Відхилити" onPress={() => dismissDraftLine(line)} />
-                </View>
-              </ListRow>
-            ))}
-          </ListCard>
+                  <View style={styles.rowActions}>
+                    <RowAction
+                      title="Підтвердити"
+                      onPress={() => confirmDraftLine(line.id, line.needsAmount)}
+                    />
+                    <RowAction title="Відхилити" onPress={() => dismissDraftLine(line)} />
+                  </View>
+                </ListRow>
+              ))}
+            </ListCard>
+          ) : null}
         </>
       ) : null}
 
       {/* The section says what it is — the latest only — and offers the whole history beside it.
           The offer does not depend on having a long one: search is where the owner goes to look
           for something, not a reward for having recorded enough. */}
-      <SectionLabel note={`останні ${FEED_SIZE}`}>Останні транзакції</SectionLabel>
-      <View style={styles.feedActions}>
-        <RowAction title="Усі транзакції та пошук" onPress={() => router.push('/transactions')} />
-      </View>
+      <SectionLabel
+        note={`останні ${FEED_SIZE}`}
+        action={{ label: 'Усі ›', onPress: () => router.push('/transactions') }}>
+        Останні транзакції
+      </SectionLabel>
       {stored.feed.length === 0 ? (
         <ThemedText type="small" themeColor="textSecondary">
           Поки нічого не записано.
@@ -787,8 +594,30 @@ export default function MainScreen() {
 }
 
 const styles = StyleSheet.create({
-  form: { gap: Spacing.three },
-  totals: { gap: Spacing.two - Spacing.half },
+  brand: { paddingHorizontal: Spacing.two, paddingBottom: Spacing.one },
+  // Clipped, so the accent rings behind the figure end at the card's own corner.
+  status: { gap: Spacing.two + Spacing.half, overflow: 'hidden' },
+  statusHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statusFoot: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  held: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  heldText: { flex: 1, gap: Spacing.half },
+  heldAmount: { fontWeight: 600 },
+  // A card holding one short line does not need a card's full padding around it.
+  attention: { gap: Spacing.two, paddingVertical: Spacing.three },
+  attentionHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  attentionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.two - Spacing.half,
+  },
+  attentionLabel: { flex: 1 },
   row: { gap: Spacing.two },
   rowTop: {
     flexDirection: 'row',
@@ -799,6 +628,5 @@ const styles = StyleSheet.create({
   rowLabel: { flex: 1, gap: Spacing.half },
   rowTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two - Spacing.half },
   rowActions: { flexDirection: 'row' },
-  feedActions: { flexDirection: 'row' },
   amount: { fontWeight: 600 },
 });

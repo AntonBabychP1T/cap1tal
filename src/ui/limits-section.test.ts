@@ -32,7 +32,7 @@ describe('limitRows', () => {
     expect(rowFor(limitRows({ categories: CATEGORIES, limits: [limit] }), 'groceries')).toEqual({
       categoryId: 'groceries',
       name: 'Groceries',
-      limit: '2500,00 UAH',
+      limit: '2 500,00 UAH',
       archived: false,
     });
   });
@@ -41,7 +41,7 @@ describe('limitRows', () => {
     const limits: CategoryLimit[] = [{ categoryId: 'groceries', amount: money(250000, 'UAH') }];
     const rows = limitRows({ categories: CATEGORIES, limits });
 
-    expect(rowFor(rows, 'groceries')?.limit).toBe('2500,00 UAH');
+    expect(rowFor(rows, 'groceries')?.limit).toBe('2 500,00 UAH');
     // And no other category picked it up.
     expect(rowFor(rows, 'travel')?.limit).toBeNull();
   });
@@ -52,7 +52,7 @@ describe('limitRows', () => {
     const rows = limitRows({ categories: CATEGORIES, limits: after });
 
     expect(rows.filter((row) => row.categoryId === 'groceries')).toHaveLength(1);
-    expect(rowFor(rows, 'groceries')?.limit).toBe('3000,00 UAH');
+    expect(rowFor(rows, 'groceries')?.limit).toBe('3 000,00 UAH');
   });
 
   it('Scenario: A cleared ліміт leaves the category listed', () => {
@@ -73,7 +73,7 @@ describe('limitRows', () => {
     });
     const after = limitRows({ categories: CATEGORIES, limits: [] });
 
-    expect(rowFor(before, 'groceries')?.limit).toBe('2500,00 UAH');
+    expect(rowFor(before, 'groceries')?.limit).toBe('2 500,00 UAH');
     expect(rowFor(after, 'groceries')?.limit).toBeNull();
   });
 
@@ -105,7 +105,7 @@ describe('limitRows', () => {
       limits: [limit],
     });
 
-    expect(rowFor(rows, UNCATEGORISED_CATEGORY_ID)?.limit).toBe('1000,00 UAH');
+    expect(rowFor(rows, UNCATEGORISED_CATEGORY_ID)?.limit).toBe('1 000,00 UAH');
     // The reserved rows are listed like any other: a ліміт is a ceiling, not an edit.
     expect(rows.map((row) => row.categoryId)).toContain(FEES_CATEGORY_ID);
     expect(rows.map((row) => row.categoryId)).toContain(CORRECTION_CATEGORY_ID);

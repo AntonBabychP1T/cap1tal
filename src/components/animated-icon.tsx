@@ -10,10 +10,22 @@ import { useTheme } from '@/hooks/use-theme';
 
 const DURATION = 600;
 
+/**
+ * Whether the launch view has already played in this process.
+ *
+ * The root layout remounts whole when the crash fallback returns the owner to the app — `retry`
+ * re-renders `RootLayout`, this overlay included, and its `visible` would otherwise start `true`
+ * again and replay the launch view over the return, which the app-shell requirement forbids
+ * («returning from the fallback SHALL NOT show the launch view again»). Module-level rather than a
+ * ref, because the whole tree is what remounts; set once the native splash has actually been
+ * handed over, which happens exactly once per launch.
+ */
+let playedOnce = false;
+
 export function AnimatedSplashOverlay() {
   const theme = useTheme();
   const [animate, setAnimate] = useState(false);
-  const [visible, setVisible] = useState(true);
+  const [visible, setVisible] = useState(!playedOnce);
 
   if (!visible) return null;
 
@@ -58,6 +70,7 @@ export function AnimatedSplashOverlay() {
   ) : (
     <View
       onLayout={() => {
+        playedOnce = true;
         SplashScreen.hideAsync().finally(() => {
           setAnimate(true);
         });

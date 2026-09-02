@@ -24,8 +24,6 @@ import { accountNameOf } from './transaction-line';
  * result into the owner's own words.
  */
 
-/** The title above the block. There is no empty state: no чернетка, no block at all. */
-export const DRAFTS_SECTION_TITLE = 'Чернетки зі сповіщень';
 
 /** One pending чернетка as Головний reads it. */
 export interface DraftLine {

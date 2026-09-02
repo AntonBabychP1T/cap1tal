@@ -4,6 +4,7 @@ import { todayIso } from './dates';
 import {
   canStepForward,
   currentMonth,
+  monthInLabel,
   monthLabel,
   monthsOf,
   nextMonth,
@@ -152,5 +153,42 @@ describe('monthsOf', () => {
 
   it('Nothing stored touches no місяць', () => {
     expect(monthsOf([])).toEqual([]);
+  });
+});
+
+describe('monthInLabel', () => {
+  it('The month is named as part of the sentence about it', () => {
+    expect(monthInLabel('2026-09')).toBe('у вересні');
+    expect(monthInLabel('2026-08')).toBe('у серпні');
+  });
+
+  it('All twelve months are named, in the locative', () => {
+    const names = Array.from({ length: 12 }, (_, i) =>
+      monthInLabel(`2026-${String(i + 1).padStart(2, '0')}`),
+    );
+    expect(names).toEqual([
+      'у січні',
+      'у лютому',
+      'у березні',
+      'у квітні',
+      'у травні',
+      'у червні',
+      'у липні',
+      'у серпні',
+      'у вересні',
+      'у жовтні',
+      'у листопаді',
+      'у грудні',
+    ]);
+  });
+
+  it('The year is not part of it — the heading is about the month the app is in', () => {
+    expect(monthInLabel('2026-09')).toBe(monthInLabel('2019-09'));
+  });
+
+  it('A month that is not one is refused, like every other reader here', () => {
+    for (const bad of ['2026-13', '2026-00', '2026', 'вересень'] as const) {
+      expect(() => monthInLabel(bad)).toThrow();
+    }
   });
 });
