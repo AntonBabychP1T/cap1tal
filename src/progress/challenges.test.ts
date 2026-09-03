@@ -220,19 +220,21 @@ describe('which ціль the виклик is about', () => {
     ).find((one) => one.template === 'goal-next-quarter')?.key;
 
   it('Scenario: The nearest ціль is the one nearest in share, not in сума', () => {
-    // 3 % short of a quarter on a small ціль, 5 % short on a large one. The сума still missing is
-    // 3 000 against 500 000 — the largest ціль would always win if сум were compared.
-    const small = goal('small', 100_000, 22);
-    const large = goal('large', 10_000_000, 20);
+    // The one case where the two rules disagree, which is the only case worth naming: the small
+    // ціль is 15 000 short and the large one 100 000 short, so comparing **сум** would offer the
+    // small one — but the small one still has 15 % of its target to go and the large one 1 %.
+    const small = goal('small', 100_000, 10);
+    const large = goal('large', 10_000_000, 24);
 
-    expect(offeredFor([small, large])).toBe('goal-next-quarter:small');
+    expect(offeredFor([small, large])).toBe('goal-next-quarter:large');
     // Order of the input must not decide it.
-    expect(offeredFor([large, small])).toBe('goal-next-quarter:small');
+    expect(offeredFor([large, small])).toBe('goal-next-quarter:large');
   });
 
-  it('offers the ціль nearer its quarter even when it is the larger one', () => {
-    expect(offeredFor([goal('small', 100_000, 10), goal('large', 10_000_000, 24)])).toBe(
-      'goal-next-quarter:large',
+  it('offers the smaller ціль when it really is the nearer one', () => {
+    // 3 % short against 5 % short: here share and сума agree, and so must the answer.
+    expect(offeredFor([goal('small', 100_000, 22), goal('large', 10_000_000, 20)])).toBe(
+      'goal-next-quarter:small',
     );
   });
 

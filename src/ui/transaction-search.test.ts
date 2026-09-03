@@ -188,6 +188,17 @@ describe('the місяць a route may ask for', () => {
     expect(monthFromRoute('')).toBeUndefined();
   });
 
+  it('is an initial value and not a lock', () => {
+    // The scenario's other half: the narrowing shows the місяць and the owner can widen it back.
+    // That lives in the screen, so it is read from the screen — `useState`, not a prop, and the
+    // same `setMonth` the picker below it calls.
+    const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+
+    expect(screen).toMatch(/const \[month, setMonth\] = useState\(monthFromRoute\(asked\) \?\? ANY\)/);
+    // The picker still writes it, so the route's місяць is a starting point like any other.
+    expect(screen).toMatch(/onSelect=\{\(picked: string\) => ask\(\(\) => setMonth\(picked\)\)\}/);
+  });
+
   it('refuses what is not a calendar місяць, shape or not', () => {
     // A shape check alone would take «2026-13»; this is `isMonth`'s answer, the app's own.
     expect(monthFromRoute('2026-13')).toBeUndefined();

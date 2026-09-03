@@ -1,13 +1,14 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
-import { account } from '../domain/account';
 import { money } from '../domain/money';
-import { expenseByDefault } from '../domain/transaction';
 import { homeViewModel } from './home-screen';
 import type { Candidate } from '../progress/catalogue';
 import type { Challenge } from '../progress/challenges';
 import type { EarnedAchievement } from '../progress/earned';
 import {
+  PROGRESS_ROUTE,
   achievementDetail,
   achievementsCount,
   challengeDetail,
@@ -22,6 +23,14 @@ import {
   NOTHING_YET,
   type ProgressInput,
 } from './progress-screen';
+
+/** `true` only while `homeViewModel`'s input has no such field — the type-level half of the proof. */
+type Excludes<K extends string> = K extends keyof Parameters<typeof homeViewModel>[0] ? false : true;
+
+/** A no-op whose only job is to make the type parameter above load-bearing at runtime too. */
+function expectTypeSatisfied<T>(): void {
+  void (undefined as T | undefined);
+}
 
 const NOW = new Date('2026-09-02T09:00:00');
 
@@ -253,6 +262,14 @@ describe('the «Прогрес» section of Головний', () => {
     expect(withChallenge.challenge?.name).toBe('Фінансова подушка');
   });
 
+  it('leads to «Прогрес» and to nothing else', () => {
+    const section = homeProgressSection({ earned: [earned()], accepted: [], candidates: [] })!;
+
+    expect(section.route).toBe(PROGRESS_ROUTE);
+    // The section holds at most two lines and a way in — and records nothing.
+    expect(Object.keys(section).sort()).toEqual(['achievements', 'challenge', 'route']);
+  });
+
   it('Scenario: One accepted виклик is shown', () => {
     const section = homeProgressSection({
       earned: [],
@@ -298,49 +315,35 @@ describe('what Головний shows beside it', () => {
       homeProgressSection({ earned: [earned({ seenAtMs: 1 })], accepted: [], candidates: [] }),
     ).toBeNull();
 
-    // Second, and the one that matters: everything else the tab shows is unchanged. Proven by
-    // computing `homeViewModel` over one world twice — once as the tab does, and once again — and
-    // asserting the two agree, while `homeProgressSection` over the same досягнення returns
-    // nothing. The two models share no input and no output: this capability cannot reach
-    // «Усього грошей», «Потребує уваги», the місяць or the monobank section, because none of them
-    // is an argument it takes or a value it returns.
-    const card = account({
-      id: 'card',
-      name: 'картка',
-      kind: 'spending',
-      currency: 'UAH',
-      openingBalance: money(500_000, 'UAH'),
-    });
-    const world = {
-      month: '2026-08',
-      accounts: [card],
-      transactions: [
-        expenseByDefault({
-          id: 'e1',
-          date: '2026-08-03',
-          accountId: 'card',
-          amount: money(120_000, 'UAH'),
-          categoryId: 'food',
-        }),
-      ],
-      balances: new Map([['card', money(380_000, 'UAH')]]),
-      rates: [],
-      uncategorised: 0,
-      pendingDrafts: 0,
-      now: NOW,
-    } as const;
+    // Second, and the one that matters: everything else the tab shows holds what it held with
+    // this capability absent. Two claims, and neither can be made by calling a pure function
+    // twice — `homeViewModel` is pure, so `toEqual` between two calls over one world would pass
+    // whatever this module did.
+    //
+    // (a) `homeViewModel` takes no прогрес at all. The type is the proof: `HomeInput` has no
+    //     field for a досягнення, a виклик or a норма, so no value of this capability can reach
+    //     «Усього грошей», «Потребує уваги», the місяць or the monobank section.
+    type HomeInput = Parameters<typeof homeViewModel>[0];
+    expect({
+      earned: true satisfies Excludes<'earned'>,
+      achievements: true satisfies Excludes<'achievements'>,
+      progress: true satisfies Excludes<'progress'>,
+      challenges: true satisfies Excludes<'challenges'>,
+      accepted: true satisfies Excludes<'accepted'>,
+      norms: true satisfies Excludes<'norms'>,
+    }).toBeTruthy();
+    expectTypeSatisfied<HomeInput>();
 
-    const before = homeViewModel({ ...world });
-    // Twelve earned досягнення, every one of them seen, and three accepted виклики.
-    homeProgressSection({
-      earned: Array.from({ length: 12 }, (_, i) => earned({ key: `e${i}`, seenAtMs: 1 })),
-      accepted: [],
-      candidates: [],
-    });
-    const after = homeViewModel({ ...world });
-
-    expect(after).toEqual(before);
-    expect(Object.keys(after)).not.toContain('progress');
+    // (b) The screen passes it none either: the call site names the same nine arguments it named
+    //     before this change, and `progressSection` is computed in its own `useMemo` beside it.
+    const home = readFileSync(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
+    const from = home.indexOf('homeViewModel({');
+    // The arguments alone, up to the `useMemo` dependency array that closes the call.
+    const call = home.slice(from, home.indexOf('    [configured', from));
+    expect(call).toContain('month: stored.month');
+    for (const word of ['progress', 'earned', 'achievement', 'challenge', 'норм']) {
+      expect(call.toLowerCase()).not.toContain(word.toLowerCase());
+    }
   });
 });
 

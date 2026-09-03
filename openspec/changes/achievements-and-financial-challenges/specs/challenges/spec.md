@@ -134,9 +134,10 @@ The catalogue SHALL hold exactly these виклики, in this order of priority
    recording a переказ onto a рахунок of вид `savings`.
 3. **«Ціль “<назва>” — до наступних 25 %»** — offered for the unreached ціль-накопичення closest to
    its next quarter, among those whose progress is exact. **Closest** SHALL mean the smallest
-   remaining **share of that ціль's own target**, not the smallest сума: a ціль of 100 000 that
-   needs 3 % more is nearer than one of 10 000 000 that needs 5 %, whatever the two сум are. The
-   ціль's identifier SHALL break a tie, so two devices holding the same data offer the same one. Progress: that ціль's progress against the
+   remaining **share of that ціль's own target**, not the smallest сума — a ціль with a tenth of
+   its target still to go is further from its quarter than one with a hundredth, however much
+   smaller the tenth is in money. The ціль's identifier SHALL break a tie, so two devices holding
+   the same data offer the same one. Progress: that ціль's progress against the
    quarter, as `goals` computes progress. Finished: the quarter is reached. Action: the ціль.
 4. **«Втримай ліміт “<категорія>”»** — offered for the категорія with a ліміт that most recently
    went over it. The window is anchored in the data, never in the owner's acceptance: it is the
@@ -169,10 +170,12 @@ app, or to do anything the app cannot verify from the транзакції.
 
 #### Scenario: The nearest ціль is the one nearest in share, not in сума
 
-- **WHEN** one ціль-накопичення of 100 000 minor units stands at 22 % and another of 10 000 000
-  minor units stands at 20 %, and both have an exact progress
-- **THEN** «Ціль — до наступних 25 %» is offered for the first, which needs 3 % more, and not for
-  the second, which needs 5 % more but a far larger сума
+- **WHEN** one ціль-накопичення of 100 000 minor units stands at 10 % — 15 000 short of its first
+  quarter — and another of 10 000 000 minor units stands at 24 %, 100 000 short of its first
+  quarter, and both have an exact progress
+- **THEN** «Ціль — до наступних 25 %» is offered for the **second**, which is one per cent from
+  its quarter, and not for the first, whose сума is smaller but which still has fifteen per cent
+  of its target to go
 
 #### Scenario: The window is the data's, not the acceptance's
 

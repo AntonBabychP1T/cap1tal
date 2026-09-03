@@ -243,11 +243,16 @@ function goalNextQuarter(input: ChallengeInput): Challenge | undefined {
       // How far short of that quarter it stands, in the ціль's own currency — the number the
       // reason states — and, scaled by the target, the ordering.
       //
-      // The **share** still missing, never the сума: a ціль of 100 000 needing 3 % more is nearer
-      // than one of 10 000 000 needing 5 %, and comparing raw сум would always offer the largest
-      // ціль. Scaling by the target is what makes two цілі of different sizes comparable at all,
-      // and it is the same ordering as «percentage points short of the next quarter», which is
-      // this number times a hundred.
+      // The **share** still missing, never the сума. Comparing сум would order by the smaller
+      // absolute gap, which is a different question: a ціль of 100 000 that needs 10 000 more
+      // would beat one of 10 000 000 that needs 100 000 more, even though the first has a tenth
+      // of its target to go and the second a hundredth. Scaling by the target is what makes two
+      // цілі of different sizes comparable at all.
+      //
+      // `gap` is a ratio and not a сума: it is never stored, never shown and never added to
+      // anything. Its only job is to order, and a double holds the ratio of two integers of this
+      // size to about one part in 10^16 — far finer than any two цілі this ordering can separate,
+      // with the ціль's id making the order total where it cannot.
       const target = Math.ceil((goal.target.amount * next) / 100);
       return { goal, progress, next, target, gap: (target - progress.amount) / goal.target.amount };
     })

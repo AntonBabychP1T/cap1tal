@@ -462,3 +462,15 @@ There is no data migration: the first evaluation after the app starts is what fi
   reads a per-категорія витрачено the зведення carries **for limited категорії only** (D10).
 - **Whether «Прогрес» belongs on Звіти at all**, given Головний already leads to it. Kept because
   Звіти is where цілі already live and where the owner goes to read the history rather than the day.
+
+## Corrections to the record
+
+- **The «до наступних 25 %» ordering did change for tied цілі, and a commit message says
+  otherwise.** Commit `38b9bec` claims a sweep of 200 000 random pairs found no disagreement
+  between the ordering this change first shipped — `quarter − floor(progress·100/target)`, whole
+  percentage points — and the one it now uses, the remaining share of the target. The sweep was
+  written to exclude ties, which is precisely where the two differ: the two rules never invert a
+  strict order, but the old one **ties** in whole percentage points where the new one
+  discriminates (11 877 pairs in 300 000). A tie fell to the ціль's id; it now falls to the finer
+  share. The behaviour in the tree is the specified one and the tests pin it, so this note exists
+  because the commit message cannot be rewritten, not because anything is wrong with the code.
