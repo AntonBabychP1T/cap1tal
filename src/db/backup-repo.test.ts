@@ -1,3 +1,4 @@
+import { asc } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -10,7 +11,7 @@ import {
 } from '../backup/backup';
 import { canonicalJson, crc32 } from '../backup/canonical';
 import type { BackupState } from '../backup/format';
-import { account } from '../domain/account';
+import { account, computeBalance } from '../domain/account';
 import { money } from '../domain/money';
 import {
   CORRECTION_CATEGORY_ID,
@@ -33,9 +34,12 @@ import { remindersRepo } from './reminders-repo';
 import { reportingRepo } from './reporting-repo';
 import { rulesRepo } from './rules-repo';
 import {
+  challengeDecisions,
+  earnedAchievements,
   monobankRates,
   notificationDrafts,
   notificationFingerprints,
+  spendingNorms,
   transactions as transactionsTable,
 } from './schema';
 import { sourcesRepo } from './sources-repo';
@@ -495,6 +499,9 @@ describe('the whole stored state replaced by a snapshot, as one unit', () => {
           lineTotal: money(0, 'UAH'),
         },
       ],
+      achievements: [],
+      challengeDecisions: [],
+      norms: [],
     };
   }
 
@@ -876,6 +883,9 @@ describe('the round trip a бекап promises', () => {
         watches: [],
         receipts: [],
         receiptItems: [],
+        achievements: [],
+        challengeDecisions: [],
+        norms: [],
       },
       MADE_AT,
     ).bytes;
@@ -1038,6 +1048,9 @@ describe('the round trip a бекап promises', () => {
         watches: [],
         receipts: [],
         receiptItems: [],
+        achievements: [],
+        challengeDecisions: [],
+        norms: [],
       },
       MADE_AT,
     ).bytes;
@@ -1254,5 +1267,240 @@ describe('the нагадування travels; this phone`s failures do not', () 
       enabled: true,
       time: { hour: 21, minute: 0 },
     });
+  });
+});
+
+/** Every рахунок's розрахунковий баланс, computed from the stored транзакції and nothing else. */
+function balancesOf(db: TestDb): [string, number, string][] {
+  const stored = transactionsRepo(db).listAll();
+  return accountsRepo(db)
+    .list()
+    .map((one) => {
+      const balance = computeBalance(one, stored);
+      return [one.id, balance.amount, balance.currency] as [string, number, string];
+    });
+}
+
+describe('the прогрес travels: досягнення, виклики and норми', () => {
+  let source: TestStorage;
+  let target: TestStorage;
+
+  const RECORDED = new Date('2026-09-02T09:00:00.000Z');
+  const SEEN = new Date('2026-09-02T09:30:00.000Z');
+  const DECIDED = new Date('2026-09-01T20:00:00.000Z');
+  const CONFIRMED = new Date('2026-08-31T18:00:00.000Z');
+
+  beforeEach(() => {
+    source = openTestDb();
+    seedWorld(source.db);
+    target = openTestDb();
+  });
+  afterEach(() => {
+    source.close();
+    target.close();
+  });
+
+  /** Twelve earned досягнення: one dated from the history, one dated the day it was recorded. */
+  function seedProgress(db: TestDb): void {
+    db.insert(earnedAchievements)
+      .values(
+        Array.from({ length: 12 }, (_, i) => ({
+          key: `ledger.transactions:${i}`,
+          template: 'ledger.transactions',
+          achievedOn: i === 0 ? '2024-12-03' : '2026-09-02',
+          recordedAt: RECORDED,
+          // One seen and one not, so both states make the trip.
+          seenAt: i === 0 ? SEEN : null,
+          evidence: JSON.stringify({ count: i }),
+        })),
+      )
+      .run();
+    db.insert(challengeDecisions)
+      .values([
+        { key: 'close-month:2026-07', decision: 'dismissed', decidedAt: DECIDED },
+        { key: 'close-month:2026-08', decision: 'dismissed', decidedAt: DECIDED },
+        { key: 'reserve-cushion:UAH', decision: 'accepted', decidedAt: DECIDED },
+      ])
+      .run();
+    db.insert(spendingNorms)
+      .values({ currency: 'UAH', amount: 3_050_000, confirmedAt: CONFIRMED })
+      .run();
+  }
+
+  it('Scenario: The three survive the round trip', async () => {
+    seedProgress(source.db);
+
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+
+    const earned = target.db.select().from(earnedAchievements).orderBy(asc(earnedAchievements.key)).all();
+    expect(earned).toHaveLength(12);
+    // The дата досягнення the history gave is still the history's, not the day of the restore.
+    expect(earned.find((row) => row.key === 'ledger.transactions:0')).toMatchObject({
+      template: 'ledger.transactions',
+      achievedOn: '2024-12-03',
+      evidence: '{"count":0}',
+    });
+    expect(earned.find((row) => row.key === 'ledger.transactions:0')?.recordedAt).toEqual(RECORDED);
+    expect(earned.find((row) => row.key === 'ledger.transactions:0')?.seenAt).toEqual(SEEN);
+    expect(earned.find((row) => row.key === 'ledger.transactions:1')?.seenAt).toBeNull();
+
+    const decisions = target.db
+      .select()
+      .from(challengeDecisions)
+      .orderBy(asc(challengeDecisions.key))
+      .all();
+    expect(decisions.map((row) => [row.key, row.decision])).toEqual([
+      ['close-month:2026-07', 'dismissed'],
+      ['close-month:2026-08', 'dismissed'],
+      ['reserve-cushion:UAH', 'accepted'],
+    ]);
+    expect(decisions[0]?.decidedAt).toEqual(DECIDED);
+
+    expect(target.db.select().from(spendingNorms).all()).toEqual([
+      { currency: 'UAH', amount: 3_050_000, confirmedAt: CONFIRMED },
+    ]);
+  });
+
+  it('Scenario: The snapshot carries all three', () => {
+    seedProgress(source.db);
+
+    const snapshot = backupRepo(source.db).snapshot();
+
+    expect(snapshot.achievements).toHaveLength(12);
+    expect(snapshot.achievements[0]).toMatchObject({
+      key: 'ledger.transactions:0',
+      template: 'ledger.transactions',
+      achievedOn: '2024-12-03',
+      recordedAtMs: RECORDED.getTime(),
+      seenAtMs: SEEN.getTime(),
+    });
+    // «Not yet shown» is an absent key, not a null and not a sentinel moment.
+    expect('seenAtMs' in snapshot.achievements[1]!).toBe(false);
+    expect(snapshot.challengeDecisions).toHaveLength(3);
+    expect(snapshot.challengeDecisions[0]).toEqual({
+      key: 'close-month:2026-07',
+      decision: 'dismissed',
+      decidedAtMs: DECIDED.getTime(),
+    });
+    expect(snapshot.norms).toEqual([
+      { amount: money(3_050_000, 'UAH'), confirmedAtMs: CONFIRMED.getTime() },
+    ]);
+  });
+
+  it('Scenario: Replacing replaces all three at once', () => {
+    seedProgress(target.db);
+    const four = {
+      ...backupRepo(target.db).snapshot(),
+      achievements: Array.from({ length: 4 }, (_, i) => ({
+        key: `four:${i}`,
+        template: 'ledger.transactions',
+        achievedOn: '2025-01-01',
+        recordedAtMs: RECORDED.getTime(),
+        evidence: '{"count":1}',
+      })),
+      challengeDecisions: [],
+      norms: [],
+    };
+
+    backupRepo(target.db).replaceAll(four);
+
+    expect(target.db.select().from(earnedAchievements).all()).toHaveLength(4);
+    expect(target.db.select().from(challengeDecisions).all()).toEqual([]);
+    expect(target.db.select().from(spendingNorms).all()).toEqual([]);
+  });
+
+  it('Scenario: A відновлення replaces the earned set', async () => {
+    // The бекап holds four; the device holds twenty of its own.
+    source.db
+      .insert(earnedAchievements)
+      .values(
+        Array.from({ length: 4 }, (_, i) => ({
+          key: `from-backup:${i}`,
+          template: 'ledger.transactions',
+          achievedOn: '2025-01-01',
+          recordedAt: RECORDED,
+          seenAt: null,
+          evidence: '{"count":1}',
+        })),
+      )
+      .run();
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    target.db
+      .insert(earnedAchievements)
+      .values(
+        Array.from({ length: 20 }, (_, i) => ({
+          key: `already-here:${i}`,
+          template: 'quality.clean-month',
+          achievedOn: '2026-05-31',
+          recordedAt: RECORDED,
+          seenAt: SEEN,
+          evidence: '{"month":"2026-05"}',
+        })),
+      )
+      .run();
+
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+
+    const keys = target.db.select().from(earnedAchievements).all().map((row) => row.key);
+    expect(keys).toHaveLength(4);
+    expect(keys.every((key) => key.startsWith('from-backup:'))).toBe(true);
+  });
+
+  it('Scenario: A restored свідчення is not money', async () => {
+    source.db
+      .insert(earnedAchievements)
+      .values({
+        key: 'reserve.norm:100:UAH',
+        template: 'reserve.norm',
+        achievedOn: '2026-09-02',
+        recordedAt: RECORDED,
+        seenAt: null,
+        // A свідчення of 4 000 000 minor units UAH — the largest number in this бекап by far.
+        evidence: JSON.stringify({ money: { amount: 4_000_000, currency: 'UAH' } }),
+      })
+      .run();
+    const withoutEvidence = backupRepo(source.db).snapshot();
+    const balancesBefore = balancesOf(source.db);
+
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+
+    // Every розрахунковий баланс is computed from the restored транзакції alone, and the свідчення
+    // moved none of them.
+    expect(balancesOf(target.db)).toEqual(balancesBefore);
+    // And the транзакції are the бекап's own, unchanged by the свідчення riding beside them.
+    expect(target.db.select().from(transactionsTable).all()).toHaveLength(
+      withoutEvidence.transactions.length,
+    );
+  });
+
+  it('a бекап written before досягнення existed restores with none of the three', async () => {
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const older = JSON.parse(snapshot.bytes) as { data: Record<string, unknown> };
+    delete older.data.achievements;
+    delete older.data.challengeDecisions;
+    delete older.data.norms;
+    const rewritten = JSON.stringify({
+      ...older,
+      checksum: crc32(canonicalJson(older.data)),
+    });
+
+    expect(await restoreBackup(backupRepo(target.db), rewritten)).toBe('ok');
+    expect(target.db.select().from(earnedAchievements).all()).toEqual([]);
+    expect(target.db.select().from(challengeDecisions).all()).toEqual([]);
+    expect(target.db.select().from(spendingNorms).all()).toEqual([]);
+  });
+
+  it('refuses a hand-edited норма of zero, having written nothing', async () => {
+    seedProgress(source.db);
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const damaged = JSON.parse(snapshot.bytes) as { data: Record<string, unknown> };
+    damaged.data.norms = [{ amount: { amount: 0, currency: 'UAH' }, confirmedAtMs: 0 }];
+
+    const refusal = await restoreBackup(backupRepo(target.db), JSON.stringify(damaged));
+
+    expect(refusal !== 'ok' && isRefusal(refusal) && refusal.kind).toBe('damaged');
+    expect(target.db.select().from(spendingNorms).all()).toEqual([]);
   });
 });

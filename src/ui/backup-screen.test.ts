@@ -93,6 +93,9 @@ function foreignBackup(): string {
     watches: [],
     receipts: [],
     receiptItems: [],
+    achievements: [],
+    challengeDecisions: [],
+    norms: [],
   };
   return makeBackup(state, new Date(2026, 7, 30, 12, 0, 0)).bytes;
 }
@@ -285,6 +288,9 @@ describe('a file chosen for restore is checked before it is offered', () => {
         watches: [],
         receipts: [],
         receiptItems: [],
+        achievements: [],
+        challengeDecisions: [],
+        norms: [],
       },
       NOW,
     ).bytes;

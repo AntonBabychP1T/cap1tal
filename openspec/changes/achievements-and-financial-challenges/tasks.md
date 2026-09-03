@@ -2,7 +2,7 @@
 
 ## 1. The зведення прогресу — one bounded reading of the history
 
-- [ ] 1.1 Create `src/progress/summary.ts` with the `ProgressSummary` shape (per (місяць, currency):
+- [x] 1.1 Create `src/progress/summary.ts` with the `ProgressSummary` shape (per (місяць, currency):
       витрачено, дохід, інвестовано, відкладено, count of транзакції, count «Без категорії», count
       «Без джерела»; per (вид рахунку, currency): sum of розрахункові баланси; total count with
       earliest and latest дата; pending чернетки by місяць) and the pure derivations over it —
@@ -13,39 +13,49 @@
       категорії» is enough to spoil a місяць», «Активні місяці need not be consecutive», «A gapped
       year still spans a year», «An empty місяць breaks the run» and «A вид рахунку's total keeps its
       currencies apart».
-- [ ] 1.2 Add `readProgressSummary()` to a new `src/db/progress-repo.ts` as aggregate SQL — one
-      `GROUP BY` per shape, never one row per транзакція — reusing the reserved ids from
-      `src/domain/category.ts` for «Без категорії» and «Без джерела»; verify
+- [x] 1.2 Add `readProgressSummary()` to a new `src/db/progress-repo.ts` as aggregate SQL — one
+      `GROUP BY` per shape, never one row per транзакція — reusing `UNCATEGORISED_CATEGORY_ID` and
+      `UNSOURCED_SOURCE_ID` from `src/domain/transaction.ts`; verify
       `src/db/progress-repo.test.ts` proves persistence scenarios «The зведення is bounded, not per
       транзакція», «The зведення holds the same numbers as the місячна картина» and «A вид рахунку's
       total keeps its currencies apart», the middle one by comparing against `monthlyPicture` on the
       same fixture.
-- [ ] 1.3 Add `nthTransactionDate(n)` to `src/db/progress-repo.ts` — `ORDER BY date, rowid LIMIT 1
+- [x] 1.3 Add `nthTransactionDate(n)` to `src/db/progress-repo.ts` — `ORDER BY date, rowid LIMIT 1
       OFFSET n-1`, one row; verify `src/db/progress-repo.test.ts` proves persistence scenario «The
       Nth транзакція is read alone» and achievements scenario «A crossed tier reads exactly one
       транзакція for its дата».
+- [x] 1.4 Add the per-категорія half of the зведення: `readProgressSummary()` also returns, per
+      (місяць, currency, категорія that carries a ліміт), that категорія's витрачено as
+      `categoryBreakdown` computes it — for limited категорії only, so the bound is (місяці ×
+      ліміти) — and `summary.ts` gains `limitedCategorySpend(month, currency, categoryId)`; verify
+      `src/db/progress-repo.test.ts` proves persistence scenario «Only категорії with a ліміт are
+      broken out» and that the numbers match `categoryBreakdown` on the same fixture.
+- [x] 1.5 Add `firstTransferOntoKind(kind)` to `src/db/progress-repo.ts` — the earliest переказ onto
+      a рахунок of that вид, one row, `undefined` when none; verify `src/db/progress-repo.test.ts`
+      proves persistence scenario «The first переказ onto a вид is read alone» and achievements
+      scenario «The first переказ onto a вид is read alone».
 
 ## 2. The three tables
 
-- [ ] 2.1 Add `earnedAchievements`, `challengeDecisions` and `spendingNorms` to `src/db/schema.ts`
+- [x] 2.1 Add `earnedAchievements`, `challengeDecisions` and `spendingNorms` to `src/db/schema.ts`
       (design D3), run `npm run db:generate`, and commit the generated migration untouched; verify
       `src/db/migrations.test.ts` proves persistence scenario «A fresh database from migrations alone
       stores a досягнення» and that a database at the previous migration keeps every row.
-- [ ] 2.2 Implement the earned-досягнення half of `src/db/progress-repo.ts`: insert-if-absent by key,
+- [x] 2.2 Implement the earned-досягнення half of `src/db/progress-repo.ts`: insert-if-absent by key,
       list, and mark-all-unseen-seen in one write; verify `src/db/progress-repo.test.ts` proves
       persistence scenarios «A stored досягнення round-trips», «Storing the same key twice stores one
       row» and «Seen is recorded once and for all unseen at once».
-- [ ] 2.3 Implement the виклик-decision half: upsert by key, read, remove; verify
+- [x] 2.3 Implement the виклик-decision half: upsert by key, read, remove; verify
       `src/db/progress-repo.test.ts` proves persistence scenarios «A decision round-trips», «A
       decision is replaced under its key» and «Nothing derived is stored beside it».
-- [ ] 2.4 Implement the норма half: upsert per currency, read one, read all, reject non-positive;
+- [x] 2.4 Implement the норма half: upsert per currency, read one, read all, reject non-positive;
       verify `src/db/progress-repo.test.ts` proves persistence scenarios «A норма round-trips per
       currency», «Confirming again replaces», «A non-positive норма is rejected» and «An absent норма
       is absent, not zero».
 
 ## 3. The місячна норма витрат
 
-- [ ] 3.1 Create `src/progress/norm.ts` with `proposeNorm(summary, currency)` — the median of
+- [x] 3.1 Create `src/progress/norm.ts` with `proposeNorm(summary, currency)` — the median of
       витрачено over the last six завершені активні місяці of that currency, with the місяці it came
       from, and nothing when fewer than six exist (design D7); verify `src/progress/norm.test.ts`
       proves achievements scenarios «The proposal is the median of six місяці», «Too little history
@@ -54,29 +64,35 @@
 
 ## 4. The catalogue and the evaluation
 
-- [ ] 4.1 Create `src/progress/catalogue.ts` with the templates of the облік and якість groups —
+- [x] 4.1 Create `src/progress/catalogue.ts` with the templates of the облік and якість groups —
       `ledger.first-transaction`, `ledger.transactions` (100/500/1000/2000), `ledger.active-months`
-      (3/6/12/18), `ledger.history-span`, `quality.clean-month`, `quality.clean-months-streak` (3/6),
-      `quality.month-without-drafts` — each with its key, Ukrainian назва, condition sentence,
-      свідчення shape and predicate over the зведення (design D5); verify
-      `src/progress/catalogue.test.ts` proves achievements scenarios «The count tiers are crossed in
-      order», «Three consecutive чисті місяці earn the run», «A waiting чернетка spoils the місяць»
-      and «A month of heavy spending earns nothing».
-- [ ] 4.2 Add the ціль templates — `goal.first`, `goal.progress` (25/50/75), `goal.reached`,
-      `goal.reached-in-time` — reading only `goal.target`, `goalProgress(goal)` and `goal.deadline`
-      through the `goals` capability, never `goal.accountId` (design D6); verify
-      `src/progress/catalogue.test.ts` proves achievements scenarios «A ціль at 60 % earns two
-      quarters at once», «Each ціль earns its own», «A ціль reached after its дата is not reached in
-      time» and «No досягнення at five per cent», and that the module's imports name no рахунок.
-- [ ] 4.3 Add the резерв and інвестиційні templates — `reserve.first`, `reserve.norm` (25/50/100),
+      (3/6/12/18), `ledger.history-span`, `quality.clean-month`, `quality.clean-months-streak` (3/6)
+      — each with its key, Ukrainian назва, condition sentence, свідчення shape, whether the history
+      dates it, and a predicate over the зведення (design D5). `quality.month-without-drafts` is
+      **not** in v1 (design D12); verify `src/progress/catalogue.test.ts` proves achievements
+      scenarios «The count tiers are crossed in order», «Three consecutive чисті місяці earn the
+      run», «An empty місяць breaks the run» and «A month of heavy spending earns nothing».
+- [x] 4.2 Add the ціль-накопичення templates — `goal.first`, `goal.progress` (25/50/75),
+      `goal.reached`, `goal.reached-in-time` — decided from a `{goal, progress: Money | null}` the
+      engine is **handed**, where `null` is an approximate or unknown progress and earns nothing;
+      the module reads `goal.target` and `goal.deadline` and never a рахунок, a склад, a вартість or
+      a курс (design D6); verify `src/progress/catalogue.test.ts` proves achievements scenarios «A
+      ціль at 60 % earns two quarters at once», «Each ціль earns its own», «A ціль reached after its
+      дата is not reached in time», «No досягнення at five per cent», «A приблизний progress earns
+      nothing», «An unknown progress earns nothing and unearns nothing», «A ціль with no дата is
+      never reached in time» and «A ліміт earns no ціль досягнення», and that `src/progress/`
+      imports nothing from `src/ui/`.
+- [x] 4.3 Add the резерв and інвестиційні templates — `reserve.first`, `reserve.norm` (25/50/100),
       `invest.first`, `invest.months` (3/6/12), `invest.norm-months` (1/3/6/12) — each money one
-      keyed by currency and existing only where a норма is confirmed; verify
+      keyed by currency and existing only where a норма is confirmed, `reserve.first` and
+      `invest.first` dated by `firstTransferOntoKind` of task 1.5 and archived рахунки counted;
+      verify
       `src/progress/catalogue.test.ts` proves achievements scenarios «Without a confirmed норма the
       milestones do not exist», «A confirmed норма earns what the резерв already covers», «Перше
       відкладення needs no норма», «Contribution months count across currencies without summing
       money», «A gain earns nothing», «Two currencies earn two досягнення» and «Currencies are never
       added together to reach a milestone».
-- [ ] 4.4 Create `src/progress/achievements.ts` with `evaluate({summary, goals, norms, earned, today})
+- [x] 4.4 Create `src/progress/achievements.ts` with `evaluate({summary, goals, norms, earned, today})
       → newlyEarned[]`, pure, add-only, and the дата досягнення rule of design D4 — the history's
       date where the template names one, today where the condition is a balance; verify
       `src/progress/achievements.test.ts` proves achievements scenarios «Evaluating twice earns
@@ -84,21 +100,27 @@
       history», «A retroactive месяць count is dated at the month's end», «A balance condition is
       dated the day it was recorded», «An existing history earns everything it proves at once» (the
       owner-shaped fixture of task 4.5) and «Editing an old транзакція earns nothing new by itself».
-- [ ] 4.5 Add `src/progress/fixtures.ts` — a generated history shaped like the owner's real Saldo
+- [x] 4.5 Add `src/progress/fixtures.ts` — a generated history shaped like the owner's real Saldo
       export and **carrying nothing personal**: 2459 транзакції from 2024-10 to 2026-09, 23 активні
-      місяці, a run of чисті місяці, savings рахунки and UAH/USD/EUR інвестиційні рахунки with over
-      100000 UAH of вкладено on the UAH ones; verify `src/progress/achievements.test.ts` uses it for
-      the existing-user scenario and that no name, опис or сума from a real export appears in it.
+      місяці, a run of чисті місяці, savings рахунки and UAH/USD/EUR інвестиційні рахунки whose
+      розрахунковий баланс exceeds 100000 UAH on the UAH ones; verify
+      `src/progress/achievements.test.ts` uses it for the existing-user scenario, that no name, опис
+      or сума from a real export appears in it, and that nothing under `src/app/` imports it, so
+      Metro never bundles it (the rule `src/db/test-db.ts` already lives by).
 
 ## 5. The виклики
 
-- [ ] 5.1 Create `src/progress/challenges.ts` with the five templates of the challenges spec, their
-      offer conditions, progress, finish criteria and the fixed priority order; verify
+- [x] 5.1 Create `src/progress/challenges.ts` with the five templates of the challenges spec, their
+      offer conditions, progress, finish criteria and the fixed priority order. Its only inputs are
+      the зведення, the цілі-накопичення with their already-resolved progress, the ліміти and the
+      owner's stored decisions — «Закрий місяць» counts **down** from what the зведення holds now
+      and carries no denominator, «Втримай ліміт» reads the limited-категорія rows of task 1.4, and
+      «Фінансова подушка» picks its currency by the rule of the challenges spec; verify
       `src/progress/challenges.test.ts` proves challenges scenarios «A proposed виклик carries all
-      four», «Закрий місяць is offered ahead of the rest», «The подушка asks for the норма first»,
-      «The ліміт виклик counts завершені місяці only» and «The інвестиційна звичка reads the last four
-      завершені місяці».
-- [ ] 5.2 Add the selection — filter by offer condition, drop dismissed, cap at three, deterministic
+      four», «Закрий місяць counts down from what is there now», «Закрий місяць is offered ahead of
+      the rest», «The подушка asks for the норма first», «The ліміт виклик counts завершені місяці
+      only» and «The інвестиційна звичка reads the last four завершені місяці».
+- [x] 5.2 Add the selection — filter by offer condition, drop dismissed, cap at three, deterministic
       order — and the derived finished state; verify `src/progress/challenges.test.ts` proves
       challenges scenarios «Four eligible виклики yield three», «The same data yields the same
       виклики», «A dismissed виклик stops being proposed», «A dismissal binds only its own
@@ -107,18 +129,23 @@
 
 ## 6. When the evaluation runs
 
-- [ ] 6.1 Add `src/progress/run.ts` — read зведення, цілі and норми, evaluate, store what is new,
-      returning what was newly earned — and call it at the eight moments of the achievements spec:
-      app start in `src/app/_layout.tsx`, and after a транзакція is stored/edited/deleted, a monobank
-      sync commits, a чернетка is settled, a Saldo імпорт commits, a відновлення lands, a ціль
-      changes, and a норма is confirmed (design D10); verify `src/progress/run.test.ts` proves
-      achievements scenarios «Recording a транзакція evaluates», «A Saldo імпорт earns what it
-      brought», «A відновлення earns what the бекап holds» and «A closed app with working import
-      loses nothing», and that no screen module imports `run`.
+- [ ] 6.1 Add `src/progress/run.ts` — read зведення, цілі (resolving each progress through
+      `goalProgress`, so an approximate one arrives as `null`), ліміти and норми, evaluate, store
+      what is new, and return what was newly earned — and call it at the ten moments of the
+      achievements spec: app start in `src/app/_layout.tsx`, and after a транзакція is
+      stored/edited/deleted, a monobank sync commits, a чернетка is settled, a Saldo імпорт commits,
+      a відновлення lands, a ціль changes, a ліміт is set or cleared, a рахунок is
+      created/edited/archived, and a норма is confirmed (design D10); verify
+      `src/progress/run.test.ts` proves achievements scenarios «Recording a транзакція evaluates», «A
+      Saldo імпорт earns what it brought», «A відновлення earns what the бекап holds» and «A closed
+      app with working import loses nothing».
 - [ ] 6.2 Prove the negative: verify a test in `src/progress/run.test.ts` and one in
       `src/ui/progress-screen.test.ts` prove achievements scenario «Opening Головний repeatedly
-      evaluates once» and main-screen scenario «Opening Головний earns nothing» — the screen view
-      model takes stored rows as input and has no way to earn anything.
+      evaluates once» and main-screen scenario «Opening Головний earns nothing» — no view model
+      under `src/ui/` imports `run`, and each takes stored rows as input, so no draw path can earn
+      anything. Storing a транзакція from a screen *does* evaluate: that is the recording, not the
+      drawing, and `src/ui/screens.test.ts` reads the two screen files by path to prove `run` is
+      called on the save path and nowhere else.
 
 ## 7. The screens
 
@@ -141,26 +168,34 @@
       was earned», «A balance-dated досягнення says «помічено»» and «A виклик's detail names its
       finish», and achievements scenarios «The свідчення keeps the number of its moment» and «A money
       свідчення carries its currency».
-- [ ] 7.4 Create `src/app/progress.tsx` and `src/app/achievement/[key].tsx`, register both in
+- [ ] 7.4 Create `src/app/progress.tsx`, `src/app/achievement/[key].tsx` and
+      `src/app/challenge/[key].tsx` — a досягнення key like `reserve.norm:100:UAH` reaches the route
+      through `encodeURIComponent`, and the screen decodes it — register all three in
       `src/app/_layout.tsx` beside `transaction/[id]`, and add the entries from Головний
       (`src/app/(tabs)/index.tsx`) and «Звіти» (`src/app/(tabs)/reports.tsx`); verify
       `npm run typecheck` and `npm run lint` pass, the five tabs are unchanged (progress-screen
       scenario «The tabs are unchanged») and reports-screen scenarios «Прогрес is reachable from
       Звіти» and «The entry is there with nothing earned» have a screen to open.
-- [ ] 7.5 Add the норма confirmation step to the «Фінансова подушка» виклик's flow — the proposal, the
-      six місяці it came from, and a field the owner may overwrite, refusing a non-positive сума in
-      Ukrainian per app-shell; verify `src/ui/progress-screen.test.ts` proves challenges scenario
-      «The подушка asks for the норма first» and achievements scenario «Lowering the норма keeps what
-      was earned».
+- [ ] 7.5 Add the норма confirmation step to the «Фінансова подушка» виклик's flow — the proposal,
+      the six місяці it came from, and a field the owner may overwrite, refusing a non-positive сума
+      in Ukrainian per app-shell — as a step inside `src/app/challenge/[key].tsx`; verify
+      `src/ui/progress-screen.test.ts` proves challenges scenario «The подушка asks for the норма
+      first» and achievements scenario «Raising the норма keeps what was earned».
 
 ## 8. The бекап and the boundaries
 
-- [ ] 8.1 Add the three tables to the бекап in `src/backup/format.ts` and `src/db/backup-repo.ts`,
-      bumping the format version as that capability requires; verify `src/backup/format.test.ts` and
+- [x] 8.1 Add the three tables to the бекап: name them in `BACKUP_TABLES`, add their shapes and
+      their parse to `src/backup/format.ts`, and carry them through `src/db/backup-repo.ts`'s
+      snapshot and its atomic replacement. `BACKUP_FORMAT_VERSION` stays 2 — an older build reads an
+      unknown list as absent, so bumping it would refuse new бекапи for nothing; what moves is
+      `BACKUP_SCHEMA_VERSION`, which the tripwire in `format.test.ts` holds equal to the number of
+      entries in `drizzle/meta/_journal.json`. Verify `src/backup/format.test.ts` and
       `src/db/backup-repo.test.ts` prove backup-file scenarios «The three survive the round trip», «A
-      відновлення replaces the earned set» and «A restored свідчення is not money».
+      відновлення replaces the earned set» and «A restored свідчення is not money», and persistence
+      scenarios «The snapshot carries all three» and «Replacing replaces all three at once».
 - [ ] 8.2 Prove the privacy boundaries: verify a test in `src/analysis/` proves achievements scenario
-      «A пакет для аналізу holds no досягнення», and a test in `src/progress/run.test.ts` proves
+      «A пакет для аналізу holds no досягнення» and ai-analysis-package scenario «The прогрес state
+      stays on the phone», and a test in `src/progress/run.test.ts` proves
       progress-screen scenario «Nothing is pushed to the phone» (the module imports no notification
       port).
 - [ ] 8.3 Prove the money boundary: verify a test in `src/progress/run.test.ts` proves achievements
@@ -171,8 +206,9 @@
 
 - [ ] 9.1 Apply design D13 to `docs/glossary.md`: the new «Прогрес» section with «Досягнення»,
       «Свідчення», «Виклик», «Активний місяць», «Завершений місяць», «Чистий місяць», «Місячна норма
-      витрат» and «Резерв», plus the three rows for «Distinctions the owner drew»; verify every term
-      this change's specs use appears there verbatim.
+      витрат» and «Резерв», plus the three rows for «Distinctions the owner drew», and extend the
+      existing «Backup (бекап)» entry, which enumerates what a бекап holds; verify every term this
+      change's specs use appears there verbatim.
 - [ ] 9.2 Apply design D13 to `docs/product-vision.md`: the new §18 and the sentence appended to §12;
       add the roadmap row to `docs/tech-task.md` §5 and note the screen in `docs/app-overview.md`
       with a screenshot from the smoke run.

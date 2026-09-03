@@ -885,3 +885,94 @@ export type BugReportRow = typeof bugReports.$inferSelect;
 export type BugReportScreenshotRow = typeof bugReportScreenshots.$inferSelect;
 export type BugReportCaptureRow = typeof bugReportCapture.$inferSelect;
 export type NewBugReportCaptureRow = typeof bugReportCapture.$inferInsert;
+
+/**
+ * An earned **досягнення** — a permanent fact about a result the owner already reached (design D3).
+ *
+ * The **key** is the primary key, and it carries every parameter that makes the fact distinct: the
+ * tier, the currency, the ціль's id, the місяць. That is what «earned at most once» *is* here — not
+ * a rule the engine remembers, but a shape storage cannot represent twice, so re-evaluating a
+ * hundred times writes one row. The **template** is the catalogue entry the key belongs to, stored
+ * beside it so a row still groups and renders after the catalogue is rewritten, and so a row whose
+ * template this build no longer knows can be kept rather than deleted.
+ *
+ * `achieved_on` is the **дата досягнення** — the history's own date where the history dates the
+ * condition, and the day the app recorded it where the condition is a balance. `recorded_at` is
+ * that day either way, and the two are separate columns precisely because a retroactive award is
+ * dated 2024 and written in 2026.
+ *
+ * `evidence` is the **свідчення**: a small deterministic JSON of one closed set of shapes, frozen
+ * at the moment the row was written. It is stored as text and read back for display alone — no
+ * сума, no місячна картина, no ліміт and no ціль takes a number from it, which is why it is not a
+ * money column beside a currency column like every other сума in this schema. A свідчення that
+ * carries money carries its currency code inside its own JSON.
+ */
+export const earnedAchievements = sqliteTable(
+  'earned_achievements',
+  {
+    key: text('key').primaryKey(),
+    template: text('template').notNull(),
+    /** The domain's `IsoDate` verbatim, TEXT 'YYYY-MM-DD', as every other calendar date column. */
+    achievedOn: text('achieved_on').notNull(),
+    recordedAt: integer('recorded_at', { mode: 'timestamp_ms' }).notNull(),
+    /** NULL while the owner has not been shown it; the moment they were, afterwards (design D11). */
+    seenAt: integer('seen_at', { mode: 'timestamp_ms' }),
+    evidence: text('evidence').notNull(),
+  },
+  (t) => [
+    check(
+      'earned_achievements_achieved_on_iso',
+      sql`${t.achievedOn} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+    check('earned_achievements_key_not_blank', sql`length(trim(${t.key})) > 0`),
+    check('earned_achievements_template_not_blank', sql`length(trim(${t.template})) > 0`),
+  ],
+);
+
+/**
+ * What the owner decided about a **виклик**, and when — and nothing else.
+ *
+ * There is deliberately no progress, no target, no count of finished виклики and no score column:
+ * a виклик's progress is recomputed from the транзакції, рахунки, цілі, ліміти, чернетки and норми
+ * every time it is shown, and a stored one would be a second answer that could disagree. The key
+ * is `template:parameters` — `close-month:2026-08` — so a dismissal binds only the виклик it was
+ * about, and 2026-09 is proposed on its own merits.
+ */
+export const challengeDecisions = sqliteTable(
+  'challenge_decisions',
+  {
+    key: text('key').primaryKey(),
+    /** 'accepted' | 'dismissed' — the two words the owner has, and no third state. */
+    decision: text('decision').notNull(),
+    decidedAt: integer('decided_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    check('challenge_decisions_known', sql`${t.decision} IN ('accepted', 'dismissed')`),
+    check('challenge_decisions_key_not_blank', sql`length(trim(${t.key})) > 0`),
+  ],
+);
+
+/**
+ * The **місячна норма витрат**: one confirmed сума per currency, and the moment it was confirmed.
+ *
+ * The currency is the primary key, which is «at most one per currency» made unrepresentable
+ * otherwise. The amount is a positive integer in minor units of that currency — the CHECK is what
+ * makes «a норма of zero is not a норма» true in storage and not only in the repository, and the
+ * absence of a row is how «this currency has no норма» stays distinguishable from a норма of zero.
+ * Nothing here is ever converted: two currencies are two rows and never a sum.
+ */
+export const spendingNorms = sqliteTable(
+  'spending_norms',
+  {
+    currency: text('currency').primaryKey(),
+    amount: integer('amount').notNull(),
+    confirmedAt: integer('confirmed_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [check('spending_norms_amount_positive', sql`${t.amount} > 0`)],
+);
+
+export type EarnedAchievementRow = typeof earnedAchievements.$inferSelect;
+export type NewEarnedAchievementRow = typeof earnedAchievements.$inferInsert;
+export type ChallengeDecisionRow = typeof challengeDecisions.$inferSelect;
+export type ChallengeDecisionInsert = typeof challengeDecisions.$inferInsert;
+export type SpendingNormRow = typeof spendingNorms.$inferSelect;

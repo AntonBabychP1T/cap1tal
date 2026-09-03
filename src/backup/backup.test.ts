@@ -24,6 +24,9 @@ function state(over: Partial<BackupState> = {}): BackupState {
     watches: [],
     receipts: [],
     receiptItems: [],
+    achievements: [],
+    challengeDecisions: [],
+    norms: [],
     ...over,
   };
 }

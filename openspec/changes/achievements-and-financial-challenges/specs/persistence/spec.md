@@ -8,7 +8,7 @@ to, its дата досягнення, the moment it was recorded, whether and w
 storing a досягнення under a key already stored SHALL leave the stored row exactly as it was, so
 running the evaluation any number of times cannot produce a duplicate.
 
-No stored досягнення SHALL hold a балanс, a total or any number the app computes money from; the
+No stored досягнення SHALL hold a баланс, a total or any number the app computes money from; the
 свідчення is a value that is read back for display alone.
 
 The досягнення storage SHALL arrive by a new migration — committed migrations stay untouched — and
@@ -87,19 +87,47 @@ currency with no stored норма SHALL read back as having none, and never as 
 - **WHEN** no EUR норма has been stored and the EUR норма is read
 - **THEN** the answer is that there is none, distinguishable from a норма of zero
 
+### Requirement: The snapshot carries the прогрес state as well
+
+The snapshot the system reads out and the snapshot it replaces the whole stored state with SHALL
+both carry the earned досягнення, the owner's decisions about виклики and the місячні норми витрат,
+alongside everything else those two requirements enumerate. Replacing SHALL make all three exactly
+the snapshot's, as it does every рахунок and транзакція, in the same single unit — a restore that
+left the device's own earned set in place would describe a history that is no longer there.
+
+Reading a snapshot SHALL NOT compute any of the three: they are stored state, not a derivation, and
+a snapshot that recomputed them would lose the дата досягнення the history no longer dates.
+
+#### Scenario: The snapshot carries all three
+
+- **WHEN** a snapshot is read from storage holding twelve earned досягнення, three виклик decisions
+  and a UAH норма
+- **THEN** it carries all twelve, all three and the норма, each with its own moment
+
+#### Scenario: Replacing replaces all three at once
+
+- **WHEN** a snapshot holding four earned досягнення and no норма replaces a stored state holding
+  twenty earned досягнення and a UAH норма
+- **THEN** storage holds exactly those four afterwards and no норма, and the рахунки and транзакції
+  were replaced in the same unit
+
 ### Requirement: The history can be read as a bounded зведення прогресу
 
 The system SHALL produce a **зведення прогресу** whose rows are bounded by the number of (місяць,
-currency) pairs, the number of (вид рахунку, currency) pairs and a fixed number of single values,
-holding: per (місяць, currency) the витрачено, дохід, інвестовано and відкладено the monthly-picture
-capability defines, the count of транзакції, the count carrying «Без категорії» and the count
-carrying «Без джерела»; per (вид рахунку, currency) the sum of the розрахункові баланси; the total
-count of транзакції with the дата of the earliest and the latest; and the count of чернетки still
-waiting, by місяць.
+currency) pairs, the number of (вид рахунку, currency) pairs, the number of (місяць, currency,
+категорія that carries a ліміт) triples and a fixed number of single values, holding: per (місяць,
+currency) the витрачено, дохід, інвестовано and відкладено the monthly-picture capability defines,
+the count of транзакції, the count carrying «Без категорії» and the count carrying «Без джерела»;
+per (вид рахунку, currency) the sum of the розрахункові баланси, archived рахунки included; per
+(місяць, currency, категорія that carries a ліміт) the витрачено of that категорія exactly as the
+monthly-picture capability's breakdown of spent computes it — and for those категорії only, so a
+vocabulary of any size costs the зведення nothing; the total count of транзакції with the дата of
+the earliest and the latest; and the count of чернетки still waiting, by місяць.
 
-Producing it SHALL NOT return one row per транзакція. The system SHALL also be able to read the дата
-of the Nth транзакція in the history's order — дата first, then the order it was stored — returning
-that one транзакція alone.
+Producing it SHALL NOT return one row per транзакція. The system SHALL also be able to read two
+single транзакції by themselves: the Nth in the history's order — дата first, then the order it was
+stored — and the earliest переказ onto a рахунок of a given вид. Each SHALL return that one
+транзакція alone.
 
 #### Scenario: The зведення is bounded, not per транзакція
 
@@ -119,6 +147,18 @@ that one транзакція alone.
 
 - **WHEN** the дата of the 500th транзакція is asked for on a database holding 2459
 - **THEN** one транзакція is returned, the 500th by дата then stored order
+
+#### Scenario: The first переказ onto a вид is read alone
+
+- **WHEN** the дата of the earliest переказ onto a рахунок of вид `savings` is asked for
+- **THEN** one транзакція is returned, and none is returned at all when no such переказ exists
+
+#### Scenario: Only категорії with a ліміт are broken out
+
+- **WHEN** the зведення is produced on a database holding 40 категорії of which 3 carry a ліміт,
+  across 24 місяці and 1 currency
+- **THEN** its per-категорія rows number at most 72, and no row exists for a категорія with no
+  ліміт
 
 #### Scenario: A вид рахунку's total keeps its currencies apart
 

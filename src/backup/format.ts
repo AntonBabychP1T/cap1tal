@@ -32,7 +32,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * breaks `verify` until someone opens this file and asks whether a бекап still holds everything it
  * should. A бекап naming a higher one is refused; a lower one is restored (design D5).
  */
-export const BACKUP_SCHEMA_VERSION = 17;
+export const BACKUP_SCHEMA_VERSION = 18;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -102,6 +102,16 @@ export const BACKUP_TABLES: readonly string[] = [
   // existing warning that whoever holds this file reads the owner's money covers it.
   'fiscal_receipts',
   'receipt_items',
+  // The прогрес: what the owner has earned, what they decided about a виклик, and the норми they
+  // confirmed. None of the three can be recomputed from the транзакції — a дата досягнення read
+  // from a history, the moment a row was written, whether the owner has seen it, a dismissal and a
+  // confirmed сума exist nowhere else — and a відновлення that dropped them would show a phone
+  // that has just restored two years of history as having achieved nothing, then re-earn
+  // everything with today's дата, losing the very dates the capability exists to protect
+  // (achievements design D8).
+  'earned_achievements',
+  'challenge_decisions',
+  'spending_norms',
 ];
 
 /** A правило, with the `createdAt` that breaks ties between two equally specific ones as epoch ms. */
@@ -214,6 +224,42 @@ export interface BackupReceiptItem {
 }
 
 /**
+ * An earned **досягнення**, exactly as it was written: its stable key, the catalogue template it
+ * belongs to, the дата досягнення, the moment it was recorded, whether and when the owner has seen
+ * it, and its **свідчення**.
+ *
+ * The свідчення travels as the text it was stored as, and a restored device reads it back for
+ * display alone: no баланс, no місячна картина, no ліміт and no ціль takes a number from it. That
+ * is why it is a string here and not a сума — a бекап that carried it as money would be inviting
+ * exactly the reading the capability forbids.
+ */
+export interface BackupAchievement {
+  readonly key: string;
+  readonly template: string;
+  readonly achievedOn: IsoDate;
+  readonly recordedAtMs: number;
+  /** Absent while the owner has not been shown it — never `null`, and never a sentinel moment. */
+  readonly seenAtMs?: number;
+  readonly evidence: string;
+}
+
+/** What the owner decided about one виклик, and when. No progress, no target, no count. */
+export interface BackupChallengeDecision {
+  readonly key: string;
+  readonly decision: 'accepted' | 'dismissed';
+  readonly decidedAtMs: number;
+}
+
+/**
+ * One confirmed **місячна норма витрат**. The сума carries its currency, as every сума in this
+ * file does, so a норма cannot arrive without the currency it is a норма of.
+ */
+export interface BackupSpendingNorm {
+  readonly amount: Money;
+  readonly confirmedAtMs: number;
+}
+
+/**
  * The owner's whole state, in the shape a бекап carries and storage restores. Every instant is
  * epoch milliseconds rather than a `Date`, because this value is written to a file and read back
  * from one: a shape that survives `JSON.parse` unchanged needs no second mapping layer to be the
@@ -238,6 +284,10 @@ export interface BackupState {
   /** Every фіскальний чек, with its снапшот. Empty on a бекап written before чеки existed. */
   readonly receipts: readonly BackupReceipt[];
   readonly receiptItems: readonly BackupReceiptItem[];
+  /** The прогрес. All three empty on a бекап written before досягнення existed. */
+  readonly achievements: readonly BackupAchievement[];
+  readonly challengeDecisions: readonly BackupChallengeDecision[];
+  readonly norms: readonly BackupSpendingNorm[];
 }
 
 /** The whole file: the marker, the versions, the moment, the integrity value and the contents. */
@@ -613,6 +663,46 @@ function receiptItemAt(value: unknown, at: string): BackupReceiptItem {
   };
 }
 
+function achievementAt(value: unknown, at: string): BackupAchievement {
+  const row = objectAt(value, at);
+  const seen = row.seenAtMs;
+  return {
+    key: stringAt(row.key, `${at}.key`),
+    template: stringAt(row.template, `${at}.template`),
+    achievedOn: dateAt(row.achievedOn, `${at}.achievedOn`),
+    recordedAtMs: integerAt(row.recordedAtMs, `${at}.recordedAtMs`),
+    ...(seen === undefined || seen === null
+      ? {}
+      : { seenAtMs: integerAt(seen, `${at}.seenAtMs`) }),
+    // Read back as the text it was written as: the свідчення is a value for display, and this file
+    // deliberately does not know what shape it holds.
+    evidence: stringAt(row.evidence, `${at}.evidence`),
+  };
+}
+
+function challengeDecisionAt(value: unknown, at: string): BackupChallengeDecision {
+  const row = objectAt(value, at);
+  if (row.decision !== 'accepted' && row.decision !== 'dismissed') {
+    fail(`${at}.decision не є ні прийняттям, ні відхиленням виклика`);
+  }
+  return {
+    key: stringAt(row.key, `${at}.key`),
+    decision: row.decision,
+    decidedAtMs: integerAt(row.decidedAtMs, `${at}.decidedAtMs`),
+  };
+}
+
+function normAt(value: unknown, at: string): BackupSpendingNorm {
+  const row = objectAt(value, at);
+  const amount = moneyAt(row.amount, `${at}.amount`);
+  // Storage refuses a non-positive норма by CHECK; a hand-edited file is refused here, in the
+  // owner's words, before storage is touched at all.
+  if (amount.amount <= 0) {
+    fail(`${at}.amount не є місячною нормою витрат: сума має бути більшою за нуль`);
+  }
+  return { amount, confirmedAtMs: integerAt(row.confirmedAtMs, `${at}.confirmedAtMs`) };
+}
+
 function watchAt(value: unknown, at: string): BackupWatch {
   const row = objectAt(value, at);
   return {
@@ -652,6 +742,9 @@ export function parseState(value: unknown): BackupState {
     // way `watches` already do (design D5).
     receipts: listAt(data, 'receipts', receiptAt),
     receiptItems: listAt(data, 'receiptItems', receiptItemAt),
+    achievements: listAt(data, 'achievements', achievementAt),
+    challengeDecisions: listAt(data, 'challengeDecisions', challengeDecisionAt),
+    norms: listAt(data, 'norms', normAt),
   };
 }
 

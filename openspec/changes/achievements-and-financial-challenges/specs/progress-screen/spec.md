@@ -57,8 +57,9 @@ against their own data, its свідчення labelled as what was true when it
 recorded dated it. Where the condition still has a current number, that number SHALL be recomputed
 and shown beside the свідчення, never in place of it.
 
-Opening a виклик SHALL show its назва, why it was proposed, its progress against its target, its
-criterion for being finished in one sentence, and its action.
+Opening a виклик SHALL show its назва, why it was proposed, its progress — a number against a
+target, or a count of what is still left to do — its criterion for being finished in one sentence,
+and its action.
 
 #### Scenario: The detail explains why it was earned
 

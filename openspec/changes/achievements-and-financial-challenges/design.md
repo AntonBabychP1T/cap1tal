@@ -123,11 +123,12 @@ Two kinds of condition, two honest answers:
   from the транзакції. A retroactive award for a 2024 fact is dated 2024, not today — which is the
   whole point of retroactive awarding, and the difference between «Рік історії» meaning something
   and meaning nothing.
-- **A condition that is a balance.** A ціль's 50 %, the резерв reaching a норма, інвестиційний
-  капітал reaching one. `goals` defines progress as «the linked рахунок's розрахунковий баланс,
-  read at the moment the ціль is shown» — a *current* number with no history the ціль owns. A ціль
-  created yesterday over a рахунок that has held money for a year did not reach 50 % a year ago, and
-  dating it there would be a fiction the app invented. `achieved_on` is **the day the app recorded
+- **A condition that is a balance, or a thing that merely exists.** A ціль's 50 %, the резерв
+  reaching a норма, інвестиційний капітал reaching one, the перша ціль-накопичення. `goals` defines
+  progress as the внески of the склад, read at the moment the ціль is shown — a *current* number
+  with no history the ціль owns. A ціль created yesterday over рахунки that have held money for a
+  year did not reach 50 % a year ago, and dating it there would be a fiction the app invented. A
+  ціль's own creation is not in the транзакції at all. `achieved_on` is **the day the app recorded
   it**.
 
 Stated in the spec as one rule, and testable both ways. The detail screen never claims more than
@@ -143,21 +144,39 @@ SQLite holds keys and свідчення. Copying the catalogue into the databas
 for every wording fix, two places to keep in step, and a бекап carrying text that the code already
 carries. Rejected.
 
-### D6 — The engine reads a ціль through the `goals` capability, never through `goal.accountId`
+### D6 — The engine is *handed* a ціль's progress; it never computes one
 
-Every goal-shaped condition is expressed over three values the capability gives: the ціль's
-**target** (a `Money`), its **progress** (a `Money` in the same currency), and its **дата**. The
-achievement code never sees `accountId`, never reads a рахунок to compute a ціль's progress, and
-never assumes there is exactly one.
+The ціль redesign the owner asked for has already landed (archived in `47e177e`). As of this
+change `openspec/specs/goals/spec.md` defines a **склад цілі** of one or more рахунки, an
+інвестиційний рахунок's **внесок** as its поточна вартість where one exists, and a progress that may
+be **exact**, **приблизний** (converted at monobank's курс) or **absent**. In code that is
+`goalProgress({currency, contributions, rates}) → GoalProgress` in `src/ui/goal-progress.ts` — a
+discriminated union of `'exact' | 'approximate' | 'unknown'` — and not a `Money`.
 
-This is not decoration. The owner has separately asked for цілі that may name a set of рахунки or a
-global pool of the matching ones; `openspec list` holds no change for it yet, so this change cannot
-integrate with one — but when it lands, `goalProgress` returns a different number from a different
-place and **not one line here changes**. The seam is `goalProgress(goal) → Money` plus
-`goal.target`, and it is the only seam.
+So the seam is not a function the engine calls. **`evaluate` is handed, per ціль-накопичення, its
+`target`, its `deadline` and one already-resolved progress**, of the shape
 
-The `goal.reached-in-time` template is the one that also reads the дата, and it reads it as the
-capability defines it — reached while `today <= дата`.
+```ts
+{ goal: AccumulationGoal; progress: Money | null }   // null ⇔ approximate or unknown
+```
+
+`src/progress/run.ts` is where the resolution happens, because that is where the rates and the
+рахунки already are. Three consequences, each deliberate:
+
+- **`src/progress/` imports nothing from `src/ui/`.** The layering of D14 survives even though
+  `goalProgress` lives under `src/ui/`, because the engine never calls it.
+- **A rate never decides a досягнення.** An approximate progress arrives as `null` and earns
+  nothing — which is the achievements capability's own «no exchange rate … SHALL take part in
+  deciding any досягнення», enforced by the type rather than by a promise. The alternative, earning
+  a badge because the dollar moved, is a badge about the dollar.
+- **The engine still knows nothing about рахунки.** It never sees `accountIds`, never reads a
+  вартість, and cannot tell a one-рахунок ціль from a склад of six.
+
+`goal.reached-in-time` also reads the дата, as the capability defines it — reached while
+`today <= дата` — and a ціль with **no** дата never earns it: there was no date to be in time for.
+
+A **ціль витрат** is a ліміт under another name and takes no part here: it is never «досягнута», and
+«Перша ціль-накопичення» is named in full for exactly that reason.
 
 ### D7 — «Базові витрати» is a number the owner confirms, never one the app infers
 
@@ -209,8 +228,14 @@ app on a particular week, and this change is explicitly not allowed to punish an
 
 So v1 ships the **виклик** «Закрий <місяць>» — proposed once a місяць is завершений and still holds
 чернетки, «Без категорії» or «Без джерела» — whose completion is *derived*: the conditions are met
-or they are not, and it says which. The досягнення it can leave behind are the ones that already
-exist («Чистий місяць», «Місяць без чернеток»).
+or they are not, and it says which. The досягнення it can leave behind is the one that already
+exists («Чистий місяць»).
+
+Its **progress carries no denominator.** «7 of the 12 there were when this was proposed» would be a
+stored count, which the challenges capability and the persistence spec both forbid — only the
+owner's decision is stored. So the progress is what is there *now*: «залишилось 3 записи», counted
+from the транзакції and the чернетки each time it is shown, falling to zero, which is also the
+criterion. A number that only ever goes down needs no total to be read against.
 
 **The room left for v2:** a виклик is keyed `template:parameters` and its state is one row of owner
 decision; a досягнення is keyed the same way and its свідчення shape is a closed union. Adding a
@@ -233,7 +258,10 @@ render, on scroll, or on a timer.
   count carrying «Без категорії», the count carrying «Без джерела» — one `GROUP BY` over the
   transactions table;
 - per (вид рахунку, currency): the sum of розрахункові баланси — which is what «резерв» and
-  «інвестиційний капітал» are;
+  «інвестиційний капітал» are, archived рахунки included, because archiving takes no money away;
+- per (місяць, currency, категорія **that carries a ліміт**): that категорія's витрачено — what
+  «Втримай ліміт» is judged by. Only the limited категорії, so a vocabulary of forty costs the
+  зведення nothing and the bound is (місяці × ліміти) rather than (місяці × категорії);
 - the total count of транзакції, and the дата of the earliest and the latest;
 - the count of pending чернетки per місяць.
 
@@ -285,6 +313,16 @@ condition meaningless for an owner whose accounts genuinely agree. The honest co
 evidence the app does not yet store — **the moment each рахунок was last звірено** — which is one
 column shaped exactly like the «поточна вартість … з датою» that `investments-value` is adding. The
 template ships when that column does.
+
+**«Місяць без чернеток» failed the same test and is not in v1 either.** The condition — «a
+завершений місяць in which no чернетка dated inside it is still waiting» — is satisfied three ways
+that have nothing to do with working through the record: a місяць in which notification capture was
+never enabled, a місяць in which the owner **dismissed** every чернетка (dismissing deletes the row
+and stores nothing), and every місяць on a phone that has just been restored, because чернетки are
+deliberately absent from a бекап. Absence of a чернетка and a чернетка dealt with are
+indistinguishable in storage, so the badge rewards never having looked exactly as much as having
+looked. Like «Точний облік» it ships when storage remembers the settling rather than merely the
+row's absence; «Чистий місяць» carries the якість group until then.
 
 Two other candidates were dropped for the same test: anything counting purchases or витрати
 (rewards spending), and any daily streak (rewards opening the app, and punishes an owner whose
@@ -374,6 +412,18 @@ src/app/achievement/[key].tsx   the detail screen
 on. It imports from `src/domain/` and nothing imports from it except `src/ui/`, `src/db/` and the
 screens.
 
+The one place that layering could have been inverted is `goalProgress`, which lives under
+`src/ui/` because a progress over a mixed склад needs a курс and the domain is rate-free. D6 is what
+keeps the layering: the engine is *handed* a resolved progress and never calls that function, so
+`src/progress/` imports nothing from `src/ui/`. `run.ts` — which is not pure, and whose job is
+precisely to gather what the engine is handed — is where `goalProgress` is called. Nothing in
+`eslint.config.js` enforces the direction, so `achievements.test.ts` asserts it by reading the
+module's own imports.
+
+`fixtures.ts` is test-only, like `src/db/test-db.ts`: it is imported by tests and by nothing under
+`src/app/`, so Metro never pulls it into the bundle. `progress-screen.test.ts` holds that as an
+assertion rather than as a habit.
+
 ## Risks / Trade-offs
 
 - **The catalogue could still grow into badge soup.** Mitigated by D12 as a written test every
@@ -406,5 +456,9 @@ There is no data migration: the first evaluation after the app starts is what fi
   currency: propose from what exists (at least three), or offer no proposal and let the owner type
   the number? The spec takes the second — a median of two months is not a median — and this is the
   one number the owner may want to overturn.
+- **Four decisions the owner took during apply**, recorded here so the reasons survive: a ціль
+  досягнення is decided only from an **exact** progress (D6); «Закрий місяць» counts **down** with
+  no stored denominator (D9); «Місяць без чернеток» is **not in v1** (D12); and «Втримай ліміт»
+  reads a per-категорія витрачено the зведення carries **for limited категорії only** (D10).
 - **Whether «Прогрес» belongs on Звіти at all**, given Головний already leads to it. Kept because
   Звіти is where цілі already live and where the owner goes to read the history rather than the day.

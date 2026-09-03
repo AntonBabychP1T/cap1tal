@@ -35,8 +35,9 @@ Earning a досягнення SHALL change no money: no розрахунков�
 
 Each earned досягнення SHALL carry a **свідчення**: the number that justified it at the moment it
 was earned — a count of транзакції, a span of місяці, a сума with its currency code, a місяць, or
-the ціль it is about. The свідчення SHALL be shown as what was true then, never as a current
-number, and SHALL NOT be read by anything that computes money: no сума, no місячна картина, no
+the ціль it is about. A ціль's свідчення SHALL also carry the ціль's назва as it stood then, so a досягнення about a ціль
+the owner has since deleted still says which ціль it was about. The свідчення SHALL be shown as what
+was true then, never as a current number, and SHALL NOT be read by anything that computes money: no сума, no місячна картина, no
 ліміт, no ціль and no звіт SHALL take any value from a свідчення.
 
 #### Scenario: The свідчення keeps the number of its moment
@@ -56,10 +57,16 @@ number, and SHALL NOT be read by anything that computes money: no сума, no �
 
 An earned досягнення SHALL carry a **дата досягнення**. WHEN the condition is one the stored
 history dates — the first транзакція, the Nth транзакція, the end of the Nth активний місяць, the
-first переказ onto a рахунок of a вид — the дата досягнення SHALL be that date from the history,
-whatever day the system evaluated. WHEN the condition is a balance — a ціль's progress, the резерв,
-the інвестиційний капітал — the дата досягнення SHALL be the day the system recorded it, because a
-розрахунковий баланс is a number about now and the history does not date it.
+end of the Nth місяць holding an інвестиція, the last day of the місяць that completed a run of
+чисті місяці, the дата of the latest транзакція where the span of the history is the condition,
+and the first переказ onto a рахунок of a вид — the дата досягнення SHALL be that date from the
+history, whatever day the system evaluated. WHEN the condition is a balance or the mere existence
+of something the history does not date — a ціль-накопичення's progress, the резерв, the
+інвестиційний капітал, the first ціль-накопичення — the дата досягнення SHALL be the day the system
+recorded it, because a розрахунковий баланс is a number about now and the history does not date it.
+
+Every template SHALL fall under exactly one of the two, and which one it is SHALL be part of the
+template rather than decided per evaluation.
 
 The system SHALL also record the moment it wrote the row, distinct from the дата досягнення.
 
@@ -69,7 +76,7 @@ The system SHALL also record the moment it wrote the row, distinct from the да
   evaluates for the first time on 2026-09-02
 - **THEN** «100 транзакцій» is dated 2024-12-03, not 2026-09-02
 
-#### Scenario: A retroactive месяць count is dated at the month's end
+#### Scenario: A retroactive місяць count is dated at the month's end
 
 - **WHEN** the sixth активний місяць of the history is 2025-03 and the system evaluates on 2026-09-02
 - **THEN** «6 активних місяців» is dated 2025-03-31
@@ -118,9 +125,15 @@ deleted. Evaluating SHALL only ever add earned досягнення.
 
 The system SHALL evaluate досягнення at these moments and no others: once when the app starts; after
 a транзакція is recorded, edited or deleted; after a monobank sync commits anything; after a
-чернетка is confirmed or dismissed; after a Saldo імпорт commits; after a відновлення; after a ціль
-is created, edited or deleted; and after a місячна норма витрат is confirmed or changed. Drawing a
-screen SHALL NOT evaluate, and no screen SHALL earn a досягнення as a consequence of being shown.
+чернетка is confirmed or dismissed, because confirming one stores a транзакція; after a Saldo
+імпорт commits; after a відновлення; after a ціль-накопичення is created, edited or deleted; after a
+рахунок is created, edited or archived, because a початковий залишок moves the резерв with no
+транзакція behind it; and after a місячна норма витрат is confirmed or changed. Setting or clearing
+a **ліміт** is not among them: a ліміт is a ціль витрат and no досягнення is defined about one, so
+there would be nothing to earn. Drawing a screen
+SHALL NOT evaluate, and no screen SHALL earn a досягнення as a consequence of being shown.
+
+Storing a транзакція from a screen SHALL evaluate; that is the recording, not the drawing.
 
 #### Scenario: Opening Головний repeatedly evaluates once
 
@@ -136,10 +149,12 @@ screen SHALL NOT evaluate, and no screen SHALL earn a досягнення as a 
 ### Requirement: Evaluating reads bounded aggregates, never the транзакції one by one
 
 Evaluating SHALL read the history as a **зведення прогресу** whose size is bounded by the number of
-(місяць, currency) pairs, the number of (вид рахунку, currency) pairs and a fixed number of single
-values. The system SHALL NOT load individual транзакції to evaluate досягнення, with one exception:
-finding the дата of the Nth транзакція for a count досягнення the evaluation is newly earning, which
-SHALL read exactly that one транзакція.
+(місяць, currency) pairs, the number of (вид рахунку, currency) pairs, the number of (місяць,
+currency, категорія що має ліміт) triples and a fixed number of single values. The system SHALL NOT
+load individual транзакції to evaluate досягнення, with two exceptions, each of which SHALL read
+exactly one транзакція: finding the дата of the Nth транзакція for a count досягнення the evaluation
+is newly earning, and finding the дата of the earliest переказ onto a рахунок of a given вид for the
+«перше відкладення» and «перший внесок» досягнення.
 
 #### Scenario: A large history is evaluated without reading its транзакції
 
@@ -151,6 +166,12 @@ SHALL read exactly that one транзакція.
 
 - **WHEN** the evaluation newly earns «500 транзакцій»
 - **THEN** it reads the 500th транзакція alone to date it, and no other транзакція individually
+
+#### Scenario: The first переказ onto a вид is read alone
+
+- **WHEN** the evaluation newly earns «Перше відкладення»
+- **THEN** it reads the earliest переказ onto a рахунок of вид `savings` alone to date it, and no
+  other транзакція individually
 
 ### Requirement: A money досягнення is per currency and never converted
 
@@ -178,7 +199,9 @@ An **активний місяць** SHALL be a calendar місяць holding at
 NOT count a місяць by whether the owner opened the app in it. A **завершений місяць** SHALL be an
 активний місяць whose last day is before the device's today. A **чистий місяць** SHALL be a
 завершений місяць in which no витрата carries «Без категорії» and no дохід carries «Без джерела»; a
-місяць holding no транзакція SHALL NOT be чистий, because it is not активний.
+повернення counts as a витрата here, because a повернення **is** a negative витрата in the same
+категорія and «Без категорії» on one leaves exactly the same question open. A місяць holding no
+транзакція SHALL NOT be чистий, because it is not активний.
 
 #### Scenario: An imported місяць is активний
 
@@ -237,13 +260,13 @@ No досягнення SHALL count витрати, purchases, a category, a car
 
 The catalogue SHALL hold these досягнення about the quality of the record:
 
-- **«Чистий місяць»** — a first чистий місяць exists.
+- **«Чистий місяць»** — a first чистий місяць exists. One key, not one per місяць: the fact is
+  «this has happened», and the місяць it happened in is its свідчення.
 - **«3 чисті місяці поспіль»** and **«6 чистих місяців поспіль»** — that many consecutive calendar
   місяці are each чистий. A місяць that is not активний breaks the run.
-- **«Місяць без чернеток»** — a завершений місяць exists in which no чернетка bearing a дата inside
-  it is still waiting for a word.
 
-Each SHALL be dated at the last day of the місяць that completed it.
+Each SHALL be dated at the last day of the місяць that completed it — the **first** місяць to
+complete it, so a later run does not re-date a fact that already happened.
 
 #### Scenario: Three consecutive чисті місяці earn the run
 
@@ -256,25 +279,41 @@ Each SHALL be dated at the last day of the місяць that completed it.
   чисті
 - **THEN** «3 чисті місяці поспіль» is not earned
 
-#### Scenario: A waiting чернетка spoils the місяць
-
-- **WHEN** 2026-05 is завершений and one чернетка dated 2026-05-18 is still waiting
-- **THEN** «Місяць без чернеток» is not earned for 2026-05
-
 ### Requirement: The ціль досягнення follow the goals capability and know nothing of рахунки
 
-The catalogue SHALL hold these досягнення about цілі, each decided from the ціль's target, its
-progress and its дата exactly as the `goals` capability defines them, and from nothing else — no
-досягнення SHALL read which рахунок or рахунки a ціль's progress came from:
+The catalogue SHALL hold these досягнення about **цілі-накопичення**, each decided from the ціль's
+target, its progress and its дата exactly as the `goals` capability defines them, and from nothing
+else — no досягнення SHALL read which рахунок or рахунки a ціль's progress came from, and no
+досягнення SHALL be defined about a ціль витрат, which is a ліміт under another name and is never
+«досягнута»:
 
-- **«Перша ціль»** — at least one ціль exists.
+- **«Перша ціль-накопичення»** — at least one ціль-накопичення exists.
 - **«Ціль “<назва>” — 25 %»**, **«… 50 %»**, **«… 75 %»** — that ціль's progress is at least that
   fraction of its target. The key SHALL carry the ціль's identifier, so each ціль earns its own.
 - **«Ціль “<назва>” досягнута»** — the ціль is reached as `goals` defines reached.
-- **«Ціль “<назва>” досягнута вчасно»** — the ціль is reached and the device's today is not after
-  its дата.
+- **«Ціль “<назва>” досягнута вчасно»** — the ціль is reached, it has a дата, and the device's today
+  is not after that дата. A ціль with no дата SHALL NOT earn it: there was no date to be in time
+  for.
 
 There SHALL be no досягнення at any other fraction of a ціль.
+
+A ціль's progress SHALL be taken exactly as the `goals` capability computes it, **including the
+поточна вартість** of an інвестиційний рахунок of its склад where the owner has entered one. That is
+the number the ціль screen itself shows, and a досягнення that disagreed with the ціль it is about
+would be the app contradicting itself on one screen's walk from another. The ban on deciding a
+досягнення from a поточна вартість belongs to the інвестиційні досягнення, which are about what the
+owner put in; a ціль is a target the owner declared, and it is reached when the money is there.
+
+A вартість being entered or changed is **not** one of the moments at which the system evaluates: a
+ціль досягнення that a new вартість makes true is earned at the next moment that does occur, which
+is app start at the latest.
+
+A ціль досягнення SHALL be decided **only from an exact progress** — one every внесок of which is
+already in the ціль's own currency. WHEN the progress is приблизний, because a внесок had to be
+converted at a курс, or unknown, because a курс is missing or the sum does not hold, no ціль
+досягнення SHALL be earned for that ціль and none SHALL be un-earned either. This is the
+«no exchange rate decides a досягнення» rule of this capability, applied where it would otherwise
+be quietly broken: a badge that appears because the dollar moved is a badge about the dollar.
 
 #### Scenario: A ціль at 60 % earns two quarters at once
 
@@ -297,10 +336,43 @@ There SHALL be no досягнення at any other fraction of a ціль.
 - **WHEN** a ціль's progress moves from 25 % to 30 %, 35 % and 40 % of its target
 - **THEN** no досягнення is earned between 25 % and 50 %
 
+#### Scenario: A приблизний progress earns nothing
+
+- **WHEN** a ціль-накопичення in UAH stands on рахунки in UAH and USD, so its progress is
+  приблизний at monobank's курс, and that progress is 60 % of the target
+- **THEN** no ціль досягнення is earned for it, whatever the курс says
+
+#### Scenario: An unknown progress earns nothing and unearns nothing
+
+- **WHEN** «Ціль “Авто” — 25 %» is earned and the курс for a currency of that ціль's склад later
+  becomes unknown, so its progress cannot be counted
+- **THEN** «Ціль “Авто” — 25 %» is still earned, and no further ціль досягнення is earned for it
+  while the progress is unknown
+
+#### Scenario: A ціль reached on a вартість is reached
+
+- **WHEN** a ціль-накопичення stands on an інвестиційний рахунок whose поточна вартість the owner
+  entered, that вартість carries the ціль's progress to its target, and the system evaluates
+- **THEN** «досягнута» is earned for that ціль, and no інвестиційне досягнення is earned by the
+  same вартість
+
+#### Scenario: A ціль with no дата is never reached in time
+
+- **WHEN** a ціль-накопичення with no дата reaches its target
+- **THEN** «досягнута» is earned and «досягнута вчасно» is not
+
+#### Scenario: A ліміт earns no ціль досягнення
+
+- **WHEN** the owner sets a ліміт on «Продукти», which is a ціль витрат, and no
+  ціль-накопичення exists
+- **THEN** «Перша ціль-накопичення» is not earned
+
 ### Requirement: The резерв досягнення are measured in місячні норми витрат
 
 The **резерв** in a currency SHALL be the sum of the розрахункові баланси of the рахунки of вид
-`savings` in that currency, and nothing else. The catalogue SHALL hold:
+`savings` in that currency, and nothing else. An archived рахунок SHALL count: archiving stops a
+рахунок being offered for a new транзакція and takes none of its money away. The catalogue SHALL
+hold:
 
 - **«Перше відкладення»** — a переказ onto a рахунок of вид `savings` exists. It SHALL be dated at
   that переказ's дата and SHALL NOT require a норма.
@@ -340,8 +412,8 @@ The catalogue SHALL hold:
   amounts of different currencies together.
 - **«Інвестовано на N місяців витрат»** for N of 1, 3, 6 and 12 — the sum of the розрахункові
   баланси of the рахунки of вид `investment` in one currency is at least N місячні норми витрат of
-  that currency. It SHALL exist only for a currency whose норма is confirmed, and SHALL be keyed to
-  that currency.
+  that currency, archived рахунки included as in the резерв. It SHALL exist only for a currency
+  whose норма is confirmed, and SHALL be keyed to that currency.
 
 No досягнення SHALL be decided from a поточна вартість, a прибуток or a збиток: what the owner
 controls is what they put in, and a market that moved is not a behaviour to reinforce.
@@ -363,8 +435,14 @@ The system SHALL hold at most one **місячна норма витрат** per
 minor-units сума the owner has confirmed. The system SHALL propose a value — the median of
 «витрачено» over the last six завершені активні місяці in that currency, exactly as the
 monthly-picture capability computes витрачено — and SHALL show which місяці the proposal was
-derived from. WHEN fewer than six завершені активні місяці exist in that currency, the system SHALL
-propose nothing and SHALL let the owner enter the сума.
+derived from. A **завершений активний місяць in a currency** SHALL be a завершений місяць holding at
+least one транзакція naming that currency, whether or not anything was витрачено in it — a місяць
+that held only a дохід counts, at витрачено of zero. Six місяці have no single middle value, so the
+median SHALL be the mean of the two middle ones, rounded half away from zero, and SHALL stay an
+integer in minor units. WHEN that median is not a positive сума — six місяці that held only доходи
+or перекази in that currency — the system SHALL propose nothing, because a норма of zero is not a
+норма and storage would refuse it. WHEN fewer than six завершені активні місяці exist in that currency, the
+system SHALL propose nothing and SHALL let the owner enter the сума.
 
 The system SHALL NOT derive a норма from the names of категорії, and SHALL NOT decide which витрати
 are «базові» by any means of its own. A currency with no confirmed норма SHALL have no норма: every
@@ -384,12 +462,18 @@ NOT remove any earned досягнення.
 - **WHEN** only three завершені активні місяці hold витрачено in USD
 - **THEN** no USD норма is proposed and the owner may enter one
 
+#### Scenario: A median of nothing is no proposal
+
+- **WHEN** six завершені активні місяці in USD each hold a дохід and no витрата, so витрачено is
+  zero in every one of them
+- **THEN** no USD норма is proposed and the owner may enter one
+
 #### Scenario: A норма is never guessed from category names
 
 - **WHEN** the owner's категорії include «Продукти», «Оренда» and «Розваги» and no норма is confirmed
 - **THEN** no норма exists for any currency, and no резерв or інвестиційний milestone is earned
 
-#### Scenario: Lowering the норма keeps what was earned
+#### Scenario: Raising the норма keeps what was earned
 
 - **WHEN** «Місяць витрат у резерві» is earned for UAH and the owner then raises the UAH норма so
   that the резерв covers only 40 % of it

@@ -81,7 +81,7 @@ ticked before `npm run verify` is green on the tree that holds it.
 
 ## 6. What the screens draw — proven on the emulator, not by `verify`
 
-- [ ] 6.1 Size the tab labels in `src/components/app-tabs.tsx` so «Налаштування» fits, and write
+- [x] 6.1 Size the tab labels in `src/components/app-tabs.tsx` so «Налаштування» fits, and write
       `labelStyle` in its `{ default, selected }` form so the unselected colour actually reaches
       the bar — today it does not, because expo-router reads any object holding `selected` as the
       `{ default, selected }` shape and a colour set beside it is dropped (design D6). Verify by
@@ -89,19 +89,19 @@ ticked before `npm run verify` is green on the tree that holds it.
       requirement "The tab bar never cuts off a name, and marks the open tab by tone" — the open
       tab's name drawn whole, and the two tones with no accent in the bar. How many of the five
       names Android draws at once is the platform's and is not this change's to move.
-- [ ] 6.2 Add the small scroller component to `src/app/(tabs)/reports.tsx` that centres the marked
+- [x] 6.2 Add the small scroller component to `src/app/(tabs)/reports.tsx` that centres the marked
       month in both charts and pad the chart content horizontally (design D7). Key it on the span,
       because `onLayout` does not fire for a column that keeps its size and only slides sideways —
       without that, a span growing under a mounted «Звіти» leaves every remembered position one
       span stale and the mark off screen. Verify by `npm run lint`, `npm run typecheck` and by
       6.4's screenshots of «Звіти» against the reports-screen requirement's four new scenarios,
       the grown span among them.
-- [ ] 6.3 Draw the header «+» of `src/app/(tabs)/accounts.tsx` only when the empty state is not
+- [x] 6.3 Draw the header «+» of `src/app/(tabs)/accounts.tsx` only when the empty state is not
       showing, so exactly one control offers creating (design nothing — it is the condition the
       empty state already has). Verify by `npm run lint`, `npm run typecheck` and by 6.4's
       screenshots of Рахунки empty and non-empty, against the accounts-screen requirement's two new
       scenarios.
-- [ ] 6.4 Run the `smoke-runner` subagent over 6.1–6.3 on the emulator: the tab bar with
+- [x] 6.4 Run the `smoke-runner` subagent over 6.1–6.3 on the emulator: the tab bar with
       «Налаштування» whole and the two tones; «Звіти» opening with its marked month whole on
       screen; a month picked on the history chart bringing the category chart to it while the
       history chart stays put; a span grown under the open tab still showing its mark; Рахунки
@@ -127,5 +127,9 @@ ticked before `npm run verify` is green on the tree that holds it.
 
 ## 8. Closing
 
-- [ ] 8.1 Run `npm run verify` and paste the final lines
-- [ ] 8.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+- [x] 8.1 Run `npm run verify` and paste the final lines
+      — `Test Files 133 passed (133)`, `Tests 2513 passed (2513)`, `✔ verify passed`
+- [x] 8.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+      — first pass FAIL (1 critical: `BUILD_SOURCES` omitted `babel.config.js`/`metro.config.js`,
+      turning the over-report this change fixes into the worse under-report; 4 major). All fixed;
+      second pass PASS on every re-checked item.

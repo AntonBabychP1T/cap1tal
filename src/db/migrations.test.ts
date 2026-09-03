@@ -21,7 +21,9 @@ import {
   bugReports,
   categories,
   categoryLimits,
+  challengeDecisions,
   dailyReminder,
+  earnedAchievements,
   entryDefaults,
   fiscalReceipts,
   goalAccounts,
@@ -39,6 +41,7 @@ import {
   rules,
   saldoImport,
   sources,
+  spendingNorms,
   transactions,
 } from './schema';
 import {
@@ -2546,6 +2549,165 @@ describe('migrations — the origin, the capture reason and the two switches', (
 
       // And the switches arrive at their defaults on a phone that has never seen them.
       expect(after.captureSettings()).toEqual({ gestureEnabled: true, handleEnabled: false });
+    } finally {
+      staged.close();
+    }
+  });
+});
+
+describe('migrations — the прогрес: досягнення, виклики and норми', () => {
+  /** Every migration but this change's, so «before» is a real device from the previous release. */
+  const BEFORE_PROGRESS = 17;
+
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    storage.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+  });
+
+  afterEach(() => storage.close());
+
+  it('Scenario: A fresh database from migrations alone stores a досягнення', () => {
+    expect(storage.db.select().from(earnedAchievements).all()).toEqual([]);
+
+    storage.db
+      .insert(earnedAchievements)
+      .values({
+        key: 'ledger.transactions:500',
+        template: 'ledger.transactions',
+        achievedOn: '2025-04-18',
+        recordedAt: new Date('2026-09-02T09:00:00.000Z'),
+        seenAt: null,
+        evidence: '{"count":500}',
+      })
+      .run();
+    storage.db
+      .insert(challengeDecisions)
+      .values({
+        key: 'close-month:2026-08',
+        decision: 'accepted',
+        decidedAt: new Date('2026-09-02T09:01:00.000Z'),
+      })
+      .run();
+    storage.db
+      .insert(spendingNorms)
+      .values({
+        currency: 'UAH',
+        amount: 3050000,
+        confirmedAt: new Date('2026-09-02T09:02:00.000Z'),
+      })
+      .run();
+
+    const earned = storage.db.select().from(earnedAchievements).all();
+    expect(earned).toHaveLength(1);
+    expect(earned[0]?.achievedOn).toBe('2025-04-18');
+    // Instants come back as Dates, not numbers — `timestamp_ms` on every moment of the three.
+    expect(earned[0]?.recordedAt).toBeInstanceOf(Date);
+    expect(earned[0]?.seenAt).toBeNull();
+    expect(storage.db.select().from(challengeDecisions).all()[0]?.decision).toBe('accepted');
+    expect(storage.db.select().from(spendingNorms).all()[0]?.amount).toBe(3050000);
+    expect(storage.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+  });
+
+  it('The migrated shape refuses a досягнення whose дата is not a calendar date', () => {
+    expect(() =>
+      storage.db
+        .insert(earnedAchievements)
+        .values({
+          key: 'ledger.first-transaction',
+          template: 'ledger.first-transaction',
+          achievedOn: '18/04/2025',
+          recordedAt: new Date(0),
+          evidence: '{"count":1}',
+        })
+        .run(),
+    ).toThrow();
+  });
+
+  it('The migrated shape refuses a decision that is neither accepted nor dismissed', () => {
+    expect(() =>
+      storage.db
+        .insert(challengeDecisions)
+        .values({ key: 'close-month:2026-08', decision: 'maybe', decidedAt: new Date(0) })
+        .run(),
+    ).toThrow();
+  });
+
+  it('The migrated shape refuses a норма of zero, and keeps one per currency', () => {
+    expect(() =>
+      storage.db
+        .insert(spendingNorms)
+        .values({ currency: 'UAH', amount: 0, confirmedAt: new Date(0) })
+        .run(),
+    ).toThrow();
+    expect(() =>
+      storage.db
+        .insert(spendingNorms)
+        .values({ currency: 'UAH', amount: -1, confirmedAt: new Date(0) })
+        .run(),
+    ).toThrow();
+
+    storage.db
+      .insert(spendingNorms)
+      .values({ currency: 'UAH', amount: 3050000, confirmedAt: new Date(0) })
+      .run();
+    expect(() =>
+      storage.db
+        .insert(spendingNorms)
+        .values({ currency: 'UAH', amount: 3200000, confirmedAt: new Date(0) })
+        .run(),
+    ).toThrow();
+  });
+
+  it('No досягнення reaches the owner`s money: none of the three tables gains a money pair', () => {
+    // The свідчення is one TEXT column read back for display; the норма's сума is the owner's own
+    // confirmed number and carries its currency as the primary key. Nothing here is a баланс.
+    const columns = (table: string) =>
+      storage.db.all<{ name: string }>(sql.raw(`PRAGMA table_info(${table})`)).map((c) => c.name);
+
+    expect(columns('earned_achievements')).toEqual([
+      'key',
+      'template',
+      'achieved_on',
+      'recorded_at',
+      'seen_at',
+      'evidence',
+    ]);
+    expect(columns('challenge_decisions')).toEqual(['key', 'decision', 'decided_at']);
+    expect(columns('spending_norms')).toEqual(['currency', 'amount', 'confirmed_at']);
+  });
+
+  it('A device that predates the прогрес keeps everything and gains the three tables', () => {
+    const staged = openTestDbMigratedTo(BEFORE_PROGRESS);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      for (const t of oneOfEachType) {
+        staged.db.insert(transactions).values(toTransactionRow(t)).run();
+      }
+      staged.db.insert(categoryLimits).values({
+        categoryId: UNCATEGORISED_CATEGORY_ID,
+        amount: 500000,
+        currency: 'UAH',
+      }).run();
+
+      const accountsBefore = staged.db.select().from(accounts).all();
+      const transactionsBefore = staged.db.select().from(transactions).all();
+      const limitsBefore = staged.db.select().from(categoryLimits).all();
+
+      staged.migrateToLatest();
+
+      expect(staged.db.select().from(accounts).all()).toEqual(accountsBefore);
+      expect(staged.db.select().from(transactions).all()).toEqual(transactionsBefore);
+      expect(staged.db.select().from(categoryLimits).all()).toEqual(limitsBefore);
+
+      // And the three arrive empty on a phone that has never earned anything.
+      expect(staged.db.select().from(earnedAchievements).all()).toEqual([]);
+      expect(staged.db.select().from(challengeDecisions).all()).toEqual([]);
+      expect(staged.db.select().from(spendingNorms).all()).toEqual([]);
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
     } finally {
       staged.close();
     }

@@ -49,13 +49,17 @@ moved and a record that is already complete, and both are read off the тран�
 - **New capability `challenges`** — the **виклик**: one thing worth doing now, with the reason it
   was proposed, a measurable progress, an unambiguous finish and one action to start from. At most
   three stand at a time, chosen deterministically from local aggregates — never by a language
-  model, which is not a source of truth here any more than anywhere else. The owner may accept,
-  dismiss or hide one; refusing costs nothing and is never counted against them.
+  model, which is not a source of truth here any more than anywhere else. The owner may accept a
+  виклик, dismiss it, or bring a dismissed one back; refusing costs nothing and is never counted
+  against them.
 - **New capability `progress-screen`** — «Прогрес»: a pushed Stack screen reached from Головний and
   from Звіти, with «Виклики», «У процесі» and «Отримані»; a detail screen per досягнення and per
   виклик naming its exact condition; a conditional card on Головний that appears only when
   something is genuinely waiting; and one grouped, unobtrusive celebration — «Ви вже маєте 12
   досягнень →», never twelve dialogs in a row and never a blocking modal.
+- **Modified `ai-analysis-package`** — the closed list of what a пакет never carries gains the
+  досягнення, the свідчення, the виклик decisions and the норми, so the one place that list lives
+  says so.
 - **New concept «місячна норма витрат»** — the owner-confirmed сума that «one month of витрати»
   means, per currency. The app proposes a number (the median of «витрачено» over the last six
   завершені активні місяці in that currency) and the owner confirms or replaces it. Until it is
@@ -64,7 +68,8 @@ moved and a record that is already complete, and both are read off the тран�
 - **Modified `persistence`** — three new tables behind append-only migrations: earned досягнення,
   the owner's decisions about виклики, and the норми. Nothing derived is stored: no progress, no
   balance, no score. Storage also gains the bounded aggregate reading the engine runs on
-  («зведення прогресу»), so evaluating never loads the history транзакція by транзакція.
+  («зведення прогресу»), so evaluating never loads the history транзакція by транзакція, and one
+  ADDED requirement putting the three tables inside the snapshot a бекап is made of.
 - **Modified `backup-file`** — a бекап carries the earned досягнення, the decisions about виклики
   and the норми. They are the owner's own state, not a derivation of the money, and a відновлення
   that dropped them would silently unearn two years of history.
@@ -103,8 +108,8 @@ at named moments, the three tables, the бекап, and one pushed screen with o
 - **No change to how any money number is computed.** `monthlyPicture`, `computeBalance`,
   `goalProgress`, `overLimit` are read and never touched. No транзакція, баланс, ліміт or ціль
   changes because a досягнення was earned.
-- **No redesign of `goals`.** See «What this change depends on» — the engine reads a ціль's
-  progress through the capability, never through `goal.accountId`.
+- **No redesign of `goals`.** See «What this change depends on» — the engine is handed a
+  ціль-накопичення's already-resolved progress and never reads a рахунок, a склад or a вартість.
 
 ### Deliberately not in v1, with the reason
 
@@ -115,8 +120,14 @@ at named moments, the three tables, the бекап, and one pushed screen with o
   incentive this change refuses to create. It ships when storage remembers the moment each рахунок
   was last звірено (one column, the shape `investments-value` already uses for «поточна вартість»),
   and not before. Nothing else in the catalogue depends on it.
-- **A composite «місяць у порядку» badge** on top of «Чистий місяць» and «Місяць без чернеток» —
-  badge inflation, three names for one fact.
+- **«Місяць без чернеток» — a завершений місяць with no чернетка of its own still waiting.** It
+  failed the same test in the same way: a чернетка dismissed leaves no row, capture may never have
+  been enabled, and чернетки are deliberately absent from a бекап — so «no чернетка waiting» is
+  indistinguishable from «never looked», and the badge would reward the second exactly as much as
+  the first. It ships when storage remembers that a чернетка was *settled* rather than merely
+  absent. «Чистий місяць» carries the якість group until then (design D12).
+- **A composite «місяць у порядку» badge** on top of «Чистий місяць» — badge inflation, two names
+  for one fact.
 - **Absolute money milestones** (1 000 / 10 000 / 100 000 UAH). A round number means something
   different to every owner and to every year; it reinforces no behaviour. Money milestones here
   are measured in місячні норми витрат instead, which is the same number for everyone: *how long
@@ -127,14 +138,20 @@ at named moments, the three tables, the бекап, and one pushed screen with o
 
 ## What this change depends on
 
-- **Nothing in flight blocks it.** It adds tables and one screen; it modifies no requirement any
-  in-flight change modifies. `home-daily-overview` and this change both add to Головний, in
-  separate sections, as separate ADDED requirements.
-- **`goals` has not been redesigned.** As of this proposal `openspec/specs/goals/spec.md` still
-  says a ціль names **one рахунок** and its progress is that рахунок's розрахунковий баланс, and
-  `openspec list` holds no change that alters it. This change therefore does **not** assume
-  multi-рахунок цілі — and does not hardcode against them either: every досягнення and виклик
-  about a ціль reads `goalProgress(ціль)` and the ціль's own currency through the `goals`
-  capability, and knows nothing about which рахунок or рахунки that progress came from (design
-  D6). When the ціль redesign the owner asked for lands as its own change, nothing here needs
-  rewriting — the goals capability changes, and this one reads the new answer.
+- **`goals` has already been redesigned, and this change reads the result.** The ціль redesign
+  landed and was archived in `47e177e`: `openspec/specs/goals/spec.md` now defines a **склад цілі**
+  of one or more рахунки, an інвестиційний рахунок's внесок as its поточна вартість, and a progress
+  that may be exact, приблизний or absent — in code `goalProgress({currency, contributions, rates})
+  → GoalProgress`, a union and not a `Money`. Nothing here calls it. The engine is **handed** each
+  ціль-накопичення's target, its дата and one already-resolved progress, and a progress that needed
+  a курс arrives as absent and earns nothing (design D6). So no rate ever decides a досягнення, the
+  engine still knows nothing about рахунки, and a further ціль change costs this capability the one
+  line in `run.ts` that resolves the progress.
+- **A ціль витрат takes no part.** It is a ліміт under another name and is never «досягнута»; every
+  ціль досягнення here names «ціль-накопичення» in full.
+- **Two in-flight changes touch the same files, and the deltas are shaped to miss them.**
+  `fiscal-receipts` is MODIFYING `backup-file`'s «holds the owner's whole state» and `persistence`'s
+  two snapshot requirements, so this change states its бекап and snapshot needs as **ADDED**
+  requirements instead (design D8) — two additions never collide, and both are true at once.
+  `home-daily-overview` and this change both add to Головний, in separate sections, as separate
+  ADDED requirements.

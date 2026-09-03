@@ -165,6 +165,9 @@ describe('what a бекап holding чеки may not contradict', () => {
     watches: [],
     receipts: [],
     receiptItems: [],
+    achievements: [],
+    challengeDecisions: [],
+    norms: [],
   };
 
   it('Scenario: A чек pointing outside the бекап stops the restore', () => {
@@ -349,6 +352,9 @@ describe('a ціль in a бекап', () => {
     watches: [],
     receipts: [],
     receiptItems: [],
+    achievements: [],
+    challengeDecisions: [],
+    norms: [],
   };
 
   const withGoals = (goals: BackupState['goals']): BackupState => ({ ...held, goals });

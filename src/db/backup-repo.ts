@@ -9,7 +9,9 @@ import {
   accounts,
   categories,
   categoryLimits,
+  challengeDecisions,
   dailyReminder,
+  earnedAchievements,
   entryDefaults,
   fiscalReceipts,
   goalAccounts,
@@ -23,6 +25,7 @@ import {
   rules,
   saldoImport,
   sources,
+  spendingNorms,
   transactions as transactionsTable,
 } from './schema';
 import type { Storage } from './storage';
@@ -213,6 +216,44 @@ export function backupRepo(db: Storage): BackupStore {
             ...(row.uktzed === null ? {} : { uktzed: row.uktzed }),
             ...(row.code === null ? {} : { code: row.code }),
           })),
+        // The прогрес, by key and by currency — a total order like everything else here, so two
+        // reads of one unchanged device produce the same бекап byte for byte. The свідчення goes
+        // out as the text it was stored as: this file does not know what shape it holds, and
+        // nothing that reads it back is allowed to treat it as money.
+        achievements: db
+          .select()
+          .from(earnedAchievements)
+          .orderBy(asc(earnedAchievements.key))
+          .all()
+          .map((row) => ({
+            key: row.key,
+            template: row.template,
+            achievedOn: row.achievedOn,
+            recordedAtMs: row.recordedAt.getTime(),
+            // Absent, never `null`: «not yet shown» is a state, and what is read back has to equal
+            // what was written.
+            ...(row.seenAt === null ? {} : { seenAtMs: row.seenAt.getTime() }),
+            evidence: row.evidence,
+          })),
+        challengeDecisions: db
+          .select()
+          .from(challengeDecisions)
+          .orderBy(asc(challengeDecisions.key))
+          .all()
+          .map((row) => ({
+            key: row.key,
+            decision: row.decision === 'dismissed' ? ('dismissed' as const) : ('accepted' as const),
+            decidedAtMs: row.decidedAt.getTime(),
+          })),
+        norms: db
+          .select()
+          .from(spendingNorms)
+          .orderBy(asc(spendingNorms.currency))
+          .all()
+          .map((row) => ({
+            amount: money(row.amount, row.currency),
+            confirmedAtMs: row.confirmedAt.getTime(),
+          })),
         // The one setting a бекап carries about the app's own voice, and only when the owner has
         // ever set it: an absent one restores as off rather than as somebody else's 21:00.
         ...(reminder
@@ -241,6 +282,7 @@ export function backupRepo(db: Storage): BackupStore {
       // the guard every other repository applies, here before the transaction opens, so a bad
       // дата costs nothing rather than being rolled back.
       for (const entry of state.transactions) isoDate(entry.transaction.date);
+      for (const earned of state.achievements) isoDate(earned.achievedOn);
       for (const goal of state.goals) if (goal.deadline !== undefined) isoDate(goal.deadline);
       for (const link of state.monobankLinks) isoDate(link.syncStartDate);
       for (const receipt of state.receipts) isoDate(receipt.issuedDate);
@@ -274,6 +316,12 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(monobankAccounts).run();
         tx.delete(saldoImport).run();
         tx.delete(dailyReminder).run();
+        // The прогрес is replaced wholesale like everything else: a відновлення that left this
+        // phone's earned set in place would describe a history that is no longer here. The three
+        // reference nothing, so they may go anywhere in this order.
+        tx.delete(earnedAchievements).run();
+        tx.delete(challengeDecisions).run();
+        tx.delete(spendingNorms).run();
         tx.delete(accounts).run();
         tx.delete(categories).run();
         tx.delete(sources).run();
@@ -414,6 +462,39 @@ export function backupRepo(db: Storage): BackupStore {
               barcode: item.barcode ?? null,
               uktzed: item.uktzed ?? null,
               code: item.code ?? null,
+            })
+            .run();
+        }
+        // The прогрес: exactly what the бекап holds, with the moments it holds. Nothing is
+        // recomputed on the way in — a дата досягнення the history no longer dates would be lost
+        // by re-deriving it, which is the whole reason the three travel in a бекап at all.
+        for (const earned of state.achievements) {
+          tx.insert(earnedAchievements)
+            .values({
+              key: earned.key,
+              template: earned.template,
+              achievedOn: earned.achievedOn,
+              recordedAt: new Date(earned.recordedAtMs),
+              seenAt: earned.seenAtMs === undefined ? null : new Date(earned.seenAtMs),
+              evidence: earned.evidence,
+            })
+            .run();
+        }
+        for (const decision of state.challengeDecisions) {
+          tx.insert(challengeDecisions)
+            .values({
+              key: decision.key,
+              decision: decision.decision,
+              decidedAt: new Date(decision.decidedAtMs),
+            })
+            .run();
+        }
+        for (const norm of state.norms) {
+          tx.insert(spendingNorms)
+            .values({
+              currency: norm.amount.currency,
+              amount: norm.amount.amount,
+              confirmedAt: new Date(norm.confirmedAtMs),
             })
             .run();
         }

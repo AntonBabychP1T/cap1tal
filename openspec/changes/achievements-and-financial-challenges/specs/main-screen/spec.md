@@ -17,7 +17,8 @@ Drawing Головний SHALL NOT evaluate досягнення.
 #### Scenario: Nothing waiting leaves Головний as it was
 
 - **WHEN** the owner opens Головний with every досягнення seen and no виклик accepted
-- **THEN** Головний shows exactly what it showed before this change, with no «Прогрес» section
+- **THEN** no «Прогрес» section is present, and the місяць, «Усього грошей», «Потребує уваги» and
+  the monobank section hold exactly the values they held with this capability absent
 
 #### Scenario: Opening Головний earns nothing
 
