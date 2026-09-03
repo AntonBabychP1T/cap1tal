@@ -15,6 +15,7 @@ import {
 } from '@/db/repos';
 import type { Account } from '@/domain/account';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
+import { evaluateProgress } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { failureAlert } from '@/ui/failure-alert';
@@ -167,6 +168,9 @@ export default function EditTransactionScreen() {
       for (const t of written) {
         transactionsRepo.save(t, now);
       }
+      // A транзакція was edited. Nothing already earned is ever taken back by it (design D2);
+      // only what the change newly makes true is earned.
+      evaluateProgress();
       router.back();
     },
     [router],
@@ -223,6 +227,8 @@ export default function EditTransactionScreen() {
         style: 'destructive',
         onPress: () => {
           transactionsRepo.remove(original.id);
+          // A транзакція was deleted. The engine only ever adds: nothing is unearned by this.
+          evaluateProgress();
           router.back();
         },
       },

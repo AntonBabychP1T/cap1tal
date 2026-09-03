@@ -47,6 +47,7 @@ import {
 import { COLLAPSE_LABEL, narrow, NOTHING_FOUND, PICKER_SIZE, type Named } from '@/ui/shortlist';
 
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
+import { evaluateProgress } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
 
@@ -104,6 +105,9 @@ export default function SaldoImportScreen() {
     if (!flow.plan) return;
     try {
       const written = importsRepo.commit(flow.plan, new Date());
+      // The імпорт committed: the evaluation that follows earns what the brought history proves,
+      // each досягнення dated from that history rather than from today.
+      evaluateProgress();
       setFlow((current) => committed(current, written));
       void clearAlert('saldo-import', ALERT_PORTS);
     } catch (error) {

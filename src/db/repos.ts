@@ -8,6 +8,7 @@ import { importRepo } from './import-repo';
 import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
 import { notificationsRepo } from './notifications-repo';
+import { progressRepo } from './progress-repo';
 import { ratesRepo } from './rates-repo';
 import { receiptsRepo } from './receipts-repo';
 import { remindersRepo } from './reminders-repo';
@@ -48,3 +49,5 @@ export const reminders = remindersRepo(db);
 export const entryDefaults = entryDefaultsRepo(db);
 /** The журнал and the репорти про помилки — what the app did, and what the owner wrote about it. */
 export const reporting = reportingRepo(db);
+/** The прогрес: the зведення the engine reads, the earned досягнення, the decisions and the норми. */
+export const progress = progressRepo(db);

@@ -344,6 +344,38 @@ describe('what a пакет для аналізу never carries', () => {
     );
   });
 
+  it('Scenario: A пакет для аналізу holds no досягнення', () => {
+    // The прогрес is stored state the builder has no field for, and no mapper can therefore pass
+    // one through: a досягнення, its свідчення, a виклик decision and a норма are absent by the
+    // shape of the input, not by a promise about behaviour.
+    expect({
+      achievements: true satisfies Excludes<'achievements'>,
+      evidence: true satisfies Excludes<'evidence'>,
+      challenges: true satisfies Excludes<'challenges'>,
+      challengeDecisions: true satisfies Excludes<'challengeDecisions'>,
+      norms: true satisfies Excludes<'norms'>,
+      spendingNorm: true satisfies Excludes<'spendingNorm'>,
+      progress: true satisfies Excludes<'progress'>,
+    }).toBeTruthy();
+
+    // And nothing under `src/analysis/` reaches for the прогрес at all.
+    for (const name of ['package.ts', 'prompt.ts', 'document.ts', 'goals.ts', 'monthly.ts']) {
+      const source = readFileSync(new URL(`./${name}`, import.meta.url), 'utf8');
+      expect(source).not.toMatch(/progress\/(earned|catalogue|achievements|challenges|norm|run)/);
+      expect(source).not.toMatch(/earnedAchievements|spendingNorms|challengeDecisions/);
+    }
+  });
+
+  it('Scenario: The прогрес state stays on the phone', () => {
+    // The serialised пакет holds none of it, under no name — asserted over the text, the way
+    // every other exclusion in this file is.
+    const serialised = serialise({ included: { descriptions: true, transactions: true } });
+
+    for (const word of ['achievement', 'досягнен', 'свідченн', 'виклик', 'challenge', 'норма', 'norm']) {
+      expect(serialised.toLowerCase()).not.toContain(word.toLowerCase());
+    }
+  });
+
   it('Scenario: The бекап knows nothing of it', () => {
     const format = readFileSync(new URL('../backup/format.ts', import.meta.url), 'utf8');
     const schema = readFileSync(new URL('../db/schema.ts', import.meta.url), 'utf8');

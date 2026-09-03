@@ -337,3 +337,78 @@ describe('the screens that file a репорт from the screen the owner is on',
     expect(readers).toEqual([]);
   });
 });
+
+describe('where the прогрес is evaluated, and where it is not', () => {
+  const readScreen = (relative: string) => readFileSync(join(APP, relative), 'utf8');
+
+  it('Scenario: Opening Головний earns nothing', () => {
+    const home = readScreen(join('(tabs)', 'index.tsx'));
+
+    // Головний calls the evaluation on the two paths where the owner *stored* something — a
+    // транзакція recategorised from the стрічка, and a чернетка settled — and on the pull that
+    // runs a sync. It calls it on no render, no focus and no scroll: `useReloadOnFocus` and the
+    // effects around it never reach it.
+    expect(home).toContain("from '@/hooks/progress-ports';");
+    expect(home).toContain('evaluateProgress');
+    // On no effect and on no focus reader: the two calls are inside the two store paths.
+    expect(home).not.toMatch(/useEffect\(\(\) => \{\s*evaluateProgress/);
+    expect(home).not.toMatch(/useReloadOnFocus\([\s\S]{0,900}?evaluateProgress/);
+  });
+
+  it('every named moment calls the evaluation, and each is a store rather than a draw', () => {
+    // The ten moments of the achievements capability, each at the place that already performs it.
+    const moments: [string, RegExp][] = [
+      ['_layout.tsx', /seedStarterSet\(db\);[\s\S]*?evaluateProgress\(\)/],
+      [join('transaction', 'new.tsx'), /transactionsRepo\.save\(t, now\);[\s\S]{0,500}?evaluateProgress\(\)/],
+      [join('transaction', '[id].tsx'), /transactionsRepo\.remove\(original\.id\);[\s\S]{0,500}?evaluateProgress\(\)/],
+      [join('(tabs)', 'accounts.tsx'), /accountsRepo\.save\([\s\S]{0,500}?evaluateProgress\(\)/],
+      [join('account', '[id].tsx'), /accountsRepo\.save\([\s\S]{0,500}?evaluateProgress\(\)/],
+      [join('manage', 'goals.tsx'), /goalsRepo\.save\([\s\S]{0,500}?evaluateProgress\(\)/],
+      [join('manage', 'saldo-import.tsx'), /importsRepo\.commit\([\s\S]{0,500}?evaluateProgress\(\)/],
+      [join('manage', 'backup.tsx'), /'restored'[\s\S]{0,500}?evaluateProgress\(\)/],
+      [join('manage', 'monobank.tsx'), /startSync\(\{[\s\S]{0,900}?evaluateProgress\(\)/],
+    ];
+
+    for (const [file, pattern] of moments) {
+      expect(readScreen(file), file).toMatch(pattern);
+    }
+  });
+
+  it('«Прогрес» reads and never evaluates', () => {
+    // Opening «Прогрес», leaving it and returning cannot earn anything: the screen calls the
+    // reader and never the runner. The one write it makes is marking the unseen досягнення seen.
+    const screen = readScreen('progress.tsx');
+
+    expect(screen).toContain('progressScreenData');
+    expect(screen).not.toContain('evaluateProgress');
+    expect(screen).toContain('markAllSeen');
+  });
+
+  it('the прогрес screens are registered beside the other pushed ones, and the tabs are unchanged', () => {
+    const layout = readScreen('_layout.tsx');
+    const tabs = readFileSync(join(COMPONENTS, 'app-tabs.tsx'), 'utf8');
+
+    for (const name of ['progress', 'achievement/[key]', 'challenge/[key]']) {
+      expect(layout).toContain(`<Stack.Screen name="${name}"`);
+    }
+    // Scenario: The tabs are unchanged — the same five, and «Прогрес» is not among them.
+    const declared = [...tabs.matchAll(/<NativeTabs\.Trigger\s+name="([^"]+)"/g)].map((m) => m[1]);
+    expect(declared).toEqual(['index', 'month', 'accounts', 'reports', 'settings']);
+  });
+
+  it('Scenario: Прогрес is reachable from Звіти, and from Головний when something waits', () => {
+    expect(readScreen(join('(tabs)', 'reports.tsx'))).toContain("router.push('/progress')");
+    // Головний renders the section only when `homeProgressSection` returned one.
+    const home = readScreen(join('(tabs)', 'index.tsx'));
+    expect(home).toContain('homeProgressSection');
+    expect(home).toMatch(/progressSection \? \(/);
+  });
+
+  it('setting a ліміт is not one of the moments', () => {
+    // A ліміт is a ціль витрат and no досягнення is defined about one, so there is nothing to
+    // earn — and a call there would be a moment the capability does not name.
+    const limits = readScreen(join('manage', 'limits.tsx'));
+
+    expect(limits).not.toContain('evaluateProgress');
+  });
+});

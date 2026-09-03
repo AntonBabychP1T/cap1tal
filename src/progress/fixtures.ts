@@ -153,24 +153,38 @@ export function ownerShapedSummary(): ProgressSummary {
     }
   });
 
-  const balance = (kind: AccountKind, currency: string, amount: number) => ({
+  const account = (id: string, kind: AccountKind, currency: string, amount: number) => ({
+    id,
     kind,
     currency,
     balance: amount,
   });
 
+  const accounts = [
+    account('card', 'spending', 'UAH', 1_850_000),
+    // A резерв of rather more than one місяць of витрати, in two currencies.
+    account('jar', 'savings', 'UAH', 4_200_000),
+    account('usd-jar', 'savings', 'USD', 60_000),
+    // Over 100 000 UAH of розрахунковий баланс on the UAH інвестиційні рахунки.
+    account('broker', 'investment', 'UAH', 12_400_000),
+    account('broker-usd', 'investment', 'USD', 180_000),
+    account('broker-eur', 'investment', 'EUR', 90_000),
+  ];
+
+  const totals = new Map<string, { kind: AccountKind; currency: string; balance: number }>();
+  for (const one of accounts) {
+    const at = `${one.kind}-${one.currency}`;
+    const held = totals.get(at);
+    totals.set(
+      at,
+      held === undefined ? { ...one } : { ...held, balance: held.balance + one.balance },
+    );
+  }
+
   return {
     months,
-    balances: [
-      balance('spending', 'UAH', 1_850_000),
-      // A резерв of rather more than one місяць of витрати, in two currencies.
-      balance('savings', 'UAH', 4_200_000),
-      balance('savings', 'USD', 60_000),
-      // Over 100 000 UAH of розрахунковий баланс on the UAH інвестиційні рахунки.
-      balance('investment', 'UAH', 12_400_000),
-      balance('investment', 'USD', 180_000),
-      balance('investment', 'EUR', 90_000),
-    ],
+    accounts,
+    balances: [...totals.values()],
     limitedCategories: [],
     history: {
       count: TOTAL_TRANSACTIONS,

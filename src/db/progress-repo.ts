@@ -18,6 +18,7 @@ import {
   type SpendingNorms,
 } from '../progress/earned';
 import type {
+  AccountRow,
   DraftRow,
   KindRow,
   LimitedCategoryRow,
@@ -57,7 +58,8 @@ interface MonthAggregate {
   readonly unsourced: number;
 }
 
-interface KindAggregate {
+interface AccountAggregate {
+  readonly id: string;
   readonly kind: string;
   readonly currency: string;
   readonly balance: number;
@@ -232,27 +234,29 @@ export function progressRepo(db: Storage) {
       `);
 
       /**
-       * The розрахунковий баланс of every рахунок, added up per (вид, currency) — `computeBalance`'s
-       * own arithmetic, in SQL: the opening balance, minus витрати, plus доходи, повернення and
-       * коригування (whose amount is signed), minus what left by a переказ and plus what arrived.
-       * One row per вид and currency comes back, never one per транзакція.
+       * The розрахунковий баланс of every рахунок — `computeBalance`'s own arithmetic, in SQL: the
+       * opening balance, minus витрати, plus доходи, повернення and коригування (whose amount is
+       * signed), minus what left by a переказ and plus what arrived.
+       *
+       * One row per рахунок, never one per транзакція, and it answers both questions the зведення
+       * asks about balances: what each рахунок holds — which is what a ціль's progress is read
+       * from — and, summed below, what each (вид, currency) holds, which is what the резерв and the
+       * інвестиційний капітал are. Archived рахунки are included: archiving takes no money away.
        */
-      const kindRows = db.all<KindAggregate>(sql`
-        SELECT a.kind AS kind,
+      const accountRows = db.all<AccountAggregate>(sql`
+        SELECT a.id AS id,
+               a.kind AS kind,
                a.currency AS currency,
-               SUM(
-                 a.opening_amount
-                 + COALESCE((SELECT SUM(CASE t.type WHEN 'expense' THEN -t.amount ELSE t.amount END)
-                             FROM transactions t
-                             WHERE t.account_id = a.id AND t.type <> 'transfer'), 0)
-                 - COALESCE((SELECT SUM(t.left_amount) FROM transactions t
-                             WHERE t.from_account_id = a.id), 0)
-                 + COALESCE((SELECT SUM(t.arrived_amount) FROM transactions t
-                             WHERE t.to_account_id = a.id), 0)
-               ) AS balance
+               a.opening_amount
+               + COALESCE((SELECT SUM(CASE t.type WHEN 'expense' THEN -t.amount ELSE t.amount END)
+                           FROM transactions t
+                           WHERE t.account_id = a.id AND t.type <> 'transfer'), 0)
+               - COALESCE((SELECT SUM(t.left_amount) FROM transactions t
+                           WHERE t.from_account_id = a.id), 0)
+               + COALESCE((SELECT SUM(t.arrived_amount) FROM transactions t
+                           WHERE t.to_account_id = a.id), 0) AS balance
         FROM accounts a
-        GROUP BY a.kind, a.currency
-        ORDER BY a.kind, a.currency
+        ORDER BY a.id
       `);
 
       /**
@@ -305,11 +309,28 @@ export function progressRepo(db: Storage) {
         uncategorised: row.uncategorised,
         unsourced: row.unsourced,
       }));
-      const balances: KindRow[] = kindRows.map((row) => ({
+      const accountBalances: AccountRow[] = accountRows.map((row) => ({
+        id: row.id,
         kind: toKind(row.kind),
         currency: row.currency,
         balance: row.balance,
       }));
+      // The (вид, currency) totals, folded from the rows above rather than read a second time:
+      // one reading, so the two can never disagree about the same money.
+      const totals = new Map<string, KindRow>();
+      for (const row of accountBalances) {
+        const at = `${row.kind}\u0000${row.currency}`;
+        const held = totals.get(at);
+        totals.set(
+          at,
+          held === undefined
+            ? { kind: row.kind, currency: row.currency, balance: row.balance }
+            : { ...held, balance: held.balance + row.balance },
+        );
+      }
+      const balances: KindRow[] = [...totals.values()].sort((a, b) =>
+        a.kind !== b.kind ? (a.kind < b.kind ? -1 : 1) : a.currency < b.currency ? -1 : 1,
+      );
       const drafts: DraftRow[] = draftRows.map((row) => ({
         month: row.month,
         waiting: row.waiting,
@@ -323,6 +344,7 @@ export function progressRepo(db: Storage) {
 
       return {
         months,
+        accounts: accountBalances,
         balances,
         limitedCategories,
         history: {

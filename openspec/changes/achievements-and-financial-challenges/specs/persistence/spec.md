@@ -118,7 +118,9 @@ currency) pairs, the number of (вид рахунку, currency) pairs, the numb
 категорія that carries a ліміт) triples and a fixed number of single values, holding: per (місяць,
 currency) the витрачено, дохід, інвестовано and відкладено the monthly-picture capability defines,
 the count of транзакції, the count carrying «Без категорії» and the count carrying «Без джерела»;
-per (вид рахунку, currency) the sum of the розрахункові баланси, archived рахунки included; per
+per рахунок its розрахунковий баланс, beside the вид and the currency it is in, archived рахунки
+included — which is what a ціль's progress is read from, so evaluating never loads a транзакція for
+one either; per (вид рахунку, currency) the sum of those розрахункові баланси; per
 (місяць, currency, категорія that carries a ліміт) the витрачено of that категорія exactly as the
 monthly-picture capability's breakdown of spent computes it — and for those категорії only, so a
 vocabulary of any size costs the зведення nothing; the total count of транзакції with the дата of
@@ -159,6 +161,12 @@ stored — and the earliest переказ onto a рахунок of a given ви
   across 24 місяці and 1 currency
 - **THEN** its per-категорія rows number at most 72, and no row exists for a категорія with no
   ліміт
+
+#### Scenario: A ціль's progress is read from the зведення, not from the транзакції
+
+- **WHEN** the зведення is produced on a database holding 12 рахунки and 5000 транзакції
+- **THEN** it holds one row per рахунок carrying that рахунок's розрахунковий баланс, and no
+  reading returned 5000 rows
 
 #### Scenario: A вид рахунку's total keeps its currencies apart
 

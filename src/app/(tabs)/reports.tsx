@@ -547,6 +547,21 @@ export default function ReportsScreen() {
         ) : null}
       </Card>
 
+      {/* The way in to «Прогрес», where the цілі already are. Present whether or not anything has
+          been earned — «Прогрес» is the screen that says there is nothing yet — and it changes
+          nothing this tab already shows. */}
+      <Pressable onPress={() => router.push('/progress')} accessibilityRole="button">
+        <Card style={styles.chartCard}>
+          <View style={styles.row}>
+            <ThemedText type="overline">Прогрес</ThemedText>
+            <Chevron />
+          </View>
+          <ThemedText type="small" themeColor="textSecondary">
+            Що вже вийшло і що варто зробити далі
+          </ThemedText>
+        </Card>
+      </Pressable>
+
       {/* The way in to «AI-аналіз», and nothing more: showing it computes nothing, builds no
           пакет and hands nothing to any app. It is offered on an empty history too — the
           AI-аналіз screen is the one that says there is nothing to analyse yet. */}

@@ -23,6 +23,7 @@ import {
   rules as rulesRepo,
 } from '@/db/repos';
 import { seedStarterSet } from '@/db/seed';
+import { evaluateProgress } from '@/hooks/progress-ports';
 import { useOnForeground } from '@/hooks/use-on-foreground';
 import {
   localNotifications,
@@ -196,6 +197,21 @@ export default function RootLayout() {
   }, [success]);
 
   /**
+   * The прогрес, evaluated once when the app starts — after the migrations, like every other read
+   * in this file. On a phone that already holds two years of history this is the evaluation that
+   * earns everything the history proves, in one go and dated where the history dates it.
+   *
+   * It is the only place a *screen* triggers an evaluation without the owner having stored
+   * anything, and it is deliberately not on any render or focus path: nothing here re-runs when
+   * Головний is opened, left and returned to.
+   */
+  useEffect(() => {
+    if (success) {
+      evaluateProgress();
+    }
+  }, [success]);
+
+  /**
    * The журнал gets its storage, once — after the migrations, like every other read in this file.
    * Whatever was recorded before this (a crash during launch, the first route) is buffered and
    * written here, in order. A second call is a no-op, which is what makes `retry` on the crash
@@ -306,6 +322,9 @@ export default function RootLayout() {
       alerts: ALERT_PORTS,
       attended: true,
     });
+    // A sync that committed anything moved the history; one that committed nothing leaves the
+    // зведення as it was and this evaluation writes nothing.
+    evaluateProgress();
   }, [success]);
 
   /**
@@ -435,6 +454,11 @@ export default function RootLayout() {
             {/* «Транзакції»: the whole history with its search, reached from the стрічка on
                 Головний. Pushed over the tabs and not a sixth tab of its own (design D14). */}
             <Stack.Screen name="transactions" options={{ presentation: 'card' }} />
+            {/* «Прогрес» and its two details: pushed over the tabs like «Транзакції», never a
+                sixth tab. The key of a досягнення or a виклик reaches the route encoded. */}
+            <Stack.Screen name="progress" options={{ presentation: 'card' }} />
+            <Stack.Screen name="achievement/[key]" options={{ presentation: 'card' }} />
+            <Stack.Screen name="challenge/[key]" options={{ presentation: 'card' }} />
             {/* «AI-аналіз»: reached from «Звіти», pushed over the tabs like «Транзакції». Nothing
                 of it is stored, so it has no state to restore and no place in the tab bar. */}
             <Stack.Screen name="ai-analysis" options={{ presentation: 'card' }} />

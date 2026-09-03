@@ -47,9 +47,11 @@ import {
 } from '@/ui/drafts-section';
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { homeViewModel } from '@/ui/home-screen';
+import { homeProgressSection } from '@/ui/progress-screen';
 import { lastCompletedSyncMs } from '@/ui/monobank-screen';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { failureAlert } from '@/ui/failure-alert';
+import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
 import { newId } from '@/ui/id';
 import { reportFailure } from '@/ui/journal';
 import { currentMonth } from '@/ui/months';
@@ -153,6 +155,9 @@ export default function MainScreen() {
         // the attempt says how the last run went. Two local reads, beside the others.
         links: monobankRepo.listLinks(),
         attempt: monobankRepo.attempt(),
+        // The прогрес, read and never evaluated: the earned rows and the accepted виклики are what
+        // decide whether the section exists at all. Nothing here can earn anything.
+        progress: progressScreenData(),
       };
     }, []),
   );
@@ -228,6 +233,9 @@ export default function MainScreen() {
         // the phone down. Read at the moment of the failure, like every other caller.
         attended: attended(),
       });
+      // The sync committed, or it did not; either way the зведення is read once and only what is
+      // newly true is earned.
+      evaluateProgress();
       reload();
     } finally {
       setPulling(false);
@@ -349,6 +357,23 @@ export default function MainScreen() {
   );
 
   /**
+   * The «Прогрес» section, or `null` — and `null` means the section is not rendered at all.
+   *
+   * Reading it computes no money number, records nothing and changes nothing about the транзакції,
+   * the місячна картина or «Усього грошей»; `homeProgressSection` takes stored rows and has no way
+   * to reach the engine.
+   */
+  const progressSection = useMemo(
+    () =>
+      homeProgressSection({
+        earned: stored.progress.earned,
+        accepted: stored.progress.accepted,
+        candidates: stored.progress.candidates,
+      }),
+    [stored.progress],
+  );
+
+  /**
    * Which categories are over their ліміт, per month of the loaded стрічка. The стрічка holds the
    * latest транзакції, not whole months, so each month it touches — one or two, typically — is
    * read in full for its breakdown. `overLimitByMonth` decides everything; this is the read it
@@ -382,6 +407,9 @@ export default function MainScreen() {
     (t: Transaction, picked: string) => {
       try {
         transactionsRepo.save(recategorise(t, picked), new Date());
+        // A транзакція was recorded — one of the named moments the прогрес is evaluated at. It is
+        // the storing that evaluates, never the drawing.
+        evaluateProgress();
         setCategorising(undefined);
         reload();
       } catch (error) {
@@ -407,6 +435,8 @@ export default function MainScreen() {
         return;
       }
       setDraftAmounts(({ [draftId]: _answered, ...rest }) => rest);
+      // A чернетка was confirmed or dismissed: confirming one stores a транзакція.
+      evaluateProgress();
       reload();
     },
     [reload, reportBug],
@@ -675,6 +705,31 @@ export default function MainScreen() {
         </>
       ) : null}
 
+      {/* «Прогрес», and only when something is genuinely waiting: an unseen досягнення or an
+          accepted виклик. With neither there is no heading, no empty state and no placeholder —
+          Головний is exactly what it was. Twelve retroactive досягнення are one line, never
+          twelve, and never a dialog. */}
+      {progressSection ? (
+        <Pressable
+          onPress={() => router.push(progressSection.route)}
+          accessibilityRole="button">
+          <Card style={styles.progress}>
+            <View style={styles.progressTop}>
+              <ThemedText type="overline">Прогрес</ThemedText>
+              <Chevron />
+            </View>
+            {progressSection.achievements ? (
+              <ThemedText>{progressSection.achievements}</ThemedText>
+            ) : null}
+            {progressSection.challenge ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                {progressSection.challenge.name} — {progressSection.challenge.progress}
+              </ThemedText>
+            ) : null}
+          </Card>
+        </Pressable>
+      ) : null}
+
       {/* The section says what it is — the latest only — and offers the whole history beside it.
           The offer does not depend on having a long one: search is where the owner goes to look
           for something, not a reward for having recorded enough. */}
@@ -771,6 +826,13 @@ export default function MainScreen() {
 }
 
 const styles = StyleSheet.create({
+  progress: { gap: Spacing.one },
+  progressTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    gap: Spacing.two,
+  },
   // Right under the money held, aligned with it rather than centred: it qualifies that figure.
   freshness: { marginTop: -8, paddingHorizontal: 4 },
   brand: { paddingHorizontal: Spacing.two, paddingBottom: Spacing.one },

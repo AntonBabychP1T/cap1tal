@@ -341,6 +341,57 @@ describe('the зведення прогресу', () => {
     }
   });
 
+  it('Scenario: A ціль`s progress is read from the зведення, not from the транзакції', () => {
+    txs.save(
+      transfer({
+        id: 'g1',
+        date: '2026-05-10',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(400_000, 'UAH'),
+        arrived: money(400_000, 'UAH'),
+      }),
+      STORED_AT,
+    );
+
+    const measured = counting(storage.db);
+    const summary = progressRepo(measured.db).readProgressSummary();
+
+    // One row per рахунок, carrying exactly what computeBalance says of it.
+    const stored = txs.listAll();
+    for (const one of ACCOUNTS) {
+      const row = summary.accounts.find((r) => r.id === one.id);
+      expect(row?.balance).toBe(computeBalance(one, stored).amount);
+      expect(row?.kind).toBe(one.kind);
+      expect(row?.currency).toBe(one.currency);
+    }
+    expect(summary.accounts).toHaveLength(ACCOUNTS.length);
+    expect(measured.largestResult()).toBeLessThanOrEqual(ACCOUNTS.length);
+  });
+
+  it('the (вид, currency) totals are the sums of the рахунки, read once', () => {
+    txs.save(
+      transfer({
+        id: 'g2',
+        date: '2026-05-10',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(400_000, 'UAH'),
+        arrived: money(400_000, 'UAH'),
+      }),
+      STORED_AT,
+    );
+
+    const summary = progressRepo(storage.db).readProgressSummary();
+
+    for (const total of summary.balances) {
+      const sum = summary.accounts
+        .filter((one) => one.kind === total.kind && one.currency === total.currency)
+        .reduce((held, one) => held + one.balance, 0);
+      expect(total.balance).toBe(sum);
+    }
+  });
+
   it('Scenario: The зведення is bounded, not per транзакція', () => {
     // 5000 транзакції across 24 місяці and 3 currencies, on 12 рахунки of 4 видів.
     const accounts = accountsRepo(storage.db);

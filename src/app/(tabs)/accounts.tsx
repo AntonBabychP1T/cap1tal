@@ -22,6 +22,7 @@ import {
 import { computeBalance, reconcile, type Account } from '@/domain/account';
 import type { Money } from '@/domain/money';
 import { useCurrentRates } from '@/hooks/use-current-rates';
+import { evaluateProgress } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountFromDraft, blankDraft, type AccountDraft } from '@/ui/account-form';
 import { accountRows, groupAccountsByKind, reconcileConfirmation } from '@/ui/account-groups';
@@ -112,6 +113,9 @@ export default function AccountsScreen() {
     if (!draft) return;
     try {
       accountsRepo.save(accountFromDraft(draft, newId()));
+      // A рахунок was created or edited: a початковий залишок moves the резерв with no транзакція
+      // behind it, so this is one of the named moments.
+      evaluateProgress();
       setDraft(undefined);
       reload();
     } catch (error) {
@@ -147,6 +151,7 @@ export default function AccountsScreen() {
               });
               if (correction) {
                 transactionsRepo.save(correction, new Date());
+                evaluateProgress();
               }
               reload();
             } catch (error) {

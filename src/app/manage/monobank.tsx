@@ -24,6 +24,7 @@ import type { SyncProgress, SyncRun } from '@/monobank/coordinator';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { evaluateProgress } from '@/hooks/progress-ports';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { todayIso } from '@/ui/dates';
 import { failureAlert } from '@/ui/failure-alert';
@@ -480,6 +481,8 @@ export default function MonobankScreen() {
         // when the run started, because leaving the app mid-sync is the whole case.
         attended: attended(),
       });
+      // A sync that committed anything moved the history the прогрес is read from.
+      evaluateProgress();
       setStatus(undefined);
       reload();
       if (started.kind === 'already-running') {

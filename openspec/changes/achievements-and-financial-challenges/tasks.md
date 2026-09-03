@@ -35,6 +35,12 @@
       proves persistence scenario «The first переказ onto a вид is read alone» and achievements
       scenario «The first переказ onto a вид is read alone».
 
+- [x] 1.6 Add the per-рахунок half of the зведення: `readProgressSummary()` returns one row per
+      рахунок — its id, вид, currency and розрахунковий баланс — and the (вид, currency) totals are
+      the sums of those, so one `GROUP BY` answers both and a ціль's progress is read without
+      loading a транзакція; verify `src/db/progress-repo.test.ts` proves persistence scenario «A
+      ціль's progress is read from the зведення, not from the транзакції».
+
 ## 2. The three tables
 
 - [x] 2.1 Add `earnedAchievements`, `challengeDecisions` and `spendingNorms` to `src/db/schema.ts`
@@ -129,7 +135,7 @@
 
 ## 6. When the evaluation runs
 
-- [ ] 6.1 Add `src/progress/run.ts` — read зведення, цілі (resolving each progress through
+- [x] 6.1 Add `src/progress/run.ts` — read зведення, цілі (resolving each progress through
       `goalProgress`, so an approximate one arrives as `null`), ліміти and норми, evaluate, store
       what is new, and return what was newly earned — and call it at the ten moments of the
       achievements spec: app start in `src/app/_layout.tsx`, and after a транзакція is
@@ -139,7 +145,7 @@
       `src/progress/run.test.ts` proves achievements scenarios «Recording a транзакція evaluates», «A
       Saldo імпорт earns what it brought», «A відновлення earns what the бекап holds» and «A closed
       app with working import loses nothing».
-- [ ] 6.2 Prove the negative: verify a test in `src/progress/run.test.ts` and one in
+- [x] 6.2 Prove the negative: verify a test in `src/progress/run.test.ts` and one in
       `src/ui/progress-screen.test.ts` prove achievements scenario «Opening Головний repeatedly
       evaluates once» and main-screen scenario «Opening Головний earns nothing» — no view model
       under `src/ui/` imports `run`, and each takes stored rows as input, so no draw path can earn
@@ -149,26 +155,26 @@
 
 ## 7. The screens
 
-- [ ] 7.1 Create `src/ui/progress-screen.ts` with `progressViewModel(...)` — the three sections, their
+- [x] 7.1 Create `src/ui/progress-screen.ts` with `progressViewModel(...)` — the three sections, their
       Ukrainian plurals, the empty sentences, and the rule that a досягнення with no measurable
       progress is not listed «У процесі»; verify `src/ui/progress-screen.test.ts` proves
       progress-screen scenarios «The three sections are shown in order», «Отримані are newest first»,
       «An empty section says so», «A досягнення with no measurable progress is not listed as in
       progress», «No score exists to show», «Two currencies read as two amounts» and «A fresh install
       shows one sentence».
-- [ ] 7.2 Add `homeProgressSection(...)` to `src/ui/progress-screen.ts` — nothing when there is
+- [x] 7.2 Add `homeProgressSection(...)` to `src/ui/progress-screen.ts` — nothing when there is
       nothing, one named досягнення when exactly one is unseen, one counting line when two or more,
       plus the accepted виклик closest to being finished (design D11); verify
       `src/ui/progress-screen.test.ts` proves progress-screen scenarios «Nothing waiting, no
       section», «One accepted виклик is shown», «Twelve retroactive досягнення are one line», «One
       new досягнення is named» and «Seen is seen».
-- [ ] 7.3 Add the detail view models — `achievementDetail(...)` and `challengeDetail(...)`, with
+- [x] 7.3 Add the detail view models — `achievementDetail(...)` and `challengeDetail(...)`, with
       «досягнуто» versus «помічено» and the свідчення beside the recomputed current number; verify
       `src/ui/progress-screen.test.ts` proves progress-screen scenarios «The detail explains why it
       was earned», «A balance-dated досягнення says «помічено»» and «A виклик's detail names its
       finish», and achievements scenarios «The свідчення keeps the number of its moment» and «A money
       свідчення carries its currency».
-- [ ] 7.4 Create `src/app/progress.tsx`, `src/app/achievement/[key].tsx` and
+- [x] 7.4 Create `src/app/progress.tsx`, `src/app/achievement/[key].tsx` and
       `src/app/challenge/[key].tsx` — a досягнення key like `reserve.norm:100:UAH` reaches the route
       through `encodeURIComponent`, and the screen decodes it — register all three in
       `src/app/_layout.tsx` beside `transaction/[id]`, and add the entries from Головний
@@ -176,7 +182,7 @@
       `npm run typecheck` and `npm run lint` pass, the five tabs are unchanged (progress-screen
       scenario «The tabs are unchanged») and reports-screen scenarios «Прогрес is reachable from
       Звіти» and «The entry is there with nothing earned» have a screen to open.
-- [ ] 7.5 Add the норма confirmation step to the «Фінансова подушка» виклик's flow — the proposal,
+- [x] 7.5 Add the норма confirmation step to the «Фінансова подушка» виклик's flow — the proposal,
       the six місяці it came from, and a field the owner may overwrite, refusing a non-positive сума
       in Ukrainian per app-shell — as a step inside `src/app/challenge/[key].tsx`; verify
       `src/ui/progress-screen.test.ts` proves challenges scenario «The подушка asks for the норма
@@ -193,12 +199,12 @@
       `src/db/backup-repo.test.ts` prove backup-file scenarios «The three survive the round trip», «A
       відновлення replaces the earned set» and «A restored свідчення is not money», and persistence
       scenarios «The snapshot carries all three» and «Replacing replaces all three at once».
-- [ ] 8.2 Prove the privacy boundaries: verify a test in `src/analysis/` proves achievements scenario
+- [x] 8.2 Prove the privacy boundaries: verify a test in `src/analysis/` proves achievements scenario
       «A пакет для аналізу holds no досягнення» and ai-analysis-package scenario «The прогрес state
       stays on the phone», and a test in `src/progress/run.test.ts` proves
       progress-screen scenario «Nothing is pushed to the phone» (the module imports no notification
       port).
-- [ ] 8.3 Prove the money boundary: verify a test in `src/progress/run.test.ts` proves achievements
+- [x] 8.3 Prove the money boundary: verify a test in `src/progress/run.test.ts` proves achievements
       scenario «An earned досягнення moves no money» by comparing every розрахунковий баланс and the
       місячна картина before and after an evaluation that earns twelve досягнення.
 

@@ -45,6 +45,18 @@ export interface KindRow {
   readonly balance: number;
 }
 
+/**
+ * One рахунок's розрахунковий баланс, beside the вид and currency it is in — what a ціль's progress
+ * is read from, so evaluating never loads a транзакція for one either. Archived рахунки are here
+ * like every other: archiving stops a рахунок being offered, and takes none of its money away.
+ */
+export interface AccountRow {
+  readonly id: string;
+  readonly kind: AccountKind;
+  readonly currency: CurrencyCode;
+  readonly balance: number;
+}
+
 /** The history's own extent: how many транзакції, and the дати of the first and the last. */
 export interface HistorySpan {
   readonly count: number;
@@ -74,6 +86,8 @@ export interface DraftRow {
 
 export interface ProgressSummary {
   readonly months: readonly MonthRow[];
+  readonly accounts: readonly AccountRow[];
+  /** The (вид, currency) totals — the sums of `accounts`, never a second reading of the history. */
   readonly balances: readonly KindRow[];
   readonly limitedCategories: readonly LimitedCategoryRow[];
   readonly history: HistorySpan;
@@ -83,6 +97,7 @@ export interface ProgressSummary {
 /** A зведення of a device holding nothing — what a fresh install evaluates against. */
 export const EMPTY_SUMMARY: ProgressSummary = {
   months: [],
+  accounts: [],
   balances: [],
   limitedCategories: [],
   history: { count: 0 },
@@ -297,6 +312,12 @@ export function investmentMonths(summary: ProgressSummary): Month[] {
     }
   }
   return [...months].sort();
+}
+
+/** One рахунок's розрахунковий баланс, or zero of its currency when the зведення does not hold it. */
+export function balanceOfAccount(summary: ProgressSummary, id: string): Money | undefined {
+  const row = summary.accounts.find((one) => one.id === id);
+  return row === undefined ? undefined : money(row.balance, row.currency);
 }
 
 /** The currencies the зведення knows about at all — every місяць row and every вид row. */

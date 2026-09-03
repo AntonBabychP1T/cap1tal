@@ -24,6 +24,7 @@ import {
 import { account } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import type { Money } from '@/domain/money';
+import { evaluateProgress } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountFromDraft, draftFrom, type AccountDraft } from '@/ui/account-form';
 import { accountMovements, reconcileTyped } from '@/ui/account-movements';
@@ -129,6 +130,8 @@ export default function AccountMovementsScreen() {
     if (!draft) return;
     try {
       accountsRepo.save(accountFromDraft(draft, newId()));
+      // A рахунок was edited: its початковий залишок moves the резерв with no транзакція behind it.
+      evaluateProgress();
       setDraft(undefined);
       reload();
     } catch (error) {
@@ -143,6 +146,10 @@ export default function AccountMovementsScreen() {
       if (!stored.account) return;
       try {
         accountsRepo.save(account({ ...stored.account, archived }));
+        // Archiving takes no money away — an archived рахунок still counts toward the резерв — so
+        // the зведення is the same and this evaluation writes nothing. It is here because the
+        // moment is named, not because it is expected to earn.
+        evaluateProgress();
         setDraft(undefined);
         reload();
       } catch (error) {
@@ -183,6 +190,7 @@ export default function AccountMovementsScreen() {
           onPress: () => {
             try {
               transactionsRepo.save(answer.correction, new Date());
+              evaluateProgress();
               setActual('');
               reload();
             } catch (error) {

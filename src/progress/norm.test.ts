@@ -24,7 +24,14 @@ function monthRow(month: Month, spent: number, over: Partial<MonthRow> = {}): Mo
 }
 
 function summary(months: MonthRow[]): ProgressSummary {
-  return { months, balances: [], limitedCategories: [], history: { count: 0 }, drafts: [] };
+  return {
+    months,
+    accounts: [],
+    balances: [],
+    limitedCategories: [],
+    history: { count: 0 },
+    drafts: [],
+  };
 }
 
 describe('the проposal', () => {

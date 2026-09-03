@@ -35,6 +35,7 @@ function monthRow(month: Month, over: Partial<MonthRow> = {}): MonthRow {
 function summary(over: Partial<ProgressSummary> = {}): ProgressSummary {
   return {
     months: [],
+    accounts: [],
     balances: [],
     limitedCategories: [],
     history: { count: 0 },

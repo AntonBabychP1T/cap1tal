@@ -71,6 +71,19 @@ function twoDigits(value: number): string {
 }
 
 /**
+ * A calendar дата in the owner's words: «30 серпня», and «30 серпня 2025» once the year is no
+ * longer this one — the way a дата досягнення is read, which is a day and never an instant.
+ *
+ * `now` is passed like every other clock here, so which year counts as "this one" is the caller's
+ * and a test can say what year it is.
+ */
+export function calendarLabel(date: IsoDate, now: Date): string {
+  const [year, month, day] = isoDate(date).split('-');
+  const named = `${Number(day)} ${GENITIVE_MONTHS[Number(month) - 1]}`;
+  return Number(year) === now.getFullYear() ? named : `${named} ${year}`;
+}
+
+/**
  * A past instant in the owner's words: «сьогодні о 09:30», «вчора о 18:05», «30 серпня о 09:00»,
  * and «30 серпня 2025 о 09:00» once the year is no longer this one.
  *
