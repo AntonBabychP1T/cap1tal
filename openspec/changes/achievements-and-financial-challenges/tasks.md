@@ -210,7 +210,7 @@
 
 ## 9. Documentation
 
-- [ ] 9.1 Apply design D13 to `docs/glossary.md`: the new «Прогрес» section with «Досягнення»,
+- [x] 9.1 Apply design D13 to `docs/glossary.md`: the new «Прогрес» section with «Досягнення»,
       «Свідчення», «Виклик», «Активний місяць», «Завершений місяць», «Чистий місяць», «Місячна норма
       витрат» and «Резерв», plus the three rows for «Distinctions the owner drew», and extend the
       existing «Backup (бекап)» entry, which enumerates what a бекап holds; verify every term this

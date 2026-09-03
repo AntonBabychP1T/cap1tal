@@ -160,7 +160,8 @@ Not in v1: forecasts ("at this pace you will have X left").
 
 - The phone's database is the primary truth and the app works offline. Outbound connections are
   limited to the monobank API and exchange rate, plus Google Drive only after the owner explicitly
-  connects it for backup. There is no analytics and no cap1tal server account.
+  connects it for backup. There is no analytics and no cap1tal server account. Досягнення й виклики рахуються
+  з тієї ж локальної бази, ніде не публікуються й у пакет для AI-аналізу не потрапляють.
 - An AI-аналіз hands a file of already computed numbers to an app the owner picks in the phone's
   own chooser. That is the owner's hand-off, not a connection the app makes; the app never reads
   an answer back, and nothing about the file, the run or the answer is stored. **[PROPOSED]**
@@ -253,3 +254,21 @@ has, or later a model on the phone. The model is never a source of truth: every 
 computed by the app, per currency; it interprets, and it changes nothing. By default it sees
 aggregates only; описи and individual транзакції leave the phone only when the owner switches them
 on for that run.
+
+## 18. Досягнення і виклики **[PROPOSED]**
+
+Застосунок може сказати власникові, що вже вийшло, і що варто зробити далі. **Досягнення** — це
+постійний факт про вже досягнутий результат, який застосунок доводить з власних транзакцій;
+отримане не забирається. **Виклик** — одна конкретна річ, до якої можна рухатися зараз, з
+причиною, прогресом і однозначним завершенням; одночасно їх щонайбільше три, і відмова від
+виклика не коштує нічого.
+
+Це не гра. Немає очок, внутрішньої валюти, рівнів, серій відкривань застосунку, рейтингу й
+нікого, з ким порівнюватися. Ніщо не винагороджує витрачання грошей, кількість покупок чи
+дорогі категорії, і ніщо не створює причини приховати витрату або не зробити потрібне
+коригування. Кожен елемент відповідає на одне питання — яку корисну фінансову поведінку він
+підсилює; те, що не відповідає, у застосунок не потрапляє.
+
+Усе рахується локально з уже збережених транзакцій, по валютах і без конвертацій. Досягнення й
+виклики нікуди не йдуть: їх немає в пакеті для AI-аналізу, і поза бекапом власника вони телефон
+не покидають.
