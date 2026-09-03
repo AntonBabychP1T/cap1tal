@@ -33,6 +33,25 @@ import { accountNameOf } from './transaction-line';
  */
 export type EntryType = Exclude<TransactionType, 'correction'>;
 
+/** The four the form offers. A коригування is created by «Звірити» and never typed here. */
+export const ENTRY_TYPES: readonly EntryType[] = ['expense', 'income', 'transfer', 'refund'];
+
+/**
+ * The type the entry form opens on: a витрата, unless the route asked for one of the four by name.
+ *
+ * «Anything not explicitly typed otherwise is a витрата» is the domain's own default and stays the
+ * answer for every path that names nothing — an absent parameter, a misspelt one, and
+ * «correction», which this form does not create. What the parameter is *for* is a виклик whose
+ * action is «recording a переказ onto a рахунок of вид `savings`»: opening a витрата form there
+ * is not the work its criterion measures.
+ *
+ * It lives here and not in the screen because it is a decision, and a decision `verify` cannot
+ * execute is how a wrong default ships.
+ */
+export function entryFromRoute(asked: string | undefined): EntryType {
+  return ENTRY_TYPES.find((one) => one === asked) ?? 'expense';
+}
+
 export interface EntryDraft {
   readonly type: EntryType;
   /** The рахунок; for a переказ, the account the money left. */

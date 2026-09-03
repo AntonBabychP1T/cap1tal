@@ -7,6 +7,7 @@ import type { IsoDate, Month } from '../domain/transaction';
 import {
   accepted,
   allChallenges,
+  dismissed,
   offered,
   type ChallengeInput,
 } from './challenges';
@@ -379,6 +380,46 @@ describe('the інвестиційна звичка', () => {
     });
   });
 
+  it('counts місяці and записи the way Ukrainian counts them', () => {
+    const four = input({
+      summary: summary({
+        months: [
+          monthRow('2026-05'),
+          monthRow('2026-06'),
+          monthRow('2026-07'),
+          monthRow('2026-08'),
+        ],
+        history: { count: 4 },
+      }),
+    });
+    const one = input({
+      summary: summary({ months: [monthRow('2026-08')], history: { count: 1 } }),
+    });
+
+    expect(allChallenges(four).find((c) => c.template === 'invest-habit')!.reason).toContain(
+      '4 завершені місяці',
+    );
+    expect(allChallenges(one).find((c) => c.template === 'invest-habit')!.reason).toContain(
+      '1 завершений місяць',
+    );
+
+    // And «Закрий <місяць>» counts its own records the same way.
+    const five = input({
+      summary: summary({
+        months: [monthRow('2026-08', { transactions: 20, uncategorised: 5 })],
+        history: { count: 20 },
+      }),
+    });
+    expect(allChallenges(five)[0]!.reason).toContain('5 записів');
+    const two = input({
+      summary: summary({
+        months: [monthRow('2026-08', { transactions: 20, uncategorised: 2 })],
+        history: { count: 20 },
+      }),
+    });
+    expect(allChallenges(two)[0]!.reason).toContain('2 записи');
+  });
+
   it('is finished once three of the last four hold an інвестиція', () => {
     const held = input({
       summary: summary({
@@ -457,6 +498,23 @@ describe('choosing which виклики stand', () => {
     expect(allChallenges(dismissed).map((one) => one.progress)).toEqual(
       allChallenges(crowded()).map((one) => one.progress),
     );
+  });
+
+  it('a dismissed виклик is still readable, so it can be brought back', () => {
+    const gone = crowded({
+      decisions: [{ key: 'invest-habit', decision: 'dismissed', decidedAtMs: 0 }],
+    });
+
+    // Not offered — and not gone: `dismissed` is how the screen that carries «Повернути» is
+    // reached at all.
+    expect(keys(offered(gone))).not.toContain('invest-habit');
+    expect(keys(dismissed(gone))).toEqual(['invest-habit']);
+    // Accepting it again removes it from the dismissed ones, under the same key.
+    const back = crowded({
+      decisions: [{ key: 'invest-habit', decision: 'accepted', decidedAtMs: 1 }],
+    });
+    expect(keys(dismissed(back))).toEqual([]);
+    expect(keys(accepted(back))).toEqual(['invest-habit']);
   });
 
   it('Scenario: A dismissal binds only its own parameters', () => {

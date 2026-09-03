@@ -5,6 +5,7 @@ import { overLimit } from '../domain/limits';
 import { money, type CurrencyCode, type Money } from '../domain/money';
 import type { IsoDate, Month } from '../domain/transaction';
 import type { ChallengeDecision, SpendingNorms } from './earned';
+import { plural } from './plural';
 import type { GoalStanding } from './catalogue';
 import {
   completedMonths,
@@ -147,7 +148,7 @@ function closeMonth(input: ChallengeInput): Challenge | undefined {
     reason:
       left === 0
         ? `${label} закрито: жодного запису без відповіді не лишилось.`
-        : `У ${label} ще ${left} ${left === 1 ? 'запис' : 'записів'} без відповіді — витрати «Без категорії», доходи «Без джерела» та чернетки, які чекають на слово.`,
+        : `У ${label} ще ${left} ${plural(left, 'запис', 'записи', 'записів')} без відповіді — витрати «Без категорії», доходи «Без джерела» та чернетки, які чекають на слово.`,
     // A countdown, and never «7 з 12»: only the owner's decision is stored, so there is no
     // remembered total to read this against. The number only ever falls.
     progress: { kind: 'remaining', remaining: left },
@@ -342,7 +343,7 @@ function investHabit(input: ChallengeInput): Challenge | undefined {
     key: 'invest-habit',
     template: 'invest-habit',
     name: 'Інвестиційна звичка',
-    reason: `За останні ${window.length} завершених місяців внески в інвестиції були у ${contributed} з них.`,
+    reason: `За останні ${window.length} ${plural(window.length, 'завершений місяць', 'завершені місяці', 'завершених місяців')} внески в інвестиції були у ${contributed} з них.`,
     progress: { kind: 'against', reached: contributed, target: INVEST_TARGET },
     criterion: 'У трьох із чотирьох останніх завершених місяців є внесок в інвестиції.',
     action: { kind: 'record-transfer', accountKind: 'investment' },
@@ -396,6 +397,21 @@ export function offered(input: ChallengeInput): Challenge[] {
 export function accepted(input: ChallengeInput): Challenge[] {
   return allChallenges(input).filter(
     (one) => !one.finished && decisionFor(input, one.key)?.decision === 'accepted',
+  );
+}
+
+/**
+ * The виклики the owner dismissed and which are still unfinished — **not** proposed, and shown
+ * only so that «bring a dismissed one back» is something they can actually do.
+ *
+ * Without this the capability's own «SHALL be able … to bring a dismissed one back» is
+ * unreachable: dismissing takes a виклик out of what is offered, and the screen that could undo it
+ * was reached only from what is offered. Listing them is not proposing them — they carry no offer
+ * and no action, and nothing counts them.
+ */
+export function dismissed(input: ChallengeInput): Challenge[] {
+  return allChallenges(input).filter(
+    (one) => !one.finished && decisionFor(input, one.key)?.decision === 'dismissed',
   );
 }
 

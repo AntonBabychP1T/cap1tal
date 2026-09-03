@@ -199,7 +199,7 @@ monobank і хоч один зв'язаний рахунок. Це вік най
 
 ### 3.6. Прогрес — що вже вийшло і що варто зробити далі
 
-*(знімок буде після смоуку на емуляторі)*
+<img src="screens/13c-progress.png" width="260">
 
 [src/app/progress.tsx](../src/app/progress.tsx),
 [src/app/achievement/\[key\].tsx](../src/app/achievement/[key].tsx),

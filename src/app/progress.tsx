@@ -83,6 +83,10 @@ export default function ProgressScreen() {
                   <ThemedText type="small" themeColor="textSecondary">
                     прийнято
                   </ThemedText>
+                ) : row.dismissed ? (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    відхилено
+                  </ThemedText>
                 ) : null}
               </View>
             </Card>

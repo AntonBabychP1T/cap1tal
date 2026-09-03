@@ -129,6 +129,47 @@ describe('evaluating', () => {
     expect(newly.find((one) => one.key === 'ledger.active-months:6')?.achievedOn).toBe('2025-03-31');
   });
 
+  it('Scenario: A досягнення is never dated in the future', () => {
+    // Three активні місяці, the third of which is the one now running: its last day is 2026-09-30
+    // and today is the 4th. «досягнуто 30 вересня» on the 4th would be the app stating a fact
+    // about a day that has not happened.
+    const running = summary({
+      months: [monthRow('2026-07'), monthRow('2026-08'), monthRow('2026-09')],
+      history: { count: 3, earliest: '2026-07-05', latest: '2026-09-01' },
+    });
+
+    const newly = evaluate(input({ summary: running, today: '2026-09-04' }));
+
+    expect(newly.find((one) => one.key === 'ledger.active-months:3')?.achievedOn).toBe(
+      '2026-09-04',
+    );
+    // A місяць already behind the device keeps its own last day: nothing retroactive is lost.
+    const past = summary({
+      months: [monthRow('2026-05'), monthRow('2026-06'), monthRow('2026-07')],
+      history: { count: 3, earliest: '2026-05-05', latest: '2026-07-20' },
+    });
+    expect(
+      evaluate(input({ summary: past, today: '2026-09-04' })).find(
+        (one) => one.key === 'ledger.active-months:3',
+      )?.achievedOn,
+    ).toBe('2026-07-31');
+  });
+
+  it('never dates anything after today, whatever the template says', () => {
+    const running = summary({
+      months: [
+        monthRow('2026-07', { invested: 1 }),
+        monthRow('2026-08', { invested: 1 }),
+        monthRow('2026-09', { invested: 1 }),
+      ],
+      history: { count: 3, earliest: '2026-07-05', latest: '2026-09-01' },
+    });
+
+    for (const one of evaluate(input({ summary: running, today: '2026-09-04' }))) {
+      expect(one.achievedOn <= '2026-09-04').toBe(true);
+    }
+  });
+
   it('Scenario: A balance condition is dated the day it was recorded', () => {
     const newly = evaluate(
       input({

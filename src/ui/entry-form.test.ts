@@ -16,6 +16,7 @@ import {
   type Transfer,
 } from '../domain/transaction';
 import {
+  entryFromRoute,
   buildEntry,
   defaultAccountId,
   normaliseDescription,
@@ -917,5 +918,23 @@ describe('recordedConfirmation', () => {
   it('Scenario: A refusal is not a confirmation', () => {
     // Nothing was stored, so there is nothing to confirm — the refusal is shown on its own.
     expect(recordedConfirmation([], names)).toBeUndefined();
+  });
+});
+
+describe('the type a route may ask the form to open on', () => {
+  it('opens on a витрата when the route names nothing', () => {
+    expect(entryFromRoute(undefined)).toBe('expense');
+    expect(entryFromRoute('')).toBe('expense');
+  });
+
+  it('opens on the переказ «Фінансова подушка» and «Інвестиційна звичка» actually name', () => {
+    expect(entryFromRoute('transfer')).toBe('transfer');
+  });
+
+  it('opens on a витрата for anything that is not one of the four', () => {
+    // «Anything not explicitly typed otherwise is a витрата» — a misspelt parameter names nothing.
+    expect(entryFromRoute('correction')).toBe('expense');
+    expect(entryFromRoute('переказ')).toBe('expense');
+    expect(entryFromRoute('TRANSFER')).toBe('expense');
   });
 });

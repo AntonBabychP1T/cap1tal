@@ -35,9 +35,18 @@ export interface EvaluateInput extends CatalogueInput {
  * баланс is a number about now and claiming an earlier date would be a fiction the app invented.
  */
 export function achievedOn(candidate: Candidate, today: IsoDate): IsoDate {
-  return candidate.dating === 'history' && candidate.achievedOn !== undefined
-    ? candidate.achievedOn
-    : today;
+  const dated =
+    candidate.dating === 'history' && candidate.achievedOn !== undefined
+      ? candidate.achievedOn
+      : today;
+  // **Never in the future.** A місяць-shaped condition is dated at that місяць's last day, and
+  // «активний місяць» includes the one now running — so the third активний місяць of a history
+  // that reaches into this місяць would otherwise be stamped with a day that has not happened,
+  // and «досягнуто 30 вересня» on the 4th is the app stating a fact about a future it cannot
+  // know. Today is the earliest day the condition is *known* to hold, so today is the honest
+  // answer; a місяць already behind us keeps its own last day, which is what dating retroactively
+  // is for.
+  return dated > today ? today : dated;
 }
 
 /**

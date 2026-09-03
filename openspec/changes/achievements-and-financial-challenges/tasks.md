@@ -224,9 +224,15 @@
       витрат» and «Резерв», plus the three rows for «Distinctions the owner drew», and extend the
       existing «Backup (бекап)» entry, which enumerates what a бекап holds; verify every term this
       change's specs use appears there verbatim.
-- [ ] 9.2 Apply design D13 to `docs/product-vision.md`: the new §18 and the sentence appended to §12;
+- [x] 9.2 Apply design D13 to `docs/product-vision.md`: the new §18 and the sentence appended to §12;
       add the roadmap row to `docs/tech-task.md` §5 and note the screen in `docs/app-overview.md`
       with a screenshot from the smoke run.
+
+- [x] 9.3 Fix what the emulator showed: a досягнення dated at a running місяць's end was dated in
+      the future; a dismissed виклик had no way back on any screen; a dismissed виклик's detail
+      read like a freshly proposed one; «Почати» opened a витрата form where the виклик names a
+      переказ; and «За останні 2 завершених місяців» was ungrammatical. Each carries a spec
+      sentence and a test.
 
 ## 10. The gate
 

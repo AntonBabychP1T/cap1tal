@@ -68,6 +68,13 @@ recorded it, because a розрахунковий баланс is a number about
 Every template SHALL fall under exactly one of the two, and which one it is SHALL be part of the
 template rather than decided per evaluation.
 
+A дата досягнення SHALL NEVER be later than the device's today. A condition dated at the end of a
+місяць — the Nth активний місяць, the Nth місяць holding an інвестиція — falls due on a day that
+has not happened when that місяць is the one now running, and a досягнення stated as reached on a
+future day is the app claiming to know something it cannot. Such a досягнення SHALL be dated today,
+which is the earliest day its condition is known to hold; a місяць already behind the device keeps
+its own last day.
+
 The system SHALL also record the moment it wrote the row, distinct from the дата досягнення.
 
 #### Scenario: A retroactive count is dated in the history
@@ -80,6 +87,12 @@ The system SHALL also record the moment it wrote the row, distinct from the да
 
 - **WHEN** the sixth активний місяць of the history is 2025-03 and the system evaluates on 2026-09-02
 - **THEN** «6 активних місяців» is dated 2025-03-31
+
+#### Scenario: A досягнення is never dated in the future
+
+- **WHEN** the third активний місяць of the history is the місяць now running, 2026-09, and the
+  system evaluates on 2026-09-04
+- **THEN** «3 активні місяці» is dated 2026-09-04 and not 2026-09-30
 
 #### Scenario: A balance condition is dated the day it was recorded
 

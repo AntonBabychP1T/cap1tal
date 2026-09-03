@@ -2,7 +2,7 @@ import { money, type Money } from '../domain/money';
 import type { Candidate, Progress } from '../progress/catalogue';
 import { plural } from '../progress/plural';
 import { newestFirst, type EarnedAchievement, type Evidence } from '../progress/earned';
-import type { Challenge, ChallengeProgress } from '../progress/challenges';
+import type { Challenge, ChallengeAction, ChallengeProgress } from '../progress/challenges';
 import { formatMoney } from './amount-input';
 import { calendarLabel } from './dates';
 
@@ -40,6 +40,8 @@ export interface ChallengeRow {
   readonly criterion: string;
   /** Whether the owner accepted this one; an offered виклик is not accepted until they say so. */
   readonly accepted: boolean;
+  /** Whether they dismissed it. A dismissed виклик is listed, never proposed — see below. */
+  readonly dismissed: boolean;
   readonly route: string;
 }
 
@@ -82,6 +84,8 @@ export interface ProgressInput {
   readonly earned: readonly EarnedAchievement[];
   readonly offered: readonly Challenge[];
   readonly accepted: readonly Challenge[];
+  /** The ones the owner dismissed, so bringing one back is reachable at all. */
+  readonly dismissed: readonly Challenge[];
   /** Whether any транзакція is stored at all. */
   readonly hasHistory: boolean;
   readonly now: Date;
@@ -206,9 +210,14 @@ export function progressViewModel(input: ProgressInput): ProgressViewModel {
   }
 
   const acceptedKeys = new Set(input.accepted.map((one) => one.key));
+  const dismissedKeys = new Set(input.dismissed.map((one) => one.key));
+  // Accepted first, then what is offered now, and last — quietly, at the end — what the owner
+  // dismissed. A dismissed виклик is **not** proposed again; it is listed so that «Повернути» is
+  // reachable, because the screen that carries it opens only from this list.
   const challenges: ChallengeRow[] = [
     ...input.accepted,
     ...input.offered.filter((one) => !acceptedKeys.has(one.key)),
+    ...input.dismissed.filter((one) => !acceptedKeys.has(one.key)),
   ].map((one) => ({
     key: one.key,
     name: one.name,
@@ -216,6 +225,7 @@ export function progressViewModel(input: ProgressInput): ProgressViewModel {
     progress: challengeProgressLabel(one.progress),
     criterion: one.criterion,
     accepted: acceptedKeys.has(one.key),
+    dismissed: dismissedKeys.has(one.key),
     route: challengeRoute(one.key),
   }));
 
@@ -367,6 +377,7 @@ export interface ChallengeDetail {
   readonly progress: string;
   readonly criterion: string;
   readonly accepted: boolean;
+  readonly dismissed: boolean;
   readonly finished: boolean;
   /** The first step, where one must be settled before the виклик can begin. */
   readonly firstStep: { readonly kind: 'confirm-norm'; readonly currency: string } | null;
@@ -376,6 +387,7 @@ export function challengeDetail(input: {
   readonly key: string;
   readonly challenges: readonly Challenge[];
   readonly accepted: readonly Challenge[];
+  readonly dismissed: readonly Challenge[];
   readonly now: Date;
 }): ChallengeDetail | null {
   const challenge = input.challenges.find((one) => one.key === input.key);
@@ -388,9 +400,45 @@ export function challengeDetail(input: {
     progress: challengeProgressLabel(challenge.progress),
     criterion: challenge.criterion,
     accepted: input.accepted.some((one) => one.key === input.key),
+    dismissed: input.dismissed.some((one) => one.key === input.key),
     finished: challenge.finished,
     firstStep: challenge.firstStep ?? null,
   };
+}
+
+/**
+ * Where a виклик's one action leads, as a route.
+ *
+ * The action is the виклик's own — «recording a переказ onto a рахунок of вид `savings`» is not
+ * «open the entry form», and a form that opens on a витрата is not the work the criterion
+ * measures. So a `record-transfer` action opens the form **as a переказ, with the destination
+ * already chosen**: the first unarchived рахунок of that вид, in the order storage lists them.
+ *
+ * When no unarchived рахунок of that вид exists there is nothing to pre-choose, and the form opens
+ * as a переказ with the destination empty — the owner has one to create, and the form is where
+ * that is said, not here.
+ */
+export function challengeStart(
+  action: ChallengeAction,
+  accounts: readonly { readonly id: string; readonly kind: string; readonly archived: boolean }[],
+): string | null {
+  switch (action.kind) {
+    case 'answer-month':
+      return `/transactions?month=${action.month}`;
+    case 'record-transfer': {
+      const onto = accounts.find((one) => one.kind === action.accountKind && !one.archived);
+      return onto === undefined
+        ? '/transaction/new?type=transfer'
+        : `/transaction/new?type=transfer&to=${encodeURIComponent(onto.id)}`;
+    }
+    case 'open-goal':
+      return `/goal/${action.goalId}`;
+    case 'open-category-month':
+      return `/category/${action.month}/${action.categoryId}`;
+    case 'confirm-norm':
+      // The question is asked on the виклик's own screen; there is nowhere to go.
+      return null;
+  }
 }
 
 /**

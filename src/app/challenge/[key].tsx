@@ -5,7 +5,7 @@ import { Alert, StyleSheet } from 'react-native';
 import { Action, Field } from '@/components/form';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import { progress as progressRepo } from '@/db/repos';
+import { accounts as accountsRepo, progress as progressRepo } from '@/db/repos';
 import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import type { ChallengeAction } from '@/progress/challenges';
@@ -13,7 +13,12 @@ import { proposeNorm } from '@/progress/norm';
 import { parseAmount } from '@/ui/amount-input';
 import { todayIso } from '@/ui/dates';
 import { monthLabel } from '@/ui/months';
-import { challengeDetail, normRefusal, normStep } from '@/ui/progress-screen';
+import {
+  challengeDetail,
+  challengeStart,
+  normRefusal,
+  normStep,
+} from '@/ui/progress-screen';
 
 import { Spacing } from '@/constants/theme';
 
@@ -43,6 +48,7 @@ export default function ChallengeScreen() {
         key,
         challenges: stored.all,
         accepted: stored.accepted,
+        dismissed: stored.dismissed,
         now: new Date(),
       }),
     [key, stored],
@@ -107,24 +113,10 @@ export default function ChallengeScreen() {
 
   const begin = useCallback(
     (action: ChallengeAction) => {
-      switch (action.kind) {
-        case 'answer-month':
-          // The місяць the виклик is about, not the whole history: «Транзакції» opens already
-          // narrowed to it, which is where those items are actually answered.
-          router.push(`/transactions?month=${action.month}`);
-          return;
-        case 'record-transfer':
-          router.push('/transaction/new');
-          return;
-        case 'open-goal':
-          router.push(`/goal/${action.goalId}`);
-          return;
-        case 'open-category-month':
-          router.push(`/category/${action.month}/${action.categoryId}`);
-          return;
-        case 'confirm-norm':
-          // The question is asked on this screen; there is nowhere else to go.
-          return;
+      // Where it leads is decided in `src/ui/progress-screen.ts` under `verify`; this pushes it.
+      const route = challengeStart(action, accountsRepo.list());
+      if (route !== null) {
+        router.push(route as never);
       }
     },
     [router],
@@ -183,19 +175,25 @@ export default function ChallengeScreen() {
       )}
 
       <Card style={styles.card}>
+        {/* What the owner has already said about this виклик, so the screen never reads the same
+            for a dismissed one as for a freshly proposed one. */}
         {detail.accepted ? (
           <ThemedText type="small" themeColor="textSecondary">
             Прийнято. Нічого не станеться, якщо він так і залишиться незавершеним.
           </ThemedText>
-        ) : (
+        ) : detail.dismissed ? (
+          <ThemedText type="small" themeColor="textSecondary">
+            Відхилено. Його більше не пропонують — поверніть, якщо передумали.
+          </ThemedText>
+        ) : null}
+        {detail.accepted ? null : (
           <Action variant="secondary" title="Прийняти" onPress={() => decide('accepted')} />
         )}
-        <Action
-          variant="secondary"
-          title="Відхилити"
-          onPress={() => decide('dismissed')}
-        />
-        <Action variant="secondary" title="Повернути" onPress={bringBack} />
+        {detail.dismissed ? (
+          <Action variant="secondary" title="Повернути" onPress={bringBack} />
+        ) : (
+          <Action variant="secondary" title="Відхилити" onPress={() => decide('dismissed')} />
+        )}
         <ThemedText type="small" themeColor="textSecondary">
           Відмова нічого не коштує й ніде не рахується.
         </ThemedText>

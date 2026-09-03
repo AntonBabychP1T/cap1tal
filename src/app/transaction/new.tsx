@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet } from 'react-native';
 
@@ -24,6 +24,7 @@ import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
 import { expenseCategoryChoices, recentlyUsed, sourceChoices } from '@/ui/category-choices';
 import { todayIso } from '@/ui/dates';
 import {
+  entryFromRoute,
   buildEntry,
   defaultAccountId,
   normaliseDescription,
@@ -128,7 +129,14 @@ export default function NewTransactionScreen() {
    */
   const recent = useMemo(() => recentlyUsed(stored.latest, RECENT_SIZE), [stored.latest]);
 
-  const [entry, setEntry] = useState<EntryType>('expense');
+  /**
+   * The form opens on a витрата — «anything not explicitly typed otherwise is a витрата» — unless
+   * the route asked for another type, which is how a виклик whose action is «recording a переказ
+   * onto a рахунок of вид `savings`» opens the work it actually names rather than a витрата form.
+   * `entryFromRoute` is what decides whether the route's text is a type at all, under `verify`.
+   */
+  const asked = useLocalSearchParams<{ type?: string; to?: string }>();
+  const [entry, setEntry] = useState<EntryType>(() => entryFromRoute(asked.type));
   /**
    * The form opens on the рахунок last recorded on by hand — an offer, freely changed before
    * recording. A remembered рахунок that has since been archived pre-chooses nothing, and
@@ -138,7 +146,11 @@ export default function NewTransactionScreen() {
   const [fromId, setFromId] = useState<string | undefined>(() =>
     defaultAccountId(stored.rememberedAccountId, accountChoicesFor(stored.accounts, undefined)),
   );
-  const [toId, setToId] = useState<string>();
+  // The destination a route may name, and nothing pre-chosen otherwise. It is an offer like every
+  // other on this form: the picker below changes it freely.
+  const [toId, setToId] = useState<string | undefined>(() =>
+    stored.accounts.some((one) => one.id === asked.to) ? asked.to : undefined,
+  );
   const [amount, setAmount] = useState('');
   const [arrived, setArrived] = useState('');
   const [date, setDate] = useState(() => todayIso(new Date()));

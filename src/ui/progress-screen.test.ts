@@ -12,6 +12,7 @@ import {
   achievementDetail,
   achievementsCount,
   challengeDetail,
+  challengeStart,
   homeProgressSection,
   normRefusal,
   normStep,
@@ -80,6 +81,7 @@ function input(over: Partial<ProgressInput> = {}): ProgressInput {
     earned: [],
     offered: [],
     accepted: [],
+    dismissed: [],
     hasHistory: true,
     now: NOW,
     ...over,
@@ -134,6 +136,36 @@ describe('«Прогрес»', () => {
     expect(model.inProgressEmpty).toBe(NOTHING_IN_PROGRESS);
     expect(model.earnedEmpty).toBe(NOTHING_EARNED);
     expect(model.challenges).toEqual([]);
+  });
+
+  it('lists a dismissed виклик so bringing it back is reachable, and never proposes it', () => {
+    // The capability says the owner may «bring a dismissed one back». Dismissing takes a виклик
+    // out of what is offered, and the screen carrying «Повернути» opens only from this list — so
+    // a dismissed виклик that vanished from it would make that sentence unreachable.
+    const cushion = challenge({ key: 'reserve-cushion:UAH' });
+    const model = progressViewModel(input({ offered: [], dismissed: [cushion] }));
+
+    expect(model.challenges.map((row) => row.key)).toEqual(['reserve-cushion:UAH']);
+    expect(model.challenges[0]!.dismissed).toBe(true);
+    expect(model.challenges[0]!.accepted).toBe(false);
+    // Listed, not proposed: `offered` is what proposes, and it holds nothing.
+    expect(model.challengesEmpty).toBeNull();
+  });
+
+  it('puts the accepted first, then what is offered, and the dismissed last', () => {
+    const model = progressViewModel(
+      input({
+        accepted: [challenge({ key: 'accepted-one', name: 'Прийнятий' })],
+        offered: [challenge({ key: 'offered-one', name: 'Запропонований' })],
+        dismissed: [challenge({ key: 'dismissed-one', name: 'Відхилений' })],
+      }),
+    );
+
+    expect(model.challenges.map((row) => row.key)).toEqual([
+      'accepted-one',
+      'offered-one',
+      'dismissed-one',
+    ]);
   });
 
   it('Scenario: A досягнення with no measurable progress is not listed as in progress', () => {
@@ -443,11 +475,34 @@ describe('the details', () => {
     expect(detail.earned).toBe(true);
   });
 
+  it('a dismissed виклик`s detail does not read like a freshly proposed one', () => {
+    const cushion = challenge();
+    const asDismissed = challengeDetail({
+      key: cushion.key,
+      challenges: [cushion],
+      accepted: [],
+      dismissed: [cushion],
+      now: NOW,
+    })!;
+    const asProposed = challengeDetail({
+      key: cushion.key,
+      challenges: [cushion],
+      accepted: [],
+      dismissed: [],
+      now: NOW,
+    })!;
+
+    expect(asDismissed.dismissed).toBe(true);
+    expect(asProposed.dismissed).toBe(false);
+    expect(asDismissed.accepted).toBe(false);
+  });
+
   it('Scenario: A виклик`s detail names its finish', () => {
     const detail = challengeDetail({
       key: 'reserve-cushion:UAH',
       challenges: [challenge()],
       accepted: [],
+      dismissed: [],
       now: NOW,
     })!;
 
@@ -455,6 +510,52 @@ describe('the details', () => {
     expect(detail.progress).toBe('9\u00A0000,00 UAH з 30\u00A0000,00 UAH');
     expect(detail.criterion).toBe('Резерв у UAH — щонайменше одна місячна норма витрат.');
     expect(detail.accepted).toBe(false);
+  });
+});
+
+describe('where a виклик`s action leads', () => {
+  const accounts = [
+    { id: 'card', kind: 'spending', archived: false },
+    { id: 'old-jar', kind: 'savings', archived: true },
+    { id: 'jar', kind: 'savings', archived: false },
+    { id: 'broker', kind: 'investment', archived: false },
+  ];
+
+  it('opens the entry form as the переказ the виклик names, onto a рахунок of that вид', () => {
+    // «Recording a переказ onto a рахунок of вид savings» — not «open the entry form», which
+    // lands on a витрата and is not the work the criterion measures.
+    expect(
+      challengeStart({ kind: 'record-transfer', accountKind: 'savings' }, accounts),
+    ).toBe('/transaction/new?type=transfer&to=jar');
+    expect(
+      challengeStart({ kind: 'record-transfer', accountKind: 'investment' }, accounts),
+    ).toBe('/transaction/new?type=transfer&to=broker');
+  });
+
+  it('passes over an archived рахунок of that вид', () => {
+    expect(
+      challengeStart({ kind: 'record-transfer', accountKind: 'savings' }, [accounts[1]!, accounts[2]!]),
+    ).toBe('/transaction/new?type=transfer&to=jar');
+  });
+
+  it('still opens the form as a переказ when there is no рахунок of that вид yet', () => {
+    expect(challengeStart({ kind: 'record-transfer', accountKind: 'savings' }, [accounts[0]!])).toBe(
+      '/transaction/new?type=transfer',
+    );
+  });
+
+  it('opens the місяць «Закрий <місяць>» is about, the ціль, and the категорія`s місяць', () => {
+    expect(challengeStart({ kind: 'answer-month', month: '2026-08' }, accounts)).toBe(
+      '/transactions?month=2026-08',
+    );
+    expect(challengeStart({ kind: 'open-goal', goalId: 'auto' }, accounts)).toBe('/goal/auto');
+    expect(
+      challengeStart({ kind: 'open-category-month', categoryId: 'food', month: '2026-07' }, accounts),
+    ).toBe('/category/2026-07/food');
+  });
+
+  it('leads nowhere for the норма, which is asked on the виклик`s own screen', () => {
+    expect(challengeStart({ kind: 'confirm-norm', currency: 'UAH' }, accounts)).toBeNull();
   });
 });
 

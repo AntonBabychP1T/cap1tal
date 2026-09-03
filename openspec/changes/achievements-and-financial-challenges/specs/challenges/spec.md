@@ -61,10 +61,27 @@ again until the owner brings it back or its parameters change; it SHALL NOT be c
 SHALL NOT reduce anything, and SHALL NOT be shown as a failure, a miss or a lost opportunity. There
 SHALL be no penalty of any kind for dismissing a виклик or for leaving an accepted one unfinished.
 
+A dismissed виклик SHALL stay **readable** where the owner can bring it back. It SHALL NOT be
+proposed — it carries no offer and takes none of the three places — but it SHALL NOT vanish
+either: the screen that brings one back is reached from the list, so a dismissed виклик absent
+from the list makes «bring a dismissed one back» a sentence with nothing behind it.
+
 #### Scenario: A dismissed виклик stops being proposed
 
 - **WHEN** the owner dismisses «Інвестиційна звичка»
 - **THEN** it is not proposed again, and nothing about the owner's record changes because of it
+
+#### Scenario: A dismissed виклик can be brought back
+
+- **WHEN** the owner dismisses «Інвестиційна звичка» and then looks for it
+- **THEN** it is readable as dismissed, it is not among the виклики offered, and bringing it back
+  is reachable from where it is read
+
+#### Scenario: A dismissed виклик does not read as a new one
+
+- **WHEN** the owner opens a виклик they dismissed
+- **THEN** it says that they dismissed it, and offers bringing it back rather than dismissing it
+  again
 
 #### Scenario: A dismissal binds only its own parameters
 
@@ -148,6 +165,12 @@ The catalogue SHALL hold exactly these виклики, in this order of priority
    last four завершені місяці. Progress: how many of those four hold an інвестиція. Finished: three
    of the last four do. Action: recording a переказ onto a рахунок of вид `investment`.
 
+Each **action** SHALL open the work its виклик names, already shaped: «recording a переказ onto a
+рахунок of вид `savings`» SHALL open the entry form as a **переказ** with a рахунок of that вид
+already chosen where one exists, and «the place where those items are answered» SHALL open already
+narrowed to the місяць in question. An action that merely opens a screen on its own defaults is not
+the work the criterion measures.
+
 No виклик SHALL ask the owner to spend, to spend less in a way the app cannot measure, to open the
 app, or to do anything the app cannot verify from the транзакції.
 
@@ -156,6 +179,12 @@ app, or to do anything the app cannot verify from the транзакції.
 - **WHEN** 2026-08 is завершений and holds two витрати «Без категорії», and the conditions of
   «Фінансова подушка» and «Інвестиційна звичка» also hold
 - **THEN** «Закрий 2026-08» is offered first
+
+#### Scenario: The action opens the переказ, not a витрата form
+
+- **WHEN** «Фінансова подушка»'s action is begun on a device holding a рахунок of вид `savings`
+- **THEN** the entry form opens as a переказ with that рахунок as the destination, and not as a
+  витрата
 
 #### Scenario: The подушка asks for the норма first
 

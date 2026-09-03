@@ -8,7 +8,13 @@ import {
   rates as ratesRepo,
 } from '@/db/repos';
 import { candidates, type Candidate, type GoalStanding } from '@/progress/catalogue';
-import { accepted, offered, allChallenges, type Challenge } from '@/progress/challenges';
+import {
+  accepted,
+  allChallenges,
+  dismissed,
+  offered,
+  type Challenge,
+} from '@/progress/challenges';
 import { runEvaluation, type RunPorts } from '@/progress/run';
 import type { ProgressSummary } from '@/progress/summary';
 import type { EarnedAchievement } from '@/progress/earned';
@@ -98,6 +104,8 @@ export interface ProgressScreenData {
   readonly earned: readonly EarnedAchievement[];
   readonly offered: readonly Challenge[];
   readonly accepted: readonly Challenge[];
+  /** The ones the owner dismissed — listed so «Повернути» is reachable, never proposed. */
+  readonly dismissed: readonly Challenge[];
   /** Every виклик the data can state, finished ones included — what a detail screen looks up. */
   readonly all: readonly Challenge[];
   readonly hasHistory: boolean;
@@ -145,6 +153,7 @@ export function progressScreenData(now: Date = new Date()): ProgressScreenData {
     earned: progressRepo.listEarned(),
     offered: offered(challengeInput),
     accepted: accepted(challengeInput),
+    dismissed: dismissed(challengeInput),
     all: allChallenges(challengeInput),
     hasHistory: summary.history.count > 0,
     summary,
