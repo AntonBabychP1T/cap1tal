@@ -187,6 +187,7 @@ describe('categoryMonthHeading', () => {
         overLimit: true,
         spent: ['2 600,00 UAH'],
         overrun: 'Перевищено ліміт на 100,00 UAH',
+        settled: null,
       },
     );
   });
@@ -213,6 +214,7 @@ describe('categoryMonthHeading', () => {
       overLimit: false,
       spent: ['990 000,00 UAH'],
       overrun: null,
+      settled: null,
     });
   });
 });
@@ -295,5 +297,81 @@ describe('the category’s own сума and its overrun', () => {
     expect(model.spent).toEqual(['990 000,00 USD']);
     expect(model.overLimit).toBe(false);
     expect(model.overrun).toBeNull();
+  });
+});
+
+describe('the settled verdict of a month that has ended', () => {
+  const restaurants: CategoryLimit = { categoryId: 'restaurants', amount: money(200000, 'UAH') };
+  const eat = (id: string, date: string, amount: number) =>
+    expense(id, date, 'restaurants', amount);
+  const names = new Map([['restaurants', 'Ресторани']]);
+
+  const heading = (month: string, transactions: readonly Transaction[], currentMonth?: string) =>
+    categoryMonthHeading({
+      month,
+      categoryId: 'restaurants',
+      transactions,
+      categoryNames: names,
+      limits: [restaurants],
+      ...(currentMonth === undefined ? {} : { currentMonth }),
+    });
+
+  it('Scenario: A month that ended within the ліміт says so', () => {
+    const august = [eat('a1', '2026-08-05', 180000)];
+
+    expect(heading('2026-08', august, '2026-09').settled).toBe('Місяць завершено в межах ліміту');
+  });
+
+  it('Scenario: The current month gets no settled verdict', () => {
+    const august = [eat('a1', '2026-08-05', 180000)];
+
+    // Still being spent: the сума and, where there is one, the overrun — and no verdict.
+    const shown = heading('2026-08', august, '2026-08');
+    expect(shown.settled).toBeNull();
+    expect(shown.spent).toEqual(['1 800,00 UAH']);
+    expect(shown.overrun).toBeNull();
+  });
+
+  it('Scenario: A month that ended over the ліміт states its overrun, not a verdict of keeping it', () => {
+    const august = [eat('a1', '2026-08-05', 248000)];
+
+    const shown = heading('2026-08', august, '2026-09');
+    expect(shown.overrun).toBe('Перевищено ліміт на 480,00 UAH');
+    expect(shown.settled).toBeNull();
+  });
+
+  it('Scenario: A month that has not started carries no verdict', () => {
+    // Later than the current month: nothing has been spent in it yet, and «в межах» about a month
+    // nobody has lived is an absence dressed as a verdict. The state is the caller's to withhold,
+    // and this is the caller.
+    const shown = heading('2026-12', [], '2026-09');
+
+    expect(shown.settled).toBeNull();
+    expect(shown.overrun).toBeNull();
+    expect(shown.spent).toEqual([]);
+  });
+
+  it('A category carrying no ліміт states no verdict, whatever month it is', () => {
+    const shown = categoryMonthHeading({
+      month: '2026-08',
+      categoryId: 'restaurants',
+      transactions: [eat('a1', '2026-08-05', 180000)],
+      categoryNames: names,
+      limits: [],
+      currentMonth: '2026-09',
+    });
+
+    expect(shown.settled).toBeNull();
+  });
+
+  it('A verdict is settled by that month’s own транзакції and by no later month’s', () => {
+    const history = [eat('a1', '2026-08-05', 180000), eat('s1', '2026-09-05', 250000)];
+
+    // September running far past the ceiling does not reopen August.
+    expect(heading('2026-08', history, '2026-10').settled).toBe('Місяць завершено в межах ліміту');
+    // …and a retroactive транзакція dated inside August does settle it anew.
+    const late = [...history, eat('a2', '2026-08-27', 30000)];
+    expect(heading('2026-08', late, '2026-10').settled).toBeNull();
+    expect(heading('2026-08', late, '2026-10').overrun).toBe('Перевищено ліміт на 100,00 UAH');
   });
 });

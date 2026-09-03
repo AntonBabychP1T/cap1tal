@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet } from 'react-native';
 
-import { Action, Choices, Field } from '@/components/form';
+import { Action, Choices, Field, Picker } from '@/components/form';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { askAboutTransfer } from '@/components/transfer-dialog';
@@ -13,18 +13,15 @@ import {
   sources as sourcesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
-import { activeAccounts } from '@/domain/account';
+
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { ALERT_PORTS, attended } from '@/hooks/use-alerting';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { accountChoicesFor } from '@/ui/account-choices';
 import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
-import {
-  expenseCategoryChoices,
-  recentlyUsed,
-  recentRows,
-  sourceChoices,
-} from '@/ui/category-choices';
+import { expenseCategoryChoices, recentlyUsed, sourceChoices } from '@/ui/category-choices';
 import { todayIso } from '@/ui/dates';
 import {
   buildEntry,
@@ -36,6 +33,7 @@ import {
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
 import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
+import { PICKER_SIZE } from '@/ui/shortlist';
 import { accountsById } from '@/ui/transaction-line';
 
 import { Spacing } from '@/constants/theme';
@@ -49,16 +47,20 @@ import { Spacing } from '@/constants/theme';
  */
 
 /**
- * How far back the «Нещодавні» row looks. The same window Головний read when the form lived
- * there: the recents are read off the latest транзакції, never counted and never stored.
+ * How far back the pickers look for what the owner reached for last. The same window Головний read
+ * when the form lived there: the recents are read off the latest транзакції, never counted and
+ * never stored.
  */
 const RECENT_WINDOW = 50;
 
 /**
- * How many recently used категорії (and джерела) the shortcut row holds. Five is a row that fits
- * under the thumb without becoming a second full list.
+ * How many recently used рахунки, категорії and джерела are worth reading off the стрічка: exactly
+ * as many as a picker draws, since a sixth would be read and never shown.
  */
-const RECENT_SIZE = 5;
+const RECENT_SIZE = PICKER_SIZE;
+
+/** Which picker has its full list open, if any — the one thing «назад» closes before the screen. */
+type OpenPicker = 'from' | 'to' | 'category' | 'source';
 
 /** The order the vision names them in; the words themselves are the glossary's, via `labels`. */
 const ENTRY_CHOICES: readonly { value: EntryType; label: string }[] = (
@@ -91,39 +93,39 @@ export default function NewTransactionScreen() {
     }, []),
   );
 
-  const offered = useMemo(() => activeAccounts(stored.accounts), [stored.accounts]);
+  /**
+   * The рахунки this form offers, in the order every рахунок picker uses — `accountChoicesFor`
+   * owns that order, so the recording form and the editing form cannot show the same question two
+   * different ways. Passing no current рахунок is what makes it exactly the unarchived ones:
+   * nothing is being edited here, so there is no carried row to keep.
+   *
+   * It was `activeAccounts` straight from storage until the emulator showed what that meant —
+   * SQLite's BINARY sort, every Cyrillic назва after every Latin one, two fields above a категорія
+   * picker in real Ukrainian order.
+   */
+  const offered = useMemo(() => accountChoicesFor(stored.accounts, undefined), [stored.accounts]);
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
   const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
-  const categoryPicks = useMemo(
-    () => expenseCategoryChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
+  /**
+   * What each picker offers, in the order it already has. A рахунок wears its currency, which is
+   * also what a search inside «Всі рахунки» then matches — «USD» finds the USD ones.
+   */
+  const accountRows = useMemo(
+    () => offered.map((a) => ({ id: a.id, name: accountChoiceLabel(a) })),
+    [offered],
+  );
+  const categoryRows = useMemo(
+    () => expenseCategoryChoices(stored.categories),
     [stored.categories],
   );
-  const sourcePicks = useMemo(
-    () => sourceChoices(stored.sources).map((s) => ({ value: s.id, label: s.name })),
-    [stored.sources],
-  );
+  const sourceRows = useMemo(() => sourceChoices(stored.sources), [stored.sources]);
   /**
-   * Resolved against the same offered lists, so an archived категорія is not resurrected by having
-   * been used and «Без джерела» is not offered by having been imported onto.
+   * What the owner reached for last. Resolved against those same offered lists by `shortlist`, so
+   * an archived категорія is not resurrected by having been used and «Без джерела» is not offered
+   * by having been imported onto.
    */
   const recent = useMemo(() => recentlyUsed(stored.latest, RECENT_SIZE), [stored.latest]);
-  const recentCategoryPicks = useMemo(
-    () =>
-      recentRows(recent.categories, expenseCategoryChoices(stored.categories)).map((c) => ({
-        value: c.id,
-        label: c.name,
-      })),
-    [recent.categories, stored.categories],
-  );
-  const recentSourcePicks = useMemo(
-    () =>
-      recentRows(recent.sources, sourceChoices(stored.sources)).map((s) => ({
-        value: s.id,
-        label: s.name,
-      })),
-    [recent.sources, stored.sources],
-  );
 
   const [entry, setEntry] = useState<EntryType>('expense');
   /**
@@ -133,7 +135,7 @@ export default function NewTransactionScreen() {
    * and `store()` is recording on this very screen.
    */
   const [fromId, setFromId] = useState<string | undefined>(() =>
-    defaultAccountId(stored.rememberedAccountId, activeAccounts(stored.accounts)),
+    defaultAccountId(stored.rememberedAccountId, accountChoicesFor(stored.accounts, undefined)),
   );
   const [toId, setToId] = useState<string>();
   const [amount, setAmount] = useState('');
@@ -150,6 +152,16 @@ export default function NewTransactionScreen() {
    * disappears before the owner looks up (design D11).
    */
   const [confirmation, setConfirmation] = useState<string>();
+  /**
+   * Which picker has its full list open. One at a time, and held here rather than inside each
+   * picker, because the phone's «назад» has to close it before it leaves the screen and only the
+   * screen can be asked that — `backGesture` decides, `useCloseOnBack` subscribes.
+   */
+  const [open, setOpen] = useState<OpenPicker>();
+  const closePicker = useCallback(() => setOpen(undefined), []);
+  useCloseOnBack(open !== undefined, closePicker);
+  const opening = (picker: OpenPicker) => (isOpen: boolean) =>
+    setOpen(isOpen ? picker : undefined);
 
   const from = offered.find((a) => a.id === fromId);
   const to = offered.find((a) => a.id === toId);
@@ -193,6 +205,11 @@ export default function NewTransactionScreen() {
     setCategoryId(undefined);
     setSourceId(undefined);
     setConfirmation(undefined);
+    // «Тип» sits above the pickers and stays tappable while one has its full list open. Switching
+    // unmounts that picker, so the open state has to go with it — otherwise `useCloseOnBack` keeps
+    // swallowing the back press for a list that is no longer on the screen, which is the opposite
+    // of what `backGesture` promises.
+    setOpen(undefined);
   }, []);
 
   /**
@@ -208,6 +225,7 @@ export default function NewTransactionScreen() {
     setCategoryId(undefined);
     setSourceId(undefined);
     setDescription('');
+    setOpen(undefined);
     reload();
   }, [reload]);
 
@@ -288,8 +306,6 @@ export default function NewTransactionScreen() {
     toId,
   ]);
 
-  const accountChoices = offered.map((a) => ({ value: a.id, label: accountChoiceLabel(a) }));
-
   /**
    * Any change to any field ends the confirmation: it named what was recorded from the form as it
    * then stood, and a form that has moved on must not still be wearing that sentence.
@@ -313,14 +329,27 @@ export default function NewTransactionScreen() {
       ) : (
         <Card style={styles.form}>
           <Choices label="Тип" choices={ENTRY_CHOICES} selected={entry} onSelect={chooseEntry} />
-          <Choices
+          <Picker
             label={entry === 'transfer' ? 'Звідки' : 'Рахунок'}
-            choices={accountChoices}
+            rows={accountRows}
+            recentIds={recent.accounts}
             selected={fromId}
             onSelect={chooseFrom}
+            noun="accounts"
+            expanded={open === 'from'}
+            onExpandedChange={opening('from')}
           />
           {entry === 'transfer' ? (
-            <Choices label="Куди" choices={accountChoices} selected={toId} onSelect={chooseTo} />
+            <Picker
+              label="Куди"
+              rows={accountRows}
+              recentIds={recent.accounts}
+              selected={toId}
+              onSelect={chooseTo}
+              noun="accounts"
+              expanded={open === 'to'}
+              onExpandedChange={opening('to')}
+            />
           ) : null}
           <Field
             label={entry === 'transfer' ? 'Скільки пішло' : 'Сума'}
@@ -352,46 +381,30 @@ export default function NewTransactionScreen() {
           {/* A витрата arrives carrying «Без категорії» and the owner may pick another; a
               повернення has no default and is not stored until one is picked. */}
           {entry === 'expense' || entry === 'refund' ? (
-            <>
-              {/* The shortcut above the full list, not instead of it: a категорія may stand in
-                  both, and it is marked selected in both. */}
-              {recentCategoryPicks.length > 0 ? (
-                <Choices
-                  label="Нещодавні"
-                  choices={recentCategoryPicks}
-                  selected={
-                    entry === 'expense' ? (categoryId ?? UNCATEGORISED_CATEGORY_ID) : categoryId
-                  }
-                  onSelect={changing(setCategoryId)}
-                />
-              ) : null}
-              <Choices
-                label={entry === 'refund' ? 'До якої категорії' : 'Категорія'}
-                choices={categoryPicks}
-                selected={
-                  entry === 'expense' ? (categoryId ?? UNCATEGORISED_CATEGORY_ID) : categoryId
-                }
-                onSelect={changing(setCategoryId)}
-              />
-            </>
+            <Picker
+              label={entry === 'refund' ? 'До якої категорії' : 'Категорія'}
+              rows={categoryRows}
+              recentIds={recent.categories}
+              selected={
+                entry === 'expense' ? (categoryId ?? UNCATEGORISED_CATEGORY_ID) : categoryId
+              }
+              onSelect={changing(setCategoryId)}
+              noun="categories"
+              expanded={open === 'category'}
+              onExpandedChange={opening('category')}
+            />
           ) : null}
           {entry === 'income' ? (
-            <>
-              {recentSourcePicks.length > 0 ? (
-                <Choices
-                  label="Нещодавні"
-                  choices={recentSourcePicks}
-                  selected={sourceId}
-                  onSelect={changing(setSourceId)}
-                />
-              ) : null}
-              <Choices
-                label="Джерело"
-                choices={sourcePicks}
-                selected={sourceId}
-                onSelect={changing(setSourceId)}
-              />
-            </>
+            <Picker
+              label="Джерело"
+              rows={sourceRows}
+              recentIds={recent.sources}
+              selected={sourceId}
+              onSelect={changing(setSourceId)}
+              noun="sources"
+              expanded={open === 'source'}
+              onExpandedChange={opening('source')}
+            />
           ) : null}
           {/* The опис: optional for every type, and information only — it moves no total, no
               balance and no classification. Left empty, nothing is stored and the feed shows no

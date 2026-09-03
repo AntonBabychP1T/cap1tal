@@ -5,6 +5,15 @@ import { ThemedText } from './themed-text';
 
 import { Radius, Spacing, TouchTarget } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import {
+  allOffer,
+  COLLAPSE_LABEL,
+  narrow,
+  NOTHING_FOUND,
+  shortlist,
+  type Named,
+  type PickerNoun,
+} from '@/ui/shortlist';
 
 /**
  * The few form pieces every screen needs: a labelled field, a row of choices, and the one button
@@ -58,6 +67,47 @@ export interface Choice<T extends string> {
   readonly label: string;
 }
 
+/**
+ * One chip. Drawn here rather than inside `Choices` because two things paint it — the row of
+ * choices below, and the expanded full list of `Picker` further down, which has no overline of its
+ * own. Two copies would be two chips that must look identical and diverge the day either is tuned.
+ */
+function Chip({
+  label,
+  picked,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  picked: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      // The chip is 38 tall; the finger gets its 48 either way.
+      hitSlop={Spacing.two}
+      style={({ pressed }) => [
+        styles.choice,
+        {
+          // An outline, not a fill: in a row of eight categories a filled chip shouts.
+          backgroundColor: picked ? theme.accentSurface : theme.backgroundSelected,
+          borderColor: picked ? theme.accent : 'transparent',
+          opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
+        },
+      ]}>
+      <ThemedText
+        type={picked ? 'smallBold' : 'small'}
+        themeColor={picked ? 'accent' : 'textSecondary'}>
+        {label}
+      </ThemedText>
+    </Pressable>
+  );
+}
+
 /** A row of choices — the picker for рахунок, вид, валюта and the витрата/переказ toggle. */
 export function Choices<T extends string>({
   label,
@@ -73,7 +123,6 @@ export function Choices<T extends string>({
   /** A вид and a валюта are fixed at creation, so editing shows them but cannot change them. */
   disabled?: boolean;
 }) {
-  const theme = useTheme();
   return (
     <View style={styles.field}>
       <ThemedText type="overline">{label}</ThemedText>
@@ -83,32 +132,15 @@ export function Choices<T extends string>({
         </ThemedText>
       ) : (
         <View style={styles.choices}>
-          {choices.map((choice) => {
-            const picked = choice.value === selected;
-            return (
-              <Pressable
-                key={choice.value}
-                disabled={disabled}
-                onPress={() => onSelect(choice.value)}
-                // The chip is 38 tall; the finger gets its 48 either way.
-                hitSlop={Spacing.two}
-                style={({ pressed }) => [
-                  styles.choice,
-                  {
-                    // An outline, not a fill: in a row of eight categories a filled chip shouts.
-                    backgroundColor: picked ? theme.accentSurface : theme.backgroundSelected,
-                    borderColor: picked ? theme.accent : 'transparent',
-                    opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
-                  },
-                ]}>
-                <ThemedText
-                  type={picked ? 'smallBold' : 'small'}
-                  themeColor={picked ? 'accent' : 'textSecondary'}>
-                  {choice.label}
-                </ThemedText>
-              </Pressable>
-            );
-          })}
+          {choices.map((choice) => (
+            <Chip
+              key={choice.value}
+              label={choice.label}
+              picked={choice.value === selected}
+              disabled={disabled}
+              onPress={() => onSelect(choice.value)}
+            />
+          ))}
         </View>
       )}
     </View>
@@ -222,6 +254,113 @@ export function RowAction({
   );
 }
 
+/**
+ * The picker for a list too long to draw: the few choices worth a thumb, and the rest one tap
+ * away. The рахунок, категорія and джерело of a транзакція all use it — twenty-eight рахунки and
+ * twenty-seven категорії were sixty-odd chips on one form before it existed.
+ *
+ * Every decision here is `src/ui/shortlist.ts`: which rows are drawn (`shortlist`), whether the
+ * offer appears and what it says (`allOffer`), and what a typed search leaves standing (`narrow`).
+ * `verify` never runs JSX, so this file is wiring and nothing else — if a rule looks like it lives
+ * here, it is in the wrong place.
+ *
+ * Expansion is *controlled*: the screen holds which picker is open, because the phone's «назад»
+ * has to close an open list before it leaves the screen and only the screen can answer that.
+ */
+export function Picker({
+  label,
+  rows,
+  recentIds,
+  selected,
+  onSelect,
+  noun,
+  expanded,
+  onExpandedChange,
+}: {
+  label: string;
+  /** The whole offered list, in the order it already has. What may be picked is decided upstream. */
+  rows: readonly Named[];
+  recentIds: readonly string[];
+  selected: string | undefined;
+  onSelect: (id: string) => void;
+  noun: PickerNoun;
+  expanded: boolean;
+  onExpandedChange: (open: boolean) => void;
+}) {
+  const [query, setQuery] = useState('');
+  /**
+   * Every row this picker has had chosen: the one it opened on, and each one picked since. The
+   * chips only ever grow, so a рахунок found through «Всі рахунки» is still there afterwards and
+   * going back to the one the form opened on is a tap rather than a second trip through the list.
+   */
+  const [chosenIds, setChosenIds] = useState<readonly string[]>(() =>
+    selected === undefined ? [] : [selected],
+  );
+
+  const shown = shortlist(rows, { recentIds, chosenIds });
+  const offer = allOffer(rows, noun);
+  const asChoices = (list: readonly Named[]) =>
+    list.map((row) => ({ value: row.id, label: row.name }));
+
+  const choose = (id: string) => {
+    setChosenIds((already) => (already.includes(id) ? already : [...already, id]));
+    setQuery('');
+    onExpandedChange(false);
+    onSelect(id);
+  };
+
+  const collapse = () => {
+    setQuery('');
+    onExpandedChange(false);
+  };
+
+  if (!expanded) {
+    return (
+      <View style={styles.field}>
+        <Choices label={label} choices={asChoices(shown)} selected={selected} onSelect={choose} />
+        {offer ? (
+          <View style={styles.offer}>
+            <RowAction title={offer} onPress={() => onExpandedChange(true)} tone="quiet" />
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+
+  const narrowed = narrow(rows, query);
+  return (
+    <View style={styles.field}>
+      <Field
+        label={label}
+        value={query}
+        onChangeText={setQuery}
+        autoCapitalize="none"
+        placeholder="почніть вводити назву"
+        autoFocus
+      />
+      {narrowed.length === 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          {NOTHING_FOUND}
+        </ThemedText>
+      ) : (
+        <View style={styles.choices}>
+          {asChoices(narrowed).map((choice) => (
+            <Chip
+              key={choice.value}
+              label={choice.label}
+              picked={choice.value === selected}
+              onPress={() => choose(choice.value)}
+            />
+          ))}
+        </View>
+      )}
+      <View style={styles.offer}>
+        <RowAction title={COLLAPSE_LABEL} onPress={collapse} tone="quiet" />
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   field: { gap: Spacing.one },
   input: {
@@ -229,6 +368,9 @@ const styles = StyleSheet.create({
     fontSize: 17,
   },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  // The offer sits under its chips and only as wide as its own words, not across the column:
+  // it is a way out of the picker, not the screen's action.
+  offer: { flexDirection: 'row' },
   choice: {
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,

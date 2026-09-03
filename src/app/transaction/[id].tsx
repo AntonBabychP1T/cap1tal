@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { askAboutTransfer } from '@/components/transfer-dialog';
-import { Action, Choices, Field } from '@/components/form';
+import { Action, Choices, Field, Picker } from '@/components/form';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -15,15 +15,17 @@ import {
 } from '@/db/repos';
 import type { Account } from '@/domain/account';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { failureAlert } from '@/ui/failure-alert';
 import { accountChoicesFor, legsOf } from '@/ui/account-choices';
 import { formatMinorUnits } from '@/ui/amount-input';
-import { categoryChoicesFor, sourceChoicesFor } from '@/ui/category-choices';
+import { categoryChoicesFor, recentlyUsed, sourceChoicesFor } from '@/ui/category-choices';
 import { buildEntry, normaliseDescription, type EntryType } from '@/ui/entry-form';
 import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
 import { receiptOffer } from '@/ui/receipt-screen';
 import { labelsAfterRetype, shapesFor } from '@/ui/retype';
+import { PICKER_SIZE } from '@/ui/shortlist';
 
 import { Spacing } from '@/constants/theme';
 
@@ -37,8 +39,17 @@ import { Spacing } from '@/constants/theme';
  * Both are pure and under `verify`; this file is the wiring.
  *
  * A коригування is still shown read-only: nothing can record one until «звірити» arrives, so
- * there is no form for it to open into.
+ * there is no form for it to open into — and therefore no picker on it either.
  */
+
+/**
+ * How far back the recents are read, and how many are kept: the same стрічка «Нова транзакція»
+ * reads, so a категорія reached for while recording is one tap away while correcting too.
+ */
+const RECENT_WINDOW = 50;
+
+/** Which picker has its full list open, if any. */
+type OpenPicker = 'from' | 'to' | 'category' | 'source';
 
 export default function EditTransactionScreen() {
   const router = useRouter();
@@ -60,6 +71,8 @@ export default function EditTransactionScreen() {
         categories: categoriesRepo.list(),
         sources: sourcesRepo.list(),
         receipt: receiptsRepo.forTransaction(id),
+        // What the owner reached for last — read, never stored, exactly as on the entry form.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
       }),
       [id],
     ),
@@ -90,22 +103,25 @@ export default function EditTransactionScreen() {
   const crossCurrency = Boolean(from && to && from.currency !== to.currency);
 
   /** The same reasoning as the account pickers: an archived label the transaction carries stays. */
-  const categoryPicks = useMemo(
-    () =>
-      categoryChoicesFor(stored.categories, form?.categoryId).map((c) => ({
-        value: c.id,
-        label: c.name,
-      })),
+  const categoryRows = useMemo(
+    () => categoryChoicesFor(stored.categories, form?.categoryId),
     [form?.categoryId, stored.categories],
   );
-  const sourcePicks = useMemo(
-    () =>
-      sourceChoicesFor(stored.sources, form?.sourceId).map((s) => ({
-        value: s.id,
-        label: s.name,
-      })),
+  const sourceRows = useMemo(
+    () => sourceChoicesFor(stored.sources, form?.sourceId),
     [form?.sourceId, stored.sources],
   );
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE), [stored.latest]);
+
+  /**
+   * Which picker has its full list open. Held by the screen, not by the picker, so the phone's
+   * «назад» can close it before it leaves the screen.
+   */
+  const [open, setOpen] = useState<OpenPicker>();
+  const closePicker = useCallback(() => setOpen(undefined), []);
+  useCloseOnBack(open !== undefined, closePicker);
+  const opening = (picker: OpenPicker) => (isOpen: boolean) =>
+    setOpen(isOpen ? picker : undefined);
 
   /**
    * Choosing an account of another currency clears the сума touching it: the spec says it is
@@ -138,6 +154,9 @@ export default function EditTransactionScreen() {
       if (!form || !original) return;
       const carried = labelsAfterRetype(original, shape);
       setForm({ ...form, shape, categoryId: carried.categoryId, sourceId: carried.sourceId });
+      // Retyping unmounts whichever picker the new shape does not have. The open state goes with
+      // it, or `useCloseOnBack` swallows a back press for a list that is no longer on the screen.
+      setOpen(undefined);
     },
     [form, original],
   );
@@ -230,8 +249,9 @@ export default function EditTransactionScreen() {
           </ThemedText>
           <StoredDescription of={original} />
         </Card>
+        {/* A коригування is shown, never edited, so the stored тип is the only тип there is. */}
         <ReceiptLine
-          transaction={original}
+          type={original.type}
           receipt={stored.receipt}
           onScan={() => router.push({ pathname: '/transaction/scan', params: { id: original.id } })}
           onOpen={() => router.push({ pathname: '/transaction/receipt', params: { id: original.id } })}
@@ -241,8 +261,9 @@ export default function EditTransactionScreen() {
     );
   }
 
-  const asChoices = (list: readonly Account[]) =>
-    list.map((a) => ({ value: a.id, label: accountChoiceLabel(a) }));
+  /** A рахунок wears its currency, so a search inside «Всі рахунки» matches «USD» too. */
+  const asRows = (list: readonly Account[]) =>
+    list.map((a) => ({ id: a.id, name: accountChoiceLabel(a) }));
 
   return (
     <Screen>
@@ -257,18 +278,26 @@ export default function EditTransactionScreen() {
           selected={form.shape}
           onSelect={chooseShape}
         />
-        <Choices
+        <Picker
           label={form.shape === 'transfer' ? 'Звідки' : 'Рахунок'}
-          choices={asChoices(sourceChoicesList)}
+          rows={asRows(sourceChoicesList)}
+          recentIds={recent.accounts}
           selected={form.fromId}
           onSelect={chooseFrom}
+          noun="accounts"
+          expanded={open === 'from'}
+          onExpandedChange={opening('from')}
         />
         {form.shape === 'transfer' ? (
-          <Choices
+          <Picker
             label="Куди"
-            choices={asChoices(destinationChoices)}
+            rows={asRows(destinationChoices)}
+            recentIds={recent.accounts}
             selected={form.toId}
             onSelect={chooseTo}
+            noun="accounts"
+            expanded={open === 'to'}
+            onExpandedChange={opening('to')}
           />
         ) : null}
         <Field
@@ -307,28 +336,39 @@ export default function EditTransactionScreen() {
             saving would store — the same default the Головний form shows. A повернення shows
             nothing selected, because nothing is what saving it would refuse. */}
         {form.shape === 'expense' || form.shape === 'refund' ? (
-          <Choices
+          <Picker
             label={form.shape === 'refund' ? 'До якої категорії' : 'Категорія'}
-            choices={categoryPicks}
+            rows={categoryRows}
+            recentIds={recent.categories}
             selected={
               form.shape === 'expense'
                 ? (form.categoryId ?? UNCATEGORISED_CATEGORY_ID)
                 : form.categoryId
             }
             onSelect={(categoryId: string) => setForm({ ...form, categoryId })}
+            noun="categories"
+            expanded={open === 'category'}
+            onExpandedChange={opening('category')}
           />
         ) : null}
         {form.shape === 'income' ? (
-          <Choices
+          <Picker
             label="Джерело"
-            choices={sourcePicks}
+            rows={sourceRows}
+            recentIds={recent.sources}
             selected={form.sourceId}
             onSelect={(sourceId: string) => setForm({ ...form, sourceId })}
+            noun="sources"
+            expanded={open === 'source'}
+            onExpandedChange={opening('source')}
           />
         ) : null}
       </Card>
+      {/* The form's own «Тип» and «Категорія», not the stored ones: picking «переказ» withdraws
+          the scan offer at the tap, and the form is what the owner is looking at. */}
       <ReceiptLine
-        transaction={original}
+        type={form.shape}
+        {...(form.categoryId ? { categoryId: form.categoryId } : {})}
         receipt={stored.receipt}
         onScan={() => router.push({ pathname: '/transaction/scan', params: { id: original.id } })}
         // The чек is found by its транзакція — one транзакція carries at most one — so its own
@@ -351,17 +391,23 @@ export default function EditTransactionScreen() {
  * label and the «no scan for a переказ» rule are all proven in `src/ui/receipt-screen.test.ts`.
  */
 function ReceiptLine({
-  transaction,
+  type,
+  categoryId,
   receipt,
   onScan,
   onOpen,
 }: {
-  transaction: Transaction;
+  type: Transaction['type'];
+  categoryId?: string;
   receipt: ReturnType<typeof receiptsRepo.forTransaction>;
   onScan: () => void;
   onOpen: () => void;
 }) {
-  const offer = receiptOffer({ transaction, ...(receipt ? { receipt } : {}) });
+  const offer = receiptOffer({
+    type,
+    ...(categoryId ? { categoryId } : {}),
+    ...(receipt ? { receipt } : {}),
+  });
   if (offer.kind === 'none') {
     return null;
   }

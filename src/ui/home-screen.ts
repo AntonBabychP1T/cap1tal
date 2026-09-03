@@ -2,9 +2,11 @@ import type { Account } from '../domain/account';
 import { monthlyPicture } from '../domain/monthly-picture';
 import { type CurrencyCode, type Money } from '../domain/money';
 import type { Month, Transaction } from '../domain/transaction';
+import { needsOwner, type OwnerSituation, type SyncAttempt } from '../monobank/auto';
 import type { MonobankRate } from '../monobank/currency';
 import { accountTotals, approximateTotals, totalsLine } from './account-totals';
 import { byCurrency } from './amount-input';
+import { freshnessLabel } from './dates';
 import { transactionCount } from './labels';
 import { emptyMessageFor, NO_INCOME_NOTE } from './month-screen';
 import { monthInLabel } from './months';
@@ -59,8 +61,34 @@ export interface HomeAttention {
    * screen's own block below them: they are answered in place, not counted.
    */
   readonly rows: readonly string[];
+  /**
+   * The monobank row, when monobank needs the owner: what happened, and that it opens the monobank
+   * screen. `null` the rest of the time, which is nearly always — a failed run over fresh data
+   * puts nothing here (`needsOwner`).
+   */
+  readonly monobank: string | null;
   /** Whether the section exists at all. False means no heading and no space held for one. */
   readonly present: boolean;
+}
+
+/** What the freshness line says, in the owner's words. */
+export const SYNCING_LINE = 'Синхронізація…';
+export const NEVER_SYNCED_LINE = 'Ще не синхронізовано з monobank';
+
+/**
+ * The two situations `needsOwner` can name, as the row the owner reads. The words live here and
+ * not in `src/monobank/`: what appears on a screen is this capability's, and the engine answers
+ * only *whether* and *which*.
+ */
+const ATTENTION_WORDS: Readonly<Record<OwnerSituation, string>> = {
+  'token-rejected': 'monobank відхилив токен — оновіть його',
+  'not-refreshed': 'Дані monobank не оновлюються',
+};
+
+/** The monobank line on Головний: how fresh the bank data is, and nothing else. */
+export interface HomeMonobank {
+  /** «оновлено 3 хв тому», «Синхронізація…», or that nothing has synced yet. */
+  readonly freshness: string;
 }
 
 export interface HomeViewModel {
@@ -69,6 +97,11 @@ export interface HomeViewModel {
   /** `null` when no unarchived рахунок exists — the screen says so instead. */
   readonly held: HomeHeld | null;
   readonly attention: HomeAttention;
+  /**
+   * `null` when monobank is not configured or nothing is linked: an owner who never connected a
+   * bank is told nothing about one.
+   */
+  readonly monobank: HomeMonobank | null;
 }
 
 /**
@@ -99,6 +132,20 @@ export function homeViewModel(input: {
   uncategorised: number;
   /** How many чернетки await an answer. Counted for nothing but whether the section exists. */
   pendingDrafts: number;
+  /**
+   * The monobank connection as this screen sees it, or absent on a device with none. `linked` is
+   * how many рахунки are linked; `lastCompletedAtMs` the most recent completed sync among them,
+   * absent when none ever has; `syncing` whether a run is going on right now, whoever started it.
+   */
+  monobank?: {
+    readonly configured: boolean;
+    readonly linked: number;
+    readonly lastCompletedAtMs?: number;
+    readonly syncing: boolean;
+    readonly attempt?: SyncAttempt;
+  };
+  /** The moment the screen is drawn — every clock in this app is passed in. */
+  now: Date;
 }): HomeViewModel {
   const picture = monthlyPicture({
     month: input.month,
@@ -114,6 +161,30 @@ export function homeViewModel(input: {
   if (input.uncategorised > 0) {
     rows.push(`${transactionCount(input.uncategorised)} без категорії`);
   }
+
+  // A bank the owner never connected, or connected and never linked a рахунок to, gets no line
+  // and no row: nothing about monobank appears on this screen at all.
+  const bank = input.monobank;
+  const connected = bank !== undefined && bank.configured && bank.linked > 0;
+  const situation = connected
+    ? needsOwner({
+        attempt: bank.attempt,
+        ...(bank.lastCompletedAtMs === undefined
+          ? {}
+          : { lastCompletedAtMs: bank.lastCompletedAtMs }),
+        nowMs: input.now.getTime(),
+      })
+    : undefined;
+  const monobank: HomeMonobank | null = connected
+    ? {
+        freshness: bank.syncing
+          ? SYNCING_LINE
+          : bank.lastCompletedAtMs === undefined
+            ? NEVER_SYNCED_LINE
+            : `оновлено ${freshnessLabel(bank.lastCompletedAtMs, input.now)}`,
+      }
+    : null;
+  const attentionRow = situation === undefined ? null : ATTENTION_WORDS[situation];
 
   return {
     month: input.month,
@@ -135,6 +206,11 @@ export function homeViewModel(input: {
             approximate: approximateTotals(totals.total, input.rates),
           }
         : null,
-    attention: { rows, present: rows.length > 0 || input.pendingDrafts > 0 },
+    attention: {
+      rows,
+      monobank: attentionRow,
+      present: rows.length > 0 || input.pendingDrafts > 0 || attentionRow !== null,
+    },
+    monobank,
   };
 }

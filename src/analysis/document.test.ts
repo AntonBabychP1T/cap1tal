@@ -6,6 +6,7 @@ import { account } from '../domain/account';
 import { money } from '../domain/money';
 import { expenseByDefault } from '../domain/transaction';
 import { documentName, renderDocument } from './document';
+import { DETAIL_INSTRUCTIONS } from './prompt';
 import { fixtureInput, fixturePackage } from './document.fixture';
 import { buildAnalysisPackage, type AnalysisPackage } from './package';
 
@@ -26,6 +27,21 @@ function summarySection(text: string): string {
   return text.slice(text.indexOf('## Підсумок'), text.indexOf('## Дані'));
 }
 
+/** Everything between `## Інструкції` and `## Контекст`. */
+function instructionSection(text: string): string {
+  return text.slice(text.indexOf('## Інструкції'), text.indexOf('## Контекст'));
+}
+
+/** Everything between `## Запит` and `## Інструкції` — the header line included. */
+function requestSection(text: string): string {
+  return text.slice(text.indexOf('## Запит'), text.indexOf('## Інструкції'));
+}
+
+/** The machine header: the one line that names the schema and the version. */
+function headerLine(text: string): string {
+  return text.split('\n').find((line) => line.startsWith('cap1tal.analysis-package'))!;
+}
+
 /** Every сума the пакет carries, as the `"4125.34"` texts it writes them in. */
 function amountsOf(value: unknown, found = new Set<string>()): Set<string> {
   if (Array.isArray(value)) {
@@ -41,20 +57,57 @@ function amountsOf(value: unknown, found = new Set<string>()): Set<string> {
 }
 
 describe('renderDocument', () => {
-  it('is one text of four sections, in the order they are read in', () => {
+  it('is one text of five sections, in the order they are read in', () => {
     const headings = document.text
       .split('\n')
       .filter((line) => line.startsWith('## '))
       .map((line) => line.slice(3));
 
-    expect(headings).toEqual(['Інструкції', 'Контекст', 'Підсумок', 'Дані']);
+    expect(headings).toEqual(['Запит', 'Інструкції', 'Контекст', 'Підсумок', 'Дані']);
     expect(document.text.startsWith('# cap1tal · AI-аналіз місячної картини')).toBe(true);
     expect(document.profile).toBe('external-advanced');
     expect(document.package).toBe(packaged);
   });
 
+  it('Scenario: The request is the first thing in the файл', () => {
+    const lines = document.text.split('\n');
+
+    // Only the title stands above it, and the machine header stands below it.
+    expect(lines[0]).toBe('# cap1tal · AI-аналіз місячної картини');
+    expect(lines[2]).toBe('## Запит');
+    expect(document.text.indexOf('## Запит')).toBeLessThan(
+      document.text.indexOf('cap1tal.analysis-package'),
+    );
+    // And before every other section and every number.
+    for (const heading of ['## Інструкції', '## Контекст', '## Підсумок', '## Дані']) {
+      expect(document.text.indexOf('## Запит')).toBeLessThan(document.text.indexOf(heading));
+    }
+  });
+
+  it('Scenario: The request names the task, the kind and the period', () => {
+    const request = requestSection(document.text);
+
+    expect(request).toContain('пакет фінансових даних із застосунку cap1tal');
+    expect(request).toContain('Проаналізуй наведені дані');
+    expect(request).toContain('практичний фінансовий огляд за цей період');
+    expect(request).toContain('місячна картина за період 2026-07 — 2026-09');
+    expect(request).toContain('Усе потрібне є в цьому ж файлі, нижче');
+  });
+
+  it('Scenario: The request adds no number', () => {
+    // Everything above `## Інструкції` except the machine header — which is the header's own job,
+    // and stands below the запит for exactly that reason.
+    const request = requestSection(document.text).replace(headerLine(document.text), '');
+
+    // No сума, no share, no count: every figure of the файл is in `## Підсумок` or in `## Дані`.
+    expect(request).not.toMatch(/\d+,\d{2}/);
+    expect(request).not.toMatch(/%/);
+    const withoutPeriod = request.split('2026-07 — 2026-09').join('').split('cap1tal').join('');
+    expect(withoutPeriod).not.toMatch(/\d/);
+  });
+
   it('names the schema, the version, the kind, the period and the day it was built for', () => {
-    const header = document.text.split('\n')[2]!;
+    const header = headerLine(document.text);
 
     expect(header).toContain('cap1tal.analysis-package');
     expect(header).toContain('версія 1');
@@ -76,6 +129,12 @@ describe('renderDocument', () => {
 
     expect(again.text).toBe(document.text);
     expect(again.name).toBe(document.name);
+
+    // And the same for the пакет that carries both details: one пакет, one файл, byte for byte.
+    const detailed = { descriptions: true, transactions: true };
+    expect(renderDocument(fixturePackage(detailed), 'external-advanced').text).toBe(
+      renderDocument(fixturePackage(detailed), 'external-advanced').text,
+    );
   });
 
   it('Scenario: The summary repeats the data, formatted', () => {
@@ -127,6 +186,29 @@ describe('renderDocument', () => {
     for (const secret of ['mono black', 'Банка на авто', 'Військові облігації', 'goal-car', 'card']) {
       expect(document.text).not.toContain(secret);
     }
+    // The fixture's транзакції do carry описи — that is what the detailed golden is for — and with
+    // «Продавці» off not one word of them reaches the файл, in any casing.
+    const lowered = document.text.toLowerCase();
+    for (const merchant of ['aroma kava', 'сільпо', 'автопрофі']) {
+      expect(lowered, `the файл carries «${merchant}»`).not.toContain(merchant);
+    }
+    expect(document.text).not.toContain('"merchants"');
+  });
+
+  it('shows the продавці it was given when «Продавці» is on', () => {
+    // The other half of the same claim, so «off leaves nothing behind» is a real assertion and not
+    // a fixture that had nothing to leave behind in the first place.
+    const detailed = renderDocument(
+      fixturePackage({ descriptions: true, transactions: true }),
+      'external-advanced',
+    ).text.toLowerCase();
+
+    for (const merchant of ['aroma kava', 'сільпо 4512', 'сто автопрофі']) {
+      expect(detailed).toContain(merchant);
+    }
+    // And the two spellings of the кафе across two months are folded into one продавець.
+    expect(detailed).toContain('"merchant":"aroma kava"');
+    expect(detailed).toContain('"count":2');
   });
 
   it('names the файл by its kind and its period', () => {
@@ -140,13 +222,72 @@ describe('renderDocument', () => {
     expect(documentName(june)).toBe('cap1tal-ai-monthly-picture-2026-06_2026-08.md');
   });
 
-  it('renders the fixture exactly as `document.golden.md` holds it', () => {
-    // The golden file is the whole rendering of one пакет. A change to any wording — an
-    // instruction, a context sentence, a heading, a table — fails here and is updated on purpose:
-    // this text is what leaves the phone, and it should never change by accident.
-    const golden = readFileSync(new URL('./document.golden.md', import.meta.url), 'utf8');
+  it('renders the fixture exactly as the two goldens hold it', () => {
+    // A golden file is the whole rendering of one пакет. A change to any wording — an instruction,
+    // a context sentence, a heading, a table — fails here and is updated on purpose, by
+    // `npx tsx scripts/regen-analysis-goldens.ts`: this text is what leaves the phone, and it
+    // should never change by accident.
+    const goldens = [
+      ['document.golden.md', { descriptions: false, transactions: false }],
+      ['document-detailed.golden.md', { descriptions: true, transactions: true }],
+    ] as const;
 
-    expect(document.text).toBe(golden);
+    for (const [file, included] of goldens) {
+      const golden = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+
+      expect(renderDocument(fixturePackage(included), 'external-advanced').text, file).toBe(golden);
+    }
+    // The first of them is the файл this whole describe reads.
+    expect(document.text).toBe(readFileSync(new URL('./document.golden.md', import.meta.url), 'utf8'));
+  });
+});
+
+describe('the instructions about detail the owner switched on', () => {
+  const instructions = (descriptions: boolean, transactions: boolean): string =>
+    instructionSection(
+      renderDocument(fixturePackage({ descriptions, transactions }), 'external-advanced').text,
+    );
+
+  it('Scenario: Опис detail is instructed as context only', () => {
+    const both = instructions(true, true);
+
+    expect(both).toContain(DETAIL_INSTRUCTIONS.descriptions);
+    // Context beside the aggregates, and never a figure of the assistant's own.
+    expect(both).toContain('Читай їх як контекст поруч з агрегатами');
+    expect(both).toContain('не підсумовуй їх, не рахуй за ними і не роби з них власного числа');
+  });
+
+  it('Scenario: One switch on does not speak for the other', () => {
+    const merchantsOnly = instructions(true, false);
+
+    expect(merchantsOnly).toContain(DETAIL_INSTRUCTIONS.descriptions);
+    expect(merchantsOnly).not.toContain(DETAIL_INSTRUCTIONS.transactions);
+    expect(merchantsOnly).not.toContain('Окремі транзакції');
+
+    const rowsOnly = instructions(false, true);
+
+    expect(rowsOnly).toContain(DETAIL_INSTRUCTIONS.transactions);
+    expect(rowsOnly).not.toContain(DETAIL_INSTRUCTIONS.descriptions);
+    expect(rowsOnly).not.toContain('Продавці');
+  });
+
+  it('Scenario: A switch that is off leaves no instruction behind', () => {
+    const neither = instructions(false, false);
+
+    expect(neither).not.toContain('Продавці');
+    expect(neither).not.toContain('Окремі транзакції');
+    expect(neither).not.toContain(DETAIL_INSTRUCTIONS.descriptions);
+    expect(neither).not.toContain(DETAIL_INSTRUCTIONS.transactions);
+  });
+
+  it('reads the switches from the пакет, so the файл can only describe what it holds', () => {
+    const packagedWithBoth = fixturePackage({ descriptions: true, transactions: true });
+
+    expect(packagedWithBoth.included).toEqual({ descriptions: true, transactions: true });
+    // The renderer takes one argument, the пакет, and there is no second opinion to disagree with.
+    expect(instructionSection(renderDocument(packagedWithBoth, 'external-advanced').text)).toContain(
+      DETAIL_INSTRUCTIONS.transactions,
+    );
   });
 });
 
@@ -154,7 +295,7 @@ describe('the fixture the golden file stands on', () => {
   it('holds every part the файл can render', () => {
     expect(packaged.byCurrency).toHaveLength(2);
     expect(packaged.approximateUah).not.toBeNull();
-    expect(packaged.goals).toHaveLength(1);
+    expect(packaged.goals).toHaveLength(3);
     expect(packaged.period.partialMonth).not.toBeNull();
     expect(
       packaged.byCurrency[0]!.categories.some((c) => c.limit && c.limit.exceeded.length > 0),

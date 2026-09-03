@@ -1,8 +1,8 @@
 import type { Account, AccountKind } from '../domain/account';
 import type { Category, Source } from '../domain/category';
-import type { Goal } from '../domain/goals';
+import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
-import type { CurrencyCode } from '../domain/money';
+import type { CurrencyCode, Money } from '../domain/money';
 import type { MonthlyNumbers } from '../domain/monthly-picture';
 import { monthOf, type IsoDate, type Transaction } from '../domain/transaction';
 import type { MonobankRate } from '../monobank/currency';
@@ -136,7 +136,14 @@ export interface AnalysisInput {
   readonly categories: readonly Category[];
   readonly sources: readonly Source[];
   readonly limits: readonly CategoryLimit[];
-  readonly goals: readonly Goal[];
+  readonly goals: readonly AccumulationGoal[];
+  /**
+   * The поточна вартість of each інвестиційний рахунок that has one, by рахунок id — from the same
+   * repo the screens read, so the пакет's progress for a ціль is the identical number «Звіти»
+   * shows (design D13). Empty until `investments-value` lands, and absent from every caller
+   * until then; the seam exists on both sides so the two cannot drift the day it does.
+   */
+  readonly currentValues?: ReadonlyMap<string, Money>;
   readonly rates: readonly DatedRate[];
   // Deliberately absent, and the absence is the guarantee: no monobank token, no cursor, no
   // баланс банку, no captured notification, no чернетка, no відстежуваний застосунок, no бекап.
@@ -269,6 +276,7 @@ export function buildAnalysisPackage(input: AnalysisInput): AnalysisPackage | An
       accounts: input.accounts,
       transactions: sorted,
       builtOn: input.builtOn,
+      ...(input.currentValues ? { currentValues: input.currentValues } : {}),
     }),
     ...(input.included.transactions
       ? {

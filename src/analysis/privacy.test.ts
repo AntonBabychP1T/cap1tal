@@ -6,10 +6,11 @@ import { describe, expect, it } from 'vitest';
 import { BACKUP_TABLES } from '../backup/format';
 import { account, type Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
-import type { Goal } from '../domain/goals';
+import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
 import { money } from '../domain/money';
 import { expenseByDefault, transfer, type Transaction } from '../domain/transaction';
+import { renderDocument } from './document';
 import { buildAnalysisPackage, type AnalysisInput, type AnalysisPackage } from './package';
 
 /**
@@ -65,13 +66,14 @@ const limits: readonly CategoryLimit[] = [
   { categoryId: `${SENTINEL}cat-cafe`, amount: money(80000, 'UAH') },
 ];
 
-const goals: readonly Goal[] = [
+const goals: readonly AccumulationGoal[] = [
   {
     id: `${SENTINEL}goal-car`,
     name: 'Авто',
     target: money(20_000_000, 'UAH'),
     deadline: '2026-12-31',
-    accountId: `${SENTINEL}acc-jar`,
+    // A склад of several рахунки: the leak test has to hold the shape the app actually stores.
+    accountIds: [`${SENTINEL}acc-jar`, `${SENTINEL}acc-card`],
   },
 ];
 
@@ -134,6 +136,10 @@ function input(over: Partial<AnalysisInput> = {}): AnalysisInput {
 const serialise = (over: Partial<AnalysisInput> = {}): string =>
   JSON.stringify(buildAnalysisPackage(input(over)) as AnalysisPackage);
 
+/** The whole файл as it would leave — the пакет plus every word of prose wrapped around it. */
+const render = (over: Partial<AnalysisInput> = {}): string =>
+  renderDocument(buildAnalysisPackage(input(over)) as AnalysisPackage, 'external-advanced').text;
+
 describe('what a пакет для аналізу never carries', () => {
   it('Scenario: Nothing secret and nothing overheard reaches the пакет', () => {
     // Everything on: the most a пакет can ever hold.
@@ -167,6 +173,26 @@ describe('what a пакет для аналізу never carries', () => {
       'ua.privatbank.ap24',
     ]) {
       expect(withDevice, `the пакет carries «${secret}»`).not.toContain(secret);
+    }
+  });
+
+  it('Scenario: Nothing secret and nothing overheard reaches the файл around it', () => {
+    // The пакет is not all that leaves: the файл wraps it in prose — a запит, an instruction
+    // section, a context and a readable summary — and a new prose section is exactly where a
+    // назва рахунку or an id could reappear. So the sentinel runs over the whole rendered text,
+    // in both detail shapes, and not over the пакет alone.
+    for (const included of [
+      { descriptions: false, transactions: false },
+      { descriptions: true, transactions: true },
+    ]) {
+      const file = render({ included });
+
+      expect(file, `included: ${JSON.stringify(included)}`).not.toContain(SENTINEL);
+      // And the назви themselves, sentinel or not — the summary formats сумі and names категорії,
+      // and it may never name a рахунок or a ціль's id.
+      for (const secret of ['mono black', 'Банка на авто', 'Військові облігації', 'goal-car']) {
+        expect(file, `the файл carries «${secret}»`).not.toContain(secret);
+      }
     }
   });
 

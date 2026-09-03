@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!--
+    Deliberately empty of everything.
+
+    No permission: `PixelCopy` reads the pixels of a window this app already owns, which is not a
+    protected operation and shows the owner no consent dialog. No service and no receiver: the
+    capture happens inside one `AsyncFunction`, on the activity that is already in front of the
+    owner. No `<queries>`: this module never asks about another app.
+
+    If this file ever grows a permission, the change that adds it is a change to the privacy
+    contract in docs/product-vision.md §12, not a build detail.
+  -->
+  <application />
+</manifest>

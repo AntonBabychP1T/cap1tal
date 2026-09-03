@@ -21,8 +21,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { href: '/manage/categories', title: 'Категорії', hint: 'Куди пішли гроші' },
   { href: '/manage/sources', title: 'Джерела', hint: 'Звідки прийшли гроші' },
   { href: '/manage/rules', title: 'Правила', hint: 'Автокатегоризація імпорту' },
-  { href: '/manage/limits', title: 'Ліміти', hint: 'Місячна стеля по категорії' },
-  { href: '/manage/goals', title: 'Цілі', hint: 'Відкласти суму до дати' },
+  { href: '/manage/limits', title: 'Ліміти', hint: 'Місячна стеля по категорії — вона ж ціль витрат' },
+  { href: '/manage/goals', title: 'Цілі', hint: 'Накопичити суму або не перевищити витрати' },
   { href: '/manage/saldo-import', title: 'Імпорт Saldo', hint: 'Разовий переїзд з історією' },
   { href: '/manage/monobank', title: 'monobank', hint: 'Токен, рахунки та синхронізація' },
   {

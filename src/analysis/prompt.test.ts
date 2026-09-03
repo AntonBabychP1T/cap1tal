@@ -1,10 +1,97 @@
 import { describe, expect, it } from 'vitest';
 
-import { CONTEXT, INSTRUCTIONS } from './prompt';
+import { CONTEXT, INSTRUCTIONS, REQUEST, SHORT_REQUEST } from './prompt';
 
 /** Every required sentence, asserted by a stable key phrase rather than by its whole wording. */
 const holds = (sentences: readonly string[], phrase: string): boolean =>
   sentences.some((sentence) => sentence.includes(phrase));
+
+describe('the запит', () => {
+  const request = REQUEST('місячна картина', '2026-06 — 2026-08').join('\n');
+
+  it('Scenario: The request names the task, the kind and the period', () => {
+    // What it is, and who it came from.
+    expect(request).toContain('пакет фінансових даних із застосунку cap1tal');
+    // The ask itself — an analysis and a practical overview of the period.
+    expect(request).toContain('Проаналізуй наведені дані');
+    expect(request).toContain('практичний фінансовий огляд за цей період');
+    // The kind and the period it was given.
+    expect(request).toContain('місячна картина за період 2026-06 — 2026-08');
+    // And that everything needed is further down in the same файл.
+    expect(request).toContain('Усе потрібне є в цьому ж файлі, нижче');
+    expect(request).toContain('інструкції');
+    expect(request).toContain('визначенням кожного терміна');
+    expect(request).toContain('самі дані');
+    expect(request).toContain('Шукати щось поза файлом не треба');
+  });
+
+  it('names the kind and the period it was given, and no other', () => {
+    const other = REQUEST('інвестиції', '2027-01 — 2027-03').join('\n');
+
+    expect(other).toContain('інвестиції за період 2027-01 — 2027-03');
+    expect(other).not.toContain('місячна картина');
+    expect(other).not.toContain('2026');
+  });
+
+  it('Scenario: The request asks for nothing the instructions forbid', () => {
+    // The запит is the first thing a model reads, so it must not pull toward what `INSTRUCTIONS`
+    // then forbids. It asks for the data below it to be analysed — never for a forecast, a figure
+    // the assistant works out itself, or a recommendation presented as a finding.
+    const lowered = request.toLowerCase();
+    for (const forbidden of [
+      'прогноз',
+      'спрогноз',
+      'передбач',
+      'порахуй',
+      'обчисли',
+      'підрахуй',
+      'підсумуй',
+      'оціни',
+      'порада',
+      'порадь',
+    ]) {
+      expect(lowered, `the запит asks for «${forbidden}»`).not.toContain(forbidden);
+    }
+    expect(request).toContain('Проаналізуй наведені дані');
+  });
+
+  it('Scenario: The request adds no number', () => {
+    // The period is the only figure the запит may carry. The app's own name carries a digit of
+    // its own — «cap1tal» — and that is a name, not a number, so both are removed before looking.
+    const withoutPeriod = request.split('2026-06 — 2026-08').join('').split('cap1tal').join('');
+
+    expect(withoutPeriod).not.toMatch(/\d/);
+  });
+});
+
+describe('the короткий запит', () => {
+  it('Scenario: The message says nothing the файл does not', () => {
+    // It asks for the attached файл to be analysed…
+    expect(SHORT_REQUEST).toContain('Проаналізуй');
+    expect(SHORT_REQUEST).toContain('прикріплений файл cap1tal');
+    // …and says the файл itself holds the context, the definitions and the instructions.
+    expect(SHORT_REQUEST).toContain('у самому файлі є повний контекст');
+    expect(SHORT_REQUEST).toContain('визначення термінів');
+    expect(SHORT_REQUEST).toContain('інструкції');
+  });
+
+  it('carries no сума, no категорія and no period', () => {
+    // No figure at all: not a period, not a count, not a сума. «cap1tal» is a name, not a number.
+    expect(SHORT_REQUEST.split('cap1tal').join('')).not.toMatch(/\d/);
+    expect(SHORT_REQUEST).not.toMatch(/\d{4}-\d{2}/);
+    for (const category of ['Кафе', 'Продукти', 'Житло', 'категорі']) {
+      expect(SHORT_REQUEST).not.toContain(category);
+    }
+    // And it is short enough to be a message rather than a second файл.
+    expect(SHORT_REQUEST.length).toBeLessThan(300);
+  });
+
+  it('names no assistant, brand or app', () => {
+    for (const brand of ['ChatGPT', 'GPT', 'Claude', 'Gemini', 'Copilot', 'DeepSeek', 'Grok']) {
+      expect(SHORT_REQUEST).not.toContain(brand);
+    }
+  });
+});
 
 describe('the instructions', () => {
   it('Scenario: The instructions forbid what the assistant must not do', () => {
@@ -32,6 +119,16 @@ describe('the instructions', () => {
     expect(holds(instructions, 'Відповідай українською')).toBe(true);
   });
 
+  it('Scenario: The instructions name what is worth looking at', () => {
+    const instructions = INSTRUCTIONS['external-advanced'];
+
+    expect(holds(instructions, 'зміни від місяця до місяця')).toBe(true);
+    expect(holds(instructions, 'найбільші категорії за період')).toBe(true);
+    expect(holds(instructions, 'виділяються на тлі попередніх місяців')).toBe(true);
+    expect(holds(instructions, 'ліміти')).toBe(true);
+    expect(holds(instructions, 'цілі')).toBe(true);
+  });
+
   it('asks for the seven-part answer, in that order', () => {
     const instructions = INSTRUCTIONS['external-advanced'];
 
@@ -54,6 +151,20 @@ describe('the instructions', () => {
 });
 
 describe('the context', () => {
+  it('Scenario: The context defines a ліміт and a ціль', () => {
+    // The instruction section points the answer at both, so the файл has to define both — a файл
+    // that instructs attention to a term it never defines is not self-contained.
+    expect(holds(CONTEXT, 'Ліміт — місячна стеля витрат на одну категорію')).toBe(true);
+    expect(holds(CONTEXT, 'у власній валюті ліміту')).toBe(true);
+    expect(holds(CONTEXT, 'рівність — не перевищення')).toBe(true);
+    expect(holds(CONTEXT, 'ні враховуються в ліміт, ні конвертуються')).toBe(true);
+
+    expect(holds(CONTEXT, 'прогрес — це розрахунковий баланс прив’язаного рахунку')).toBe(true);
+    expect(holds(CONTEXT, 'у валюті того рахунку і без жодної конвертації')).toBe(true);
+    expect(holds(CONTEXT, 'досягнута')).toBe(true);
+    expect(holds(CONTEXT, 'прострочена')).toBe(true);
+  });
+
   it('Scenario: The context defines the month', () => {
     // The six numbers, each defined.
     for (const phrase of [

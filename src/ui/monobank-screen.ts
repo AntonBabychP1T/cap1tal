@@ -69,6 +69,45 @@ function lastSyncOf(lastSyncedAtMs: number | null | undefined, now: Date): strin
     : `Синхронізовано ${momentLabel(lastSyncedAtMs, now)}`;
 }
 
+/**
+ * What the screen says while a run *it did not start* is going on, and once one has ended.
+ *
+ * A sync now starts on its own — opening the app, coming back to it, the pull on Головний — so
+ * this screen can be looking at a run it has no progress for and no right to stop. It says so and
+ * offers neither button: starting would be refused by the one-run lock, and «Зупинити» would be
+ * this screen stopping somebody else's work.
+ */
+export const FOREIGN_RUN_RUNNING = 'Синхронізація вже триває — почалася не з цього екрана.';
+export const FOREIGN_RUN_FINISHED = 'Синхронізація, що вже тривала, завершилася.';
+
+/**
+ * Which of the three things the sync card offers, given the two facts the screen holds: whether a
+ * run is going on anywhere, and whether *this* screen is the one that started it.
+ *
+ * A decision rather than three nested ternaries in JSX, because it is exactly the kind of
+ * two-input boolean that `verify` can prove and a rendered tree cannot. The screen maps the answer
+ * to a button and adds nothing.
+ */
+export type SyncControl =
+  /** This screen's own run is going on: it may be stopped, because it is this screen's to stop. */
+  | 'stop'
+  /** Someone else's run is going on: neither button, just `FOREIGN_RUN_RUNNING`. */
+  | 'foreign'
+  /** Nothing is going on: «Синхронізувати». */
+  | 'start';
+
+export function syncControl(input: {
+  /** Whether any run is going on, whoever started it. */
+  readonly inFlight: boolean;
+  /** Whether this screen is the one that started the run it is waiting on. */
+  readonly busy: boolean;
+}): SyncControl {
+  if (input.busy) {
+    return 'stop';
+  }
+  return input.inFlight ? 'foreign' : 'start';
+}
+
 /** Said for a linked account no sync has completed for — never an empty gap where a date goes. */
 export const NEVER_SYNCED_ACCOUNT = 'Ще не синхронізовано';
 
@@ -90,13 +129,30 @@ export function lastSyncLine(input: {
   if (input.links.length === 0) {
     return null;
   }
-  const moments = input.links
-    .map((link) => link.lastSyncedAtMs)
-    .filter((ms): ms is number => ms !== null && ms !== undefined);
-  if (moments.length === 0) {
+  const latest = lastCompletedSyncMs(input.links);
+  if (latest === undefined) {
     return NEVER_SYNCED_DEVICE;
   }
-  return `Остання синхронізація — ${momentLabel(Math.max(...moments), input.now)}`;
+  return `Остання синхронізація — ${momentLabel(latest, input.now)}`;
+}
+
+/**
+ * The moment the most recently synced of these links completed, or `undefined` when none ever has.
+ *
+ * Exported because two screens state the same moment in different words — this screen names it,
+ * Головний ages it into «оновлено 3 хв тому» — and the main-screen spec requires them to be the
+ * same moment. Two reducers would be two answers the day one of them started filtering
+ * differently; there is one, and it is under `verify`.
+ *
+ * Only a completed account carries a moment (`markSynced`), so a failed run cannot move this.
+ */
+export function lastCompletedSyncMs(
+  links: readonly { readonly lastSyncedAtMs?: number | null }[],
+): number | undefined {
+  const moments = links
+    .map((link) => link.lastSyncedAtMs)
+    .filter((ms): ms is number => ms !== null && ms !== undefined);
+  return moments.length > 0 ? Math.max(...moments) : undefined;
 }
 
 /** The state the screen is in as far as monobank's own answer is concerned. */
@@ -263,7 +319,10 @@ export interface SyncSummary {
   }[];
   /** Whether anything is left unfinished, so a retry is worth offering. */
   readonly retryOffered: boolean;
-  /** Whether the token itself is what failed, so replacing it is the offer rather than a retry. */
+  /**
+   * Whether the токен is what stands between the owner and a sync, so entering one is the offer
+   * rather than a retry — because it failed mid-run, or because there is none to fail.
+   */
   readonly replaceTokenOffered: boolean;
 }
 
@@ -283,8 +342,11 @@ export function syncSummary(
     return {
       headline: RUN_HEADLINES[run.kind],
       accounts: [],
-      retryOffered: run.kind !== 'no-links',
-      replaceTokenOffered: false,
+      // A run that never began left no unfinished work, so a retry would only restate the same
+      // setup message — the same line `syncFailed` draws just below, for the same reason. Only a
+      // storage that would not answer is worth trying again; a missing токен is worth entering.
+      retryOffered: run.kind === 'storage-unavailable',
+      replaceTokenOffered: run.kind === 'not-configured',
     };
   }
   return {

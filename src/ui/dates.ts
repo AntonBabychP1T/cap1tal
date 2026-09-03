@@ -101,6 +101,42 @@ export function momentLabel(ms: number, now: Date): string {
     : `${date} ${at.getFullYear()} о ${time}`;
 }
 
+/**
+ * How long ago something happened, as Головний says it: «щойно», «3 хв тому», «5 год тому», and
+ * `momentLabel`'s own words once it is more than a day old.
+ *
+ * An age rather than a moment, because the question it answers is different from the monobank
+ * screen's. Головний asks «is what I am looking at current», and «оновлено 3 хв тому» answers it
+ * without the owner doing arithmetic; the monobank screen asks «when did each рахунок last sync»,
+ * where the moment itself is the answer. Past a day an age stops being useful — «31 год тому» is
+ * work to read — and both fall through to the same words, so they converge where it matters.
+ *
+ * «хв» and «год» rather than «хвилини» and «годин» on purpose: `plural` in `./labels` would give
+ * the three Ukrainian forms correctly, but the abbreviation is what a status line wants and it
+ * keeps three grammatical forms out of the busiest string in the app.
+ *
+ * A moment in the future — a clock corrected backwards, a phone carried across a zone — reads as
+ * «щойно» rather than as a negative age: it is the nearest true thing to say, and the alternative
+ * is arithmetic nobody can act on.
+ */
+export function freshnessLabel(ms: number, now: Date): string {
+  const elapsed = now.getTime() - ms;
+  if (elapsed < MINUTE_MS) {
+    return 'щойно';
+  }
+  if (elapsed < HOUR_MS) {
+    return `${Math.floor(elapsed / MINUTE_MS)} хв тому`;
+  }
+  if (elapsed < DAY_MS) {
+    return `${Math.floor(elapsed / HOUR_MS)} год тому`;
+  }
+  return momentLabel(ms, now);
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
 /** The shape a дата is typed in, and the shape the placeholder «РРРР-ММ-ДД» asks for. */
 const TYPED_DATE = /^\d{4}-\d{2}-\d{2}$/;
 

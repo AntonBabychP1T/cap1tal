@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { Choices } from '@/components/form';
@@ -9,6 +9,8 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   goals as goalsRepo,
+  limits as limitsRepo,
+  rates as ratesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
@@ -107,6 +109,105 @@ function AxisLabel({ children }: { children: string }) {
 }
 
 /**
+ * A chart's span as one string, used as the strip's `key`. The months are contiguous, so how many
+ * there are and which is first says which span this is — and a new span must remount the strip
+ * (see `MonthStrip`), not merely re-render it.
+ */
+function spanOf(columns: readonly { readonly month: string }[]): string {
+  return `${columns.length}:${columns[0]?.month ?? ''}`;
+}
+
+/** How a column tells the strip around it where it sits. Unset outside one, which is never. */
+const MeasureColumn = createContext<
+  ((month: string, x: number, width: number) => void) | undefined
+>(undefined);
+
+/**
+ * A chart's columns behind a horizontal scroll that keeps the marked month whole on screen.
+ *
+ * A chart wider than its card opens at its left edge, while the month it marks is the newest one
+ * holding a сума — usually its last column. The emulator showed exactly that: «Вер 2026» marked
+ * and its pill cut in half by the right edge. So the strip measures its own viewport and every
+ * column, and when the marked column is not wholly inside the window it scrolls it to the middle.
+ *
+ * Only when it is *not* already whole. A month picked on this chart was tapped, so it was already
+ * visible, and a chart that jumped under the finger that tapped it would be worse than the
+ * clipping this fixes. What does move is the other chart, which the pick governs too.
+ *
+ * Everything is a ref: none of these numbers is drawn, and putting a scroll offset in state would
+ * re-render both charts on every pixel of a drag.
+ *
+ * **The caller keys this on its span** (see both call sites). A column reports its place through
+ * `onLayout`, which does not fire when a column keeps its size and only slides sideways — so when
+ * the span grows under a mounted «Звіти» (a транзакція recorded in a month the chart did not have,
+ * then back to the tab) every remembered `x` is silently a column too far left, and the strip
+ * would sit on its old offset believing the mark was still whole. The emulator found exactly that:
+ * the readout said «ВЕР 2026» over a chart showing Лют–Тра 2026 and no pill anywhere. Remounting
+ * on a new span throws the stale measurements away and makes every column report itself again.
+ */
+function MonthStrip({ marked, children }: { marked?: string; children: React.ReactNode }) {
+  const scroller = useRef<ScrollView>(null);
+  const columns = useRef(new Map<string, { x: number; width: number }>());
+  const viewport = useRef(0);
+  const offset = useRef(0);
+  const markedNow = useRef(marked);
+
+  const bring = useCallback(() => {
+    const month = markedNow.current;
+    const column = month === undefined ? undefined : columns.current.get(month);
+    const width = viewport.current;
+    if (!column || width === 0) {
+      return;
+    }
+    const whole = column.x >= offset.current && column.x + column.width <= offset.current + width;
+    if (whole) {
+      return;
+    }
+    const x = Math.max(0, column.x + column.width / 2 - width / 2);
+    // Remembered here and not left to `onScroll`: a programmatic jump does not reliably raise a
+    // scroll event on every platform, and the containment test above would then keep reading the
+    // window the strip was at before this call and scroll again on the next measurement.
+    offset.current = x;
+    scroller.current?.scrollTo({ x, animated: false });
+  }, []);
+
+  // The mark moved — on opening, or because the owner picked a month on the other chart.
+  useEffect(() => {
+    markedNow.current = marked;
+    bring();
+  }, [bring, marked]);
+
+  const measure = useCallback(
+    (month: string, x: number, width: number) => {
+      columns.current.set(month, { x, width });
+      // A column laid out after the effect above has run still has to be brought in: on the first
+      // pass there were no measurements for it to read.
+      bring();
+    },
+    [bring],
+  );
+
+  return (
+    <MeasureColumn.Provider value={measure}>
+      <ScrollView
+        ref={scroller}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        scrollEventThrottle={32}
+        onScroll={({ nativeEvent }) => {
+          offset.current = nativeEvent.contentOffset.x;
+        }}
+        onLayout={({ nativeEvent }) => {
+          viewport.current = nativeEvent.layout.width;
+          bring();
+        }}>
+        <View style={styles.chart}>{children}</View>
+      </ScrollView>
+    </MeasureColumn.Provider>
+  );
+}
+
+/**
  * One month's column: its bars over the zero line, its name under them, and the tap that picks it.
  *
  * The pick is marked on the month's name and nowhere else — the app's own «current choice» tint,
@@ -114,19 +215,29 @@ function AxisLabel({ children }: { children: string }) {
  * more bar, which on a chart is worse than not marking it at all.
  */
 function Column({
+  month,
   label,
   selected,
   onPick,
   children,
 }: {
+  month: string;
   label: string;
   selected: boolean;
   onPick: () => void;
   children: React.ReactNode;
 }) {
   const theme = useTheme();
+  const measure = useContext(MeasureColumn);
   return (
-    <Pressable onPress={onPick} accessibilityLabel={label} style={styles.column}>
+    <Pressable
+      onPress={onPick}
+      accessibilityLabel={label}
+      style={styles.column}
+      // Its own place in the strip, so the strip can tell whether the mark on it is whole.
+      onLayout={({ nativeEvent }) =>
+        measure?.(month, nativeEvent.layout.x, nativeEvent.layout.width)
+      }>
       <View>
         <View style={styles.columnBars}>{children}</View>
         {/* The zero the bars grow from, drawn per column so it reaches exactly as far as the
@@ -185,6 +296,10 @@ export default function ReportsScreen() {
         transactions: transactionsRepo.listAll(),
         categories: categoriesRepo.list(),
         goals: goalsRepo.list(),
+        // Every ліміт is a ціль витрат (design D1), and a склад spanning currencies needs the
+        // stored rates to be approximated at all. Both are read here and changed nowhere.
+        limits: limitsRepo.list(),
+        rates: ratesRepo.all(),
       }),
       [],
     ),
@@ -203,6 +318,9 @@ export default function ReportsScreen() {
         transactions: stored.transactions,
         categoryNames,
         goals: stored.goals,
+        limits: stored.limits,
+        categories: stored.categories,
+        rates: stored.rates,
         shownCurrency,
         chosenCategoryId,
         chosenMonth,
@@ -236,26 +354,25 @@ export default function ReportsScreen() {
             {model.historyReadout ? <HistoryNumbers readout={model.historyReadout} /> : null}
             <View style={styles.plot}>
               {model.historyAxis ? <Axis axis={model.historyAxis} /> : null}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={styles.chart}>
-                  {model.history.map((column) => (
-                    <Column
-                      key={column.month}
-                      label={column.label}
-                      selected={column.selected}
-                      onPick={() => setChosenMonth(column.month)}>
-                      {column.bars.map((bar) => (
-                        <Bar
-                          key={bar.key}
-                          bar={bar}
-                          color={BAR_COLORS[bar.key]!}
-                          room={model.historyHasNegative}
-                        />
-                      ))}
-                    </Column>
-                  ))}
-                </View>
-              </ScrollView>
+              <MonthStrip key={spanOf(model.history)} marked={model.historyReadout?.month}>
+                {model.history.map((column) => (
+                  <Column
+                    key={column.month}
+                    month={column.month}
+                    label={column.label}
+                    selected={column.selected}
+                    onPick={() => setChosenMonth(column.month)}>
+                    {column.bars.map((bar) => (
+                      <Bar
+                        key={bar.key}
+                        bar={bar}
+                        color={BAR_COLORS[bar.key]!}
+                        room={model.historyHasNegative}
+                      />
+                    ))}
+                  </Column>
+                ))}
+              </MonthStrip>
             </View>
           </Card>
 
@@ -285,23 +402,24 @@ export default function ReportsScreen() {
                 ) : null}
                 <View style={styles.plot}>
                   {model.categoryAxis ? <Axis axis={model.categoryAxis} /> : null}
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    <View style={styles.chart}>
-                      {model.categoryChart.map((column) => (
-                        <Column
-                          key={column.month}
-                          label={column.label}
-                          selected={column.selected}
-                          onPick={() => setChosenMonth(column.month)}>
-                          <Bar
-                            bar={column}
-                            color={BAR_COLORS.spent!}
-                            room={model.categoryChartHasNegative}
-                          />
-                        </Column>
-                      ))}
-                    </View>
-                  </ScrollView>
+                  <MonthStrip
+                    key={spanOf(model.categoryChart)}
+                    marked={model.categoryReadout?.month}>
+                    {model.categoryChart.map((column) => (
+                      <Column
+                        key={column.month}
+                        month={column.month}
+                        label={column.label}
+                        selected={column.selected}
+                        onPick={() => setChosenMonth(column.month)}>
+                        <Bar
+                          bar={column}
+                          color={BAR_COLORS.spent!}
+                          room={model.categoryChartHasNegative}
+                        />
+                      </Column>
+                    ))}
+                  </MonthStrip>
                 </View>
               </>
             )}
@@ -315,45 +433,118 @@ export default function ReportsScreen() {
           <ThemedText type="small" themeColor="textSecondary">
             {model.emptyGoalsMessage}
           </ThemedText>
-        ) : (
-          model.goals.map((goal) => (
-            <View key={goal.id} style={styles.goal}>
-              <View style={styles.row}>
-                <ThemedText
-                  numberOfLines={1}
-                  style={styles.goalName}
-                  themeColor={
-                    goal.reached ? 'textPositive' : goal.overdue ? 'textDanger' : undefined
-                  }>
-                  {goal.name}
-                </ThemedText>
-                <ThemedText
-                  type="small"
-                  tabular
-                  themeColor={
-                    goal.reached ? 'textPositive' : goal.overdue ? 'textDanger' : 'textSecondary'
-                  }>
-                  {goal.progress} / {goal.target}
-                </ThemedText>
-              </View>
-              <View style={styles.row}>
-                <ThemedText type="small" themeColor="textMuted">
-                  до {goal.deadline}
-                </ThemedText>
-                {goal.reached ? (
-                  <ThemedText type="overline" themeColor="textPositive">
-                    Досягнута
+        ) : null}
+
+        {/* Two named groups, never one list: a ціль-накопичення moves toward a сума the owner
+            wants and a ціль витрат away from one they do not, so neither is ever read in the
+            other's words. Each row opens what explains it — the ціль's own breakdown, or the
+            категорія's month, where its транзакції already are. */}
+        {model.goals.accumulation.length > 0 ? (
+          <>
+            <ThemedText type="small" themeColor="textMuted">
+              {model.goals.accumulationTitle}
+            </ThemedText>
+            {model.goals.accumulation.map((goal) => (
+              <Pressable
+                key={goal.id}
+                onPress={() => router.push(goal.route as never)}
+                style={styles.goal}>
+                <View style={styles.row}>
+                  <ThemedText
+                    numberOfLines={1}
+                    style={styles.goalName}
+                    themeColor={
+                      goal.reached ? 'textPositive' : goal.overdue ? 'textDanger' : undefined
+                    }>
+                    {goal.name}
                   </ThemedText>
-                ) : null}
-                {goal.overdue ? (
-                  <ThemedText type="overline" themeColor="textDanger">
-                    Прострочена
+                  <ThemedText
+                    type="small"
+                    tabular
+                    themeColor={
+                      goal.reached ? 'textPositive' : goal.overdue ? 'textDanger' : 'textSecondary'
+                    }>
+                    {goal.progress === null
+                      ? '—'
+                      : `${goal.approximate ? '≈ ' : ''}${goal.progress} / ${goal.target}`}
                   </ThemedText>
-                ) : null}
-              </View>
-            </View>
-          ))
-        )}
+                </View>
+                <View style={styles.row}>
+                  <ThemedText type="small" themeColor="textMuted">
+                    {goal.uncountable ??
+                      [
+                        goal.percentage === null ? null : `${goal.approximate ? '≈ ' : ''}${goal.percentage} %`,
+                        goal.deadline === null ? null : `до ${goal.deadline}`,
+                        goal.accountCount,
+                      ]
+                        .filter((part) => part !== null)
+                        .join(' · ')}
+                  </ThemedText>
+                  {goal.reached ? (
+                    <ThemedText type="overline" themeColor="textPositive">
+                      Досягнута
+                    </ThemedText>
+                  ) : null}
+                  {goal.overdue ? (
+                    <ThemedText type="overline" themeColor="textDanger">
+                      Прострочена
+                    </ThemedText>
+                  ) : null}
+                </View>
+              </Pressable>
+            ))}
+          </>
+        ) : null}
+
+        {model.goals.spending.length > 0 ? (
+          <>
+            <ThemedText type="small" themeColor="textMuted">
+              {model.goals.spendingTitle}
+            </ThemedText>
+            {model.goals.spending.map((goal) => (
+              <Pressable
+                key={goal.categoryId}
+                onPress={() => router.push(goal.route as never)}
+                style={styles.goal}>
+                <View style={styles.row}>
+                  <ThemedText
+                    numberOfLines={1}
+                    style={styles.goalName}
+                    themeColor={goal.exceededBy ? 'textDanger' : undefined}>
+                    {goal.name}
+                    {goal.archived ? ' · в архіві' : ''}
+                  </ThemedText>
+                  <ThemedText
+                    type="small"
+                    tabular
+                    themeColor={goal.exceededBy ? 'textDanger' : 'textSecondary'}>
+                    {goal.spent} / {goal.ceiling}
+                  </ThemedText>
+                </View>
+                <View style={styles.row}>
+                  <ThemedText type="small" themeColor="textMuted">
+                    {goal.monthLabel}
+                    {goal.percentageUsed === null
+                      ? ''
+                      : ` · використано ${goal.percentageUsed} %`}
+                  </ThemedText>
+                  {/* Within: what may still be spent. Over: by how much — and no percentage at
+                      all, because «виконано на 124 %» is a lie about a thing the owner did not
+                      want to happen. */}
+                  {goal.exceededBy ? (
+                    <ThemedText type="overline" themeColor="textDanger">
+                      Перевищено на {goal.exceededBy}
+                    </ThemedText>
+                  ) : (
+                    <ThemedText type="overline" themeColor="textSecondary">
+                      Можна ще {goal.mayStillSpend}
+                    </ThemedText>
+                  )}
+                </View>
+              </Pressable>
+            ))}
+          </>
+        ) : null}
       </Card>
 
       {/* The way in to «AI-аналіз», and nothing more: showing it computes nothing, builds no
@@ -397,7 +588,9 @@ const styles = StyleSheet.create({
   plot: { flexDirection: 'row', gap: Spacing.two },
   axisAbove: { height: CHART_HEIGHT, justifyContent: 'space-between', alignItems: 'flex-end' },
   axisBelow: { height: CHART_HEIGHT, justifyContent: 'flex-end', alignItems: 'flex-end' },
-  chart: { flexDirection: 'row', gap: Spacing.one, paddingVertical: Spacing.one },
+  // The horizontal padding is the mark's breathing room: a pill on the first or last column must
+  // not sit flush against the edge the strip clips at, even when nothing scrolls.
+  chart: { flexDirection: 'row', gap: Spacing.one, padding: Spacing.one },
   column: { alignItems: 'center', gap: Spacing.one },
   columnLabel: {
     paddingHorizontal: Spacing.one,

@@ -12,6 +12,7 @@ import { failureAlert } from '@/ui/failure-alert';
 import {
   DEFAULT_LIMIT_CURRENCY,
   LIMIT_CURRENCIES,
+  LIMIT_IS_A_SPENDING_GOAL,
   limitFromDraft,
   limitRows,
   type LimitDraft,
@@ -92,7 +93,7 @@ export default function LimitsScreen() {
     <Screen>
       <ScreenHeader
         title="Ліміти"
-        subtitle="Місячна стеля по категорії. Перевищення лише підсвічує категорію червоним — нічого не блокується."
+        subtitle={`Місячна стеля по категорії. Перевищення лише підсвічує категорію червоним — нічого не блокується. ${LIMIT_IS_A_SPENDING_GOAL}`}
         back={() => router.back()}
       />
 

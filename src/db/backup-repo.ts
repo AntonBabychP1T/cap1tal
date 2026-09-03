@@ -12,6 +12,7 @@ import {
   dailyReminder,
   entryDefaults,
   fiscalReceipts,
+  goalAccounts,
   goals,
   monobankAccounts,
   monobankImportedItems,
@@ -89,18 +90,33 @@ export function backupRepo(db: Storage): BackupStore {
           .orderBy(asc(categoryLimits.categoryId))
           .all()
           .map((row) => ({ categoryId: row.categoryId, amount: money(row.amount, row.currency) })),
-        goals: db
-          .select()
-          .from(goals)
-          .orderBy(asc(goals.id))
-          .all()
-          .map((row) => ({
-            id: row.id,
-            name: row.name,
-            target: money(row.amount, row.currency),
-            deadline: row.deadline,
-            accountId: row.accountId,
-          })),
+        goals: (() => {
+          // The склад of every ціль in one query, in a stable order, so a snapshot of the same
+          // state is byte-identical whatever order SQLite happened to return the rows in.
+          const composition = new Map<string, string[]>();
+          for (const row of db
+            .select()
+            .from(goalAccounts)
+            .orderBy(asc(goalAccounts.goalId), asc(goalAccounts.accountId))
+            .all()) {
+            const held = composition.get(row.goalId);
+            if (held) held.push(row.accountId);
+            else composition.set(row.goalId, [row.accountId]);
+          }
+          return db
+            .select()
+            .from(goals)
+            .orderBy(asc(goals.id))
+            .all()
+            .map((row) => ({
+              id: row.id,
+              name: row.name,
+              target: money(row.amount, row.currency),
+              // Absent, never null: «this ціль has no дата» is the shape the бекап carries too.
+              ...(row.deadline === null ? {} : { deadline: row.deadline }),
+              accountIds: composition.get(row.id) ?? [],
+            }));
+        })(),
         transactions: db
           .select()
           .from(transactionsTable)
@@ -225,7 +241,7 @@ export function backupRepo(db: Storage): BackupStore {
       // the guard every other repository applies, here before the transaction opens, so a bad
       // дата costs nothing rather than being rolled back.
       for (const entry of state.transactions) isoDate(entry.transaction.date);
-      for (const goal of state.goals) isoDate(goal.deadline);
+      for (const goal of state.goals) if (goal.deadline !== undefined) isoDate(goal.deadline);
       for (const link of state.monobankLinks) isoDate(link.syncStartDate);
       for (const receipt of state.receipts) isoDate(receipt.issuedDate);
 
@@ -245,6 +261,10 @@ export function backupRepo(db: Storage): BackupStore {
         // a cascade would be one `PRAGMA foreign_keys = OFF` away from leaving orphans behind.
         tx.delete(receiptItems).run();
         tx.delete(fiscalReceipts).run();
+        // The склад rows go immediately before the цілі they hang under. The cascade would take
+        // them anyway; this file deletes in reference order and says so, for the reason stated
+        // above the чеки.
+        tx.delete(goalAccounts).run();
         tx.delete(goals).run();
         tx.delete(categoryLimits).run();
         tx.delete(rules).run();
@@ -302,10 +322,13 @@ export function backupRepo(db: Storage): BackupStore {
               name: goal.name,
               amount: goal.target.amount,
               currency: goal.target.currency,
-              deadline: goal.deadline,
-              accountId: goal.accountId,
+              deadline: goal.deadline ?? null,
             })
             .run();
+          // After the ціль and after the рахунки: both are pointed at by a склад row.
+          for (const accountId of goal.accountIds) {
+            tx.insert(goalAccounts).values({ goalId: goal.id, accountId }).run();
+          }
         }
         for (const entry of state.transactions) {
           tx.insert(transactionsTable)

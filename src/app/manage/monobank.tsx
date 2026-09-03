@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { Alert, StyleSheet, View } from 'react-native';
@@ -16,22 +16,30 @@ import {
 } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import type { AcceptedLink } from '@/db/monobank-repo';
-import { accounts as accountsRepo, monobank as monobankRepo, rules as rulesRepo } from '@/db/repos';
+import { accounts as accountsRepo, monobank as monobankRepo } from '@/db/repos';
 import { account, type AccountKind } from '@/domain/account';
 import { monobankConnection, type ConnectionResult } from '@/monobank/connection';
 import { suggestLinks } from '@/monobank/link';
-import { syncLinkedAccounts, type SyncProgress, type SyncRun } from '@/monobank/coordinator';
+import type { SyncProgress, SyncRun } from '@/monobank/coordinator';
+import { syncPorts } from '@/hooks/monobank-ports';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
-import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
-import { dateOfEpochMs, todayIso } from '@/ui/dates';
+import { todayIso } from '@/ui/dates';
 import { failureAlert } from '@/ui/failure-alert';
 import { journal } from '@/ui/journal';
 import { newId } from '@/ui/id';
 import { KIND_CHOICES } from '@/ui/labels';
 import {
+  onSyncState,
+  startSync,
+  syncInFlight,
+} from '@/ui/monobank-sync';
+import {
   boundaryConfirmation,
+  FOREIGN_RUN_FINISHED,
+  FOREIGN_RUN_RUNNING,
+  syncControl,
   CLIPBOARD_NO_TOKEN,
   linkChoiceLabel,
   linkChoices,
@@ -455,42 +463,63 @@ export default function MonobankScreen() {
     setRun(undefined);
     setStatus('Синхронізація почалася.');
     try {
-      const result = await syncLinkedAccounts({
-        tokenStore: monobankTokenStore,
-        fetch: (url, headers) => fetch(url, { headers }),
-        storage: monobankRepo,
-        rules: () => rulesRepo.list(),
-        nowMs: () => Date.now(),
-        now: () => new Date(),
-        // The statement's own seconds turned into the day the money moved. `dateOfEpochMs` is
-        // shared with the notification drain, so the two importers date a purchase alike.
-        dateOf: (unixSeconds) => dateOfEpochMs(unixSeconds * 1000),
-        wait: (ms) =>
-          new Promise<void>((resolve) => {
-            setTimeout(resolve, ms);
-          }),
-        newId,
-        onProgress: (event: SyncProgress) => setStatus(progressLabel(event, names)),
-        cancelled: () => cancelled.current,
+      // Through the one entry point every run goes through, which is what keeps this one from
+      // colliding with the one Головний starts on opening. It owns the lock, the attempt written
+      // around the run and the сповіщення; everything else below is this screen's, unchanged.
+      const started = await startSync({
+        // The device's own ports, shared with the other two triggers, plus the two things only
+        // this screen has: somewhere to report progress, and a «Зупинити» to obey.
+        sync: syncPorts({
+          onProgress: (event: SyncProgress) => setStatus(progressLabel(event, names)),
+          cancelled: () => cancelled.current,
+        }),
+        attempts: monobankRepo,
+        alerts: ALERT_PORTS,
+        // A sync outlives the owner's patience for watching it — a minute per request — so this is
+        // the failure they are least likely to be looking at. `attended()` is read now rather than
+        // when the run started, because leaving the app mid-sync is the whole case.
+        attended: attended(),
       });
-      setRun(result);
       setStatus(undefined);
       reload();
-      // A sync outlives the owner's patience for watching it — a minute per request — so this is
-      // the failure they are least likely to be looking at. `attended()` is read now rather than
-      // when the run started, because leaving the app mid-sync is the whole case.
+      if (started.kind === 'already-running') {
+        // A run started elsewhere was already going on, so this screen started nothing. Its
+        // per-account outcomes belong to the run the owner starts here and to no other, so the
+        // rows simply carry the moments it moved (spec: monobank-sync-screen).
+        setStatus(FOREIGN_RUN_FINISHED);
+        return;
+      }
+      const result = started.run;
+      setRun(result);
       if (syncFailed(result)) {
         // Shown in place on this screen, like the бекап's: no dialog, so no offer — but the
-        // журнал holds it with the same words the summary says, and the section reports it.
+        // журнал holds it with the same words the summary says, and the section reports it. The
+        // сповіщення itself was raised by `startSync`; this is the text the owner is looking at.
         journal.failure('monobank-sync', syncSummary(result, names).headline);
-        await raiseAlert('monobank-sync', { attended: attended() }, ALERT_PORTS);
-      } else {
-        await clearAlert('monobank-sync', ALERT_PORTS);
       }
     } finally {
       setBusy(false);
     }
   }, [names, reload]);
+
+  /**
+   * A run started elsewhere — by opening the app, or by the pull on Головний — going on right now.
+   *
+   * Kept in state and refreshed on `onSyncState` rather than read during render, because a run
+   * that *begins* while this screen is open has to reach it: the spec says the screen says so
+   * without being left and reopened.
+   */
+  const [elsewhere, setElsewhere] = useState(() => syncInFlight());
+  useEffect(
+    () =>
+      onSyncState(() => {
+        setElsewhere(syncInFlight());
+        reload();
+      }),
+    [reload],
+  );
+  /** What the sync card offers right now — the decision itself is in `monobank-screen.ts`. */
+  const control = syncControl({ inFlight: elsewhere, busy });
 
   /**
    * Opening the route reads the connection state and, when a token is kept, asks monobank once
@@ -792,9 +821,11 @@ export default function MonobankScreen() {
               </ThemedText>
             ))}
             {summary.replaceTokenOffered ? (
+              // The same door under two names: «Замінити» when a токен is stored and turned out
+              // not to work, «Ввести» when the run never began because there is none.
               <Action
                 variant="secondary"
-                title="Замінити токен"
+                title={configured ? 'Замінити токен' : 'Ввести токен'}
                 onPress={() => setEntering(true)}
               />
             ) : null}
@@ -809,7 +840,7 @@ export default function MonobankScreen() {
               : `Приєднано рахунків: ${stored.links.length}. Банк дозволяє один запит на хвилину, тож перша синхронізація може тривати.`}
           </ThemedText>
         )}
-        {busy ? (
+        {control === 'stop' ? (
           <Action
             variant="destructive"
             title="Зупинити"
@@ -817,6 +848,13 @@ export default function MonobankScreen() {
               cancelled.current = true;
             }}
           />
+        ) : control === 'foreign' ? (
+          // A run the owner did not start here is going on. Neither button is offered: starting
+          // would be refused by the lock, and stopping is not this screen's to do — it holds no
+          // «Зупинити» for a run it did not begin (spec: monobank-sync-screen).
+          <ThemedText type="small" themeColor="textSecondary">
+            {FOREIGN_RUN_RUNNING}
+          </ThemedText>
         ) : (
           // One accent fill per screen: without a token the screen's action is entering one, and
           // syncing without it would do nothing anyway.

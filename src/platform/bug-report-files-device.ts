@@ -160,7 +160,10 @@ export const bugReportFiles: BugReportFilesPort = {
 
     // The promise resolves when the chooser returns, the same way whether the owner picked an app
     // or dismissed it. So this says the file reached the system, and the screen says exactly that.
-    return { kind: 'handed-over' };
+    //
+    // `messageIncluded: false` is the AI-аналіз's field, and it is false here for a simpler reason
+    // than there: a репорт про помилку offers no короткий запит at all (`bug-report-files.ts`).
+    return { kind: 'handed-over', messageIncluded: false };
   },
 };
 

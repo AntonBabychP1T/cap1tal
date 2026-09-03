@@ -15,6 +15,12 @@ import type { AnalysisShareOutcome } from './analysis-share';
  * `failed` is a file that could not be written. Reusing the type rather than declaring a twin is
  * also what keeps the two screens saying the same words about the same event.
  *
+ * `handed-over` carries `messageIncluded`, which belongs to the AI-аналіз and not here: a репорт
+ * про помилку has no короткий запит to offer the phone beside it. It is therefore always `false` on
+ * this side — nothing was offered, so nothing was carried — and nothing on this side reads it. The
+ * field stays required rather than optional so that an adapter which one day *can* carry text has
+ * to say so, and the compiler is what asks.
+ *
  * Failures are values, as everywhere in this directory. A picker the owner backs out of is
  * `cancelled` and never a failure — the spec says so in as many words.
  */
@@ -117,7 +123,9 @@ export function inMemoryBugReportFiles(
     },
 
     share: async (file) => {
-      const outcome = options.outcome ?? { kind: 'handed-over' };
+      // `messageIncluded: false` — see the note above: a репорт про помилку offers the phone no
+      // короткий запит, so none was ever carried with it.
+      const outcome = options.outcome ?? { kind: 'handed-over', messageIncluded: false };
       if (outcome.kind === 'handed-over') {
         handed.push(file);
       }

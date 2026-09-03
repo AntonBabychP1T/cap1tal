@@ -1,8 +1,8 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View, type ScrollView } from 'react-native';
+import { Alert, Pressable, RefreshControl, StyleSheet, View, type ScrollView } from 'react-native';
 
-import { Action, Choices, Field, RowAction } from '@/components/form';
+import { Action, Field, Picker, RowAction } from '@/components/form';
 import {
   Card,
   CardGlow,
@@ -21,6 +21,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   limits as limitsRepo,
+  monobank as monobankRepo,
   notifications as notificationsRepo,
   rates as ratesRepo,
   rules as rulesRepo,
@@ -31,8 +32,11 @@ import { computeBalance } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { syncPorts } from '@/hooks/monobank-ports';
+import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { raise as raiseAlert } from '@/ui/alerting';
 import {
   confirmPendingDraft,
@@ -41,11 +45,15 @@ import {
   draftLines,
   type DraftAnswer,
 } from '@/ui/drafts-section';
-import { expenseCategoryChoices } from '@/ui/category-choices';
+import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { homeViewModel } from '@/ui/home-screen';
+import { lastCompletedSyncMs } from '@/ui/monobank-screen';
+import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
+import { reportFailure } from '@/ui/journal';
 import { currentMonth } from '@/ui/months';
+import { PICKER_SIZE } from '@/ui/shortlist';
 import { onCapturesStored } from '@/ui/notification-drain';
 import { firstRun } from '@/ui/onboarding';
 import { recategorise } from '@/ui/retype';
@@ -72,6 +80,13 @@ import { Spacing } from '@/constants/theme';
 
 /** How many транзакції the стрічка shows. The rest are one tap away, in «Транзакції». */
 const FEED_SIZE = 5;
+
+/**
+ * How far back the categorising picker reads what the owner reached for last. The стрічка above it
+ * is five lines — too few to learn anything from — so recency gets its own bounded read, the same
+ * one «Нова транзакція» makes, and the same rule: read, never counted, never stored.
+ */
+const RECENT_WINDOW = 50;
 
 /**
  * Whether this launch has already been handed to «Перші кроки». Module state on purpose: the
@@ -122,6 +137,8 @@ export default function MainScreen() {
         monthTransactions: transactionsRepo.listMonth(month),
         rates: ratesRepo.all(),
         feed: transactionsRepo.listLatest(FEED_SIZE),
+        // Deeper than the стрічка, and for one purpose: the категорії the picker offers first.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
         // Everything stored that still carries «Без категорії» — counted, not listed.
         uncategorised: transactionsRepo.countUncategorised(),
         // Every row, archived included: pickers filter, but a feed line still shows the name of a
@@ -132,12 +149,90 @@ export default function MainScreen() {
         // What the drain has left for the owner to answer. Pending ones only — a confirmed or
         // dismissed чернетка is deleted, so this is never a growing archive.
         drafts: notificationsRepo.pendingDrafts(),
+        // How fresh the bank data is: the links carry the moment each last completed a sync, and
+        // the attempt says how the last run went. Two local reads, beside the others.
+        links: monobankRepo.listLinks(),
+        attempt: monobankRepo.attempt(),
       };
     }, []),
   );
 
   // The «≈ … грн» beside the money held; its absence changes nothing else on the screen.
   useCurrentRates(reload);
+
+  /**
+   * Whether a monobank token is kept — the one thing about the connection this screen cannot read
+   * synchronously, because it lives in the device's secure storage.
+   *
+   * It decides only whether the freshness line exists at all: an owner who never connected a bank
+   * is told nothing about one, and one who removed their token sees the line stop rather than age
+   * silently. Read on focus like everything else here, and `undefined` until the first read
+   * answers, which draws no line rather than a wrong one.
+   */
+  const [configured, setConfigured] = useState<boolean>();
+  useFocusEffect(
+    useCallback(() => {
+      let current = true;
+      void monobankTokenStore.read().then((read) => {
+        if (current) {
+          setConfigured(read.kind === 'ok' && Boolean(read.token));
+        }
+      });
+      return () => {
+        current = false;
+      };
+    }, []),
+  );
+
+  /**
+   * Whether a sync is going on, whoever started it — the app opening, a return to the foreground,
+   * the pull below, or «Синхронізувати» on the monobank screen.
+   *
+   * Subscribed rather than read during render: a run that *begins* while Головний is already open
+   * has to reach the line, and neither opening the app nor coming back to it is a navigation
+   * focus. The same signal reloads what the screen shows, so транзакції a run imported appear
+   * without the owner leaving it.
+   */
+  const [syncing, setSyncing] = useState(() => syncInFlight());
+  useEffect(
+    () =>
+      onSyncState(() => {
+        setSyncing(syncInFlight());
+        reload();
+      }),
+    [reload],
+  );
+
+  /**
+   * Pulling down: re-read everything, and ask monobank for anything new.
+   *
+   * A run the owner asked for, so the quiet interval does not apply: `syncDue` is asked only by
+   * the trigger in the app shell, and nothing on this path consults it. With no token or no link it re-reads storage, sends nothing and refuses
+   * nothing; with a run already going on `startSync` waits for that one instead of starting a
+   * second, which is what keeps the spinner honest.
+   */
+  const [pulling, setPulling] = useState(false);
+  const pull = useCallback(async (): Promise<void> => {
+    setPulling(true);
+    try {
+      reload();
+      if (configured !== true || stored.links.length === 0) {
+        return;
+      }
+      await startSync({
+        sync: syncPorts(),
+        attempts: monobankRepo,
+        alerts: ALERT_PORTS,
+        // `attended()` and not a hardcoded `true`, unlike the run the app shell starts: a pull can
+        // begin a first sync that takes minutes, and the owner who started it may well have put
+        // the phone down. Read at the moment of the failure, like every other caller.
+        attended: attended(),
+      });
+      reload();
+    } finally {
+      setPulling(false);
+    }
+  }, [configured, reload, stored.links.length]);
 
   /**
    * Opening Головний again shows it from its top — the month's status. Restoring the scroll
@@ -190,10 +285,22 @@ export default function MainScreen() {
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
   // The джерела by id too: an imported дохід carries «Без джерела», and the стрічка has to name it.
   const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
-  const categoryPicks = useMemo(
-    () => expenseCategoryChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
+  /**
+   * What the categorising picker offers: every unarchived категорія except «Без категорії», which
+   * is what the line is being moved away from.
+   */
+  const categoryRows = useMemo(
+    () =>
+      expenseCategoryChoices(stored.categories).filter((c) => c.id !== UNCATEGORISED_CATEGORY_ID),
     [stored.categories],
   );
+  /**
+   * One more than a picker draws, deliberately. This screen's picker is the one place «Без
+   * категорії» is not offered — it is what the line is being moved off — and it is also the
+   * likeliest head of the recents on a phone full of imported витрати. Capped at five before that
+   * filter, the picker would routinely get four real recents and an alphabetical top-up.
+   */
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE + 1), [stored.latest]);
 
   /** The pending чернетки as lines; an empty list is no block at all, not an empty state. */
   const drafts = useMemo(
@@ -205,6 +312,12 @@ export default function MainScreen() {
       }),
     [sourceNames, stored.accounts, stored.drafts],
   );
+
+  /**
+   * The most recent moment a linked рахунок completed a sync, or nothing when none ever has.
+   * Only a completed account carries one, so a failed run leaves this exactly where it was.
+   */
+  const lastCompletedAtMs = useMemo(() => lastCompletedSyncMs(stored.links), [stored.links]);
 
   /**
    * Everything the screen says about the month, the money held and what is waiting. No number is
@@ -221,8 +334,18 @@ export default function MainScreen() {
         rates: stored.rates,
         uncategorised: stored.uncategorised,
         pendingDrafts: drafts.length,
+        monobank: {
+          configured: configured === true,
+          linked: stored.links.length,
+          // The most recent completed sync among the linked рахунки — the same moment the
+          // monobank screen states, in shorter words.
+          ...(lastCompletedAtMs === undefined ? {} : { lastCompletedAtMs }),
+          syncing,
+          ...(stored.attempt ? { attempt: stored.attempt } : {}),
+        },
+        now: new Date(),
       }),
-    [drafts.length, stored],
+    [configured, drafts.length, lastCompletedAtMs, stored, syncing],
   );
 
   /**
@@ -243,6 +366,16 @@ export default function MainScreen() {
 
   /** The «Без категорії» line whose one-tap picker is open, if any. */
   const [categorising, setCategorising] = useState<string>();
+  /**
+   * Whether that picker has its full list open. One boolean, because only one line categorises at
+   * a time — and it is held here so the phone's «назад» closes the list before leaving Головний.
+   */
+  const [categoryListOpen, setCategoryListOpen] = useState(false);
+  const closeCategoryList = useCallback(() => setCategoryListOpen(false), []);
+  // Both halves, because Головний is the tab where «назад» exits the app: the flag has to mean
+  // "a full list is on the screen right now", and `categorising` can go stale over a reload while
+  // `categoryListOpen` stays true.
+  useCloseOnBack(categorising !== undefined && categoryListOpen, closeCategoryList);
 
   /** One tap from the стрічка: the same transaction under the same id, now carrying the pick. */
   const categorise = useCallback(
@@ -334,6 +467,18 @@ export default function MainScreen() {
   return (
     <Screen
       scrollRef={scrollRef}
+      refreshControl={
+        <RefreshControl
+          refreshing={pulling}
+          onRefresh={() => {
+            // A run that throws outright is journaled and goes no further: an unhandled rejection
+            // out of a gesture handler is a red box the owner can do nothing with.
+            pull().catch((thrown: unknown) => {
+              reportFailure('monobank-sync', thrown);
+            });
+          }}
+        />
+      }
       overlay={<Fab onPress={() => router.push('/transaction/new')} />}>
       {/* The app's own name, not the tab's — the tab bar below already says which screen this is,
           and the reference reads as a product rather than as a form because of it. */}
@@ -404,6 +549,14 @@ export default function MainScreen() {
         </Pressable>
       ) : null}
 
+      {/* How fresh the bank data is — «оновлено 3 хв тому». Under the money held, because that is
+          the figure whose age it qualifies. Absent entirely for an owner with no monobank. */}
+      {model.monobank ? (
+        <ThemedText type="small" themeColor="textMuted" style={styles.freshness}>
+          {model.monobank.freshness}
+        </ThemedText>
+      ) : null}
+
       {/* Nothing to record on: the invitation stays on Головний, and the latest транзакції below
           still show whatever is stored. */}
       {model.held === null ? (
@@ -418,7 +571,7 @@ export default function MainScreen() {
           section is absent — no heading, no empty state. */}
       {model.attention.present ? (
         <>
-          {model.attention.rows.length > 0 ? (
+          {model.attention.rows.length > 0 || model.attention.monobank ? (
             <Card tone="accent" style={styles.attention}>
               <View style={styles.attentionHead}>
                 <Mark />
@@ -443,6 +596,25 @@ export default function MainScreen() {
                   </Pressable>
                 </View>
               ))}
+              {/* monobank, and only when it needs the owner: a rejected token at once, anything
+                  else once the data has gone stale. It leads where it is retried. */}
+              {model.attention.monobank ? (
+                <View>
+                  {model.attention.rows.length > 0 ? <Divider /> : null}
+                  <Pressable
+                    onPress={() => router.push('/manage/monobank')}
+                    accessibilityRole="button"
+                    style={styles.attentionRow}>
+                    <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+                      {model.attention.monobank}
+                    </ThemedText>
+                    <ThemedText type="link" themeColor="accent">
+                      Відкрити
+                    </ThemedText>
+                    <Chevron />
+                  </Pressable>
+                </View>
+              ) : null}
             </Card>
           ) : (
             <SectionLabel>{ATTENTION_TITLE}</SectionLabel>
@@ -570,18 +742,23 @@ export default function MainScreen() {
                   <View style={styles.rowActions}>
                     <RowAction
                       title={categorising === line.id ? 'Згорнути' : 'Обрати категорію'}
-                      onPress={() =>
-                        setCategorising(categorising === line.id ? undefined : line.id)
-                      }
+                      onPress={() => {
+                        setCategorising(categorising === line.id ? undefined : line.id);
+                        setCategoryListOpen(false);
+                      }}
                     />
                   </View>
                 ) : null}
                 {categorising === line.id ? (
-                  <Choices
+                  <Picker
                     label="Категорія"
-                    choices={categoryPicks.filter((c) => c.value !== UNCATEGORISED_CATEGORY_ID)}
+                    rows={categoryRows}
+                    recentIds={recent.categories}
                     selected={undefined}
                     onSelect={(picked: string) => categorise(t, picked)}
+                    noun="categories"
+                    expanded={categoryListOpen}
+                    onExpandedChange={setCategoryListOpen}
                   />
                 ) : null}
               </ListRow>
@@ -594,6 +771,8 @@ export default function MainScreen() {
 }
 
 const styles = StyleSheet.create({
+  // Right under the money held, aligned with it rather than centred: it qualifies that figure.
+  freshness: { marginTop: -8, paddingHorizontal: 4 },
   brand: { paddingHorizontal: Spacing.two, paddingBottom: Spacing.one },
   // Clipped, so the accent rings behind the figure end at the card's own corner.
   status: { gap: Spacing.two + Spacing.half, overflow: 'hidden' },

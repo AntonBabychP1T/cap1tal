@@ -27,6 +27,7 @@ import {
   nextState,
   PERIOD_CHOICES,
   runOutcomeWords,
+  shortRequestToCopy,
   textToCopy,
   type PeriodChoiceId,
   type RunState,
@@ -111,6 +112,16 @@ export default function AiAnalysisScreen() {
     }
     await Clipboard.setStringAsync(text);
     setRun((current) => nextState(current, { kind: 'copy' }));
+  }, [model]);
+
+  /** The короткий запит alone — for the app that took the attachment and no message with it. */
+  const copyRequest = useCallback(async () => {
+    const text = shortRequestToCopy(model);
+    if (!text) {
+      return;
+    }
+    await Clipboard.setStringAsync(text);
+    setRun((current) => nextState(current, { kind: 'copy-request' }));
   }, [model]);
 
   const outcome = runOutcomeWords(run);
@@ -198,6 +209,7 @@ export default function AiAnalysisScreen() {
       {model.preview ? (
         <Card style={styles.card}>
           <ThemedText type="small">{model.preview.handOver}</ThemedText>
+          <ThemedText type="small">{model.preview.requestIncluded}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             {model.preview.periodLabel}
           </ThemedText>
@@ -252,6 +264,15 @@ export default function AiAnalysisScreen() {
       {model.canCopy ? (
         <Action variant="secondary" title="Скопіювати" onPress={() => void copy()} />
       ) : null}
+      {model.canCopy ? (
+        <Action variant="secondary" title="Скопіювати запит" onPress={() => void copyRequest()} />
+      ) : null}
+      {model.canCopy && model.preview ? (
+        // Standing beside the action from the moment it is offered, and not only after it is used.
+        <ThemedText type="small" themeColor="textMuted" style={styles.hint}>
+          {model.preview.requestHint}
+        </ThemedText>
+      ) : null}
     </Screen>
   );
 }
@@ -264,4 +285,6 @@ const styles = StyleSheet.create({
   rangeField: { flex: 1 },
   // Tall enough to read a section of the файл in, short enough that the actions stay reachable.
   file: { maxHeight: 320 },
+  // The sentence under «Скопіювати запит», inset to the width the actions above it occupy.
+  hint: { paddingHorizontal: Spacing.two },
 });

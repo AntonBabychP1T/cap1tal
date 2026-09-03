@@ -36,7 +36,9 @@ describe('the files a репорт про помилку keeps and hands over', 
 
     const outcome = await files.share({ name: 'cap1tal-report.md', text: '# репорт' });
 
-    expect(outcome).toEqual({ kind: 'handed-over' });
+    // `messageIncluded` is the AI-аналіз's field on the shared outcome, and it is always false
+    // here: a репорт про помилку offers the phone no короткий запит beside the file.
+    expect(outcome).toEqual({ kind: 'handed-over', messageIncluded: false });
     expect(files.handed()).toEqual([{ name: 'cap1tal-report.md', text: '# репорт' }]);
   });
 

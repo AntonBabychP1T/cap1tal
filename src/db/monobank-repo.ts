@@ -10,6 +10,7 @@ import {
   monobankAccounts,
   monobankImportedItems,
   monobankLinks,
+  monobankSyncAttempt,
   transactions as transactionsTable,
 } from './schema';
 import type { Storage } from './storage';
@@ -59,6 +60,23 @@ export interface StoredMonobankLink extends MonobankLink {
    */
   readonly lastSyncedAtMs: number | null;
 }
+
+/**
+ * The last sync run this phone attempted, as storage remembers it.
+ *
+ * `outcome` is `undefined` while the run has not reported one — a run going on now, or one the
+ * phone did not survive. That is a third answer, not a missing one: the moment already counts
+ * against the quiet interval, and nothing about how it went is known yet.
+ */
+export interface StoredSyncAttempt {
+  /** Epoch milliseconds of the moment the run started. */
+  readonly attemptedAtMs: number;
+  /** One of the coordinator's account outcomes, or `undefined` while the run has not reported. */
+  readonly outcome?: string;
+}
+
+/** The one row's key; the CHECK in the schema is what keeps the table to it. */
+const ATTEMPT_ROW = 'attempt';
 
 /** One statement answer, whole — the unit `commitStatementAnswer` either stores or does not. */
 export interface StatementAnswer {
@@ -456,6 +474,57 @@ export function monobankRepo(db: Storage) {
         .where(eq(monobankLinks.accountId, accountId))
         .get();
       return row ? toStoredLink(row) : undefined;
+    },
+
+    /**
+     * The last run this phone attempted, or `undefined` on a device that has attempted none.
+     * `undefined` and «a moment with no outcome» are two different answers and the caller tells
+     * them apart: the first means nothing has been tried, the second that something was.
+     */
+    attempt(): StoredSyncAttempt | undefined {
+      const row = db.select().from(monobankSyncAttempt).get();
+      return row
+        ? {
+            attemptedAtMs: row.attemptedAt.getTime(),
+            ...(row.outcome === null ? {} : { outcome: row.outcome }),
+          }
+        : undefined;
+    },
+
+    /**
+     * A run is starting: this moment, and no outcome yet. Written before the first request rather
+     * than after the last, so a run the phone does not survive still spends its interval — see
+     * the table's own comment. Replaces whatever was remembered; there is one row.
+     */
+    beginAttempt(at: Date): void {
+      db.insert(monobankSyncAttempt)
+        .values({ id: ATTEMPT_ROW, attemptedAt: at, outcome: null })
+        .onConflictDoUpdate({
+          target: monobankSyncAttempt.id,
+          set: { attemptedAt: at, outcome: null },
+        })
+        .run();
+    },
+
+    /**
+     * The run reported: the same moment, now with how it went. An update rather than an upsert —
+     * `beginAttempt` always ran first, and writing a moment here would date the attempt from when
+     * it ended, which is not what the interval measures.
+     */
+    finishAttempt(outcome: string): void {
+      db.update(monobankSyncAttempt)
+        .set({ outcome })
+        .where(eq(monobankSyncAttempt.id, ATTEMPT_ROW))
+        .run();
+    },
+
+    /**
+     * The run never reached monobank — no token kept, no link, or the token storage unreadable —
+     * so nothing was tried and nothing is remembered as tried. Without this, a device with no
+     * token would wait out a quiet interval before every non-attempt.
+     */
+    withdrawAttempt(): void {
+      db.delete(monobankSyncAttempt).where(eq(monobankSyncAttempt.id, ATTEMPT_ROW)).run();
     },
 
     /** Whether this exact pair is already remembered — the read behind "at most once, forever". */

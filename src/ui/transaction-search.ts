@@ -1,6 +1,7 @@
 import type { Category, Source } from '../domain/category';
 import type { Transaction } from '../domain/transaction';
 import { parseAmount } from './amount-input';
+import { folded, nameMatches } from './labels';
 
 /**
  * What the owner typed on «Транзакції», turned into the thing storage can be asked, and the paging
@@ -20,11 +21,6 @@ export interface SearchMatch {
   readonly categoryIds: readonly string[];
   /** The джерела whose names the typed text occurs in — archived ones included. */
   readonly sourceIds: readonly string[];
-}
-
-/** The fold the owner's data needs; `toLowerCase()` folds ASCII only. */
-function folded(value: string): string {
-  return value.toLocaleLowerCase('uk');
 }
 
 /**
@@ -51,7 +47,7 @@ export function searchCriteria(
   const needle = folded(text);
   const named = <Row extends { readonly id: string; readonly name: string }>(
     rows: readonly Row[],
-  ): string[] => rows.filter((row) => folded(row.name).includes(needle)).map((row) => row.id);
+  ): string[] => rows.filter((row) => nameMatches(row.name, needle)).map((row) => row.id);
 
   return {
     text,

@@ -53,6 +53,10 @@ export default function NewBugReportScreen() {
       journal: journal.tail(),
       prompting,
       now: new Date(),
+      // The one thing this screen knows that the репорт cannot derive: whether a failure sent the
+      // owner here or they came looking. `prompt` is set only when a dialog offered «Повідомити
+      // про помилку», so it *is* the distinction — no second flag to keep in step.
+      origin: prompting === null ? 'section' : 'dialog',
     };
     const outcome = submitForm({
       id,

@@ -13,11 +13,11 @@ import { money } from '../domain/money';
 import {
   categoryChoicesFor,
   expenseCategoryChoices,
-  recentRows,
   recentlyUsed,
   sourceChoices,
   sourceChoicesFor,
 } from './category-choices';
+import { shortlist } from './shortlist';
 
 // The three reserved rows plus a slice of the starter set, deliberately unsorted so the order the
 // picker shows is the module's doing and not the storage order's.
@@ -175,11 +175,11 @@ describe('sourceChoices', () => {
 });
 
 /** A feed as `listLatest` hands it over: newest first. */
-const spent = (id: string, categoryId: string): Transaction => ({
+const spent = (id: string, categoryId: string, accountId = 'card'): Transaction => ({
   type: 'expense',
   id,
   date: '2026-09-01',
-  accountId: 'card',
+  accountId,
   amount: money(12000, 'UAH'),
   categoryId,
 });
@@ -207,10 +207,9 @@ describe('recentlyUsed', () => {
     expect(recent.categories).toEqual(['groceries', 'eating-out']);
 
     const offered = expenseCategoryChoices(categories);
-    expect(recentRows(recent.categories, offered).map((c) => c.name)).toEqual([
-      'Groceries',
-      'Eating out',
-    ]);
+    expect(
+      shortlist(offered, { recentIds: recent.categories }).slice(0, 2).map((c) => c.name),
+    ).toEqual(['Groceries', 'Eating out']);
     // The full list is still reachable, unchanged.
     expect(offered.map((c) => c.id)).toContain('groceries');
     expect(offered.map((c) => c.id)).toContain('eating-out');
@@ -222,15 +221,20 @@ describe('recentlyUsed', () => {
     expect(recent.categories).toEqual(['pets']);
     // «Pets» is archived, so neither list offers it — one rule, `expenseCategoryChoices`'s.
     const offered = expenseCategoryChoices(categories);
-    expect(recentRows(recent.categories, offered)).toEqual([]);
+    expect(shortlist(offered, { recentIds: recent.categories }).map((c) => c.id)).not.toContain(
+      'pets',
+    );
     expect(offered.map((c) => c.id)).not.toContain('pets');
   });
 
-  it('Scenario: A fresh device offers only the full list', () => {
+  it('Scenario: A fresh device names nothing at all', () => {
     const recent = recentlyUsed([], 5);
 
-    expect(recent).toEqual({ categories: [], sources: [] });
-    expect(recentRows(recent.categories, expenseCategoryChoices(categories))).toEqual([]);
+    expect(recent).toEqual({ accounts: [], categories: [], sources: [] });
+    // Nothing was reached for, so the picker is topped up from the head of the list instead.
+    expect(shortlist(expenseCategoryChoices(categories), { recentIds: recent.categories })).toEqual(
+      expenseCategoryChoices(categories).slice(0, 5),
+    );
   });
 
   it('Джерела are read the same way, off the доходи', () => {
@@ -239,22 +243,25 @@ describe('recentlyUsed', () => {
     const recent = recentlyUsed(feed, 5);
 
     expect(recent.sources).toEqual(['batky', 'salary']);
-    expect(recentRows(recent.sources, sourceChoices(sources)).map((s) => s.id)).toEqual([
-      'batky',
-      'salary',
-    ]);
-    // An archived джерело is out of both lists, exactly as an archived категорія is.
-    expect(recentRows(['freelance'], sourceChoices(sources))).toEqual([]);
+    expect(
+      shortlist(sourceChoices(sources), { recentIds: recent.sources }).slice(0, 2).map((s) => s.id),
+    ).toEqual(['batky', 'salary']);
+    // An archived джерело is out of both places, exactly as an archived категорія is.
+    expect(
+      shortlist(sourceChoices(sources), { recentIds: ['freelance'] }).map((s) => s.id),
+    ).not.toContain('freelance');
   });
 
   it('«Без джерела» is not offered by having been imported onto', () => {
     const recent = recentlyUsed([earned('i1', UNSOURCED_SOURCE_ID)], 5);
 
     expect(recent.sources).toEqual([UNSOURCED_SOURCE_ID]);
-    expect(recentRows(recent.sources, sourceChoices(sources))).toEqual([]);
+    expect(
+      shortlist(sourceChoices(sources), { recentIds: recent.sources }).map((s) => s.id),
+    ).not.toContain(UNSOURCED_SOURCE_ID);
   });
 
-  it('A переказ and a коригування carry neither, so they name nothing', () => {
+  it('A переказ and a коригування carry neither категорія nor джерело, but both name рахунки', () => {
     const feed: Transaction[] = [
       {
         type: 'transfer',
@@ -274,7 +281,13 @@ describe('recentlyUsed', () => {
       },
     ];
 
-    expect(recentlyUsed(feed, 5)).toEqual({ categories: [], sources: [] });
+    // Neither carries a label — the переказ has none and the domain fixes the коригування's.
+    // Both sit on рахунки, though, and a переказ sits on two: left before arrived.
+    expect(recentlyUsed(feed, 5)).toEqual({
+      accounts: ['card', 'jar'],
+      categories: [],
+      sources: [],
+    });
   });
 
   it('A повернення names its категорія like a витрата', () => {
@@ -296,5 +309,46 @@ describe('recentlyUsed', () => {
     const feed = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, index) => spent(`e${index}`, id));
 
     expect(recentlyUsed(feed, 5).categories).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('Scenario: The рахунки with recent movement are the ones shown', () => {
+    // Newest first: the переказ, then the витрата on «гаманець».
+    const feed: Transaction[] = [
+      {
+        type: 'transfer',
+        id: 't1',
+        date: '2026-09-02',
+        fromAccountId: 'mono-bila',
+        toAccountId: 'banka-vidpustka',
+        left: money(100000, 'UAH'),
+        arrived: money(100000, 'UAH'),
+      },
+      spent('e1', 'groceries', 'hamanets'),
+    ];
+
+    // Both legs of the переказ count, the one the money left first.
+    expect(recentlyUsed(feed, 5).accounts).toEqual([
+      'mono-bila',
+      'banka-vidpustka',
+      'hamanets',
+    ]);
+  });
+
+  it('A рахунок used twice is named once, in the place it was last used', () => {
+    const feed = [
+      spent('e3', 'groceries', 'card'),
+      spent('e2', 'coffee', 'hamanets'),
+      spent('e1', 'bills', 'card'),
+    ];
+
+    expect(recentlyUsed(feed, 5).accounts).toEqual(['card', 'hamanets']);
+  });
+
+  it('The рахунок row is bounded like the others', () => {
+    const feed = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, index) =>
+      spent(`e${index}`, 'groceries', id),
+    );
+
+    expect(recentlyUsed(feed, 5).accounts).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 });

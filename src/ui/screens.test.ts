@@ -250,3 +250,90 @@ describe('the crash fallback', () => {
     expect(linking).toEqual([]);
   });
 });
+
+/**
+ * What the two new bug-report surfaces must actually contain.
+ *
+ * Read as text, because `verify` runs no JSX. These are structural claims the behavioural tests
+ * cannot make: `bug-report-screen.test.ts` proves what the switch *words* say and what `handOver`
+ * *does*, and both stay green if the screen never draws a switch or never passes a confirmer. That
+ * gap is exactly how a warning stops being shown without a single test going red.
+ */
+describe('the screens that file a репорт from the screen the owner is on', () => {
+  const section = () => read('manage/bug-reports/index.tsx');
+  const sheet = () =>
+    readFileSync(join(COMPONENTS, 'bug-report-here.tsx'), 'utf8');
+  const savedReport = () => read('manage/bug-reports/[id].tsx');
+
+  it('the section actually draws both switches and writes them', () => {
+    const source = section();
+
+    // Drawn…
+    expect(source).toContain('GESTURE_SWITCH_LABEL');
+    expect(source).toContain('HANDLE_SWITCH_LABEL');
+    expect(source).toContain('<Switch');
+    // …bound to the two fields…
+    expect(source).toContain('gestureEnabled');
+    expect(source).toContain('handleEnabled');
+    // …written to storage, or the switch would forget itself the moment the screen closed…
+    expect(source).toContain('setCaptureSettings');
+    // …and the sentence about the скріншот is on the screen, not merely exported.
+    expect(source).toContain('CAPTURE_SECTION_WARNING');
+  });
+
+  it('both hand-over doors pass the скріншот confirmation', () => {
+    // `handOver` fails closed without it, so a screen that forgot would hand over nothing at all —
+    // which is safe, but is a broken «Передати» rather than a working one.
+    expect(sheet()).toContain('confirmScreenshots');
+    expect(savedReport()).toContain('confirmScreenshots');
+    // One copy of the dialog, imported — not two that can drift apart.
+    expect(savedReport()).toContain("from '@/components/bug-report-here'");
+    expect(savedReport()).not.toContain('SCREENSHOT_CONFIRMATION.title');
+  });
+
+  it('the sheet takes its gesture, its words and its ordering from src/ui', () => {
+    const source = sheet();
+
+    // The recognizer reads the values `verify` asserts, rather than repeating numbers.
+    expect(source).toContain('GESTURE.pointers');
+    expect(source).toContain('GESTURE.minDurationMs');
+    expect(source).toContain('GESTURE.maxDistanceDp');
+    // The ordering is `activate`'s, not the component's.
+    expect(source).toContain('activate({');
+    // The back gesture is «Скасувати» — one way out, not two.
+    expect(source).toContain('BackHandler.addEventListener');
+    expect(source).toContain('dismiss()');
+    // No number and no sentence invented here.
+    expect(source).not.toContain('1200');
+    expect(source).not.toContain('minDuration(2');
+  });
+
+  it('the sheet says which way a hand-over failed', () => {
+    const source = sheet();
+
+    // The one link in «A hand-over that cannot happen still leaves the репорт stored» that has no
+    // seam a Node test can reach: `handOver`'s two outcomes are proven in bug-report-screen.test.ts
+    // and both sentences in bug-report-here.test.ts, but the mapping between them lives here.
+    expect(source).toContain('HAND_OVER_UNAVAILABLE');
+    expect(source).toContain('handOverFailed(');
+    expect(source).toContain("state.kind === 'unavailable'");
+    expect(source).toContain("state.kind === 'failed'");
+    // And the репорт stays stored either way — the sheet must not discard it on a failed chooser.
+    expect(source).not.toContain('remove(id)');
+  });
+
+  it('nothing derives anything from a скріншот except the bytes the file needs', () => {
+    // «The app never looks inside a скріншот»: the one place image data is read at all is the
+    // files port, and only to base64 it into the file the owner hands over. Nothing decodes,
+    // measures, samples or OCRs one.
+    const readers = [...tsxUnder(APP), ...tsxUnder(COMPONENTS)]
+      .concat(
+        readdirSync(join(import.meta.dirname))
+          .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+          .map((name) => join(import.meta.dirname, name)),
+      )
+      .filter((path) => /getPixel|decodeBitmap|ImageData|createCanvas|OCR|recognizeText/i.test(readFileSync(path, 'utf8')));
+
+    expect(readers).toEqual([]);
+  });
+});

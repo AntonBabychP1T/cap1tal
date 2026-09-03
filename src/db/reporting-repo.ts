@@ -7,10 +7,12 @@ import type {
   BuildInfo,
   DeviceInfo,
   ReportCounts,
+  ReportOrigin,
   ReportScreenshot,
 } from '../reporting/report';
 import {
   accounts,
+  bugReportCapture,
   bugReportScreenshots,
   bugReports,
   categories,
@@ -48,6 +50,32 @@ import type { Storage } from './storage';
  */
 
 const KINDS: readonly JournalKind[] = ['screen', 'failure', 'alert', 'crash'];
+
+/** The four doors, checked on the way back out for `checkKind`'s reason — the enumeration is
+ *  TypeScript's, so a fifth door costs no migration and SQL knows nothing about it. */
+const ORIGINS: readonly ReportOrigin[] = ['here', 'dialog', 'crash', 'section'];
+
+/**
+ * The stored origin as a `ReportOrigin`, or `null`.
+ *
+ * An unrecognised string reads as `null` rather than throwing, against this file's usual habit and
+ * for one stated reason: `origin` is a fact *about* a diagnostic record, not part of one. A репорт
+ * written by a build that knew a door this one does not is still a репорт worth reading, and
+ * refusing to load it would lose the crash it was filed about to protect a label.
+ */
+function toOrigin(value: string | null): ReportOrigin | null {
+  return value !== null && ORIGINS.includes(value as ReportOrigin) ? (value as ReportOrigin) : null;
+}
+
+/** What a phone that has never touched either switch does: the gesture is the feature, the handle
+ *  is the fallback and would otherwise decorate every screen unasked (design D10). */
+export const CAPTURE_DEFAULTS: CaptureSettings = { gestureEnabled: true, handleEnabled: false };
+
+/** Whether a репорт may be filed from the screen the owner is on, and by which of the two doors. */
+export interface CaptureSettings {
+  readonly gestureEnabled: boolean;
+  readonly handleEnabled: boolean;
+}
 
 function checkKind(kind: string): JournalKind {
   // The enumeration is `src/reporting/journal.ts`'s, where the label and the rendering already
@@ -108,6 +136,8 @@ function toReport(row: BugReportRow, screenshots: readonly ReportScreenshot[]): 
           })(),
     screenshots,
     handedOverAt: row.handedOverAt,
+    origin: toOrigin(row.origin),
+    captureFailure: row.captureFailure,
   };
 }
 
@@ -118,6 +148,9 @@ function serialisable(entry: JournalEntry) {
 
 /** What the репорт's screen and the list ask for. `create` takes the rest as values. */
 export type NewBugReport = Omit<BugReport, 'screenshots' | 'handedOverAt'>;
+
+/** The one key `bug_report_capture` ever holds; the schema's CHECK is what enforces it. */
+const CAPTURE_ROW = 'capture';
 
 export function reportingRepo(db: Storage) {
   const screenshotsOf = (reportId: string): ReportScreenshot[] =>
@@ -193,6 +226,8 @@ export function reportingRepo(db: Storage) {
           journalJson: JSON.stringify(report.journal.map(serialisable)),
           migrationsApplied: report.migrationsApplied,
           handedOverAt: null,
+          origin: report.origin,
+          captureFailure: report.captureFailure,
         })
         .run();
     },
@@ -267,6 +302,37 @@ export function reportingRepo(db: Storage) {
       } catch {
         return 0;
       }
+    },
+
+    /**
+     * The two switches, or the defaults on a phone where neither has been touched.
+     *
+     * The absent row *is* the default state, so there is nothing to write on first read and a
+     * fresh install costs one SELECT rather than an INSERT on the launch path.
+     */
+    captureSettings(): CaptureSettings {
+      const row = db.select().from(bugReportCapture).where(eq(bugReportCapture.id, CAPTURE_ROW)).all()[0];
+      return row === undefined
+        ? CAPTURE_DEFAULTS
+        : { gestureEnabled: row.gestureEnabled, handleEnabled: row.handleEnabled };
+    },
+
+    /** Both switches at once — the row is the pair, and a screen never sets one behind the other. */
+    setCaptureSettings(settings: CaptureSettings): void {
+      db.insert(bugReportCapture)
+        .values({
+          id: CAPTURE_ROW,
+          gestureEnabled: settings.gestureEnabled,
+          handleEnabled: settings.handleEnabled,
+        })
+        .onConflictDoUpdate({
+          target: bugReportCapture.id,
+          set: {
+            gestureEnabled: settings.gestureEnabled,
+            handleEnabled: settings.handleEnabled,
+          },
+        })
+        .run();
     },
 
     /**

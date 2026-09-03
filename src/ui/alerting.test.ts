@@ -329,6 +329,8 @@ describe('the five places a failure is already a value', () => {
   /** Recording moved off Головний to its own screen, and the raise around a store moved with it. */
   const entryScreen = source('../app/transaction/new.tsx');
   const notifications = source('../app/manage/notifications.tsx');
+  /** The one place a sync is started, and so the one place its сповіщення is raised and cleared. */
+  const syncEntry = source('./monobank-sync.ts');
 
   it('raises each kind where that work already produces its failure', () => {
     // The drain: unattended by definition, because it runs precisely while the app is open, so
@@ -338,9 +340,8 @@ describe('the five places a failure is already a value', () => {
     expect(layout).toContain('failed: report.failure !== undefined }');
     expect(layout).not.toContain('reportCollection({ access, watched, failed: false }, NOTIFY);\n      const report');
 
-    // The four screens: each passes whether the app is in front of the owner right now.
+    // The screens: each passes whether the app is in front of the owner right now.
     for (const [screen, kind] of [
-      [monobank, 'monobank-sync'],
       [saldo, 'saldo-import'],
       [backup, 'backup'],
       // Both places a транзакція is stored by hand: the entry form, and confirming a чернетка on
@@ -350,6 +351,16 @@ describe('the five places a failure is already a value', () => {
     ] as const) {
       expect(screen, kind).toContain(`raiseAlert('${kind}', { attended: attended() }, ALERT_PORTS)`);
     }
+
+    // monobank is the one that moved, and it moved because a sync now starts in three places —
+    // the app opening, the pull on Головний, and «Синхронізувати». `startSync` is the only caller
+    // of the coordinator, so it is also the only place the сповіщення belongs; each caller still
+    // supplies its own answer to «is the owner watching».
+    expect(syncEntry).toContain("raiseAlert('monobank-sync', { attended: ports.attended }");
+    expect(monobank).toContain('attended: attended()');
+    // The automatic run's `true` is a fact, not a guess: it exists because the app was opened.
+    expect(layout).toContain('attended: true');
+    expect(monobank).not.toContain('raiseAlert(');
   });
 
   it('clears each kind on opening the screen that сповіщення leads to', () => {
@@ -362,7 +373,9 @@ describe('the five places a failure is already a value', () => {
   });
 
   it('clears each kind when that same work next succeeds', () => {
-    expect(monobank).toContain("clearAlert('monobank-sync', ALERT_PORTS)");
+    // For monobank that is `startSync`, wherever the run was started from — including a run the
+    // owner did not ask for, which must not leave an earlier failure standing once it works.
+    expect(syncEntry).toContain("clearAlert('monobank-sync', ports.alerts)");
     expect(saldo).toContain("clearAlert('saldo-import', ALERT_PORTS)");
     expect(backup).toContain("clearAlert('backup', ALERT_PORTS)");
     // Storing a транзакція is what makes the last failure to store untrue, and that store is on

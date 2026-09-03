@@ -89,7 +89,7 @@ describe('a бекап is one versioned file holding the whole state', () => {
       sources: [{ id: 's1', name: 'Зарплата', archived: false }],
       rules: [{ id: 'r1', merchant: 'сільпо', categoryId: 'c1', createdAtMs: 1_700_000_000_000 }],
       goals: [
-        { id: 'g1', name: 'Авто', target: money(500_000, 'UAH'), deadline: '2027-01-01', accountId: 'a1' },
+        { id: 'g1', name: 'Авто', target: money(500_000, 'UAH'), deadline: '2027-01-01', accountIds: ['a1'] },
       ],
       transactions: [stored(expense('t1', '2026-08-30'))],
     });
@@ -285,6 +285,76 @@ describe('a бекап that contradicts itself is refused whole', () => {
     expect(refusal(makeBackup(noSource, MADE_AT).bytes).kind).toBe('inconsistent');
   });
 
+  it('Scenario: A ціль comes back with its whole склад', () => {
+    const before = state({
+      accounts: [
+        uahAccount('a1', 'Резерв'),
+        {
+          id: 'a2',
+          name: 'USD банка',
+          kind: 'savings' as const,
+          currency: 'USD',
+          openingBalance: money(0, 'USD'),
+          archived: false,
+        },
+        {
+          id: 'a3',
+          name: 'ОВДП',
+          kind: 'investment' as const,
+          currency: 'UAH',
+          openingBalance: money(0, 'UAH'),
+          archived: false,
+        },
+      ],
+      goals: [
+        {
+          id: 'g1',
+          name: 'Машина',
+          target: money(70_000_000, 'UAH'),
+          deadline: '2027-06-30',
+          accountIds: ['a1', 'a2', 'a3'],
+        },
+      ],
+    });
+
+    const read = readBackup(makeBackup(before, MADE_AT).bytes);
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+
+    // The same target, the same currency and exactly those three рахунки — so the progress the
+    // ціль shows afterwards is the progress it showed on the phone the бекап came from.
+    expect(read.state.goals).toEqual(before.goals);
+  });
+
+  it('Scenario: A ціль without a дата comes back without one', () => {
+    const before = state({
+      accounts: [uahAccount('a1', 'Резерв')],
+      goals: [
+        { id: 'g1', name: 'Резерв', target: money(30_000_000, 'UAH'), accountIds: ['a1'] },
+      ],
+    });
+
+    const read = readBackup(makeBackup(before, MADE_AT).bytes);
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+
+    expect(read.state.goals).toEqual(before.goals);
+    expect('deadline' in read.state.goals[0]!).toBe(false);
+  });
+
+  it('Scenario: A ціль витрат comes back as its ліміт', () => {
+    const before = state({
+      categories: [{ id: 'restaurants', name: 'Ресторани', archived: false }],
+      limits: [{ categoryId: 'restaurants', amount: money(200_000, 'UAH') }],
+    });
+
+    const read = readBackup(makeBackup(before, MADE_AT).bytes);
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+
+    // One сума and not two: the ціль витрат is the ліміт, so nothing new was written for it and
+    // the бекап carries no second row that could disagree.
+    expect(read.state.limits).toEqual(before.limits);
+    expect(read.state.goals).toEqual([]);
+  });
+
   it('Scenario: A ціль in another currency than its рахунок stops the restore', () => {
     const mismatched = state({
       accounts: [uahAccount('a1', 'Картка')],
@@ -294,7 +364,7 @@ describe('a бекап that contradicts itself is refused whole', () => {
           name: 'Авто',
           target: money(500_000, 'USD'),
           deadline: '2027-01-01',
-          accountId: 'a1',
+          accountIds: ['a1'],
         },
       ],
     });
@@ -315,7 +385,7 @@ describe('a бекап that contradicts itself is refused whole', () => {
             name: 'Авто',
             target: money(1, 'UAH'),
             deadline: '2027-01-01',
-            accountId: 'a-gone',
+            accountIds: ['a-gone'],
           },
         ],
       }),

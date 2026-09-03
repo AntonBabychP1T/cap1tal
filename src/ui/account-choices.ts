@@ -1,5 +1,6 @@
 import { activeAccounts, type Account } from '../domain/account';
 import type { Transaction } from '../domain/transaction';
+import { byName } from './labels';
 
 /**
  * What one account picker on the editing screen offers. An archived account is offered for
@@ -14,7 +15,15 @@ export function accountChoicesFor(
   all: readonly Account[],
   currentAccountId: string | undefined,
 ): Account[] {
-  return withCurrent(activeAccounts(all), all, currentAccountId);
+  // In Ukrainian order, like the категорії and джерела beside it on the same form. Storage sorts
+  // by name in SQLite's BINARY collation, which files every Cyrillic назва after every Latin one —
+  // so a picker that passed that order through showed «Борги» below «binance» while the категорія
+  // picker two fields down had «Без категорії» at the top. One form, two alphabets. The order also
+  // decides what the short list is topped up from, so it is what the owner reads on a fresh phone.
+  //
+  // Sorted before `withCurrent` and not after: the carried row is appended deliberately, and
+  // ordering the offers may not swallow it into the middle of them.
+  return withCurrent([...activeAccounts(all)].sort(byName), all, currentAccountId);
 }
 
 /**

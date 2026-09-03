@@ -14,6 +14,10 @@ import m0009 from './0009_aromatic_retro_girl.sql';
 import m0010 from './0010_white_wraith.sql';
 import m0011 from './0011_glorious_ultragirl.sql';
 import m0012 from './0012_empty_omega_sentinel.sql';
+import m0013 from './0013_overjoyed_doctor_faustus.sql';
+import m0014 from './0014_solid_darwin.sql';
+import m0015 from './0015_large_rachel_grey.sql';
+import m0016 from './0016_futuristic_triathlon.sql';
 
   export default {
     journal,
@@ -30,7 +34,11 @@ m0008,
 m0009,
 m0010,
 m0011,
-m0012
+m0012,
+m0013,
+m0014,
+m0015,
+m0016
     }
   }
   

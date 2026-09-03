@@ -25,7 +25,9 @@
  *
  * `handed-over` — the chooser opened and closed. What the owner did in it is unknown and unknowable
  * (Android ignores the result code, iOS resolves regardless of `completed`), so this says only that
- * the файл reached the system.
+ * the файл reached the system. `messageIncluded` says whether the короткий запит went with it —
+ * a field on the outcome and not a variant of it, because the claim about the файл is the same
+ * either way and only the one extra sentence about the запит is gated on it.
  *
  * `unavailable` — this platform or build has no chooser to hand a файл to. The web build is one;
  * the clipboard is what covers it.
@@ -34,7 +36,7 @@
  * the device, a directory that would not be created, a second share started while one was open.
  */
 export type AnalysisShareOutcome =
-  | { readonly kind: 'handed-over' }
+  | { readonly kind: 'handed-over'; readonly messageIncluded: boolean }
   | { readonly kind: 'unavailable' }
   | { readonly kind: 'failed'; readonly reason: string };
 
@@ -42,6 +44,16 @@ export type AnalysisShareOutcome =
 export interface AnalysisFile {
   readonly name: string;
   readonly text: string;
+  /**
+   * The короткий запит, offered to the platform beside the файл — best-effort and never
+   * load-bearing.
+   *
+   * No adapter shipped today carries it: the phone's share sheet takes a file or text and not
+   * both, and a receiver is free to drop text that arrives beside an attachment anyway. The файл
+   * opens with its own запит and stays sufficient on its own; this is a hint, and the outcome's
+   * `messageIncluded` is what says whether it travelled.
+   */
+  readonly message?: string;
 }
 
 export interface AnalysisSharePort {
@@ -51,14 +63,16 @@ export interface AnalysisSharePort {
 /**
  * The port the tests use, and the only implementation `verify` ever loads.
  *
- * `handed()` is what actually left — every файл the double really handed over, in order — so
- * «backing out claims nothing» is provable rather than assumed: an `unavailable` or a `failed`
- * leaves it empty, and a screen that claimed otherwise would be caught by a test rather than by
- * the owner. It is also how the screen's tests assert the exact text that left, character for
- * character.
+ * `handed()` is what actually left — every файл the double really handed over, in order, the
+ * `message` included — so «backing out claims nothing» is provable rather than assumed: an
+ * `unavailable` or a `failed` leaves it empty, and a screen that claimed otherwise would be caught
+ * by a test rather than by the owner. It is also how the screen's tests assert the exact text that
+ * left, character for character.
  *
- * The default outcome is `handed-over`, because that is what the phone answers whether the owner
- * picked an app or dismissed the chooser.
+ * The default outcome is `handed-over` with no message carried, because that is what the phone
+ * answers today whether the owner picked an app or dismissed the chooser. A test that wants the
+ * other branch passes it in, which is the only way that branch is reachable at all until an
+ * adapter exists that can carry text beside a file.
  */
 export function inMemoryAnalysisShare(
   options: { readonly outcome?: AnalysisShareOutcome } = {},
@@ -70,7 +84,7 @@ export function inMemoryAnalysisShare(
 
   return {
     share: async (file: AnalysisFile) => {
-      const outcome = options.outcome ?? { kind: 'handed-over' };
+      const outcome = options.outcome ?? { kind: 'handed-over', messageIncluded: false };
       if (outcome.kind === 'handed-over') {
         handed.push(file);
       }

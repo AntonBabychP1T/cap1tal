@@ -2,7 +2,7 @@ import type { Account, AccountKind } from '../domain/account';
 import { identityKey, receiptIdentity } from '../domain/fiscal-receipt';
 import type { Category, Source } from '../domain/category';
 import type { CategoryLimit } from '../domain/limits';
-import type { Goal } from '../domain/goals';
+import { compositionProblem, type AccumulationGoal } from '../domain/goals';
 import { money, type CurrencyCode, type Money } from '../domain/money';
 import { isoDate, type IsoDate, type Transaction } from '../domain/transaction';
 import type { TimeOfDay } from '../reminders/time';
@@ -22,7 +22,7 @@ import type { TimeOfDay } from '../reminders/time';
  */
 
 /** The shape of the envelope. Bumped by hand when that shape changes; never derived. */
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 2;
 
 /**
  * The number of committed migrations a бекап is written under — the storage shape it saw.
@@ -32,7 +32,7 @@ export const BACKUP_FORMAT_VERSION = 1;
  * breaks `verify` until someone opens this file and asks whether a бекап still holds everything it
  * should. A бекап naming a higher one is refused; a lower one is restored (design D5).
  */
-export const BACKUP_SCHEMA_VERSION = 13;
+export const BACKUP_SCHEMA_VERSION = 17;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -58,8 +58,18 @@ export const BACKUP_KIND = 'backup';
  * (`src/platform/monobank-token.ts`), which is what makes FR-B2 a property of the code and not a
  * promise.
  *
+ * `bug_report_capture` is out for the same reason one step further: it holds whether *this* phone
+ * files репорти by the gesture or by the handle — the owner's testing habit, not a setting about
+ * their money — and a restored phone should decide that for itself. `bug_reports`' `origin` and
+ * `capture_failure` columns need no separate decision: the whole table is already excluded above.
+ *
  * `daily_reminder` is here: FR-B1's «налаштування без секретів», so a restored phone reminds the
  * owner as the old one did (design D8).
+ *
+ * `monobank_sync_attempt` is absent for `alerts`'s reason rather than for a secret's: it is when
+ * this phone last tried to sync and how that went. A moment carried in from another device would
+ * make this one skip a sync it never made, or wear a failure it never had; a restored phone simply
+ * has not tried yet, and tries the moment it is opened.
  *
  * `entry_defaults` is deliberately absent, and it is the one exclusion that is not about secrecy:
  * it holds which рахунок the entry form on *this* phone opens on — a habit the device learned from
@@ -74,6 +84,9 @@ export const BACKUP_TABLES: readonly string[] = [
   'rules',
   'category_limits',
   'goals',
+  // The склад of a ціль: its own relation, so the бекап carries it explicitly. A ціль витрат adds
+  // nothing here — it is the `category_limits` row above, which is why it costs the бекап nothing.
+  'goal_accounts',
   'transactions',
   'saldo_import',
   'monobank_accounts',
@@ -212,7 +225,7 @@ export interface BackupState {
   readonly sources: readonly Source[];
   readonly rules: readonly BackupRule[];
   readonly limits: readonly CategoryLimit[];
-  readonly goals: readonly Goal[];
+  readonly goals: readonly AccumulationGoal[];
   readonly transactions: readonly BackupTransaction[];
   /** When the one-time Saldo import was committed; absent on a device that has imported nothing. */
   readonly saldoImportCommittedAtMs?: number;
@@ -381,14 +394,33 @@ function limitAt(value: unknown, at: string): CategoryLimit {
   };
 }
 
-function goalAt(value: unknown, at: string): Goal {
+/**
+ * A ціль, in either format version (design D10). Format 2 names a `accountIds` склад and may omit
+ * the дата; format 1 named exactly one `accountId` and always a дата, and its ціль restores as a
+ * склад of that one рахунок — keeping its назва, target, currency and дата, and therefore the
+ * progress it showed on the phone the бекап came from.
+ *
+ * The two are told apart by which key is present, not by the envelope's version number: a file is
+ * read for what it holds, and a ціль that names neither is a ціль with no склад, which the
+ * self-consistency check refuses by name rather than silently restoring as empty.
+ */
+function goalAt(value: unknown, at: string): AccumulationGoal {
   const row = objectAt(value, at);
+  const composition =
+    row.accountIds === undefined && row.accountId !== undefined
+      ? [stringAt(row.accountId, `${at}.accountId`)]
+      : listAt(row, 'accountIds', (id, idAt) => stringAt(id, idAt)).map((id, index) =>
+          stringAt(id, `${at}.accountIds[${index}]`),
+        );
   return {
     id: stringAt(row.id, `${at}.id`),
     name: stringAt(row.name, `${at}.name`),
     target: moneyAt(row.target, `${at}.target`),
-    deadline: dateAt(row.deadline, `${at}.deadline`),
-    accountId: stringAt(row.accountId, `${at}.accountId`),
+    // Absent stays absent: a ціль with no дата must not come back carrying one.
+    ...(row.deadline === undefined || row.deadline === null
+      ? {}
+      : { deadline: dateAt(row.deadline, `${at}.deadline`) }),
+    accountIds: composition,
   };
 }
 
@@ -667,12 +699,36 @@ export function checkConsistent(state: BackupState): void {
   }
   for (const goal of state.goals) {
     const what = `ціль «${goal.name}»`;
-    needsAccount(goal.accountId, what);
-    const account = accounts.get(goal.accountId);
-    if (account && account.currency !== goal.target.currency) {
-      fail(
-        `${what} — у ${goal.target.currency}, а рахунок «${account.name}» — у ${account.currency}`,
-      );
+    for (const accountId of goal.accountIds) {
+      needsAccount(accountId, what);
+    }
+    // The same rule the form and the repository keep, asked here so a hand-edited file cannot
+    // smuggle in a склад that is empty, names a рахунок twice, or carries a currency no rate
+    // reaches (design D5).
+    const problem = compositionProblem(
+      goal.target.currency,
+      goal.accountIds.map((id) => ({ id, currency: accounts.get(id)!.currency })),
+    );
+    switch (problem?.kind) {
+      case undefined:
+        break;
+      case 'empty':
+        fail(`${what} не має жодного рахунку`);
+        break;
+      case 'duplicate':
+        fail(`${what} називає рахунок «${accounts.get(problem.accountId)!.name}» двічі`);
+        break;
+      case 'mixed':
+        fail(
+          `${what} стоїть на рахунках у різних валютах (${problem.currencies.join(', ')}), ` +
+            `тож вона може бути тільки в UAH, а не в ${goal.target.currency}`,
+        );
+        break;
+      case 'foreign':
+        fail(
+          `${what} — у ${goal.target.currency}, а її рахунки — у ${problem.shared}`,
+        );
+        break;
     }
   }
   for (const watch of state.watches) {

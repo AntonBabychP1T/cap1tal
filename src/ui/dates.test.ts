@@ -4,6 +4,7 @@ import { isoDate, monthOf } from '../domain/transaction';
 import { planWindows } from '../monobank/sync';
 import {
   dateOfEpochMs,
+  freshnessLabel,
   momentLabel,
   parseTypedDate,
   startOfLocalDayMs,
@@ -163,3 +164,50 @@ function refusalOf(run: () => unknown): string {
   }
   throw new Error('nothing was refused');
 }
+
+describe('freshnessLabel', () => {
+  const now = new Date('2026-09-02T12:00:00');
+  const ago = (ms: number) => now.getTime() - ms;
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+
+  it('Scenario: Minutes are stated as minutes', () => {
+    expect(freshnessLabel(ago(3 * MINUTE), now)).toBe('3 хв тому');
+  });
+
+  it('Scenario: A sync just now is щойно', () => {
+    expect(freshnessLabel(ago(20_000), now)).toBe('щойно');
+    // The edge: a minute exactly is a minute, and the second before it is still «щойно».
+    expect(freshnessLabel(ago(MINUTE), now)).toBe('1 хв тому');
+    expect(freshnessLabel(ago(MINUTE - 1), now)).toBe('щойно');
+  });
+
+  it('Scenario: Hours are stated as hours', () => {
+    expect(freshnessLabel(ago(5 * HOUR), now)).toBe('5 год тому');
+    // Rounded down, never up: 59 minutes is not yet an hour, and 119 is one hour and not two.
+    expect(freshnessLabel(ago(59 * MINUTE), now)).toBe('59 хв тому');
+    expect(freshnessLabel(ago(HOUR), now)).toBe('1 год тому');
+    expect(freshnessLabel(ago(119 * MINUTE), now)).toBe('1 год тому');
+  });
+
+  it('Scenario: Beyond a day it is a calendar moment', () => {
+    const yesterdayEvening = new Date('2026-09-01T21:14:00');
+    const nextMorning = new Date('2026-09-02T22:00:00');
+    // More than 24 hours later, so the age gives way to the words the monobank screen uses.
+    expect(freshnessLabel(yesterdayEvening.getTime(), nextMorning)).toBe(
+      momentLabel(yesterdayEvening.getTime(), nextMorning),
+    );
+    expect(freshnessLabel(yesterdayEvening.getTime(), nextMorning)).toContain('вчора о 21:14');
+  });
+
+  it('a moment in the future is щойно rather than a negative age', () => {
+    // An NTP correction or a zone change; «-3 хв тому» is not something anyone can act on.
+    expect(freshnessLabel(now.getTime() + HOUR, now)).toBe('щойно');
+  });
+
+  it('never spells a Ukrainian plural it would have to decline', () => {
+    for (const minutes of [1, 2, 5, 11, 21, 44]) {
+      expect(freshnessLabel(ago(minutes * MINUTE), now)).toBe(`${minutes} хв тому`);
+    }
+  });
+});

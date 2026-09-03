@@ -27,8 +27,19 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   balance the app believes.
 - **Bank balance** (баланс банку) — the balance the bank reports where an API exists; shown next
   to the computed one, never overwriting it.
+- **Current value** (поточна вартість) — what an інвестиційний рахунок is worth today, as the owner
+  types it in: a сума in the рахунок's own currency with the дата it was entered, at most one per
+  рахунок, replaced when entered again and clearable. Entering it creates **no транзакція** and
+  moves no баланс — it is an observation of the outside world rather than a consequence of the
+  owner's money moving, and it is kept apart from the розрахунковий баланс exactly as баланс банку
+  is. A вартість of zero is a вартість the owner entered: an інвестиція may be worth nothing.
 - **Reconcile** (звірити) — create a correction for the difference between bank balance and
   computed balance, so every hryvnia stays explained.
+- **Підказка про дубль** (duplicate hint) **[PROPOSED]** — one sentence the Saldo імпорт states on
+  a рахунок of the account map when another рахунок of the same currency can only be the same one,
+  offering to merge them. It is an offer and never an act: nothing merges until the owner takes it,
+  it names only a рахунок the row could have been merged onto anyway, and dismissing it is
+  remembered for that import and stored nowhere.
 
 ## Transactions
 
@@ -87,13 +98,42 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   holds — is strictly greater than the ліміт; equality is not over, and spending in any other
   currency neither counts toward it nor is converted toward it. Exceeding it marks the category
   red in the monthly picture and in the transaction list. Nothing is blocked, nothing is pushed.
-- **Goal** (ціль) — "set aside N by a date", with progress shown: a назва, a target сума, a дата
-  and one linked рахунок. Its **progress is that рахунок's розрахунковий баланс**, read when the
-  ціль is shown — never a second number entered by hand, which could drift from the stored truth,
-  so money reaches a ціль only the way money reaches its рахунок. The target lives in the linked
-  рахунок's currency; nothing is ever converted. A ціль is **reached** (досягнута) when its
-  progress is at or above its target, and **overdue** (прострочена) when its дата has passed and
-  it is not reached; a reached ціль is never overdue.
+  A ліміт **is** that категорія's ціль витрат — one сума under two names, set, changed and cleared
+  from either place, so no second ceiling exists that could disagree with it.
+- **Goal** (ціль) — something the owner is aiming at, of exactly one of two kinds: a
+  ціль-накопичення or a ціль витрат. The kind is chosen when the ціль is created and never changes
+  afterwards — the two hold different fields and mean opposite things, so they never wear each
+  other's words: nothing calls a ціль витрат досягнута, and nothing calls a ціль-накопичення
+  перевищена.
+- **Accumulation goal** (ціль-накопичення) — «накопичити N»: a назва, a target сума in the ціль's
+  own currency, **optionally** a дата, and a склад. It is **reached** (досягнута) when its прогрес
+  is at or above its target, and **overdue** (прострочена) when it has a дата, that дата has passed
+  and it is not reached. A reached ціль is never overdue, a ціль without a дата is never overdue,
+  and a ціль whose прогрес cannot be counted is neither — an unknown прогрес is not a verdict.
+- **Spending goal** (ціль витрат) — «витратити не більше N цього місяця» on one категорія. It **is**
+  that категорія's ліміт read as a ціль: the same сума, the same currency, the same calendar month
+  and the same arithmetic, and it holds no сума, currency, назва or period of its own — its назва is
+  its категорія's. Its states are **в межах**, **перевищено** and, once a month has ended at or
+  below the ceiling, **завершено в межах**; it is never досягнута and never прострочена.
+- **Goal composition** (склад цілі) — the рахунки whose money counts toward a ціль-накопичення: a
+  stored set of рахунок ids, one or more, each standing in it at most once. It is what the owner
+  ticked and not a live query by вид рахунку — a рахунок created later does not join a ціль, and
+  archiving one does not take it out. A рахунок of any вид may stand in a склад, борг included.
+- **Account contribution** (внесок рахунку) — what one рахунок of a склад brings to a ціль: that
+  рахунок's розрахунковий баланс in its own currency — except for an інвестиційний рахунок, whose
+  внесок is its поточна вартість where the app holds one, and its розрахунковий баланс otherwise. A
+  негативний внесок is subtracted like any other. No внесок is ever entered by hand.
+- **Goal progress** (прогрес цілі) — the sum of the внески of a ціль-накопичення's склад, expressed
+  in the ціль's own currency and read at the moment the ціль is shown — never a second number
+  entered by hand, which could drift from the stored truth, so money reaches a ціль only the way
+  money reaches its рахунки. A ціль's currency is its own: UAH, the only currency the app can
+  convert into, or the single currency every рахунок of its склад shares.
+- **Approximate progress** (приблизний прогрес) — a прогрес цілі any внесок of which had to be
+  converted into the ціль's currency at monobank's current rate, each внесок converted and rounded
+  on its own before the sum. It is marked «≈» wherever it, its percentage or what is left of it is
+  shown, and nothing converted is stored anywhere. Where a rate it needs is unknown the прогрес is
+  **absent** — no total, no percentage and no verdict — and the currency that cannot be converted
+  is named: a missing rate is never counted as zero.
 
 ## The month
 
@@ -181,9 +221,19 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   stored транзакції alone. It carries no identifier, no назва of a рахунок, no secret and no text
   a bank sent. Описи and individual транзакції are in it only by the owner's explicit choice for
   that one run.
-- **Файл для аналізу** (analysis file) — the пакет rendered as one self-contained text: the
-  instructions to the assistant, the context that defines the terms, a readable summary and the
-  пакет itself. It is what an assistant answers from with nothing added by the owner.
+- **Файл для аналізу** (analysis file) — the пакет rendered as one self-contained text, in five
+  sections and in this order: the запит, the instructions to the assistant, the context that
+  defines the terms, a readable summary and the пакет itself. It is what an assistant answers from
+  with nothing added by the owner.
+- **Запит** (request) — the opening section of a файл для аналізу: what the файл is, and the ask to
+  analyse it, in the owner's own language. It names the kind of AI-аналіз and the period, says that
+  the instructions, the definitions and the data are further down in the same файл, and introduces
+  no number of its own — every сума, share and count in the файл is in the summary or the data.
+- **Короткий запит** (short request) — the one or two sentences offered to the phone beside the
+  файл при передачі, and copyable on their own. It asks for the attached файл to be analysed and
+  says the файл itself holds the full context and the instructions; it holds no number, no
+  категорія and no rule the файл does not. Whether it is carried at all is the platform's matter,
+  and nothing depends on it: the файл для аналізу is what an assistant answers from.
 - **Передати** (hand over) — giving one file the app made — a файл для аналізу, a репорт про
   помилку — to an app the owner picks in the phone's own chooser; on the AI-аналіз screen the
   action reads «Поділитися з AI». It is the owner's act, not a connection the app makes: the app
@@ -214,10 +264,29 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   what they did (required), what happened, what they expected — together with what the app
   attaches by itself at that moment: its version and build, the platform, the device, the number
   of migrations applied, the route of the screen it was filed from, the moment, the whole журнал,
-  the failure or crash that prompted it, and counts of what the phone holds as numbers only; plus
-  any screenshots the owner adds afterwards. It is stored on the phone and read there whole, and
-  it leaves only when the owner hands it over («Передати») or copies its text. It is never in a
-  бекап, and a відновлення leaves репорти and the журнал untouched.
+  the failure or crash that prompted it, **походження репорту**, and counts of what the phone
+  holds as numbers only; plus any screenshots — the one the app takes itself when the репорт is
+  filed from the screen, and any the owner adds afterwards. Where the app could not take that
+  скріншот, the репорт carries the reason instead, in Ukrainian, and is filed all the same. It is
+  stored on the phone and read there whole, and it leaves only when the owner hands it over
+  («Передати») or copies its text. It is never in a бекап, and a відновлення leaves репорти and
+  the журнал untouched.
+- **Походження репорту** (report origin) — which of the four doors a репорт came through: from the
+  screen the problem was on, from a failure dialog, from the crash fallback, or from «Репорти про
+  помилки». The app records it; the owner is never asked. A репорт stored before the app recorded
+  it has no походження rather than a guessed one.
+- **Жест репорту** (report gesture) — two fingers held still on any screen for about a second and
+  a fifth, which files a репорт про помилку about that screen without leaving it. On until the
+  owner turns it off. Nothing the owner does in ordinary use can reach it: every other interaction
+  in the app is one finger.
+- **Маркер репорту** (report handle) — a small «⚑» drawn above every screen that does exactly what
+  the жест does. Off until the owner turns it on. It exists because a multi-finger gesture is not
+  guaranteed to reach the app while TalkBack is on, and because an emulator cannot press two
+  fingers.
+- **Аркуш репорту** (report sheet) — the short form the жест and the маркер open over the screen,
+  never in place of it: «Що не так?» (required), «Чого я очікував?» (optional), the скріншот, and
+  «Зберегти», «Зберегти й передати», «Скасувати». It asks nothing else — «Що я робив» is written
+  by the app from the route. Leaving it without saving stores nothing and keeps no скріншот.
 
 ## Distinctions the owner drew
 
@@ -241,3 +310,5 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 | Фіскальний чек | Квитанція | the чек is what the seller's реєстратор registered with the tax service and names the позиції; a квитанція (monobank's `receiptId`, check.gov.ua) only proves a payment happened and names no product — it cannot be used to find a чек |
 | Позиція чека | Транзакція | a позиція is detail under one транзакція; it has no категорія, no рахунок and no effect on any number the app computes |
 | Репорт про помилку | Сповіщення про збій | the репорт is what the owner writes for the developer; the сповіщення is what the app posts to the owner |
+| Ціль витрат | Ціль-накопичення | they point in opposite directions — one is a ceiling not to be crossed, the other a сума to be reached — so they share no word: spending under a ліміт is never «досягнуто», and saving is never «перевищено» |
+| Прогрес цілі | Розрахунковий баланс | a прогрес may sum several рахунки, may read an інвестиційний рахунок's поточна вартість instead of its баланс, and may be приблизний; a баланс is one рахунок's own number in its own currency and is never approximate |

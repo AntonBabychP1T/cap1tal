@@ -71,8 +71,11 @@ the UI. Terms are defined in [glossary.md](glossary.md).
 - Categories are the owner's own flat list, seeded with a starter set.
   **[PROPOSED]** The starter set is the owner's existing Saldo list of expense categories and income
   sources, with the one nested income source ("parents → Andriy, Lena") flattened.
-- A category may carry an optional monthly limit (section 9).
-- Goals exist (section 11).
+- A category may carry an optional monthly limit (section 9). That limit is also the spending goal
+  of its category — one amount under two names, never two ceilings that could disagree.
+- Goals exist (section 11), of two kinds. A goal of the accumulating kind counts the money of one
+  **or more** accounts, chosen by the owner; a spending goal is a category's monthly limit read as
+  a goal.
 
 ## 5. Money rules
 
@@ -145,7 +148,11 @@ Not in v1: recurring or scheduled transactions, SMS parsing, other banks' APIs. 
 In v1:
 - Spent / income / invested by month, over the whole history.
 - A category by month.
-- Goals: set aside N by a date, with progress.
+- Goals of two kinds, with progress: accumulate N — optionally by a date — over one or more
+  accounts the owner picks, and spend no more than N a month in a category, which is that
+  category's limit seen as a goal. A progress that has to add up accounts in several currencies is
+  converted into hryvnia and shown as explicitly approximate; where a rate is missing it is shown
+  as not countable rather than as a smaller number.
 
 Not in v1: forecasts ("at this pace you will have X left").
 
@@ -158,11 +165,19 @@ Not in v1: forecasts ("at this pace you will have X left").
   own chooser. That is the owner's hand-off, not a connection the app makes; the app never reads
   an answer back, and nothing about the file, the run or the answer is stored. **[PROPOSED]**
 - A репорт про помилку is the app's own record of a bug — what the owner wrote, the build, the
-  device, the журнал and any screenshots they attached — kept on the phone and handed to an app
-  the owner picks, one file at a time, exactly like an AI-аналіз. It carries no сума, назва, опис,
-  bank text or token; the one thing it quotes is the app's own refusal, which the owner reads whole
-  before handing it over. The app sends none of it anywhere on its own, and there is no service to
-  send it to. **[PROPOSED]**
+  device, the журнал, how the репорт was opened, and its screenshots — kept on the phone and handed
+  to an app the owner picks, one file at a time, exactly like an AI-аналіз. Everything the app
+  *writes* into it carries no сума, назва, опис, bank text or token; the one thing it quotes is the
+  app's own refusal, which the owner reads whole before handing it over. The app sends none of it
+  anywhere on its own, and there is no service to send it to. **[PROPOSED]**
+- A скріншот is the one thing a репорт carries that can show the owner's money, and it is named
+  here rather than left implied. Screenshots reach a репорт two ways: the owner picks one, or —
+  when the репорт is filed from the screen the problem is on — the app photographs that screen
+  itself, which is the whole point of filing from there. Either way the app never reads,
+  interprets, redacts or blurs it: it cannot know which pixels are a сума, and a promise it could
+  not keep would be worse than the plain warning it can. So the owner is shown the скріншот and
+  told, in as many words, that it carries whatever was on the screen — суми and назви included —
+  before anything is handed over, and it leaves by their hand or not at all. **[PROPOSED]**
 - Bank notifications are captured and parsed on the device. Raw notification payloads and the local
   capture queue never enter the Google Drive backup and are never sent to a server.
 - Backup has one versioned file format. The owner can export/import that file manually. When Google

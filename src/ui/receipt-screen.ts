@@ -76,12 +76,20 @@ export const SCAN_LABEL = 'Сканувати QR чека';
  * A транзакція carrying a чек shows it whatever its type has become — a витрата retyped into a
  * переказ keeps the чек, and hiding it would be the app quietly holding data the owner cannot
  * reach. Only a витрата or повернення *without* one is offered the scan.
+ *
+ * It takes the тип and the категорія rather than a `Transaction` because on an open form the only
+ * `Transaction` a caller has is the **stored** one, and the offer must answer the тип the owner has
+ * just chosen. Handed a whole транзакція, the editing screen could not say anything else — which is
+ * how «Сканувати QR чека» stayed on screen after «переказ» was picked, until the save. The form
+ * hands its own `shape` and `categoryId`; a screen that only shows a stored транзакція hands that
+ * one's.
  */
 export function receiptOffer(input: {
-  readonly transaction: Transaction;
+  readonly type: Transaction['type'];
+  readonly categoryId?: string;
   readonly receipt?: StoredReceipt;
 }): ReceiptOffer {
-  const { transaction, receipt } = input;
+  const { type, categoryId, receipt } = input;
   if (receipt) {
     return {
       kind: 'attached',
@@ -89,7 +97,7 @@ export function receiptOffer(input: {
       receiptId: receipt.receipt.id,
     };
   }
-  if (transaction.type !== 'expense' && transaction.type !== 'refund') {
+  if (type !== 'expense' && type !== 'refund') {
     return { kind: 'none' };
   }
   return {
@@ -98,7 +106,7 @@ export function receiptOffer(input: {
     // «more prominent for a витрата in the seeded groceries category» — a повернення there is
     // money coming back, not a shop full of позиції, so it gets the same quiet offer as any
     // other category.
-    prominent: transaction.type === 'expense' && transaction.categoryId === GROCERIES_CATEGORY_ID,
+    prominent: type === 'expense' && categoryId === GROCERIES_CATEGORY_ID,
   };
 }
 

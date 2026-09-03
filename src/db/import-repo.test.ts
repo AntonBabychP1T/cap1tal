@@ -133,6 +133,20 @@ describe('importRepo — committing a plan', () => {
     expect(importRepo(storage.db).committedAt()).toEqual(committedAt);
   });
 
+  it('The опис Saldo wrote is stored with the транзакція, not lost at the commit', () => {
+    // saldo-import «The опис of a Saldo row travels onto the транзакції built from it» — proven
+    // here, past the interpreter, because a field the plan carries and the write drops is the same
+    // defect from the owner's side.
+    const plan = planFrom([
+      ...pair({ id: '1', datetime: '2024-11-01T10:00:00.000', description: 'СІЛЬПО', account: 'mono black', journalType: 'CREDIT', amount: '250.00', other: 'булка', otherType: 'EXPENSES' }),
+      ...pair({ id: '2', datetime: '2024-11-02T10:00:00.000', description: '  ', account: 'mono black', journalType: 'CREDIT', amount: '300.00', other: 'булка', otherType: 'EXPENSES' }),
+    ]);
+    importRepo(storage.db).commit(plan, committedAt);
+
+    const stored = transactionsRepo(storage.db).listMonth('2024-11');
+    expect(stored.map((t) => t.description)).toEqual(['СІЛЬПО', undefined]);
+  });
+
   it('Scenario: A plan mapping onto an existing рахунок replaces its opening balance', () => {
     accountsRepo(storage.db).save(
       account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH', openingBalance: money(5000, 'UAH') }),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { appendBounded, entryLine, type JournalEntry, type JournalKind } from './journal';
-import { renderReport, type BugReport } from './report';
+import { renderReport, routeTrail, type BugReport } from './report';
 
 /**
  * What must never reach a репорт про помилку, proven over the rendered text rather than over the
@@ -118,6 +118,11 @@ const report: BugReport = {
   // The crash is what prompted this репорт, so the whole-stack section below quotes it and not
   // the refusal — which is what keeps the sentinel to the single occurrence asserted below.
   prompting: journal.find((entry) => entry.kind === 'crash') ?? null,
+  // Filed from a screen by the gesture, so both new facts are exercised by the sweep below: the
+  // origin is a label the app wrote, and a capture reason is Ukrainian the app wrote — neither may
+  // smuggle money into the text.
+  origin: 'here',
+  captureFailure: null,
   screenshots: [],
   handedOverAt: null,
 };
@@ -130,13 +135,24 @@ describe('what a репорт про помилку never carries', () => {
   it('Scenario: The journal carries no money', () => {
     const text = renderReport(report);
 
-    // The exception, and only the exception: the sentinel is in the text exactly once, on the
-    // line of the refusal that quoted the назва the owner had just typed.
-    expect(occurrences(text, SENTINEL)).toBe(1);
+    // The exception, and only the exception: every appearance of the sentinel is the *same* one
+    // refusal — the app's own words, quoting the назва the owner had just typed themselves.
+    //
+    // It appears twice rather than once because the restructured text says the failures twice on
+    // purpose: §7 «Recent journal» is the whole журнал, and §8 «Relevant failures/errors» lifts
+    // the failure and crash entries out of it so the second reader does not have to find them.
+    // That repeats a line the owner already read; it discloses nothing the first copy did not. So
+    // what is asserted is the thing that actually matters — one distinct quoted value, and it is
+    // the refusal — rather than a count that would pass just as well if a сума appeared once.
     const quoting = text.split('\n').filter((line) => line.includes(SENTINEL));
-    expect(quoting).toHaveLength(1);
-    expect(quoting[0]).toContain('account-rename');
-    expect(quoting[0]).toContain('вже існує');
+    expect(quoting.length).toBeGreaterThan(0);
+    expect(occurrences(text, SENTINEL)).toBe(quoting.length);
+    for (const line of quoting) {
+      expect(line).toContain('account-rename');
+      expect(line).toContain('вже існує');
+    }
+    // One distinct sentinel-bearing value in the whole text, however many times it is printed.
+    expect(new Set(quoting.map((line) => line.slice(line.indexOf(SENTINEL)))).size).toBe(1);
 
     // Every other marked value stays on the phone.
     expect(text).not.toContain(JAR_NAME);
@@ -172,5 +188,88 @@ describe('what a репорт про помилку never carries', () => {
     // cannot attach a сума, a назва or an опис to an entry even if it wanted to.
     const keys = Object.keys(journal[journal.length - 1] ?? {}).sort();
     expect(keys).toEqual(['at', 'detail', 'id', 'kind', 'name']);
+  });
+});
+
+/**
+ * The same guarantee, on the path the gesture opens (`bug-report-here`: "The diagnostic text
+ * carries no money").
+ *
+ * A репорт filed from a screen carries two things the other three doors do not — the «Що я робив»
+ * line the *app* wrote, and the route trail — and both are made of routes. This is what pins that:
+ * a phone full of суми and renamed рахунки, a репорт filed by the gesture, and the whole rendered
+ * text swept for every marked value.
+ *
+ * The скріншот is deliberately outside this sweep and is the one thing that is: it shows whatever
+ * was on the screen, the app never reads it, and the owner is shown it and warned before any
+ * hand-over (vision §12, as amended by this change).
+ */
+describe('a репорт filed from the screen carries no more than any other', () => {
+  const filedHere: BugReport = {
+    ...report,
+    origin: 'here',
+    // Written by the app from the route, never typed by the owner — this is the line that used to
+    // ask them what they were doing.
+    did: 'Заведено з екрана /(tabs)/accounts жестом',
+    happened: 'підсумок за місяць відʼємний',
+    expected: null,
+    prompting: null,
+    screenshots: [],
+  };
+
+  it('Scenario: The diagnostic text carries no money', () => {
+    const text = renderReport(filedHere);
+
+    // The app's own «Що я робив» names a route and how the репорт was started, and nothing else.
+    expect(text).toContain('Заведено з екрана /(tabs)/accounts жестом');
+    expect(text).toContain('Заведено: з екрана, де сталася проблема');
+
+    // The trail is routes. Every marked value stays on the phone — except the назва inside the
+    // app's own refusal, which is the one quotation the журнал is allowed and which the owner
+    // reads whole before anything leaves (asserted as the sole exception below).
+    expect(text).not.toContain(JAR_NAME);
+    expect(text).not.toContain(CATEGORY_NAME);
+    expect(text).not.toContain(CAPTURED_TEXT);
+    for (const transaction of phone.transactions) {
+      expect(text).not.toContain(transaction.description);
+    }
+    for (const amount of ['431', '1234', '90000', '3000', '1100', '12345']) {
+      expect(text).not.toContain(amount);
+    }
+    expect(text).not.toContain(TOKEN);
+
+    // The one allowed quotation is still the app's own refusal, and still only that.
+    const quoting = text.split('\n').filter((line) => line.includes(SENTINEL));
+    for (const line of quoting) {
+      expect(line).toContain('account-rename');
+    }
+    // Exactly one distinct quoted value, not «at most one» — `toBeLessThanOrEqual` would also
+    // pass on zero, which would make this assertion vacuous the day the refusal stopped appearing.
+    expect(new Set(quoting.map((line) => line.slice(line.indexOf(SENTINEL)))).size).toBe(1);
+  });
+
+  it('the reason a скріншот failed is the app\'s own Ukrainian, never the screen\'s contents', () => {
+    const text = renderReport({
+      ...filedHere,
+      captureFailure: 'Система не віддала зображення екрана (код 3, Android 36)',
+    });
+
+    expect(text).toContain('Скріншот не вдалося зробити: Система не віддала зображення екрана');
+    // The app cannot describe what it failed to photograph, and does not try: the sentence names
+    // the platform's own code and nothing that was on the screen.
+    expect(text).not.toContain(JAR_NAME);
+    expect(text).not.toContain(CATEGORY_NAME);
+    const reason = text.slice(text.indexOf('Скріншот не вдалося зробити'));
+    expect(reason.split('\n')[0]).not.toContain(SENTINEL);
+  });
+
+  it('the route trail holds routes and not one thing the owner typed', () => {
+    const trail = routeTrail(filedHere.journal);
+
+    expect(trail.length).toBeGreaterThan(0);
+    for (const route of trail) {
+      expect(route.startsWith('/')).toBe(true);
+      expect(route).not.toContain(SENTINEL);
+    }
   });
 });

@@ -1,0 +1,27 @@
+// The repo's second native module, and the smaller of the two: Android only, autolinked from
+// `modules/` by Expo (SDK 57's local-module support), so `expo prebuild` regenerating `android/`
+// cannot lose it and nothing under the generated tree is ever hand-edited (rules/android.md).
+//
+// It declares no permission and no service. Copying the pixels of the app's *own* window needs
+// neither — that is the whole reason `PixelCopy` was chosen over `MediaProjection` (design D2).
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.screencapture'
+version = '0.1.0'
+
+// A module that lives in this repository and is consumed only by this app: there is no artifact
+// for anyone to resolve, so nothing is published to a local Maven repository either.
+expoModule {
+  canBePublished = false
+}
+
+android {
+  namespace "expo.modules.screencapture"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+}

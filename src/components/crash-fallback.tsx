@@ -92,6 +92,9 @@ export function CrashFallback({
       journal: journal.tail(),
       prompting,
       now: new Date(),
+      // Always the crash: this component is drawn only when a screen threw, so there is no other
+      // door it could be.
+      origin: 'crash',
     };
     const outcome = submitForm({ id, fields, context, save: (report) => reportingRepo.create(report) });
     if (outcome.kind === 'refused') {

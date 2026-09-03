@@ -7,8 +7,12 @@ import {
   UNCATEGORISED_CATEGORY_ID,
 } from '../domain/transaction';
 import {
+  accountCount,
+  categoryCount,
   categoryLabel,
   kindLabel,
+  sourceCount,
+  transactionCount,
   transactionTypeLabel,
   OFFERED_CURRENCIES,
 } from './labels';
@@ -94,5 +98,82 @@ describe('categoryLabel — the correction category', () => {
         categoryLabel(id, CATEGORY_NAMES),
       ),
     ).toEqual(['Без категорії', 'Комісія', 'Коригування']);
+  });
+});
+
+describe('the counts the owner reads', () => {
+  /**
+   * app-shell «A count the owner reads carries the Ukrainian form its number asks for». The rule
+   * itself is `plural`; these are the four nouns built on it, together, because a fifth noun added
+   * without its forms is exactly the bug this requirement was written for.
+   */
+  const FORMS = [1, 2, 3, 4, 5, 11, 12, 14, 21, 22, 25, 0] as const;
+
+  it('1 and anything ending in 1 take the singular, 2–4 the few form, the rest the many form', () => {
+    expect(FORMS.map(transactionCount)).toEqual([
+      '1 транзакція',
+      '2 транзакції',
+      '3 транзакції',
+      '4 транзакції',
+      '5 транзакцій',
+      '11 транзакцій',
+      '12 транзакцій',
+      '14 транзакцій',
+      '21 транзакція',
+      '22 транзакції',
+      '25 транзакцій',
+      '0 транзакцій',
+    ]);
+  });
+
+  it('«рахунок» takes the same three forms', () => {
+    expect(FORMS.map(accountCount)).toEqual([
+      '1 рахунок',
+      '2 рахунки',
+      '3 рахунки',
+      '4 рахунки',
+      '5 рахунків',
+      '11 рахунків',
+      '12 рахунків',
+      '14 рахунків',
+      '21 рахунок',
+      '22 рахунки',
+      '25 рахунків',
+      '0 рахунків',
+    ]);
+  });
+
+  it('«категорія» takes the same three forms', () => {
+    expect(FORMS.map(categoryCount)).toEqual([
+      '1 категорія',
+      '2 категорії',
+      '3 категорії',
+      '4 категорії',
+      '5 категорій',
+      '11 категорій',
+      '12 категорій',
+      '14 категорій',
+      '21 категорія',
+      '22 категорії',
+      '25 категорій',
+      '0 категорій',
+    ]);
+  });
+
+  it('«джерело» takes the same three forms', () => {
+    expect(FORMS.map(sourceCount)).toEqual([
+      '1 джерело',
+      '2 джерела',
+      '3 джерела',
+      '4 джерела',
+      '5 джерел',
+      '11 джерел',
+      '12 джерел',
+      '14 джерел',
+      '21 джерело',
+      '22 джерела',
+      '25 джерел',
+      '0 джерел',
+    ]);
   });
 });

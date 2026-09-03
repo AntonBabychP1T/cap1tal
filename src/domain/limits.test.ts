@@ -159,3 +159,40 @@ describe('overLimitCategories', () => {
     ).toEqual(new Map());
   });
 });
+
+describe('a month’s verdict is settled by that month’s own транзакції', () => {
+  const restaurants: CategoryLimit = { categoryId: 'restaurants', amount: money(200000, 'UAH') };
+  const eat = (id: string, date: string, amount: number) =>
+    expenseByDefault({
+      id,
+      date,
+      accountId: 'card',
+      amount: money(amount, 'UAH'),
+      categoryId: 'restaurants',
+    });
+
+  const overIn = (month: string, transactions: readonly Transaction[]) =>
+    overLimitCategories({ breakdown: breakdownOf(month, transactions), limits: [restaurants] }).has(
+      'restaurants',
+    );
+
+  it('Scenario: A finished month keeps its verdict', () => {
+    const history: Transaction[] = [
+      eat('a1', '2026-08-05', 180000),
+      // September then runs far past the ceiling. August is not judged by it.
+      eat('s1', '2026-09-05', 250000),
+    ];
+
+    expect(overIn('2026-08', history)).toBe(false);
+    expect(overIn('2026-09', history)).toBe(true);
+  });
+
+  it('Scenario: A retroactive транзакція settles the month anew', () => {
+    const august: Transaction[] = [eat('a1', '2026-08-05', 180000)];
+    // Recorded after August ended, but dated inside it — so it is August's spending.
+    const late: Transaction[] = [...august, eat('a2', '2026-08-27', 30000)];
+
+    expect(overIn('2026-08', august)).toBe(false);
+    expect(overIn('2026-08', late)).toBe(true);
+  });
+});

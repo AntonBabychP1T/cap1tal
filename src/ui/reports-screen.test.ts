@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { account, type Account } from '../domain/account';
 import { namesById } from '../domain/category';
-import type { Goal } from '../domain/goals';
+import type { AccumulationGoal } from '../domain/goals';
 import { money } from '../domain/money';
 import {
   expenseByDefault,
@@ -268,53 +268,195 @@ describe('the Звіти category chart', () => {
 });
 
 describe('the Звіти цілі', () => {
-  const car: Goal = {
+  const car: AccumulationGoal = {
     id: 'g-car',
     name: 'Авто',
     target: money(20000000, 'UAH'),
     deadline: '2026-12-31',
-    accountId: 'jar',
+    accountIds: ['jar'],
   };
+  const restaurants = { categoryId: 'groceries', amount: money(200000, 'UAH') };
+  const categories = [
+    { id: 'groceries', name: 'Groceries', archived: false },
+    { id: 'pets', name: 'Pets', archived: true },
+  ];
 
   it('Scenario: A ціль shows its progress', () => {
-    const model = view([], { goals: [car] });
+    const model = view([], { goals: [{ ...car, accountIds: ['jar', 'card', 'wallet', 'ib'] }] });
 
-    expect(model.goals).toEqual([
+    expect(model.goals.accumulation).toEqual([
       {
+        kind: 'accumulation',
         id: 'g-car',
         name: 'Авто',
         target: '200 000,00 UAH',
         deadline: '2026-12-31',
         progress: '50 000,00 UAH',
+        percentage: 25,
+        leftToAccumulate: '150 000,00 UAH',
+        accountCount: '4 рахунки',
         reached: false,
         overdue: false,
+        approximate: false,
+        uncountable: null,
+        route: '/goal/g-car',
       },
     ]);
     expect(model.emptyGoalsMessage).toBeNull();
   });
 
-  it('Scenario: A reached ціль is marked', () => {
-    const small: Goal = { ...car, target: money(5000000, 'UAH') };
+  it('Scenario: A ціль витрат shows what is left of its month', () => {
+    const model = view([spend('e1', '2026-08-10', 132000)], {
+      limits: [restaurants],
+      categories,
+    });
 
-    const row = view([], { goals: [small] }).goals[0]!;
+    expect(model.goals.spending).toEqual([
+      {
+        kind: 'spending',
+        categoryId: 'groceries',
+        name: 'Groceries',
+        spent: '1 320,00 UAH',
+        ceiling: '2 000,00 UAH',
+        percentageUsed: 66,
+        mayStillSpend: '680,00 UAH',
+        exceededBy: null,
+        month: '2026-08',
+        monthLabel: 'Серпень 2026',
+        archived: false,
+        route: '/category/2026-08/groceries',
+      },
+    ]);
+  });
+
+  it('Scenario: An exceeded ціль витрат shows the excess and no percentage', () => {
+    const model = view([spend('e1', '2026-08-10', 248000)], {
+      limits: [restaurants],
+      categories,
+    });
+
+    const row = model.goals.spending[0]!;
+    expect(row.exceededBy).toBe('480,00 UAH');
+    expect(row.percentageUsed).toBeNull();
+    expect(row.mayStillSpend).toBeNull();
+    // Nothing about it reads as reached, done or complete.
+    expect('reached' in row).toBe(false);
+  });
+
+  it('Scenario: The two kinds are not mixed together', () => {
+    const model = view([spend('e1', '2026-08-10', 132000)], {
+      goals: [car],
+      limits: [restaurants],
+      categories,
+    });
+
+    expect(model.goals.accumulationTitle).toBe('Накопичення');
+    expect(model.goals.spendingTitle).toBe('Ліміти витрат');
+    expect(model.goals.accumulation.every((row) => row.kind === 'accumulation')).toBe(true);
+    expect(model.goals.spending.every((row) => row.kind === 'spending')).toBe(true);
+    expect(model.goals.accumulation).toHaveLength(1);
+    expect(model.goals.spending).toHaveLength(1);
+  });
+
+  it('Scenario: A reached ціль is marked', () => {
+    const small: AccumulationGoal = { ...car, target: money(5000000, 'UAH') };
+
+    const row = view([], { goals: [small] }).goals.accumulation[0]!;
 
     expect(row.reached).toBe(true);
     expect(row.overdue).toBe(false);
+    expect(row.leftToAccumulate).toBeNull();
   });
 
   it('Scenario: An overdue ціль is marked', () => {
-    const lastYear: Goal = { ...car, deadline: '2025-12-31' };
+    const lastYear: AccumulationGoal = { ...car, deadline: '2025-12-31' };
 
-    const row = view([], { goals: [lastYear] }).goals[0]!;
+    const row = view([], { goals: [lastYear] }).goals.accumulation[0]!;
 
     expect(row.overdue).toBe(true);
     expect(row.reached).toBe(false);
     // A reached ціль past its дата is not overdue.
-    const reached: Goal = { ...lastYear, target: money(5000000, 'UAH') };
-    expect(view([], { goals: [reached] }).goals[0]!.overdue).toBe(false);
+    const reached: AccumulationGoal = { ...lastYear, target: money(5000000, 'UAH') };
+    expect(view([], { goals: [reached] }).goals.accumulation[0]!.overdue).toBe(false);
   });
 
-  it('A переказ into the рахунок moves the progress the ціль shows', () => {
+  it('Scenario: An approximate progress is marked', () => {
+    const mixed: AccumulationGoal = { ...car, accountIds: ['jar', 'usd'] };
+    const arrival = transfer({
+      id: 't-usd',
+      date: '2026-08-02',
+      fromAccountId: 'card',
+      toAccountId: 'usd',
+      left: money(1000000, 'UAH'),
+      arrived: money(30000, 'USD'),
+    });
+
+    const row = view([arrival], {
+      goals: [mixed],
+      rates: [{ currency: 'USD', rateMillionths: 41_250_000 }],
+    }).goals.accumulation[0]!;
+
+    expect(row.approximate).toBe(true);
+    expect(row.progress).toBe('62 375,00 UAH');
+    expect(row.uncountable).toBeNull();
+  });
+
+  it('Scenario: A progress that cannot be counted says so', () => {
+    const mixed: AccumulationGoal = { ...car, accountIds: ['jar', 'usd'] };
+    const arrival = transfer({
+      id: 't-usd',
+      date: '2026-08-02',
+      fromAccountId: 'card',
+      toAccountId: 'usd',
+      left: money(1000000, 'UAH'),
+      arrived: money(30000, 'USD'),
+    });
+
+    // No rate at all for USD.
+    const row = view([arrival], { goals: [mixed], rates: [] }).goals.accumulation[0]!;
+
+    expect(row.progress).toBeNull();
+    expect(row.percentage).toBeNull();
+    expect(row.uncountable).toContain('USD');
+    // Marked neither reached nor overdue: an unknown progress is not a verdict.
+    expect(row.reached).toBe(false);
+    expect(row.overdue).toBe(false);
+  });
+
+  it('An overdue дата does not make an uncountable ціль overdue', () => {
+    const mixed: AccumulationGoal = {
+      ...car,
+      deadline: '2025-12-31',
+      accountIds: ['jar', 'usd'],
+    };
+    const arrival = transfer({
+      id: 't-usd',
+      date: '2026-08-02',
+      fromAccountId: 'card',
+      toAccountId: 'usd',
+      left: money(1000000, 'UAH'),
+      arrived: money(30000, 'USD'),
+    });
+
+    expect(view([arrival], { goals: [mixed], rates: [] }).goals.accumulation[0]!.overdue).toBe(
+      false,
+    );
+  });
+
+  it('Scenario: A ціль витрат of an archived категорія is set apart, not hidden', () => {
+    const model = view([], {
+      limits: [restaurants, { categoryId: 'pets', amount: money(100000, 'UAH') }],
+      categories,
+    });
+
+    expect(model.goals.spending.map((row) => ({ id: row.categoryId, archived: row.archived }))).toEqual([
+      { id: 'groceries', archived: false },
+      // Listed among the цілі витрат, after the rest, visibly set apart.
+      { id: 'pets', archived: true },
+    ]);
+  });
+
+  it('A переказ into a рахунок of the склад moves the progress the ціль shows', () => {
     const arrival = transfer({
       id: 't1',
       date: '2026-08-20',
@@ -324,14 +466,36 @@ describe('the Звіти цілі', () => {
       arrived: money(1000000, 'UAH'),
     });
 
-    expect(view([arrival], { goals: [car] }).goals[0]!.progress).toBe('60 000,00 UAH');
+    expect(view([arrival], { goals: [car] }).goals.accumulation[0]!.progress).toBe(
+      '60 000,00 UAH',
+    );
+  });
+
+  it('A ціль without a дата is shown without one and is never overdue', () => {
+    const undated: AccumulationGoal = {
+      id: 'g-reserve',
+      name: 'Резерв',
+      target: money(30000000, 'UAH'),
+      accountIds: ['jar'],
+    };
+
+    const row = view([], { goals: [undated] }).goals.accumulation[0]!;
+    expect(row.deadline).toBeNull();
+    expect(row.overdue).toBe(false);
   });
 
   it('Scenario: No цілі is said plainly', () => {
     const model = view([spend('e1', '2026-08-10', 100000)]);
 
-    expect(model.goals).toEqual([]);
+    expect(model.goals.accumulation).toEqual([]);
+    expect(model.goals.spending).toEqual([]);
     expect(model.emptyGoalsMessage).toBe('Цілей поки немає.');
+  });
+
+  it('A ліміт alone is цілі enough: the tab does not say there are none', () => {
+    const model = view([], { limits: [restaurants], categories });
+
+    expect(model.emptyGoalsMessage).toBeNull();
   });
 });
 

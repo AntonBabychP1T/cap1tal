@@ -1,3 +1,4 @@
+import { spendingGoalSpent, spendingGoalState } from '../domain/goals';
 import { overLimitBy, overLimitCategories, type CategoryLimit } from '../domain/limits';
 import { categoryBreakdown } from '../domain/monthly-picture';
 import {
@@ -65,6 +66,15 @@ export interface CategoryMonthHeading {
    * carrying none are the same answer.
    */
   readonly overrun: string | null;
+  /**
+   * «Місяць завершено в межах ліміту» — the settled verdict of a month that has **ended** at or
+   * below its ліміт. This list is where a ціль витрат is read, and «завершено в межах» is that
+   * ціль's third state; the current month gets none, because it is still being spent.
+   *
+   * `null` for the current month, for a month with no ліміт, and for one that went over — that
+   * month states its overrun instead, and stating both would be two answers to one question.
+   */
+  readonly settled: string | null;
 }
 
 /**
@@ -85,6 +95,12 @@ export function categoryMonthHeading(input: {
   transactions: readonly Transaction[];
   categoryNames: ReadonlyMap<string, string>;
   limits: readonly CategoryLimit[];
+  /**
+   * The month the app is in, so «has this month ended» can be answered. Optional because every
+   * caller that only wants the сума and the overrun needs no clock, and a month with no answer to
+   * that question simply carries no settled verdict.
+   */
+  currentMonth?: Month;
 }): CategoryMonthHeading {
   const breakdown = categoryBreakdown({ month: input.month, transactions: input.transactions });
   const over = overLimitCategories({ breakdown, limits: input.limits });
@@ -101,10 +117,24 @@ export function categoryMonthHeading(input: {
   const judged = limit && breakdown.get(limit.amount.currency)?.get(input.categoryId);
   const overrun = limit && judged ? overLimitBy(judged, limit.amount) : null;
 
+  // A month that has ended at or below its ліміт has one final answer, decided by that month's
+  // транзакції alone: `spendingGoalState` reads it from `overLimit`, so «is the ліміт exceeded» and
+  // «did the month finish within it» can never be two different verdicts.
+  const monthEnded = input.currentMonth !== undefined && input.month < input.currentMonth;
+  const settled =
+    limit && monthEnded
+      ? spendingGoalState({
+          spent: spendingGoalSpent({ breakdown, limit }),
+          ceiling: limit.amount,
+          monthEnded: true,
+        }) === 'completedWithin'
+      : false;
+
   return {
     label: categoryLabel(input.categoryId, input.categoryNames),
     overLimit: over.has(input.categoryId),
     spent,
     overrun: overrun ? `Перевищено ліміт на ${formatMoney(overrun)}` : null,
+    settled: settled ? 'Місяць завершено в межах ліміту' : null,
   };
 }

@@ -319,11 +319,47 @@ export const monobankImportedItems = sqliteTable(
   (t) => [primaryKey({ columns: [t.monobankAccountId, t.itemId] })],
 );
 
+/**
+ * The last sync run this phone attempted: when it started, and how it ended.
+ *
+ * One row, `'attempt'`, the single-row idiom `daily_reminder` and `entry_defaults` keep, CHECK and
+ * all — a new attempt replaces the one before it rather than growing a history nobody reads.
+ *
+ * It exists so that opening the app does not spend a request every time. monobank allows one
+ * request a minute, and force-closing an app that feels slow is exactly what an owner does, so a
+ * moment kept only in memory would let ten openings fire ten requests. `attempted_at` is written
+ * when the run starts and `outcome` when it ends, which is why the outcome is nullable: a run the
+ * phone did not survive still spends its interval, and «a moment with no outcome» is a third
+ * answer, distinct from an attempt that ended and from no attempt at all.
+ *
+ * `outcome` carries no CHECK, for `alerts`'s stated reason: the set of outcomes lives in
+ * `src/monobank/coordinator.ts`, migrations are immutable, and widening a CHECK in SQLite means
+ * rebuilding a table for the sake of one string.
+ *
+ * Not in a бекап (`src/backup/format.ts`): what *this* phone last tried is operational state about
+ * one device, like the сповіщення про збій standing on it — an attempt carried in from another
+ * phone would make this one skip a sync it never made.
+ */
+export const monobankSyncAttempt = sqliteTable(
+  'monobank_sync_attempt',
+  {
+    /** Always `'attempt'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    /** When the run started — not when it ended, which may never happen. */
+    attemptedAt: integer('attempted_at', { mode: 'timestamp_ms' }).notNull(),
+    /** One of `AccountOutcome`, or `null` while the run has not reported; see above. */
+    outcome: text('outcome'),
+  },
+  (t) => [check('monobank_sync_attempt_single_row', sql`${t.id} = 'attempt'`)],
+);
+
 export type MonobankAccountRow = typeof monobankAccounts.$inferSelect;
 export type NewMonobankAccountRow = typeof monobankAccounts.$inferInsert;
 export type MonobankLinkRow = typeof monobankLinks.$inferSelect;
 export type NewMonobankLinkRow = typeof monobankLinks.$inferInsert;
 export type MonobankImportedItemRow = typeof monobankImportedItems.$inferSelect;
+export type MonobankSyncAttemptRow = typeof monobankSyncAttempt.$inferSelect;
+export type NewMonobankSyncAttemptRow = typeof monobankSyncAttempt.$inferInsert;
 
 /**
  * A category's ліміт: the optional monthly ceiling the limits capability defines. Its own table
@@ -349,16 +385,23 @@ export const categoryLimits = sqliteTable(
 );
 
 /**
- * A ціль: «відкласти N до дати» on one рахунок. No progress column — progress is the linked
- * рахунок's розрахунковий баланс, read when the ціль is shown, so no second number can drift from
- * the stored truth (goals: "Progress is the linked рахунок's розрахунковий баланс").
+ * A ціль-накопичення: «накопичити N», optionally by a дата, over a склад of рахунки. No progress
+ * column — progress is the sum of the внески of that склад, read when the ціль is shown, so no
+ * second number can drift from the stored truth (goals: "Progress is the sum of the внески").
  *
- * The currency column stays even though the рахунок has one: an amount without its currency code
- * would be the first such amount in the schema. That the two agree is `goals-repo`'s check — a
- * read-and-compare, not a trigger — since SQLite cannot express it as a constraint (design D2).
+ * There is no `account_id` here any more and no `kind` column either. A ціль-накопичення has no
+ * «primary» рахунок — its склад is `goal_accounts` below — and a `kind` discriminator would only
+ * ever hold one value, because the other kind, the ціль витрат, **is** the `category_limits` row
+ * of its категорія and is stored nowhere else (design D1).
+ *
+ * The currency column is now genuinely the ціль's own: it is UAH, or the single currency every
+ * рахунок of the склад is in (design D5). SQLite cannot express "equal to a column of another
+ * table", so that is `goals-repo`'s read-and-compare, in the one writer every path goes through.
  *
  * `deadline` is the domain's `IsoDate` verbatim, TEXT 'YYYY-MM-DD', exactly as a транзакція's date
- * is: a calendar date, not an instant, so no device timezone can move it.
+ * is: a calendar date, not an instant, so no device timezone can move it. It is **nullable**,
+ * because «this ціль has no deadline» is an answer the owner may give and a sentinel date would be
+ * a lie every screen would have to un-tell.
  */
 export const goals = sqliteTable(
   'goals',
@@ -367,22 +410,52 @@ export const goals = sqliteTable(
     name: text('name').notNull(),
     amount: integer('amount').notNull(),
     currency: text('currency').notNull(),
-    deadline: text('deadline').notNull(),
-    accountId: text('account_id')
-      .notNull()
-      .references(() => accounts.id, { onDelete: 'restrict' }),
+    deadline: text('deadline'),
   },
   (t) => [
     check('goals_amount_positive', sql`${t.amount} > 0`),
     check('goals_name_not_blank', sql`length(trim(${t.name})) > 0`),
-    check('goals_deadline_iso', sql`${t.deadline} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`),
+    check(
+      'goals_deadline_iso',
+      sql`${t.deadline} IS NULL OR ${t.deadline} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
   ],
+);
+
+/**
+ * The склад цілі: which рахунки' money counts toward which ціль-накопичення.
+ *
+ * A join table rather than a list on `goals`, because that is how this schema stores a relation.
+ * The composite primary key **is** «no рахунок twice» — a property of the shape, not of a check —
+ * and a склад that names one twice is refused by `goals-repo` rather than quietly deduplicated:
+ * the form ticks boxes and cannot produce a duplicate, so one arriving at storage is a bug.
+ *
+ * `account_id` restricts like every other reference to a рахунок — рахунки are archived, never
+ * deleted, and an archived рахунок keeps feeding its ціль. `goal_id` cascades: a склад row has no
+ * meaning without its ціль. It arrives with **no** reference at all in the migration that creates
+ * this table and gains the cascade in the next one, because the same migration drops and rebuilds
+ * `goals` while foreign keys are on, and `DROP TABLE` with a live reference would either fail or
+ * cascade away the very rows just copied (design D4).
+ */
+export const goalAccounts = sqliteTable(
+  'goal_accounts',
+  {
+    goalId: text('goal_id')
+      .notNull()
+      .references(() => goals.id, { onDelete: 'cascade' }),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+  },
+  (t) => [primaryKey({ columns: [t.goalId, t.accountId] })],
 );
 
 export type CategoryLimitRow = typeof categoryLimits.$inferSelect;
 export type NewCategoryLimitRow = typeof categoryLimits.$inferInsert;
 export type GoalRow = typeof goals.$inferSelect;
 export type NewGoalRow = typeof goals.$inferInsert;
+export type GoalAccountRow = typeof goalAccounts.$inferSelect;
+export type NewGoalAccountRow = typeof goalAccounts.$inferInsert;
 
 /**
  * One app the owner opted into reading, and the рахунок its notifications land on. The package
@@ -735,7 +808,56 @@ export const bugReports = sqliteTable('bug_reports', {
   journalJson: text('journal_json').notNull(),
   migrationsApplied: integer('migrations_applied').notNull(),
   handedOverAt: integer('handed_over_at', { mode: 'timestamp_ms' }),
+  /**
+   * Which of the four doors the репорт came through — one of `src/reporting/report.ts`'s
+   * `ReportOrigin` values, and NULL on a row written before this column existed.
+   *
+   * Nullable rather than defaulted, deliberately: a репорт stored before the app recorded this has
+   * no honest answer, and a guess in a diagnostic file is worse than a blank (design D7). No CHECK,
+   * for `journal.kind`'s reason — the enumeration lives in TypeScript, and a fifth door should not
+   * cost a migration.
+   */
+  origin: text('origin'),
+  /**
+   * Why this репорт has no скріншот, when one was to be taken and could not be — in Ukrainian, as
+   * the owner was shown it.
+   *
+   * Stored and not merely shown, because the saved репорт is rendered again after a restart: the
+   * rendering reads this column, so «скріншота немає» keeps saying *why* on the second reading.
+   * NULL both when the capture succeeded and when none was attempted.
+   */
+  captureFailure: text('capture_failure'),
 });
+
+/**
+ * The two switches that decide how a репорт may be filed from the screen the owner is on: the
+ * gesture (two fingers held still) and the handle (a marker drawn above every screen).
+ *
+ * One row, keyed `'capture'` — the single-row shape `daily_reminder` and `entry_defaults` already
+ * keep, CHECK and all. Not a generic settings table: the app has none, and inventing one for two
+ * booleans would be a bigger decision than the change that needed them is allowed to make
+ * (design D10).
+ *
+ * No row means «never touched», which is the gesture on and the handle off — the defaults live in
+ * `reporting-repo.ts` rather than in a DEFAULT clause, so there is one answer to «what does a
+ * fresh phone do» and it is testable without a database.
+ *
+ * Never in a бекап, and a відновлення leaves it alone: it is how *this* phone is being tested, not
+ * the owner's money — the reason `journal`, `bug_reports` and `bug_report_screenshots` are already
+ * outside one. See `src/backup/format.ts`.
+ */
+export const bugReportCapture = sqliteTable(
+  'bug_report_capture',
+  {
+    /** Always `'capture'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    /** The two-finger long press. On until the owner turns it off. */
+    gestureEnabled: integer('gesture_enabled', { mode: 'boolean' }).notNull(),
+    /** The visible marker. Off until the owner turns it on. */
+    handleEnabled: integer('handle_enabled', { mode: 'boolean' }).notNull(),
+  },
+  (t) => [check('bug_report_capture_single_row', sql`${t.id} = 'capture'`)],
+);
 
 /**
  * One screenshot the owner attached to a saved репорт, kept on the phone beside it.
@@ -761,3 +883,5 @@ export const bugReportScreenshots = sqliteTable(
 export type JournalRow = typeof journal.$inferSelect;
 export type BugReportRow = typeof bugReports.$inferSelect;
 export type BugReportScreenshotRow = typeof bugReportScreenshots.$inferSelect;
+export type BugReportCaptureRow = typeof bugReportCapture.$inferSelect;
+export type NewBugReportCaptureRow = typeof bugReportCapture.$inferInsert;

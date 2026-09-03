@@ -110,6 +110,19 @@ export interface ImportPlan {
   readonly rejectedRedirects: readonly RejectedRedirect[];
 }
 
+/**
+ * The опис a Saldo row carries, ready to be spread onto a транзакція — `{ description }` when the
+ * export wrote one, and nothing at all when it did not.
+ *
+ * Spread rather than assigned, and absent rather than `''`, because two of the seven constructions
+ * below are hand-built object literals (`Correction`, `Income`) which — unlike the domain's
+ * factories — would happily store an empty string and leave a blank line under the транзакція.
+ */
+function описOf(transaction: SaldoTransaction): { description?: string } {
+  const trimmed = transaction.description.trim();
+  return trimmed.length > 0 ? { description: trimmed } : {};
+}
+
 /** The normalised datetime as a comparable instant. Arithmetic on the text, never a clock read. */
 function instantOf(datetime: string): number {
   const [day = '', time = ''] = datetime.split('T');
@@ -380,6 +393,9 @@ export function interpret(input: {
         // still loses exactly what its real leg says.
         left: departure.inTransit.amount,
         arrived: arrival.real.amount,
+        // The departure's, not the arrival's: the departure is the row that names where the money
+        // went, and the arrival in a Saldo export is the anonymous other half.
+        ...описOf(departure.transaction),
       }),
     );
     if (!переказ) {
@@ -393,6 +409,9 @@ export function interpret(input: {
         accountId: from.id,
         amount: departure.fee.amount,
         categoryId: FEES_CATEGORY_ID,
+        // The same movement, so the same опис: a «Комісія» with none is the one row of an import
+        // the owner cannot place afterwards.
+        ...описOf(departure.transaction),
       });
       add(комісія, [departure.transaction.id], departure.transaction, 1);
     }
@@ -456,6 +475,7 @@ export function interpret(input: {
           toAccountId: lending ? debts.id : account.id,
           left: real.amount,
           arrived: real.amount,
+          ...описOf(transaction),
         }),
       );
       if (переказ) {
@@ -495,6 +515,7 @@ export function interpret(input: {
           // Each side in its own рахунок's currency; a cross-currency move stores no rate.
           left: credited.amount,
           arrived: debited.amount,
+          ...описOf(transaction),
         }),
       );
       if (переказ) {
@@ -527,6 +548,7 @@ export function interpret(input: {
         accountId: account.id,
         // The sign is the direction the money went, not which side of the ledger it sat on.
         amount: legEffect(real),
+        ...описOf(transaction),
       };
       add(коригування, [transaction.id], transaction);
       continue;
@@ -549,6 +571,7 @@ export function interpret(input: {
         // Money handed back out of an income is a negative дохід, never a витрата in a category.
         amount: legEffect(real),
         sourceId,
+        ...описOf(transaction),
       };
       add(дохід, [transaction.id], transaction);
       continue;
@@ -568,6 +591,7 @@ export function interpret(input: {
           accountId: account.id,
           amount: real.amount,
           categoryId,
+          ...описOf(transaction),
         }),
       );
       if (!повернення) {
@@ -595,6 +619,7 @@ export function interpret(input: {
       ...(counterpart.amount.currency !== real.amount.currency
         ? { originalAmount: counterpart.amount }
         : {}),
+      ...описOf(transaction),
     });
     add(витрата, [transaction.id], transaction);
   }

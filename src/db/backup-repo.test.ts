@@ -98,7 +98,7 @@ function seedWorld(db: TestDb): void {
     name: 'Авто',
     target: money(500_000, 'UAH'),
     deadline: '2027-01-01',
-    accountId: 'jar',
+    accountIds: ['jar'],
   });
 
   const transactions = transactionsRepo(db);
@@ -392,6 +392,22 @@ describe('the whole stored state as one snapshot', () => {
     expect(snapshot.transactions).toHaveLength(10);
   });
 
+  it('Scenario: A бекап carries no attempt', () => {
+    // The phone has synced and remembers how it went; the file must not.
+    const monobank = monobankRepo(storage.db);
+    monobank.beginAttempt(new Date('2026-09-02T08:15:00.000Z'));
+    monobank.finishAttempt('invalid-token');
+
+    const snapshot = repo.snapshot();
+
+    const written = JSON.stringify(snapshot);
+    expect(written).not.toContain('invalid-token');
+    expect(Object.keys(snapshot)).not.toContain('attempt');
+    // ...while the money and the links of that same device are in it whole.
+    expect(snapshot.accounts).toHaveLength(5);
+    expect(snapshot.monobankLinks.length).toBeGreaterThan(0);
+  });
+
   it('reads the same snapshot twice from an unchanged device', () => {
     // A total order everywhere, so a бекап of an unchanged phone is the same file — which is what
     // makes a checksum comparable at all.
@@ -505,6 +521,75 @@ describe('the whole stored state replaced by a snapshot, as one unit', () => {
     expect(receiptsRepo(storage.db).forTransaction('n0')?.receipt.fiscalNumber).toBe('1384600901');
   });
 
+  it("Scenario: A ціль's склад is in the snapshot, and survives snapshot → replace → snapshot", () => {
+    const withComposition: BackupState = {
+      ...smallState(),
+      accounts: [
+        ...smallState().accounts,
+        {
+          id: 'usd',
+          name: 'USD банка',
+          kind: 'savings',
+          currency: 'USD',
+          openingBalance: money(0, 'USD'),
+          archived: false,
+        },
+        {
+          id: 'bonds',
+          name: 'ОВДП',
+          kind: 'investment',
+          currency: 'UAH',
+          openingBalance: money(0, 'UAH'),
+          archived: false,
+        },
+      ],
+      goals: [
+        {
+          id: 'g-machine',
+          name: 'Машина',
+          target: money(70_000_000, 'UAH'),
+          deadline: '2027-06-30',
+          accountIds: ['only', 'usd', 'bonds'],
+        },
+        { id: 'g-reserve', name: 'Резерв', target: money(1_000_000, 'UAH'), accountIds: ['only'] },
+      ],
+    };
+
+    repo.replaceAll(withComposition);
+
+    const after = repo.snapshot();
+    expect(after.goals).toEqual([
+      {
+        id: 'g-machine',
+        name: 'Машина',
+        target: money(70_000_000, 'UAH'),
+        deadline: '2027-06-30',
+        // In the snapshot's own stable order, so the same state snapshots identically.
+        accountIds: ['bonds', 'only', 'usd'],
+      },
+      { id: 'g-reserve', name: 'Резерв', target: money(1_000_000, 'UAH'), accountIds: ['only'] },
+    ]);
+    // Round-trips a second time unchanged.
+    repo.replaceAll(after);
+    expect(repo.snapshot()).toEqual(after);
+  });
+
+  it('Scenario: Replacing leaves no склад behind — no orphan склад row remains', () => {
+    repo.replaceAll({
+      ...smallState(),
+      goals: [
+        { id: 'g-old', name: 'Старе', target: money(1_000, 'UAH'), accountIds: ['only'] },
+      ],
+    });
+
+    repo.replaceAll(smallState());
+
+    expect(repo.snapshot().goals).toEqual([]);
+    // Asserted as the outcome, so it holds whether or not the cascade fires: `backup-repo` deletes
+    // `goal_accounts` explicitly, and a restore must not depend on a PRAGMA to be correct.
+    expect(storage.db.all('SELECT * FROM goal_accounts')).toEqual([]);
+  });
+
   it('Scenario: A replacement that fails partway stores nothing', () => {
     const before = repo.snapshot();
     const broken: BackupState = {
@@ -565,9 +650,14 @@ describe('the whole stored state replaced by a snapshot, as one unit', () => {
         counts: { accounts: 1, transactions: 1, categories: 1, rules: 0, drafts: 0 },
         journal: reporting.tail(),
         prompting: null,
+        origin: 'section',
+        captureFailure: null,
       });
     }
     reporting.addScreenshot('r1', 'shot-1.png', OBTAINED_AT);
+    // This phone is being tested by the handle rather than the gesture — a habit of the device,
+    // not a setting about the owner's money.
+    reporting.setCaptureSettings({ gestureEnabled: false, handleEnabled: true });
     const journalBefore = reporting.tail();
     const reportsBefore = reporting.list();
 
@@ -578,6 +668,53 @@ describe('the whole stored state replaced by a snapshot, as one unit', () => {
     expect(reporting.list()).toEqual(reportsBefore);
     expect(reporting.list().map((r) => r.id)).toEqual(['r2', 'r1']);
     expect(reporting.get('r1')?.screenshots.map((shot) => shot.name)).toEqual(['shot-1.png']);
+  });
+
+  it('Scenario: A restore leaves them in place', () => {
+    // The origins and the two switches say how this phone is being tested. A бекап made on another
+    // phone knows nothing about that, and a відновлення must not pretend otherwise.
+    const reporting = reportingRepo(storage.db);
+    reporting.create({
+      id: 'r-here',
+      createdAt: OBTAINED_AT,
+      did: 'заведено з екрана /(tabs) жестом',
+      happened: 'підсумок відʼємний',
+      expected: null,
+      route: '/(tabs)',
+      build: { version: '0.0.0', commit: 'abc1234', dirty: false, builtAt: 'x' },
+      device: { platform: 'android', systemVersion: '16', model: 'Pixel 7' },
+      migrationsApplied: 14,
+      counts: { accounts: 1, transactions: 1, categories: 1, rules: 0, drafts: 0 },
+      journal: [],
+      prompting: null,
+      origin: 'here',
+      captureFailure: 'Вікно захищене від знімків',
+    });
+    reporting.setCaptureSettings({ gestureEnabled: false, handleEnabled: true });
+
+    repo.replaceAll(smallState());
+
+    expect(reporting.captureSettings()).toEqual({ gestureEnabled: false, handleEnabled: true });
+    const kept = reporting.get('r-here');
+    expect(kept?.origin).toBe('here');
+    expect(kept?.captureFailure).toBe('Вікно захищене від знімків');
+  });
+
+  it('Scenario: A restore leaves this phone`s attempt alone', () => {
+    // What this phone last tried is a fact about this phone. A бекап made elsewhere replaces the
+    // owner's money and says nothing about it — otherwise a restored device would either skip a
+    // sync it never made or wear a failure it never had.
+    const monobank = monobankRepo(storage.db);
+    const at = new Date('2026-09-02T08:15:00.000Z');
+    monobank.beginAttempt(at);
+    monobank.finishAttempt('complete');
+
+    repo.replaceAll(smallState());
+
+    expect(monobankRepo(storage.db).attempt()).toEqual({
+      attemptedAtMs: at.getTime(),
+      outcome: 'complete',
+    });
   });
 
   it('Scenario: The rate cache and the fingerprints survive a replacement', () => {
@@ -693,7 +830,7 @@ describe('the round trip a бекап promises', () => {
         name: 'Авто',
         target: money(500_000, 'UAH'),
         deadline: '2027-01-01',
-        accountId: 'jar',
+        accountIds: ['jar'],
       },
     ]);
     expect(importRepo(target.db).committedAt()).toEqual(new Date('2026-06-01T09:00:00.000Z'));
@@ -1038,6 +1175,8 @@ describe('the нагадування travels; this phone`s failures do not', () 
         counts: { accounts: 1, transactions: 1, categories: 1, rules: 0, drafts: 0 },
         journal: reporting.tail(),
         prompting: null,
+        origin: 'section',
+        captureFailure: null,
       });
     }
     reporting.addScreenshot('r1', 'ZZ-SHOT.png', OBTAINED_AT);

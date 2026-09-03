@@ -5,8 +5,14 @@ import type { CategoryLimit } from '../domain/limits';
 import { money } from '../domain/money';
 import { CORRECTION_CATEGORY_ID, FEES_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import {
+  spendingFromDraft,
+  spendingGoalCategoryChoices,
+  spendingGoalRows,
+} from './goals-section';
+import {
   DEFAULT_LIMIT_CURRENCY,
   LIMIT_CURRENCIES,
+  LIMIT_IS_A_SPENDING_GOAL,
   limitFromDraft,
   limitRows,
 } from './limits-section';
@@ -151,5 +157,100 @@ describe('limitRows', () => {
     });
 
     expect(rows.map((row) => row.name)).toEqual(['Без категорії', 'Groceries', 'Travel']);
+  });
+});
+
+describe('a ліміт and the ціль витрат of its категорія are one thing', () => {
+  const categories: Category[] = [
+    { id: 'groceries', name: 'Groceries', archived: false },
+    { id: 'restaurants', name: 'Ресторани', archived: false },
+  ];
+
+  /**
+   * The one stored row, as both screens see it. A `Map` and not two lists, because that is exactly
+   * the claim: there is one сума per категорія and both names read it.
+   */
+  const stored = (entries: readonly CategoryLimit[]) => [...entries];
+
+  it('Scenario: A ліміт set here is a ціль витрат there', () => {
+    const limits = stored([limitFromDraft('groceries', { amount: '2500', currency: 'UAH' })]);
+
+    expect(limitRows({ categories, limits })).toContainEqual({
+      categoryId: 'groceries',
+      name: 'Groceries',
+      limit: '2 500,00 UAH',
+      archived: false,
+    });
+    expect(spendingGoalRows({ limits, categories })).toEqual([
+      {
+        kind: 'spending',
+        categoryId: 'groceries',
+        name: 'Groceries',
+        ceiling: '2 500,00 UAH',
+        period: 'Календарний місяць',
+        archived: false,
+      },
+    ]);
+  });
+
+  it('Scenario: One сума, whichever name it is set under', () => {
+    // Typed in «Ліміти» and typed in «Цілі» — the same value, because it is the same function's
+    // output shape reaching the same one row.
+    expect(limitFromDraft('groceries', { amount: '2500', currency: 'UAH' })).toEqual(
+      spendingFromDraft({ categoryId: 'groceries', amount: '2500', currency: 'UAH' }),
+    );
+  });
+
+  it('Scenario: Changing under one name changes under the other', () => {
+    const limits = stored([spendingFromDraft({ categoryId: 'groceries', amount: '3000', currency: 'UAH' })]);
+
+    expect(
+      limitRows({ categories, limits }).find((row) => row.categoryId === 'groceries')?.limit,
+    ).toBe('3 000,00 UAH');
+    expect(spendingGoalRows({ limits, categories })[0]?.ceiling).toBe('3 000,00 UAH');
+  });
+
+  it('Scenario: Clearing removes both readings', () => {
+    const limits: CategoryLimit[] = [];
+
+    // The категорія is still listed under «Ліміти», now with none…
+    // In the section's own Ukrainian order, both still listed and both now carrying none.
+    expect(limitRows({ categories, limits })).toEqual([
+      { categoryId: 'restaurants', name: 'Ресторани', limit: null, archived: false },
+      { categoryId: 'groceries', name: 'Groceries', limit: null, archived: false },
+    ]);
+    // …and no ціль витрат remains among the цілі.
+    expect(spendingGoalRows({ limits, categories })).toEqual([]);
+  });
+
+  it('Scenario: A cleared ліміт leaves the category listed', () => {
+    const before = stored([limitFromDraft('groceries', { amount: '2500', currency: 'UAH' })]);
+    const after = before.filter((limit) => limit.categoryId !== 'groceries');
+
+    expect(limitRows({ categories, limits: after }).map((row) => row.categoryId)).toContain(
+      'groceries',
+    );
+    expect(
+      limitRows({ categories, limits: after }).find((row) => row.categoryId === 'groceries')?.limit,
+    ).toBeNull();
+    expect(spendingGoalRows({ limits: after, categories })).toEqual([]);
+  });
+
+  it('Scenario: A категорія cannot hold two ceilings', () => {
+    const limits = stored([limitFromDraft('groceries', { amount: '2500', currency: 'UAH' })]);
+
+    // Exactly one ціль витрат for it, of exactly that сума…
+    const rows = spendingGoalRows({ limits, categories });
+    expect(rows.filter((row) => row.categoryId === 'groceries')).toHaveLength(1);
+    // …and no way to give the ціль a different one, because the form does not offer a категорія
+    // that already carries a ліміт: its ціль витрат exists and is edited where it stands.
+    expect(spendingGoalCategoryChoices({ categories, limits }).map((c) => c.id)).toEqual([
+      'restaurants',
+    ]);
+  });
+
+  it('The section says the two are one, so the owner is not left to discover it', () => {
+    expect(LIMIT_IS_A_SPENDING_GOAL).toContain('ціль витрат');
+    expect(LIMIT_IS_A_SPENDING_GOAL).toContain('Цілях');
   });
 });

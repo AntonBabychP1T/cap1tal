@@ -2,9 +2,9 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, StyleSheet } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices } from '@/components/form';
+import { Action, Choices, Field, RowAction } from '@/components/form';
 import { Banner, Card, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -17,26 +17,37 @@ import {
 import { formatMoney } from '@/ui/amount-input';
 import { failureAlert } from '@/ui/failure-alert';
 import { reportFailure } from '@/ui/journal';
-import { KIND_CHOICES } from '@/ui/labels';
+import { KIND_CHOICES, kindLabel } from '@/ui/labels';
 import {
-  accountRows,
   canCommit,
   commitFailed,
   committed,
   confirmSecondImport,
+  dismissHint,
+  mapSections,
+  mapSummary,
   mergeTargets,
+  noTargetsMessage,
+  planLine,
   planSummary,
+  receivesLine,
   redirectAccount,
   redirectName,
   setAccountKind,
   startFlow,
   startWithText,
+  stateLine,
   targetOf,
   toStep,
+  writtenLine,
+  SEPARATE_TARGET,
+  type AccountRow,
   type FlowState,
 } from '@/ui/saldo-import';
+import { COLLAPSE_LABEL, narrow, NOTHING_FOUND, PICKER_SIZE, type Named } from '@/ui/shortlist';
 
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
 
 import { Spacing } from '@/constants/theme';
@@ -72,7 +83,8 @@ export default function SaldoImportScreen() {
       ...(importsRepo.committedAt() ? { previouslyCommittedAt: importsRepo.committedAt() } : {}),
     }),
   );
-  const rows = useMemo(() => accountRows(flow), [flow]);
+  const sections = useMemo(() => mapSections(flow), [flow]);
+  const opening = useMemo(() => mapSummary(flow), [flow]);
   const summary = useMemo(() => planSummary(flow), [flow]);
 
   const choose = useCallback(async () => {
@@ -108,11 +120,170 @@ export default function SaldoImportScreen() {
   useClearAlertOnOpen('saldo-import');
 
   /**
-   * What each row could merge into. The list itself is `mergeTargets` in `src/ui/saldo-import.ts`,
-   * where `verify` can reach it — which entries and рахунки are offered, and how each is named, is
-   * the whole of the requirement, and none of it is a drawing decision.
+   * The one editor the step may have open: a row's merge targets, a row's вид, or the existing
+   * rows offered to a proposed категорія or джерело. One at a time, because with twenty-three rows
+   * several open selectors mean several search fields, several keyboards and a screen whose height
+   * changes under the thumb — and because it gives the phone's «назад» one unambiguous answer.
+   *
+   * It lives here rather than in `FlowState` for the reason `shortlist-pickers` gave for the same
+   * decision: expansion is presentation, and every field of `FlowState` feeds the engine or the
+   * commit. The *rule* — that «назад» closes it before leaving the screen — is `backGesture`, and
+   * `useCloseOnBack` is the subscription around it.
    */
-  const targetsFor = useCallback((key: string) => mergeTargets(flow, key), [flow]);
+  const [open, setOpen] = useState<{ key: string; editor: 'merge' | 'kind' | 'name' } | undefined>(
+    undefined,
+  );
+  /** The search inside whichever editor is open; there is only ever one, so it needs only one. */
+  const [query, setQuery] = useState('');
+
+  const isOpen = (key: string, editor: 'merge' | 'kind' | 'name') =>
+    open?.key === key && open.editor === editor;
+  const openEditor = (key: string, editor: 'merge' | 'kind' | 'name') => {
+    setQuery('');
+    setOpen({ key, editor });
+  };
+  const close = useCallback(() => {
+    setQuery('');
+    setOpen(undefined);
+  }, []);
+  useCloseOnBack(open !== undefined, close);
+
+  /**
+   * One row of the account map: назва, валюта, вид, one line of what will happen to it, and its
+   * actions. Nothing here decides anything — every line is a field of `AccountRow` and every action
+   * a transition of `src/ui/saldo-import.ts`, which is where `verify` can reach them.
+   *
+   * The вид rides the currency line rather than the state line design D9 sketches it on, so that a
+   * Saldo назва too long for the width wraps above a line that still carries both — the words the
+   * owner reads are the same words.
+   */
+  const mapRow = (row: AccountRow) => {
+    const targets = isOpen(row.key, 'merge') ? mergeTargets(flow, row.key) : [];
+    const narrowed = narrow(targets, query);
+    const merge = (value: string) => {
+      setFlow((c) => redirectAccount(c, row.key, targetOf(value)));
+      close();
+    };
+
+    return (
+      <Card key={row.key} style={styles.row}>
+        <ThemedText type="smallBold">{row.entry.saldoAccount}</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {`${row.entry.currency} · ${kindLabel(row.becomes.kind)}`}
+        </ThemedText>
+        <ThemedText type="small">{stateLine(row)}</ThemedText>
+        {receivesLine(row) ? (
+          <ThemedText type="small" themeColor="textSecondary">
+            {receivesLine(row)}
+          </ThemedText>
+        ) : null}
+        {row.rejection ? <Warning>{row.rejection}</Warning> : null}
+
+        {row.duplicateHint ? (
+          <>
+            <ThemedText type="small">
+              {`Схоже, це той самий рахунок → «${row.duplicateHint.name}»`}
+            </ThemedText>
+            <View style={styles.actions}>
+              {/* The same call a pick from the targets makes — the підказка is an offer of one of
+                  them, never a merge of its own. */}
+              <RowAction title="Об’єднати" onPress={() => merge(row.duplicateHint!.id)} />
+              <RowAction
+                title="Ні, окремо"
+                tone="quiet"
+                onPress={() => setFlow((c) => dismissHint(c, row.key))}
+              />
+            </View>
+          </>
+        ) : null}
+
+        <View style={styles.actions}>
+          <RowAction title="Об’єднати з…" onPress={() => openEditor(row.key, 'merge')} />
+          {/* Only a row that becomes its own рахунок has a вид to change: a merged-away entry
+              takes the вид of the рахунок it lands on, and `interpret` reads that owner entry's
+              kind, so a pick here would be silently dropped. */}
+          {row.state === 'new' ? (
+            <RowAction title="Вид" onPress={() => openEditor(row.key, 'kind')} />
+          ) : null}
+          {row.state !== 'new' ? (
+            <RowAction
+              title="Скасувати об’єднання"
+              tone="quiet"
+              onPress={() => setFlow((c) => redirectAccount(c, row.key))}
+            />
+          ) : null}
+        </View>
+
+        {isOpen(row.key, 'kind') && row.state === 'new' ? (
+          <>
+            <Choices
+              label="Вид"
+              selected={row.becomes.kind}
+              choices={KIND_CHOICES}
+              onSelect={(kind) => {
+                setFlow((c) => setAccountKind(c, row.key, kind));
+                close();
+              }}
+            />
+            {row.kindOverridden ? (
+              <RowAction
+                title="Повернути вид із Saldo"
+                tone="quiet"
+                onPress={() => {
+                  setFlow((c) => setAccountKind(c, row.key));
+                  close();
+                }}
+              />
+            ) : null}
+            <View style={styles.actions}>
+              <RowAction title={COLLAPSE_LABEL} tone="quiet" onPress={close} />
+            </View>
+          </>
+        ) : null}
+
+        {isOpen(row.key, 'merge') ? (
+          <>
+            {/* The search appears for a list longer than a picker draws — and `SEPARATE_TARGET` is
+                not in `targets`, so it neither raises the field nor is taken away by it. */}
+            {targets.length > PICKER_SIZE ? (
+              <Field
+                label="Пошук"
+                value={query}
+                onChangeText={setQuery}
+                autoCapitalize="none"
+                placeholder="почніть вводити назву"
+              />
+            ) : null}
+            <Choices
+              label={`Об’єднати «${row.entry.saldoAccount}» (${row.entry.currency}) з`}
+              selected={row.state === 'new' ? SEPARATE_TARGET.id : undefined}
+              choices={[
+                { value: SEPARATE_TARGET.id, label: SEPARATE_TARGET.name },
+                ...narrowed.map((target) => ({
+                  value: target.id,
+                  label: target.name,
+                })),
+              ]}
+              onSelect={merge}
+            />
+            {targets.length === 0 ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                {noTargetsMessage(row.entry.currency)}
+              </ThemedText>
+            ) : null}
+            {targets.length > 0 && narrowed.length === 0 ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                {NOTHING_FOUND}
+              </ThemedText>
+            ) : null}
+            <View style={styles.actions}>
+              <RowAction title={COLLAPSE_LABEL} tone="quiet" onPress={close} />
+            </View>
+          </>
+        ) : null}
+      </Card>
+    );
+  };
 
   return (
     <Screen>
@@ -137,73 +308,64 @@ export default function SaldoImportScreen() {
       {flow.step === 'accounts' && summary ? (
         <>
           <SectionLabel>Рахунки</SectionLabel>
+          {/* The step's honest default is «нічого робити не треба», so it says so first — and the
+              way on stands right there, before the list rather than after it. */}
           <ThemedText type="small" themeColor="textSecondary">
-            Перевірте вид кожного рахунку; дублі однієї картки об’єднайте.
+            {opening.sentence}
           </ThemedText>
-          {rows.map((row) => (
-            <Card key={row.key} style={styles.row}>
-              <ThemedText type="smallBold">
-                {`${row.entry.saldoAccount} (${row.entry.currency})`}
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {row.ontoExisting
-                  ? `→ наявний рахунок «${row.becomes.name}»`
-                  : row.mergedInto
-                    ? `→ ${row.mergedInto}`
-                    : `→ ${row.becomes.name}`}
-              </ThemedText>
-              {row.rejection ? <Warning>{row.rejection}</Warning> : null}
-              {row.mergedInto || row.ontoExisting ? (
-                <Action
-                  variant="secondary"
-                  title="Скасувати об’єднання"
-                  onPress={() => setFlow((c) => redirectAccount(c, row.key))}
-                />
-              ) : (
-                <>
-                  <Choices
-                    label="Вид"
-                    selected={row.becomes.kind}
-                    choices={KIND_CHOICES}
-                    onSelect={(kind) => setFlow((c) => setAccountKind(c, row.key, kind))}
-                  />
-                  {flow.decisions.accountKinds?.[row.key] ? (
-                    <Action
-                      variant="secondary"
-                      title="Повернути вид із Saldo"
-                      onPress={() => setFlow((c) => setAccountKind(c, row.key))}
-                    />
-                  ) : null}
-                  {/* The targets by name, on the row that is merging — no mode to be in and no
-                      second card to hunt for somewhere else on the screen. */}
-                  <Choices
-                    label="Об’єднати з"
-                    selected={undefined}
-                    choices={targetsFor(row.key)}
-                    onSelect={(value) =>
-                      setFlow((c) => redirectAccount(c, row.key, targetOf(value)))
-                    }
-                  />
-                </>
-              )}
-            </Card>
-          ))}
+          <Action title="Далі — звірка" onPress={() => setFlow((c) => toStep(c, 'report'))} />
 
-          <SectionLabel>Нові категорії та джерела</SectionLabel>
+          {sections.duplicates.length > 0 ? (
+            <>
+              <SectionLabel>{`Схоже на дублі (${sections.duplicates.length})`}</SectionLabel>
+              {sections.duplicates.map(mapRow)}
+            </>
+          ) : null}
+
+          {/* A heading over nothing is a heading that says the screen lost something. When every
+              row carried a підказка, the group below this is empty and the opening line says so. */}
+          {sections.rest.length > 0 ? (
+            <>
+              <SectionLabel>{`Решта рахунків (${sections.rest.length})`}</SectionLabel>
+              {sections.rest.map(mapRow)}
+            </>
+          ) : null}
+
+          {/* The same rule as the two groups above: an export whose every назва already matches
+              proposes nothing, and a heading over nothing reads as something gone missing. */}
+          {flow.plan!.categories.length + flow.plan!.sources.length > 0 ? (
+            <SectionLabel>Нові категорії та джерела</SectionLabel>
+          ) : null}
           {flow.plan!.categories.map((proposal) => (
             <NameRow
               key={`c-${proposal.saldoName}`}
               name={proposal.saldoName}
-              choices={categoriesRepo.list().map((row) => ({ value: row.id, label: row.name }))}
-              onPick={(id) => setFlow((c) => redirectName(c, 'categories', proposal.saldoName, id))}
+              rows={categoriesRepo.list()}
+              open={isOpen(`c-${proposal.saldoName}`, 'name')}
+              onOpen={() => openEditor(`c-${proposal.saldoName}`, 'name')}
+              onClose={close}
+              query={query}
+              onQuery={setQuery}
+              onPick={(id) => {
+                setFlow((c) => redirectName(c, 'categories', proposal.saldoName, id));
+                close();
+              }}
             />
           ))}
           {flow.plan!.sources.map((proposal) => (
             <NameRow
               key={`s-${proposal.saldoName}`}
               name={proposal.saldoName}
-              choices={sourcesRepo.list().map((row) => ({ value: row.id, label: row.name }))}
-              onPick={(id) => setFlow((c) => redirectName(c, 'sources', proposal.saldoName, id))}
+              rows={sourcesRepo.list()}
+              open={isOpen(`s-${proposal.saldoName}`, 'name')}
+              onOpen={() => openEditor(`s-${proposal.saldoName}`, 'name')}
+              onClose={close}
+              query={query}
+              onQuery={setQuery}
+              onPick={(id) => {
+                setFlow((c) => redirectName(c, 'sources', proposal.saldoName, id));
+                close();
+              }}
             />
           ))}
           <Action title="Далі — звірка" onPress={() => setFlow((c) => toStep(c, 'report'))} />
@@ -262,7 +424,7 @@ export default function SaldoImportScreen() {
 
           {summary ? (
             <ThemedText type="small">
-              {`Буде записано: ${summary.transactions} транзакцій, ${summary.newAccounts} рахунків, ${summary.categories} категорій, ${summary.sources} джерел.`}
+              {planLine(summary)}
             </ThemedText>
           ) : null}
 
@@ -287,7 +449,7 @@ export default function SaldoImportScreen() {
         <>
           {flow.outcome.kind === 'written' ? (
             <ThemedText type="small">
-              {`Записано: ${flow.outcome.summary.transactions} транзакцій, ${flow.outcome.summary.accounts} рахунків, ${flow.outcome.summary.categories} категорій, ${flow.outcome.summary.sources} джерел.`}
+              {writtenLine(flow.outcome.summary)}
             </ThemedText>
           ) : (
             <Warning>{`Не записано нічого: ${flow.outcome.reason}`}</Warning>
@@ -308,28 +470,67 @@ function Warning({ children }: { children: string }) {
   return <Banner tone="danger">{children}</Banner>;
 }
 
+/**
+ * A категорія or джерело the plan would create, and the existing rows it can be redirected onto
+ * instead. The list is one of the three editors the step opens one at a time — it kept its own
+ * `open` flag until this change, which would have left «назад» taking the whole screen out from
+ * under the search field below.
+ */
 function NameRow({
   name,
-  choices,
+  rows,
+  open,
+  onOpen,
+  onClose,
   onPick,
+  query,
+  onQuery,
 }: {
   name: string;
-  choices: { value: string; label: string }[];
+  rows: readonly Named[];
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
   onPick: (id: string) => void;
+  query: string;
+  onQuery: (value: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const narrowed = narrow(rows, query);
   return (
     <Card style={styles.row}>
       <ThemedText>{`Створити «${name}»`}</ThemedText>
       {open ? (
-        <Choices
-          label="Замість створення"
-          selected={undefined}
-          choices={choices}
-          onSelect={onPick}
-        />
+        <>
+          {rows.length > PICKER_SIZE ? (
+            <Field
+              label="Пошук"
+              value={query}
+              onChangeText={onQuery}
+              autoCapitalize="none"
+              placeholder="почніть вводити назву"
+            />
+          ) : null}
+          {narrowed.length === 0 ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              {NOTHING_FOUND}
+            </ThemedText>
+          ) : (
+            <Choices
+              label="Замість створення"
+              selected={undefined}
+              choices={narrowed.map((row) => ({
+                value: row.id,
+                label: row.name,
+              }))}
+              onSelect={onPick}
+            />
+          )}
+          <View style={styles.actions}>
+            <RowAction title={COLLAPSE_LABEL} tone="quiet" onPress={onClose} />
+          </View>
+        </>
       ) : (
-        <Action variant="secondary" title="Обрати наявну" onPress={() => setOpen(true)} />
+        <Action variant="secondary" title="Обрати наявну" onPress={onOpen} />
       )}
     </Card>
   );
@@ -337,4 +538,9 @@ function NameRow({
 
 const styles = StyleSheet.create({
   row: { gap: Spacing.two },
+  // A row's verbs sit side by side and wrap rather than run off a narrow screen; nothing on this
+  // step is ever reached by a horizontal gesture. The gap is `three` and not `two` because each
+  // `RowAction` carries `hitSlop` of `two`: eight apart, their hit areas would meet in the middle,
+  // and a mis-tap between «Об’єднати» and «Ні, окремо» merges two рахунки.
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.three },
 });

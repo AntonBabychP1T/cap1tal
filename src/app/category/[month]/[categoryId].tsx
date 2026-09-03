@@ -13,7 +13,7 @@ import {
 import { namesById } from '@/domain/category';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { categoryMonthHeading, categoryTransactions } from '@/ui/category-transactions';
-import { monthLabel } from '@/ui/months';
+import { currentMonth, monthLabel } from '@/ui/months';
 import { accountsById, feedSubtitle, feedTitle, transactionLine } from '@/ui/transaction-line';
 
 import { Spacing } from '@/constants/theme';
@@ -58,6 +58,10 @@ export default function CategoryMonthScreen() {
         transactions: stored.transactions,
         categoryNames: names,
         limits: stored.limits,
+        // The month the app is in, so a month that has **ended** can carry its settled verdict.
+        // This list is where a ціль витрат is read, and «завершено в межах» is that ціль's third
+        // state; the current month gets none, because it is still being spent.
+        currentMonth: currentMonth(new Date()),
       }),
     [categoryId, month, names, stored.limits, stored.transactions],
   );
@@ -88,6 +92,13 @@ export default function CategoryMonthScreen() {
           {heading.overrun ? (
             <ThemedText type="small" themeColor="textDanger">
               {heading.overrun}
+            </ThemedText>
+          ) : null}
+          {/* A month that ended at or below its ліміт says so; one that went over states its
+              overrun above instead, and never both. */}
+          {heading.settled ? (
+            <ThemedText type="small" themeColor="textPositive">
+              {heading.settled}
             </ThemedText>
           ) : null}
         </Card>

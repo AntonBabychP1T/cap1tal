@@ -8,6 +8,7 @@ import {
   type DeviceInfo,
   type ReportCounts,
   type ReportImage,
+  type ReportOrigin,
 } from '../reporting/report';
 import type { AnalysisShareOutcome } from '../platform/analysis-share';
 import type { BugReportFilesPort } from '../platform/bug-report-files';
@@ -64,6 +65,24 @@ export function saveFailedRefusal(reason: string): string {
 export const LIST_TITLE = 'Репорти про помилки';
 export const NEW_REPORT_LABEL = 'Повідомити про помилку';
 export const EMPTY_LIST = 'Репортів поки немає. Якщо щось піде не так — заведіть звідси.';
+
+/**
+ * The two switches at the top of the section, and the sentence that must stand beside them.
+ *
+ * The warning is not decoration. Filing from a screen photographs that screen, and a скріншот of
+ * this app is usually a picture of the owner's money — so the section says so plainly, once,
+ * where the owner turns the thing on rather than only at the moment they hand a file over
+ * (vision §12 as amended).
+ */
+export const CAPTURE_SECTION_LABEL = 'Як заводити репорт з екрана';
+export const GESTURE_SWITCH_LABEL = 'Жест: два пальці';
+export const GESTURE_SWITCH_HINT =
+  'Потримайте два пальці нерухомо близько секунди на будь-якому екрані — відкриється коротка форма.';
+export const HANDLE_SWITCH_LABEL = 'Маркер на екрані';
+export const HANDLE_SWITCH_HINT =
+  'Маленька позначка «⚑» поверх усіх екранів робить те саме, що й жест. Знадобиться, якщо увімкнено TalkBack.';
+export const CAPTURE_SECTION_WARNING =
+  'Репорт з екрана робить скріншот цього екрана. Скріншот показує те, що на ньому було — разом із сумами й назвами. Він лишається на телефоні, доки ви самі не передасте репорт.';
 
 /** The saved репорт's actions. */
 export const ADD_SCREENSHOT_LABEL = 'Додати скріншот';
@@ -139,12 +158,18 @@ export function formState(options: {
   readonly refusal?: string | null;
 }): FormModel {
   const prompting = options.prompting ?? null;
+  const refusal = options.refusal ?? null;
   return {
     title: FORM_TITLE,
     fields: options.fields,
     prompting,
     promptingLine: promptingLine(prompting),
-    refusal: options.refusal ?? null,
+    // A refusal is shown while it is still true and no longer. The host holds it so it survives
+    // the form component, which means it also survives the keystroke that answers it — and a red
+    // line under a filled «Що я робив» says the form is still refusing when it is not. Only the
+    // required-line refusal is answerable this way: a save the storage would not take is not about
+    // the fields, and typing does not make the storage work.
+    refusal: refusal === REQUIRED_REFUSAL && options.fields.did.trim().length > 0 ? null : refusal,
     saveLabel: SAVE_LABEL,
   };
 }
@@ -161,6 +186,17 @@ export interface ReportContext {
   readonly journal: readonly JournalEntry[];
   readonly prompting: JournalEntry | null;
   readonly now: Date;
+  /**
+   * Which door this репорт came through.
+   *
+   * On the context rather than at a second call site, because `attachContext` has exactly one
+   * caller — `submitForm` — and everything the app attaches by itself already travels this way. The
+   * three screens that reach `submitForm` each know their own answer: `new.tsx` says `'dialog'`
+   * when a failure prompted it and `'section'` when the owner went looking, and
+   * `crash-fallback.tsx` says `'crash'`. The fourth, `'here'`, is `submitHere`'s and never passes
+   * through here.
+   */
+  readonly origin: ReportOrigin;
 }
 
 /**
@@ -191,6 +227,10 @@ export function attachContext(
     counts: context.counts,
     journal: context.journal,
     prompting: context.prompting,
+    origin: context.origin,
+    // These three doors never capture a скріншот, so there is never a reason there is none. Only
+    // `submitHere` can carry one (design D3).
+    captureFailure: null,
   };
 }
 
@@ -317,12 +357,42 @@ export async function handOver(
     readonly files: BugReportFilesPort;
     readonly storage: { markHandedOver(id: string, at: Date): void };
     readonly now: () => Date;
+/**
+     * Shows the скріншот and the warning, and answers whether the owner confirmed.
+     *
+     * Asked by `handOver` rather than by the screen, so «the скріншот is seen before it can leave»
+     * is a property of the one function every hand-over goes through — the saved репорт's
+     * «Передати» and the sheet's «Зберегти й передати» alike. A репорт with no скріншот never
+     * reaches it (design D11).
+     *
+     * Optional in the type but **not** optional in effect: a репорт holding a скріншот and no
+     * confirmer hands over nothing at all. Fail-closed rather than fail-open, because the failure
+     * mode this guards is the owner's суми reaching a chooser they were never warned about — and a
+     * caller that forgets to pass one must lose a hand-over, never the warning.
+     */
+    readonly confirmScreenshots?: () => Promise<boolean>;
   },
   progress: (state: SavedReportState) => void,
 ): Promise<SavedReportState> {
   if (state.kind === 'handing-over') {
     return state;
   }
+
+  // Before anything is prepared and before the state moves: backing out must leave the репорт
+  // exactly as it was, and a `handing-over` the owner then cancelled would be a screen stuck
+  // saying «Передаємо…» about a hand-over that never started.
+  //
+  // A missing confirmer is treated as a refusal, not as permission. The requirement is
+  // unconditional — WHERE the репорт holds a скріншот the hand-over SHALL pass through the
+  // confirmation — so the one function every hand-over goes through refuses rather than letting a
+  // forgetful caller put the owner's суми in front of a chooser unwarned.
+  if (needsScreenshotWarning(options.report)) {
+    const confirmed = (await options.confirmScreenshots?.()) ?? false;
+    if (!confirmed) {
+      return state;
+    }
+  }
+
   progress({ kind: 'handing-over' });
 
   const images: ReportImage[] = [];
@@ -382,6 +452,31 @@ export async function addScreenshot(options: {
   }
   options.storage.addScreenshot(options.reportId, kept.name, options.now());
   return { kind: 'added', name: kept.name };
+}
+
+/**
+ * The confirmation that stands between a репорт holding a скріншот and the phone's chooser.
+ *
+ * A скріншот is the one thing a репорт carries that can show the owner's money: the app never
+ * reads, interprets or redacts it — it cannot know which pixels are a сума, and a promise it could
+ * not keep would be worse than the plain warning it can. So the owner is shown the picture and
+ * told exactly what it may carry, and nothing leaves until they say so (vision §12 as amended,
+ * design D11).
+ *
+ * A репорт holding no скріншот is not warned about at all: a warning about nothing is how owners
+ * learn to dismiss warnings without reading them.
+ */
+export const SCREENSHOT_CONFIRMATION = {
+  title: 'Передати репорт зі скріншотом?',
+  message:
+    'Скріншот показує те, що було на екрані — разом із сумами й назвами. Подивіться на нього, перш ніж передавати.',
+  confirm: 'Передати',
+  cancel: 'Скасувати',
+} as const;
+
+/** Whether the hand-over must pass through that confirmation first. */
+export function needsScreenshotWarning(report: BugReport): boolean {
+  return report.screenshots.length > 0;
 }
 
 /** Removing asks first, and the question is a value so the screen invents none of its words. */

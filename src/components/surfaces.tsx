@@ -1,4 +1,11 @@
-import { Pressable, ScrollView, StyleSheet, View, type ViewProps } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+  type RefreshControlProps,
+  type ViewProps,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from './themed-text';
@@ -30,6 +37,7 @@ export function Screen({
   children,
   scrollRef,
   overlay,
+  refreshControl,
 }: {
   children: React.ReactNode;
   /**
@@ -44,12 +52,22 @@ export function Screen({
    * scrolling cannot live inside the thing being scrolled.
    */
   overlay?: React.ReactNode;
+  /**
+   * The pull-to-refresh of the one screen that has one — Головний, where pulling down re-reads
+   * storage and asks monobank for anything new. Passed straight through to the `ScrollView`,
+   * because that is where React Native wants it and it lives here rather than there: every screen
+   * shares this frame, and Головний cannot reach its own scroll view any other way.
+   *
+   * Absent everywhere else, which leaves those screens rendering exactly as they did.
+   */
+  refreshControl?: React.ReactElement<RefreshControlProps>;
 }) {
   return (
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.screen} edges={['top']}>
         <ScrollView
           ref={scrollRef}
+          refreshControl={refreshControl}
           // A screen with something floating over its corner ends its column above it, so the
           // last row can always be read and tapped rather than sitting under the «+».
           contentContainerStyle={[styles.content, overlay ? styles.contentUnderOverlay : null]}

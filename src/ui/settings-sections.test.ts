@@ -114,3 +114,18 @@ describe('the Налаштування sections', () => {
     expect(goals.href).toBe('/manage/goals');
   });
 });
+
+describe('the hints name what the section actually holds', () => {
+  const hintOf = (href: string) => SETTINGS_SECTIONS.find((s) => s.href === href)?.hint;
+
+  it('«Цілі» names both kinds and promises no дата', () => {
+    // A ціль is one of two kinds and its дата is optional, so the row may not say «до дати» —
+    // it was the one sentence on the path to the feature still describing the old model.
+    expect(hintOf('/manage/goals')).toBe('Накопичити суму або не перевищити витрати');
+    expect(hintOf('/manage/goals')).not.toContain('дати');
+  });
+
+  it('«Ліміти» says a ліміт is also the категорія’s ціль витрат', () => {
+    expect(hintOf('/manage/limits')).toContain('ціль витрат');
+  });
+});

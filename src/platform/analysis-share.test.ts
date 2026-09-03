@@ -10,6 +10,12 @@ const file = {
   text: '# cap1tal · AI-аналіз місячної картини\n',
 };
 
+/** The same файл, with the короткий запит offered beside it. */
+const withMessage = {
+  ...file,
+  message: 'Проаналізуй, будь ласка, прикріплений файл cap1tal — у самому файлі є повний контекст.',
+};
+
 describe('the analysis share double', () => {
   it('Scenario: A dismissed chooser is not a failure and not a success', () => {
     // The default outcome, and the whole point of the port: the phone answers the same way whether
@@ -18,7 +24,7 @@ describe('the analysis share double', () => {
     const share = inMemoryAnalysisShare();
 
     return share.share(file).then((outcome) => {
-      expect(outcome).toEqual({ kind: 'handed-over' });
+      expect(outcome).toEqual({ kind: 'handed-over', messageIncluded: false });
       expect(share.handed()).toEqual([file]);
     });
   });
@@ -30,6 +36,46 @@ describe('the analysis share double', () => {
     await share.share({ name: 'second.md', text: 'друге' });
 
     expect(share.handed()).toEqual([file, { name: 'second.md', text: 'друге' }]);
+  });
+
+  it('Scenario: The файл is sufficient with no message at all', async () => {
+    // A hand-off with the короткий запит beside it and one without are both hand-offs, and the
+    // файл that left is the same файл either way — the message never edits it.
+    const carried = inMemoryAnalysisShare({ outcome: { kind: 'handed-over', messageIncluded: true } });
+    const alone = inMemoryAnalysisShare();
+
+    expect(await carried.share(withMessage)).toEqual({ kind: 'handed-over', messageIncluded: true });
+    expect(await alone.share(file)).toEqual({ kind: 'handed-over', messageIncluded: false });
+
+    // The файл's own name and text are untouched in both, and the message is recorded where it
+    // was offered — so a screen's test can assert exactly what was handed to the phone.
+    expect(carried.handed()).toEqual([withMessage]);
+    expect(carried.handed()[0]!.name).toBe(file.name);
+    expect(carried.handed()[0]!.text).toBe(file.text);
+    expect(alone.handed()).toEqual([file]);
+    expect(alone.handed()[0]!.message).toBeUndefined();
+  });
+
+  it('Scenario: A platform that cannot carry text with a file is not a failure', async () => {
+    // The короткий запит was offered and the platform took only the файл. That is a hand-off, not
+    // a failure, and the outcome says plainly that the message did not travel.
+    const share = inMemoryAnalysisShare();
+
+    expect(await share.share(withMessage)).toEqual({ kind: 'handed-over', messageIncluded: false });
+    expect(share.handed()).toEqual([withMessage]);
+  });
+
+  it('keeps nothing when the hand-off is refused, message or not', async () => {
+    const unavailable = inMemoryAnalysisShare({ outcome: { kind: 'unavailable' } });
+    const failed = inMemoryAnalysisShare({
+      outcome: { kind: 'failed', reason: 'немає місця на пристрої' },
+    });
+
+    await unavailable.share(withMessage);
+    await failed.share(withMessage);
+
+    expect(unavailable.handed()).toEqual([]);
+    expect(failed.handed()).toEqual([]);
   });
 
   it('Scenario: A platform without a chooser answers honestly', async () => {

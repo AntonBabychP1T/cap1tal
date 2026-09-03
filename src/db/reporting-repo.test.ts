@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
@@ -23,6 +24,8 @@ const CONTEXT: Omit<NewBugReport, 'id' | 'createdAt' | 'journal' | 'prompting'> 
   device: { platform: 'android', systemVersion: '16', model: 'Pixel 7' },
   migrationsApplied: 13,
   counts: { accounts: 2, transactions: 7, categories: 5, rules: 0, drafts: 1 },
+  origin: 'section',
+  captureFailure: null,
 };
 
 function report(over: Partial<NewBugReport> & { id: string }): NewBugReport {
@@ -257,5 +260,136 @@ describe('what the репорт says about the phone', () => {
   it('says how many migrations this database has had applied', () => {
     // Every committed one, since `openTestDb` runs the real migrator over the real folder.
     expect(repo.migrationsApplied()).toBeGreaterThanOrEqual(13);
+  });
+});
+
+/**
+ * The two facts a репорт gained with the gesture, and the two switches that govern it.
+ *
+ * All four are storage's problem and nobody else's: the origin and the capture reason are written
+ * once with the репорт and read back with it, and the switches are one row that a phone which has
+ * never been touched does not have at all.
+ */
+describe('how a репорт was opened, and why it has no скріншот', () => {
+  let storage: TestStorage;
+  let repo: ReportingRepo;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    repo = reportingRepo(storage.db);
+  });
+
+  afterEach(() => storage.close());
+
+  it('Scenario: The origin comes back', () => {
+    repo.create({ ...CONTEXT, id: 'r-here', createdAt: new Date(BASE), journal: [], prompting: null, origin: 'here' });
+
+    // Reopened, not merely re-read: a new repository over the same file, which is what a restart is.
+    const reread = reportingRepo(storage.db).get('r-here');
+
+    expect(reread?.origin).toBe('here');
+    expect(reread?.did).toBe(CONTEXT.did);
+  });
+
+  it('Scenario: Each origin round-trips', () => {
+    for (const origin of ['here', 'dialog', 'crash', 'section'] as const) {
+      repo.create({
+        ...CONTEXT,
+        id: `r-${origin}`,
+        createdAt: new Date(BASE),
+        journal: [],
+        prompting: null,
+        origin,
+      });
+    }
+
+    for (const origin of ['here', 'dialog', 'crash', 'section'] as const) {
+      expect(repo.get(`r-${origin}`)?.origin).toBe(origin);
+    }
+  });
+
+  it('Scenario: The reason a скріншот could not be taken comes back', () => {
+    repo.create({
+      ...CONTEXT,
+      id: 'r-nocapture',
+      createdAt: new Date(BASE),
+      journal: [],
+      prompting: null,
+      origin: 'here',
+      captureFailure: 'Вікно захищене від знімків',
+    });
+
+    // Word for word: the rendering reads this column, so the text says the same thing on the
+    // second reading as it did on the first.
+    expect(reportingRepo(storage.db).get('r-nocapture')?.captureFailure).toBe(
+      'Вікно захищене від знімків',
+    );
+  });
+
+  it('Scenario: A репорт that has its скріншот holds no such reason', () => {
+    repo.create({ ...CONTEXT, id: 'r-shot', createdAt: new Date(BASE), journal: [], prompting: null, origin: 'here' });
+    repo.addScreenshot('r-shot', 'shot-1.png', new Date(BASE));
+
+    const reread = repo.get('r-shot');
+
+    expect(reread?.screenshots.map((shot) => shot.name)).toEqual(['shot-1.png']);
+    // Not an invented sentence: nothing failed, so there is nothing to say.
+    expect(reread?.captureFailure).toBeNull();
+  });
+
+  it('an origin a later build wrote and this one does not know reads as none', () => {
+    repo.create({ ...CONTEXT, id: 'r-future', createdAt: new Date(BASE), journal: [], prompting: null, origin: 'here' });
+    storage.db.run(sql`UPDATE bug_reports SET origin = 'telepathy' WHERE id = 'r-future'`);
+
+    // The репорт still loads whole. Refusing it would lose the crash it was filed about in order
+    // to protect a label — see `toOrigin`.
+    const reread = repo.get('r-future');
+    expect(reread?.origin).toBeNull();
+    expect(reread?.did).toBe(CONTEXT.did);
+  });
+});
+
+describe('the two switches for filing from a screen', () => {
+  let storage: TestStorage;
+  let repo: ReportingRepo;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    repo = reportingRepo(storage.db);
+  });
+
+  afterEach(() => storage.close());
+
+  it('Scenario: A fresh database has the defaults', () => {
+    // No row at all is the ordinary state of a phone that has never touched either switch, and it
+    // is the default state rather than a missing one.
+    expect(repo.captureSettings()).toEqual({ gestureEnabled: true, handleEnabled: false });
+  });
+
+  it('Scenario: The switches come back', () => {
+    repo.setCaptureSettings({ gestureEnabled: false, handleEnabled: true });
+
+    expect(reportingRepo(storage.db).captureSettings()).toEqual({
+      gestureEnabled: false,
+      handleEnabled: true,
+    });
+  });
+
+  it('setting them twice replaces the row rather than adding one', () => {
+    repo.setCaptureSettings({ gestureEnabled: false, handleEnabled: true });
+    repo.setCaptureSettings({ gestureEnabled: true, handleEnabled: true });
+
+    expect(repo.captureSettings()).toEqual({ gestureEnabled: true, handleEnabled: true });
+    expect(
+      storage.db.all<{ n: number }>(sql`SELECT count(*) AS n FROM bug_report_capture`)[0]?.n,
+    ).toBe(1);
+  });
+
+  it('refuses a second row — the CHECK is what keeps the table to one', () => {
+    expect(() =>
+      storage.db.run(
+        sql`INSERT INTO bug_report_capture (id, gesture_enabled, handle_enabled) VALUES ('other', 1, 1)`,
+      ),
+    ).toThrow();
   });
 });

@@ -61,6 +61,14 @@ export interface LimitDraft {
  */
 export const LIMIT_CURRENCIES = OFFERED_CURRENCIES;
 
+/**
+ * What the section says above its rows, so the owner meets one сума under two names knowingly
+ * rather than discovering it (design D1). Set a ліміт here and its ціль витрат appears among the
+ * цілі; clear it here and that ціль is gone — there is one row, not two that could disagree.
+ */
+export const LIMIT_IS_A_SPENDING_GOAL =
+  'Ліміт категорії — це і є її ціль витрат: одна сума, яку видно і тут, і в «Цілях».';
+
 /** UAH — the owner's own currency, and what most ліміти will be in. */
 export const DEFAULT_LIMIT_CURRENCY: CurrencyCode = 'UAH';
 

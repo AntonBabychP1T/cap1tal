@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { account, type Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
-import type { Goal } from '../domain/goals';
+import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
 import { money } from '../domain/money';
 import { expenseByDefault, transfer, type Transaction } from '../domain/transaction';
@@ -46,7 +46,7 @@ function input(over: Partial<AnalysisInput> = {}): AnalysisInput {
     categories,
     sources,
     limits: [] as readonly CategoryLimit[],
-    goals: [] as readonly Goal[],
+    goals: [] as readonly AccumulationGoal[],
     rates: [],
     ...over,
   };
@@ -95,9 +95,9 @@ describe('buildAnalysisPackage', () => {
       { categoryId: 'cafe', amount: money(80000, 'UAH') },
       { categoryId: 'groceries', amount: money(100000, 'UAH') },
     ];
-    const goals: readonly Goal[] = [
-      { id: 'g1', name: 'Авто', target: money(20_000_000, 'UAH'), deadline: '2026-12-31', accountId: 'bonds' },
-      { id: 'g2', name: 'Ноутбук', target: money(5_000_000, 'UAH'), deadline: '2026-10-31', accountId: 'bonds' },
+    const goals: readonly AccumulationGoal[] = [
+      { id: 'g1', name: 'Авто', target: money(20_000_000, 'UAH'), deadline: '2026-12-31', accountIds: ['bonds'] },
+      { id: 'g2', name: 'Ноутбук', target: money(5_000_000, 'UAH'), deadline: '2026-10-31', accountIds: ['bonds'] },
     ];
     const rates = [
       { currency: 'USD', rateMillionths: 41_000_000, obtainedAt: new Date(2026, 7, 30, 9, 0) },
@@ -289,14 +289,32 @@ describe('buildAnalysisPackage', () => {
     ]);
   });
 
+  it('Scenario: A ціль витрат is in the пакет only as its ліміт', () => {
+    // Кафе carries a ceiling of 200 000 minor units UAH — which *is* the ціль витрат «Кафе».
+    const packaged = built({
+      limits: [{ categoryId: 'cafe', amount: money(200_000, 'UAH') }],
+      goals: [],
+    });
+
+    // The пакет carries that ceiling once, on the категорія it belongs to…
+    const withCeiling = packaged.byCurrency.flatMap((c) =>
+      c.categories.filter((category) => category.limit !== null),
+    );
+    expect(withCeiling).toHaveLength(1);
+    expect(withCeiling[0]?.limit?.amount).toEqual({ amount: '2000.00', currency: 'UAH' });
+    // …and the цілі of the пакет hold no row for it: a second row would let the assistant read one
+    // ліміт as two.
+    expect(packaged.goals).toEqual([]);
+  });
+
   it('carries every ціль with what remains, and no рахунок', () => {
-    const goals: readonly Goal[] = [
+    const goals: readonly AccumulationGoal[] = [
       {
         id: 'g1',
         name: 'Авто',
         target: money(20_000_000, 'UAH'),
         deadline: '2026-12-31',
-        accountId: 'bonds',
+        accountIds: ['bonds'],
       },
     ];
 

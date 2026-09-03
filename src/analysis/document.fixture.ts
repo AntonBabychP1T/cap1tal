@@ -1,6 +1,6 @@
 import { account, type Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
-import type { Goal } from '../domain/goals';
+import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
 import { money } from '../domain/money';
 import {
@@ -14,13 +14,18 @@ import {
 import { buildAnalysisPackage, type AnalysisInput, type AnalysisPackage } from './package';
 
 /**
- * The one fixture the golden файл is rendered from, shared by `document.test.ts` and the script
- * that regenerates `document.golden.md`.
+ * The one fixture both golden файли are rendered from, shared by `document.test.ts` and
+ * `scripts/regen-analysis-goldens.ts`, the script that regenerates them.
  *
  * It is deliberately a whole small life rather than a minimal case: two currencies, a ліміт that
  * was exceeded, a ціль with a pace, a переказ, a повернення and a коригування, a month with nothing
  * in it, and the month the пакет is built in still running. Every section of the файл therefore has
  * something to render, and a wording change anywhere shows up in the golden file.
+ *
+ * Four витрати carry an опис, one of them under two spellings across two months — so the golden
+ * rendered with «Продавці» on shows actual продавці, folded and grouped, and is a real review
+ * surface for what that switch lets out. With the switch off they are in no пакет at all, which is
+ * what `document.golden.md` and `privacy.test.ts` each assert from their own side.
  */
 
 export const fixtureAccounts: readonly Account[] = [
@@ -28,6 +33,8 @@ export const fixtureAccounts: readonly Account[] = [
   account({ id: 'cash', name: 'Готівка', kind: 'cash', currency: 'UAH' }),
   account({ id: 'jar', name: 'Банка на авто', kind: 'savings', currency: 'UAH' }),
   account({ id: 'bonds', name: 'Військові облігації', kind: 'investment', currency: 'UAH' }),
+  // A рахунок in another currency, so a ціль whose склад mixes currencies has one to stand on.
+  account({ id: 'usd-jar', name: 'USD банка', kind: 'savings', currency: 'USD' }),
 ];
 
 export const fixtureCategories: readonly Category[] = [
@@ -50,13 +57,30 @@ export const fixtureLimits: readonly CategoryLimit[] = [
   { categoryId: 'cafe', amount: money(80000, 'UAH') },
 ];
 
-export const fixtureGoals: readonly Goal[] = [
+export const fixtureGoals: readonly AccumulationGoal[] = [
   {
     id: 'goal-car',
     name: 'Авто',
     target: money(20_000_000, 'UAH'),
     deadline: '2026-12-31',
-    accountId: 'jar',
+    // Three рахунки, all in the ціль's own currency: an exact progress, carried in full.
+    accountIds: ['jar', 'cash', 'bonds'],
+  },
+  {
+    id: 'goal-reserve',
+    name: 'Резерв',
+    target: money(5_000_000, 'UAH'),
+    // No дата: no pace, and never overdue.
+    accountIds: ['jar'],
+  },
+  {
+    id: 'goal-trip',
+    name: 'Подорож',
+    target: money(3_000_000, 'UAH'),
+    deadline: '2027-03-31',
+    // A склад holding another currency: the progress would rest on a conversion, so the пакет
+    // carries none — its target and дата only.
+    accountIds: ['jar', 'usd-jar'],
   },
 ];
 
@@ -66,16 +90,24 @@ const spend = (
   amount: number,
   categoryId: string,
   currency = 'UAH',
+  description?: string,
 ): Transaction =>
-  expenseByDefault({ id, date, accountId: 'card', amount: money(amount, currency), categoryId });
+  expenseByDefault({
+    id,
+    date,
+    accountId: 'card',
+    amount: money(amount, currency),
+    categoryId,
+    ...(description ? { description } : {}),
+  });
 
 export const fixtureTransactions: readonly Transaction[] = [
   // June: the baseline month before the period.
   spend('b1', '2026-06-10', 250000, 'groceries'),
   // July.
   spend('t1', '2026-07-05', 1_500_000, 'home'),
-  spend('t2', '2026-07-08', 50000, 'cafe'),
-  spend('t3', '2026-07-12', 300000, 'groceries'),
+  spend('t2', '2026-07-08', 50000, 'cafe', 'UAH', 'AROMA KAVA'),
+  spend('t3', '2026-07-12', 300000, 'groceries', 'UAH', 'СІЛЬПО 4512'),
   {
     type: 'income',
     id: 't4',
@@ -94,8 +126,8 @@ export const fixtureTransactions: readonly Transaction[] = [
   }),
   // August: «Кафе» goes over its ліміт, and a large ремонт explains the month.
   spend('t6', '2026-08-05', 1_510_000, 'home'),
-  spend('t7', '2026-08-09', 100000, 'cafe'),
-  spend('t8', '2026-08-14', 2_500_000, 'car'),
+  spend('t7', '2026-08-09', 100000, 'cafe', 'UAH', 'Aroma Kava'),
+  spend('t8', '2026-08-14', 2_500_000, 'car', 'UAH', 'СТО АвтоПрофі'),
   {
     type: 'income',
     id: 't9',
@@ -147,6 +179,15 @@ export const fixtureInput: AnalysisInput = {
   rates: [{ currency: 'USD', rateMillionths: 41_500_000, obtainedAt: new Date(2026, 7, 30, 9, 0) }],
 };
 
-export function fixturePackage(): AnalysisPackage {
-  return buildAnalysisPackage(fixtureInput) as AnalysisPackage;
+/**
+ * The fixture as a пакет, with both detail switches off — the shape `document.golden.md` holds.
+ *
+ * `included` is the one thing a caller may vary, because it is the one thing that changes which
+ * sections and which instructions the файл carries; `document-detailed.golden.md` is this same
+ * fixture with both switches on.
+ */
+export function fixturePackage(
+  included: AnalysisInput['included'] = fixtureInput.included,
+): AnalysisPackage {
+  return buildAnalysisPackage({ ...fixtureInput, included }) as AnalysisPackage;
 }

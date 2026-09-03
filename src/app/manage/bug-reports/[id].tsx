@@ -11,6 +11,7 @@ import { Spacing } from '@/constants/theme';
 import { reporting as reportingRepo } from '@/db/repos';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { bugReportFiles } from '@/platform/bug-report-files-device';
+import { confirmScreenshots } from '@/components/bug-report-here';
 import { failureAlert } from '@/ui/failure-alert';
 import {
   ADD_SCREENSHOT_LABEL,
@@ -64,7 +65,16 @@ export default function SavedBugReportScreen() {
   const onHandOver = () => {
     void handOver(
       state,
-      { report, files: bugReportFiles, storage: reportingRepo, now: () => new Date() },
+      {
+        report,
+        files: bugReportFiles,
+        storage: reportingRepo,
+        now: () => new Date(),
+        // The same dialog the sheet's «Зберегти й передати» shows — one copy, imported, so the two
+        // doors cannot drift into warning differently (design D11). A репорт holding no скріншот
+        // never reaches it.
+        confirmScreenshots,
+      },
       setState,
     ).then((next) => {
       setState(next);

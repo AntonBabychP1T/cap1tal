@@ -11,6 +11,9 @@
 #   scripts/android.sh tap X Y   tap at device pixels (a screenshot is 1:1 with them)
 #   scripts/android.sh text S    type S into the focused field
 #   scripts/android.sh key K     a key event: back, enter, tab, del …
+#   scripts/android.sh swipe X1 Y1 X2 Y2 [MS]      one finger, dragged (scrolling, flicks)
+#   scripts/android.sh twofinger X1 Y1 X2 Y2 [MS]  two fingers held STILL (the репорт gesture)
+#   scripts/android.sh twodrag X1 Y1 X2 Y2 DX DY [MS]  two fingers dragged (must start nothing)
 #   scripts/android.sh logs [N]  dump the last N (200) lines of the app's JS/native log and exit
 #   scripts/android.sh stop      stop Metro and the Gradle daemon
 #
@@ -138,6 +141,53 @@ metro() {
   adb reverse "tcp:$METRO_PORT" "tcp:$METRO_PORT" >/dev/null
 }
 
+# The touchscreen's event node, as the kernel names it. Asked of the device rather than assumed:
+# an AVD and a plugged-in phone do not agree on the number, and a wrong node sends taps into the
+# void with no error at all.
+touch_device() {
+  adb shell getevent -pl 2>/dev/null \
+    | awk '/^add device/ {dev=$4} /ABS_MT_POSITION_X/ {print dev; exit}'
+}
+
+# Two fingers down at (x1,y1) and (x2,y2), held for MS, optionally moved by (dx,dy) first, then up.
+#
+# Multitouch protocol B: each finger owns a slot with a tracking id, and a slot whose id is set to
+# -1 is a finger lifted. SYN_REPORT (0 0 0) is what commits a batch of events as one frame, so it
+# comes after every group — without it the kernel sees nothing at all.
+two_finger_hold() {
+  local x1=$1 y1=$2 x2=$3 y2=$4 ms=$5 dx=${6:-0} dy=${7:-0}
+  local dev
+  dev=$(touch_device) || true
+  [ -n "$dev" ] || die "no touchscreen event node found (getevent -pl); use the handle instead — see design D12"
+
+  # EV_ABS=3, EV_SYN=0. ABS_MT_SLOT=0x2f, ABS_MT_TRACKING_ID=0x39, POSITION_X=0x35, POSITION_Y=0x36.
+  adb shell "
+    sendevent $dev 3 47 0; sendevent $dev 3 57 1001
+    sendevent $dev 3 53 $x1; sendevent $dev 3 54 $y1
+    sendevent $dev 3 47 1; sendevent $dev 3 57 1002
+    sendevent $dev 3 53 $x2; sendevent $dev 3 54 $y2
+    sendevent $dev 0 0 0
+  "
+  if [ "$dx" -ne 0 ] || [ "$dy" -ne 0 ]; then
+    # Moved in a few steps rather than one jump, so the recognizer sees travel and cancels rather
+    # than seeing a teleport it might discard as noise.
+    local step
+    for step in 1 2 3 4; do
+      adb shell "
+        sendevent $dev 3 47 0; sendevent $dev 3 53 $((x1 + dx * step / 4)); sendevent $dev 3 54 $((y1 + dy * step / 4))
+        sendevent $dev 3 47 1; sendevent $dev 3 53 $((x2 + dx * step / 4)); sendevent $dev 3 54 $((y2 + dy * step / 4))
+        sendevent $dev 0 0 0
+      "
+    done
+  fi
+  sleep "$(awk -v ms="$ms" 'BEGIN { print ms / 1000 }')"
+  adb shell "
+    sendevent $dev 3 47 0; sendevent $dev 3 57 -1
+    sendevent $dev 3 47 1; sendevent $dev 3 57 -1
+    sendevent $dev 0 0 0
+  "
+}
+
 launch() {
   say "launching $PACKAGE"
   adb shell am force-stop "$PACKAGE"
@@ -157,6 +207,19 @@ case "${1:-up}" in
   # through the IME clipboard instead. Keep smoke-test input ASCII where you can.
   text)    ensure_device; adb shell input text "$(printf '%s' "${2:?text}" | sed 's/ /%s/g')" ;;
   key)     ensure_device; adb shell input keyevent "${2:?keycode}" ;;
+  # One finger, dragged. `input swipe` is enough for every scroll and flick §8 needs, and unlike
+  # the two-finger drivers below it needs no knowledge of the touchscreen device node.
+  swipe)   ensure_device
+           adb shell input swipe "${2:?x1}" "${3:?y1}" "${4:?x2}" "${5:?y2}" "${6:-300}" ;;
+  # Two fingers held still — the репорт gesture. `adb shell input` has no multi-touch at all, so
+  # this goes to the touchscreen's own event node through `sendevent`, multitouch protocol B: two
+  # tracking slots down, a hold, both up. Default 1400 ms, comfortably past GESTURE.minDurationMs
+  # (1200) without being so long that a test waits on it.
+  twofinger) ensure_device; two_finger_hold "${2:?x1}" "${3:?y1}" "${4:?x2}" "${5:?y2}" "${6:-1400}" ;;
+  # Two fingers that travel. It must start nothing: the recognizer cancels past GESTURE.maxDistanceDp
+  # (24), and scenario 8.5 is what proves that on a device rather than in a comment.
+  twodrag) ensure_device
+           two_finger_hold "${2:?x1}" "${3:?y1}" "${4:?x2}" "${5:?y2}" "${8:-1400}" "${6:?dx}" "${7:?dy}" ;;
   # A bounded dump, never a stream: plain `adb logcat` follows the device forever and the caller
   # (an agent, a hook) waits with it for hours. `-d` reads the buffer to its end and exits; the
   # tail is ours rather than logcat's `-t`, which counts unfiltered lines and so returns almost

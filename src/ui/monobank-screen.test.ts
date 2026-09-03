@@ -7,6 +7,9 @@ import type { MonobankLink } from '../monobank/link';
 import { accountCount, transactionCount } from './labels';
 import {
   boundaryConfirmation,
+  FOREIGN_RUN_FINISHED,
+  FOREIGN_RUN_RUNNING,
+  syncControl,
   CLIPBOARD_NO_TOKEN,
   lastSyncLine,
   linkChoices,
@@ -382,6 +385,42 @@ describe('syncSummary', () => {
     expect(syncSummary({ kind: 'storage-unavailable' }, names).retryOffered).toBe(true);
   });
 
+  it('Scenario: Sync without a token offers the token, not a retry', () => {
+    // A retry for a run that never began repeats the same setup message and nothing else — the
+    // emulator found «Повторити незавершене» doing exactly that with no token stored.
+    const summary = syncSummary({ kind: 'not-configured' }, names);
+
+    expect(summary.retryOffered).toBe(false);
+    expect(summary.replaceTokenOffered).toBe(true);
+  });
+
+  it('Scenario: Sync with nothing linked offers no retry', () => {
+    const summary = syncSummary({ kind: 'no-links' }, names);
+
+    expect(summary.retryOffered).toBe(false);
+    // Nothing to enter either: the card's own sentence already says to link a рахунок.
+    expect(summary.replaceTokenOffered).toBe(false);
+  });
+
+  it('A token the storage could not be read is still a retry — nothing about it is settled', () => {
+    expect(syncSummary({ kind: 'storage-unavailable' }, names)).toMatchObject({
+      retryOffered: true,
+      replaceTokenOffered: false,
+    });
+  });
+
+  it('The screen offers the token under the name that fits the state it is in', () => {
+    // `replaceTokenOffered` is one flag for two sentences: «Замінити» when a токен is stored and
+    // turned out not to work, «Ввести» when the run never began because there is none. Read off the
+    // screen because `verify` runs no JSX — without this, the flag could be right and the button
+    // still say «Замінити токен» to someone who has never entered one.
+    const source = readFileSync(new URL('../app/manage/monobank.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain("title={configured ? 'Замінити токен' : 'Ввести токен'}");
+    // And a retry is never drawn from the flag this change narrowed.
+    expect(source).toContain('summary.retryOffered ? (');
+  });
+
   it('The транзакція plural follows Ukrainian, teens included', () => {
     expect(transactionCount(1)).toBe('1 транзакція');
     expect(transactionCount(3)).toBe('3 транзакції');
@@ -740,5 +779,76 @@ describe('the sync boundary is a typed дата like any other', () => {
     // database — this is what keeps the boundary parsed exactly once, in one place.
     expect(screen).not.toContain('startOfLocalDayMs');
     expect([...screen.matchAll(/syncBoundary\(/g)]).toHaveLength(3);
+  });
+});
+
+describe('a run this screen did not start', () => {
+  it('Scenario: A run started elsewhere is not started again here', () => {
+    // Every run on this screen goes through the one entry point, whose lock refuses a second —
+    // the screen no longer calls the coordinator itself, so there is no road around it.
+    expect(screen).toContain('startSync(');
+    expect(screen).not.toContain('syncLinkedAccounts(');
+    // ...and a start that turns out to be refused says so instead of drawing somebody else's run
+    // as a result of its own.
+    expect(screen).toContain("started.kind === 'already-running'");
+    expect(screen).toContain('FOREIGN_RUN_FINISHED');
+  });
+
+  it("Scenario: A run started elsewhere is not this screen's to stop", () => {
+    // The decision itself, as values: a foreign run gets neither button.
+    expect(syncControl({ inFlight: true, busy: false })).toBe('foreign');
+    // ...while this screen's own run keeps its «Зупинити», because that one is its to stop.
+    expect(syncControl({ inFlight: true, busy: true })).toBe('stop');
+    // Nothing going on: the ordinary «Синхронізувати».
+    expect(syncControl({ inFlight: false, busy: false })).toBe('start');
+
+    // And the screen renders exactly those three, with `<Action>` in two of them and not in the
+    // foreign one — the branch is what the decision was extracted to make provable.
+    const foreignAt = screen.lastIndexOf('FOREIGN_RUN_RUNNING');
+    const branchAt = screen.lastIndexOf("control === 'foreign' ?");
+    expect(branchAt).toBeGreaterThan(-1);
+    expect(branchAt).toBeLessThan(foreignAt);
+    const branch = screen.slice(branchAt, screen.indexOf(') : (', foreignAt));
+    expect(branch).toContain('FOREIGN_RUN_RUNNING');
+    expect(branch).not.toContain('<Action');
+    expect(screen).toContain("control === 'stop' ?");
+  });
+
+  it('a run this screen started is still its own, however it was announced', () => {
+    // `busy` wins over `inFlight`: the screen hears its own run through `onSyncState` too, and
+    // must not hide its «Зупинити» because of that.
+    expect(syncControl({ inFlight: true, busy: true })).toBe('stop');
+    // The impossible pair answers safely rather than throwing: a screen that thinks it is running
+    // while the lock says nothing is, still offers to stop what it started.
+    expect(syncControl({ inFlight: false, busy: true })).toBe('stop');
+  });
+
+  it('Scenario: A run the owner asked for ignores the interval', () => {
+    // The interval governs only the runs the owner did not ask for, so no screen may gate its own
+    // «Синхронізувати» on it. Головний's pull is guarded the same way in `home-screen.test.ts`.
+    expect(screen).not.toContain('syncDue(');
+  });
+
+  it('Scenario: A run that begins while the screen is open is seen there', () => {
+    // Subscribed rather than read once: a run that starts after this screen was drawn has to
+    // reach it, which a render-time read of `syncInFlight()` would not do.
+    expect(screen).toContain('onSyncState(');
+    expect(screen).toContain('setElsewhere(syncInFlight())');
+  });
+
+  it('Scenario: A run started elsewhere dates the accounts it completed', () => {
+    // The same subscription reloads what the screen shows, so the moments a foreign run moved are
+    // read back from storage rather than left at what they were when the screen opened.
+    const at = screen.indexOf('onSyncState(');
+    expect(screen.slice(at, at + 200)).toContain('reload()');
+  });
+
+  it('says both foreign-run sentences in the owner`s language', () => {
+    for (const line of [FOREIGN_RUN_RUNNING, FOREIGN_RUN_FINISHED]) {
+      expect(line).toMatch(/[а-яїієґ]/i);
+      expect(line).toContain('инхроніз');
+    }
+    // Neither names a рахунок, a сума or anything else the owner did not already have on screen.
+    expect(FOREIGN_RUN_RUNNING).not.toMatch(/\d/);
   });
 });

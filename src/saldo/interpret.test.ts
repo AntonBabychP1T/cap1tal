@@ -730,3 +730,159 @@ describe('interpret — order and determinism', () => {
     ]);
   });
 });
+
+// ------------------------------------------------------------------- the опис
+
+/**
+ * saldo-import «The опис of a Saldo row travels onto the транзакції built from it».
+ *
+ * A real Saldo export names the merchant on every row. Before this, the column was parsed, carried
+ * onto `SaldoTransaction`, and then dropped on the floor by the interpreter — the one-time move
+ * that is meant to bring the owner's history over arrived with every name gone.
+ */
+describe('interpret — the опис Saldo wrote', () => {
+  it('Scenario: A витрата keeps the merchant the export named', () => {
+    const plan = planFrom(
+      pair({
+        id: '1',
+        description: 'СІЛЬПО',
+        account: 'mono black',
+        journalType: 'CREDIT',
+        amount: '100.00',
+        other: 'булка',
+        otherType: 'EXPENSES',
+      }),
+    );
+    expect(moves(plan)[0]).toMatchObject({ type: 'expense', description: 'СІЛЬПО' });
+  });
+
+  it('Scenario: An in-transit pair takes the departure’s опис', () => {
+    const described = (rows: FixtureRow[], description: string): FixtureRow[] =>
+      rows.map((row) => ({ ...row, Description: description }));
+    const plan = planFrom([
+      ...described(
+        departure({
+          id: '1',
+          datetime: '2024-10-27T10:00:00.000',
+          source: 'mono black',
+          destination: 'гаманець',
+          amount: '100.00',
+          inTransit: '95.00',
+          fee: '5.00',
+        }),
+        'Переказ на картку',
+      ),
+      ...described(
+        arrival({
+          id: '2',
+          datetime: '2024-10-27T11:00:00.000',
+          source: 'mono black',
+          destination: 'гаманець',
+          amount: '95.00',
+        }),
+        'Зарахування',
+      ),
+    ]);
+    expect(moves(plan)).toMatchObject([
+      { type: 'transfer', description: 'Переказ на картку' },
+      { type: 'expense', categoryId: FEES_CATEGORY_ID, description: 'Переказ на картку' },
+    ]);
+  });
+
+  it('Scenario: An empty description leaves no опис', () => {
+    const plan = planFrom(
+      pair({
+        id: '1',
+        description: '   ',
+        account: 'mono black',
+        journalType: 'CREDIT',
+        amount: '100.00',
+        other: 'булка',
+        otherType: 'EXPENSES',
+      }),
+    );
+    // Absent, not `''`: a витрата carrying an empty опис would store one and show a blank line.
+    expect(moves(plan)[0]).not.toHaveProperty('description');
+  });
+
+  it('Scenario: A коригування and a дохід carry theirs too', () => {
+    const plan = planFrom([
+      ...pair({
+        id: '1',
+        description: 'Звірка',
+        account: 'гаманець',
+        accountType: 'CASH',
+        journalType: 'CREDIT',
+        amount: '42.00',
+        other: 'Balance correction',
+        otherType: 'EXPENSES',
+      }),
+      ...pair({
+        id: '2',
+        description: 'Зарплата',
+        account: 'mono black',
+        journalType: 'DEBIT',
+        amount: '5000.00',
+        other: 'Робота',
+        otherType: 'INCOME',
+      }),
+    ]);
+    expect(moves(plan)).toMatchObject([
+      { type: 'correction', description: 'Звірка' },
+      { type: 'income', description: 'Зарплата' },
+    ]);
+  });
+
+  it('A повернення, a «Борг» переказ and a move between two рахунки carry theirs', () => {
+    const plan = planFrom([
+      ...pair({
+        id: '1',
+        description: 'Повернення за куртку',
+        account: 'mono black',
+        journalType: 'DEBIT',
+        amount: '300.00',
+        other: 'одяг',
+        otherType: 'EXPENSES',
+      }),
+      ...борг({ id: '2', description: 'борг яріку', amount: '1000.00', lending: true }),
+      ...pair({
+        id: '3',
+        description: 'На готівку',
+        account: 'mono black',
+        journalType: 'CREDIT',
+        amount: '200.00',
+        other: 'гаманець',
+        otherType: 'CASH',
+      }),
+    ]);
+    expect(plan.categories.map((c) => c.saldoName)).toEqual(['одяг']);
+    expect(moves(plan)).toMatchObject([
+      // Still a повернення in the категорія it came out of, not a дохід: the опис rides along and
+      // changes nothing about what the транзакція is.
+      {
+        type: 'refund',
+        description: 'Повернення за куртку',
+        categoryId: `${NEW_CATEGORY_PREFIX}одяг`,
+      },
+      { type: 'transfer', description: 'борг яріку' },
+      { type: 'transfer', description: 'На готівку' },
+    ]);
+  });
+
+  it('The опис decides nothing: it names no категорія, no джерело and no сума', () => {
+    const withName = planFrom(
+      pair({
+        id: '1',
+        description: 'булка',
+        account: 'mono black',
+        journalType: 'CREDIT',
+        amount: '100.00',
+        other: 'одяг',
+        otherType: 'EXPENSES',
+      }),
+    );
+    // The опис says «булка» and the counterparty says «одяг»; the категорія is the counterparty's.
+    expect(withName.categories.map((c) => c.saldoName)).toEqual(['одяг']);
+    expect(moves(withName)[0]).toMatchObject({ amount: { amount: 10000, currency: 'UAH' } });
+  });
+});

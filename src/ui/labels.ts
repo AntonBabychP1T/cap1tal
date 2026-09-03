@@ -41,6 +41,29 @@ export function byName(a: { name: string; id: string }, b: { name: string; id: s
 }
 
 /**
+ * The fold the owner's data needs before one name is matched against another: `toLowerCase()`
+ * folds ASCII only, so «Продукти» would not answer to «продукти».
+ *
+ * It lives here beside `byName` because ordering names and matching names are the same question
+ * asked twice, and because two screens now ask it — the search on «Транзакції» and the search
+ * inside a picker's full list. Two copies would be two answers the day one of them is tuned.
+ */
+export function folded(value: string): string {
+  return value.toLocaleLowerCase('uk');
+}
+
+/**
+ * Whether a row's name answers to what was typed: anywhere in the name, folded. The one rule, so
+ * the search inside a picker's full list and the search on «Транзакції» cannot come apart — the
+ * spec promises they fold the same way, and stating the match twice is how that promise rots.
+ *
+ * `needle` is already folded; the caller folds the query once and asks about many names.
+ */
+export function nameMatches(name: string, foldedNeedle: string): boolean {
+  return folded(name).includes(foldedNeedle);
+}
+
+/**
  * The five transaction types in the owner's words — the glossary's own, verbatim. One list,
  * because a feed row, the recording form and the retype menu all name the same five things and
  * three lists would drift.
@@ -111,6 +134,14 @@ export function failureMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The two ціль groups, named. They are two headings and not one list because the kinds mean
+ * opposite things: a ціль-накопичення moves toward a сума the owner wants, a ціль витрат away from
+ * one they do not, and a row of either read under the other's heading would say the wrong thing.
+ */
+export const ACCUMULATION_GOALS_TITLE = 'Накопичення';
+export const SPENDING_GOALS_TITLE = 'Ліміти витрат';
+
 /** The currencies an account can be opened in — FR-A1's set for v1. */
 export const OFFERED_CURRENCIES = ['UAH', 'EUR', 'USD'] as const;
 
@@ -141,4 +172,14 @@ export function transactionCount(n: number): string {
 /** The same three forms for «рахунок». */
 export function accountCount(n: number): string {
   return `${n} ${plural(n, 'рахунок', 'рахунки', 'рахунків')}`;
+}
+
+/** The same three forms for «категорія». */
+export function categoryCount(n: number): string {
+  return `${n} ${plural(n, 'категорія', 'категорії', 'категорій')}`;
+}
+
+/** The same three forms for «джерело» — neuter, so 2–4 take «джерела», not «джерели». */
+export function sourceCount(n: number): string {
+  return `${n} ${plural(n, 'джерело', 'джерела', 'джерел')}`;
 }

@@ -94,7 +94,13 @@ export const analysisShare: AnalysisSharePort = {
     // The promise resolves when the chooser returns, the same way whether the owner picked an app
     // or dismissed it: Android ignores the result code and iOS resolves regardless of `completed`.
     // So this says the файл reached the system, and the screen says exactly that and nothing more.
-    return { kind: 'handed-over' };
+    //
+    // `messageIncluded: false`, always, and `file.message` is deliberately not read: expo-sharing's
+    // `SharingOptions` is `mimeType`, `UTI`, `dialogTitle` and `anchor` — there is no text, message
+    // or subject field to put the короткий запит in (design.md D2). Saying so honestly is what lets
+    // the screen never claim a запит that did not travel; «Скопіювати запит» is what covers it, and
+    // the файл opens with its own запит regardless.
+    return { kind: 'handed-over', messageIncluded: false };
   },
 };
 

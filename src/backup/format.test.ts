@@ -49,6 +49,9 @@ describe('what a бекап holds', () => {
       // What this phone last failed at — not the owner's money, and another device's failures are
       // not facts about this one.
       'alerts',
+      // Whether *this* phone files репорти by the gesture or by the handle: how the owner is
+      // testing this device, not a setting about their money. A restored phone decides for itself.
+      'bug_report_capture',
       // The screenshots of a репорт про помилку, and the репорти themselves: this phone's memory
       // of its own bugs — a build, a device and what the owner wrote about them, none of it the
       // owner's money, and none of it true of another phone. They leave only by «Передати».
@@ -62,6 +65,9 @@ describe('what a бекап holds', () => {
       'journal',
       // A cache; it re-fetches itself.
       'monobank_rates',
+      // When this phone last tried to sync and how it went — the same class as `alerts`. Another
+      // device's attempt would make this one skip a sync it never made.
+      'monobank_sync_attempt',
       // Чернетки the owner has not confirmed — and their notification text with them.
       'notification_drafts',
       // What stops an already-decided notification drafting twice; it stays on the phone.
@@ -85,6 +91,8 @@ describe('what a бекап holds', () => {
       'rules',
       'category_limits',
       'goals',
+      // The склад of a ціль — its own relation, so the бекап names it.
+      'goal_accounts',
       'transactions',
       'saldo_import',
       'monobank_accounts',
@@ -315,5 +323,163 @@ describe('reading чеки back out of a file', () => {
     expect(() => parseState({ receipts: [{ ...base, acquisition: 'monobank_auto' }] })).toThrow(
       /способом/,
     );
+  });
+});
+
+describe('a ціль in a бекап', () => {
+  /** The рахунки the цілі below stand on, each in its own currency. */
+  const accounts: BackupState['accounts'] = [
+    { id: 'jar', name: 'Подушка', kind: 'savings', currency: 'UAH', openingBalance: money(0, 'UAH'), archived: false },
+    { id: 'cash', name: 'Готівка', kind: 'cash', currency: 'UAH', openingBalance: money(0, 'UAH'), archived: false },
+    { id: 'usd', name: 'USD банка', kind: 'savings', currency: 'USD', openingBalance: money(0, 'USD'), archived: false },
+    { id: 'eur', name: 'EUR банка', kind: 'savings', currency: 'EUR', openingBalance: money(0, 'EUR'), archived: false },
+  ];
+
+  const held: BackupState = {
+    accounts,
+    categories: [],
+    sources: [],
+    rules: [],
+    limits: [],
+    goals: [],
+    transactions: [],
+    monobankAccounts: [],
+    monobankLinks: [],
+    monobankImportedItems: [],
+    watches: [],
+    receipts: [],
+    receiptItems: [],
+  };
+
+  const withGoals = (goals: BackupState['goals']): BackupState => ({ ...held, goals });
+
+  it('Scenario: A ціль of the previous format keeps its one рахунок', () => {
+    // Format 1 named exactly one рахунок and always a дата.
+    const state = parseState({
+      goals: [
+        {
+          id: 'g-auto',
+          name: 'Авто',
+          target: { amount: 20000000, currency: 'UAH' },
+          deadline: '2026-12-31',
+          accountId: 'jar',
+        },
+      ],
+    });
+
+    expect(state.goals).toEqual([
+      {
+        id: 'g-auto',
+        name: 'Авто',
+        target: money(20000000, 'UAH'),
+        deadline: '2026-12-31',
+        accountIds: ['jar'],
+      },
+    ]);
+  });
+
+  it('Scenario: A ціль without a дата comes back without one', () => {
+    const state = parseState({
+      goals: [
+        {
+          id: 'g-reserve',
+          name: 'Резерв',
+          target: { amount: 30000000, currency: 'UAH' },
+          accountIds: ['jar'],
+        },
+      ],
+    });
+
+    // Absent, not null and not today: the shape written is the shape read.
+    expect('deadline' in state.goals[0]!).toBe(false);
+    expect(state.goals[0]).toEqual({
+      id: 'g-reserve',
+      name: 'Резерв',
+      target: money(30000000, 'UAH'),
+      accountIds: ['jar'],
+    });
+  });
+
+  it('A ціль of the current format carries its whole склад', () => {
+    const state = parseState({
+      goals: [
+        {
+          id: 'g-machine',
+          name: 'Машина',
+          target: { amount: 70000000, currency: 'UAH' },
+          deadline: '2027-06-30',
+          accountIds: ['jar', 'cash', 'usd'],
+        },
+      ],
+    });
+
+    expect(state.goals[0]?.accountIds).toEqual(['jar', 'cash', 'usd']);
+  });
+
+  it('Scenario: A ціль pointing at a рахунок outside the бекап stops the restore', () => {
+    expect(() =>
+      checkConsistent(
+        withGoals([
+          { id: 'g', name: 'Авто', target: money(1000, 'UAH'), accountIds: ['jar', 'ghost'] },
+        ]),
+      ),
+    ).toThrow(/рахунок, якого в бекапі немає/);
+  });
+
+  it('Scenario: A ціль with an empty склад stops the restore', () => {
+    expect(() =>
+      checkConsistent(withGoals([{ id: 'g', name: 'Авто', target: money(1000, 'UAH'), accountIds: [] }])),
+    ).toThrow(/жодного рахунку/);
+  });
+
+  it('Scenario: A ціль naming one рахунок twice stops the restore', () => {
+    expect(() =>
+      checkConsistent(
+        withGoals([
+          { id: 'g', name: 'Авто', target: money(1000, 'UAH'), accountIds: ['jar', 'jar'] },
+        ]),
+      ),
+    ).toThrow(/двічі/);
+  });
+
+  it('Scenario: A ціль in another currency than its рахунок stops the restore', () => {
+    expect(() =>
+      checkConsistent(
+        withGoals([
+          { id: 'g', name: 'Подорож', target: money(1000, 'USD'), accountIds: ['jar', 'cash'] },
+        ]),
+      ),
+    ).toThrow(/у USD, а її рахунки — у UAH/);
+    // And a склад that mixes currencies outside UAH is refused with its own reason.
+    expect(() =>
+      checkConsistent(
+        withGoals([
+          { id: 'g', name: 'Подорож', target: money(1000, 'USD'), accountIds: ['usd', 'jar'] },
+        ]),
+      ),
+    ).toThrow(/тільки в UAH/);
+  });
+
+  it('Scenario: A UAH ціль over several currencies does not stop the restore', () => {
+    expect(() =>
+      checkConsistent(
+        withGoals([
+          {
+            id: 'g',
+            name: 'Машина',
+            target: money(70000000, 'UAH'),
+            accountIds: ['jar', 'usd', 'eur'],
+          },
+        ]),
+      ),
+    ).not.toThrow();
+    // As does a ціль in the one currency its склад shares.
+    expect(() =>
+      checkConsistent(
+        withGoals([
+          { id: 'g', name: 'Подорож', target: money(500000, 'USD'), accountIds: ['usd'] },
+        ]),
+      ),
+    ).not.toThrow();
   });
 });

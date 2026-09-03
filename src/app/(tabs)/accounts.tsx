@@ -167,8 +167,11 @@ export default function AccountsScreen() {
         title="Рахунки"
         right={
           // Creating moves under the thumb of the hand already holding the phone; the empty state
-          // still says it in words, because a lone «+» explains nothing to an empty screen.
-          draft ? undefined : (
+          // still says it in words, because a lone «+» explains nothing to an empty screen — and
+          // while it is saying them, the «+» stands down. Two controls for one action, one of them
+          // wordless, is one accessible name read twice by a screen reader with nothing to tell
+          // them apart. The condition is the empty state's own, so exactly one is ever drawn.
+          draft || groups.length === 0 ? undefined : (
             <Pressable
               onPress={() => setDraft(blankDraft())}
               accessibilityLabel="Створити рахунок"

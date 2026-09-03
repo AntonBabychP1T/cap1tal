@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { makeBackup, readBackup, isRefusal } from '../backup/backup';
-import type { BackupState } from '../backup/format';
+import { BACKUP_FORMAT_VERSION, type BackupState } from '../backup/format';
 import { backupRepo } from '../db/backup-repo';
 import { openTestDb, type TestDb, type TestStorage } from '../db/test-db';
 import { accountsRepo } from '../db/accounts-repo';
@@ -228,14 +228,23 @@ describe('a file chosen for restore is checked before it is offered', () => {
   });
 
   it('Scenario: A бекап from a newer app is named as such', async () => {
-    const state = await pick(foreignBackup().replace('"formatVersion":1', '"formatVersion":2'));
+    // One past whatever this build writes: the format version moves when a shape inside the file
+    // changes, so the number is read from the constant rather than written here again.
+    const newer = `"formatVersion":${BACKUP_FORMAT_VERSION + 1}`;
+    const state = await pick(
+      foreignBackup().replace(`"formatVersion":${BACKUP_FORMAT_VERSION}`, newer),
+    );
 
     expect(state.kind).toBe('refused');
     expect(state.kind === 'refused' && state.message).toContain('новішою версією');
     expect(state.kind === 'refused' && state.message).toContain('оновіть застосунок');
     // The storage-shape version reads the same way, because from here the two are one fact.
     expect(refusalMessage({ kind: 'newer-schema', schemaVersion: 9, supported: 8 })).toBe(
-      refusalMessage({ kind: 'newer-format', formatVersion: 2, supported: 1 }),
+      refusalMessage({
+        kind: 'newer-format',
+        formatVersion: BACKUP_FORMAT_VERSION + 1,
+        supported: BACKUP_FORMAT_VERSION,
+      }),
     );
   });
 

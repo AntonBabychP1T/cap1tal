@@ -16,6 +16,7 @@ import {
 import { suggestKind } from '../monobank/link';
 import { accountsRepo } from './accounts-repo';
 import { monobankRepo, type FetchedMonobankAccount, type MonobankRepo } from './monobank-repo';
+import { monobankSyncAttempt } from './schema';
 import { openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
 
@@ -838,5 +839,117 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
   it('An empty set writes nothing and refuses nothing', () => {
     repo.linkMany({ accepted: [], syncStartDate: '2026-08-01', cursorMs: boundaryMs });
     expect(repo.listLinks()).toEqual([]);
+  });
+});
+
+describe('the last sync attempt', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'cap1tal-attempt-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** The attempt is about the run, not about a рахунок, so none of these needs a link. */
+  function reopened(path: string, read: (repo: MonobankRepo) => void): void {
+    const storage = openFileDb(path);
+    try {
+      read(monobankRepo(storage.db));
+    } finally {
+      storage.close();
+    }
+  }
+
+  it('Scenario: An attempt is read back as it was written', () => {
+    const path = join(dir, 'attempt.db');
+    const at = new Date('2026-09-02T08:15:00.000Z');
+
+    reopened(path, (repo) => {
+      repo.beginAttempt(at);
+      repo.finishAttempt('rate-limited');
+    });
+
+    reopened(path, (repo) => {
+      expect(repo.attempt()).toEqual({ attemptedAtMs: at.getTime(), outcome: 'rate-limited' });
+    });
+  });
+
+  it('Scenario: An attempt without an outcome round-trips as one', () => {
+    const path = join(dir, 'unfinished.db');
+    const at = new Date('2026-09-02T08:15:00.000Z');
+
+    // A run that started and never reported — the app killed mid-sync.
+    reopened(path, (repo) => repo.beginAttempt(at));
+
+    reopened(path, (repo) => {
+      // A moment with no outcome, and emphatically not the absence of an attempt: the interval
+      // has been spent even though nothing is known about how the run went.
+      expect(repo.attempt()).toEqual({ attemptedAtMs: at.getTime() });
+      expect(repo.attempt()).toBeDefined();
+    });
+  });
+
+  it('Scenario: A later attempt replaces the earlier one', () => {
+    const storage = openTestDb();
+    try {
+      const repo = monobankRepo(storage.db);
+      repo.beginAttempt(new Date('2026-09-02T08:00:00.000Z'));
+      repo.finishAttempt('unavailable');
+
+      const later = new Date('2026-09-02T09:00:00.000Z');
+      repo.beginAttempt(later);
+      repo.finishAttempt('complete');
+
+      expect(repo.attempt()).toEqual({ attemptedAtMs: later.getTime(), outcome: 'complete' });
+      // One row, not a history: the earlier attempt is not readable anywhere.
+      expect(storage.db.select().from(monobankSyncAttempt).all()).toHaveLength(1);
+    } finally {
+      storage.close();
+    }
+  });
+
+  it('Scenario: A device that never attempted says so', () => {
+    const storage = openTestDb();
+    try {
+      expect(monobankRepo(storage.db).attempt()).toBeUndefined();
+    } finally {
+      storage.close();
+    }
+  });
+
+  it('A withdrawn attempt leaves nothing behind, and withdrawing nothing is silent', () => {
+    const storage = openTestDb();
+    try {
+      const repo = monobankRepo(storage.db);
+      // Withdrawing on a device that never attempted is the ordinary case — a phone with no
+      // token starts a run, learns there is none, and withdraws.
+      repo.withdrawAttempt();
+      expect(repo.attempt()).toBeUndefined();
+
+      repo.beginAttempt(new Date('2026-09-02T08:00:00.000Z'));
+      repo.withdrawAttempt();
+      expect(repo.attempt()).toBeUndefined();
+    } finally {
+      storage.close();
+    }
+  });
+
+  it('The attempt begins again cleanly after an outcome was recorded', () => {
+    const storage = openTestDb();
+    try {
+      const repo = monobankRepo(storage.db);
+      repo.beginAttempt(new Date('2026-09-02T08:00:00.000Z'));
+      repo.finishAttempt('invalid-token');
+
+      // The next run starts: its moment is new and the outcome of the last one does not linger,
+      // or a rejected token would keep needing the owner while a run is going on.
+      repo.beginAttempt(new Date('2026-09-02T09:00:00.000Z'));
+      expect(repo.attempt()).toEqual({ attemptedAtMs: Date.UTC(2026, 8, 2, 9, 0, 0) });
+    } finally {
+      storage.close();
+    }
   });
 });

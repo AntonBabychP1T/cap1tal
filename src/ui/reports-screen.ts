@@ -1,6 +1,14 @@
 import type { Account } from '../domain/account';
-import { goalProgress, isOverdue, isReached, type Goal } from '../domain/goals';
+import type { Category } from '../domain/category';
+import {
+  contribution,
+  isOverdue,
+  spendingGoalSpent,
+  type AccumulationGoal,
+} from '../domain/goals';
+import type { CategoryLimit } from '../domain/limits';
 import { money, type CurrencyCode, type Money } from '../domain/money';
+import { categoryBreakdown } from '../domain/monthly-picture';
 import {
   categoriesInHistory,
   categorySeries,
@@ -8,10 +16,23 @@ import {
   type MonthTotals,
 } from '../domain/reports';
 import type { IsoDate, Month, Transaction } from '../domain/transaction';
+import type { MonobankRate } from '../monobank/currency';
 import { formatMoney } from './amount-input';
 import { todayIso } from './dates';
-import { byName, categoryLabel } from './labels';
-import { currentMonth, shortMonthLabel } from './months';
+import {
+  accumulationReadout,
+  goalProgress,
+  spendingReadout,
+  type Contribution,
+} from './goal-progress';
+import { accountCountLabel } from './goals-section';
+import {
+  ACCUMULATION_GOALS_TITLE,
+  byName,
+  categoryLabel,
+  SPENDING_GOALS_TITLE,
+} from './labels';
+import { currentMonth, monthLabel, shortMonthLabel } from './months';
 
 /**
  * Everything the «Звіти» tab renders, as data — so what it says is under `verify` even though the
@@ -99,16 +120,63 @@ export interface CategoryReadout {
   readonly amount: string;
 }
 
-/** One ціль as «Звіти» shows it: what was wanted, by when, and how far the рахунок has got. */
-export interface ReportsGoalRow {
+/**
+ * One ціль-накопичення as «Звіти» shows it: what was wanted, by when, how far the склад has got,
+ * and how many рахунки it counts.
+ *
+ * It shares no field with the ціль витрат row below beyond a назва and where it goes, and that is
+ * the guard (design D8): neither row can be handed to the other's renderer, so a ceiling can never
+ * be drawn as an achievement.
+ */
+export interface ReportsAccumulationGoalRow {
+  readonly kind: 'accumulation';
   readonly id: string;
   readonly name: string;
   readonly target: string;
-  readonly deadline: IsoDate;
-  /** The linked рахунок's розрахунковий баланс, read now. */
-  readonly progress: string;
+  /** The дата, or `null` where the ціль has none. */
+  readonly deadline: IsoDate | null;
+  /** «487 300,00 UAH»; `null` when the progress cannot be counted. */
+  readonly progress: string | null;
+  readonly percentage: number | null;
+  readonly leftToAccumulate: string | null;
+  /** «4 рахунки» — how many the склад holds, never their назви. */
+  readonly accountCount: string;
   readonly reached: boolean;
   readonly overdue: boolean;
+  /** Some внесок was converted, so the whole progress is marked «≈». */
+  readonly approximate: boolean;
+  /** What stands in place of the progress when it cannot be counted, naming the currency. */
+  readonly uncountable: string | null;
+  /** Where choosing it goes: the ціль's own breakdown. */
+  readonly route: string;
+}
+
+/** One ціль витрат as «Звіти» shows it — its категорія's ліміт, in the words of a ceiling. */
+export interface ReportsSpendingGoalRow {
+  readonly kind: 'spending';
+  readonly categoryId: string;
+  readonly name: string;
+  readonly spent: string;
+  readonly ceiling: string;
+  /** «Використано 66 %»; **absent once exceeded** — no percentage is shown past a ceiling. */
+  readonly percentageUsed: number | null;
+  readonly mayStillSpend: string | null;
+  readonly exceededBy: string | null;
+  /** The month it is about — always the current one on this tab. */
+  readonly month: Month;
+  readonly monthLabel: string;
+  /** Its категорія is archived; the row stays, set apart, so the ceiling can be found and cleared. */
+  readonly archived: boolean;
+  /** Where choosing it goes: the категорія's own month, where its транзакції already are. */
+  readonly route: string;
+}
+
+/** The two kinds, in named groups, so neither is ever read in the other's words. */
+export interface ReportsGoalGroups {
+  readonly accumulationTitle: string;
+  readonly accumulation: readonly ReportsAccumulationGoalRow[];
+  readonly spendingTitle: string;
+  readonly spending: readonly ReportsSpendingGoalRow[];
 }
 
 export interface ReportsViewModel {
@@ -139,7 +207,7 @@ export interface ReportsViewModel {
   readonly categoryReadout: CategoryReadout | null;
   /** The same, for the category chart — a category's month goes negative when повернення outran it. */
   readonly categoryChartHasNegative: boolean;
-  readonly goals: readonly ReportsGoalRow[];
+  readonly goals: ReportsGoalGroups;
   /** What to say instead of an empty chart, or `null` when there is a chart. */
   readonly emptyHistoryMessage: string | null;
   /** What to say instead of an empty ціль list, or `null` when there are цілі. */
@@ -230,7 +298,21 @@ export function reportsViewModel(input: {
   transactions: readonly Transaction[];
   /** The категорії list as the screen loaded it, so the chooser reads the owner's own names. */
   categoryNames: ReadonlyMap<string, string>;
-  goals: readonly Goal[];
+  goals: readonly AccumulationGoal[];
+  /**
+   * The ліміти and the категорії they stand on: every ліміт is a ціль витрат (design D1), so this
+   * tab reads them to draw that group. Nothing here changes a ліміт — `limits` and
+   * `monthly-picture` are read, not touched.
+   */
+  limits?: readonly CategoryLimit[];
+  categories?: readonly Category[];
+  /** The stored monobank rates — what makes an approximate progress possible, and marks it «≈». */
+  rates?: readonly MonobankRate[];
+  /**
+   * The поточна вартість of each інвестиційний рахунок that has one, by рахунок id. Empty until
+   * `investments-value` lands; passing it here is what keeps the пакет and this tab on one number.
+   */
+  currentValues?: ReadonlyMap<string, Money>;
   /** What the owner switched to; ignored when the history does not hold it. */
   shownCurrency?: CurrencyCode;
   /** What the owner chose; ignored when the history does not carry it. */
@@ -288,23 +370,90 @@ export function reportsViewModel(input: {
 
   const today = todayIso(input.now);
   const accountsById = new Map(input.accounts.map((a) => [a.id, a]));
-  const goals: ReportsGoalRow[] = input.goals.map((goal) => {
-    const account = accountsById.get(goal.accountId);
-    // Storage refuses a ціль whose рахунок is not there, so the fallback is unreachable; it exists
-    // so a half-loaded screen shows a ціль at zero rather than throwing on the way to a chart.
-    const progress = account
-      ? goalProgress(account, input.transactions)
-      : money(0, goal.target.currency);
+  const currentValues = input.currentValues ?? new Map<string, Money>();
+  const accumulation: ReportsAccumulationGoalRow[] = input.goals.map((goal) => {
+    // Storage refuses a ціль whose рахунок is not there, so a missing one is unreachable; it is
+    // simply left out of the внески rather than counted as zero, which would be a wrong total.
+    const contributions: Contribution[] = goal.accountIds.flatMap((id) => {
+      const account = accountsById.get(id);
+      return account
+        ? [
+            {
+              accountId: id,
+              amount: contribution(account, input.transactions, currentValues.get(id)),
+            },
+          ]
+        : [];
+    });
+    const progress = goalProgress({
+      currency: goal.target.currency,
+      contributions,
+      rates: input.rates ?? [],
+    });
+    const readout = accumulationReadout(goal, progress);
     return {
+      kind: 'accumulation',
       id: goal.id,
       name: goal.name,
-      target: formatMoney(goal.target),
-      deadline: goal.deadline,
-      progress: formatMoney(progress),
-      reached: isReached(goal, progress),
-      overdue: isOverdue(goal, progress, today),
+      target: readout.target,
+      deadline: goal.deadline ?? null,
+      progress: readout.progress,
+      percentage: readout.percentage,
+      leftToAccumulate: readout.leftToAccumulate,
+      accountCount: accountCountLabel(goal.accountIds.length),
+      reached: readout.reached,
+      // An unknown progress is no verdict: neither reached nor overdue, whatever the дата says.
+      overdue:
+        progress.kind === 'unknown' ? false : isOverdue(goal, progress.total, today),
+      approximate: readout.approximate,
+      uncountable: readout.uncountable,
+      route: `/goal/${goal.id}`,
     };
   });
+
+  // Every ліміт, read as the ціль витрат it is — for the current month, from the same breakdown the
+  // Місяць tab and the ліміт itself read. No second count of spending is made here.
+  const goalMonthBreakdown = categoryBreakdown({ month, transactions: input.transactions });
+  const categoryArchived = new Set(
+    (input.categories ?? []).filter((c) => c.archived).map((c) => c.id),
+  );
+  const spending: ReportsSpendingGoalRow[] = (input.limits ?? [])
+    .map((limit) => {
+      const readout = spendingReadout({
+        spent: spendingGoalSpent({ breakdown: goalMonthBreakdown, limit }),
+        ceiling: limit.amount,
+        // Always the current month on this tab, so it has not ended.
+        monthEnded: false,
+      });
+      return {
+        kind: 'spending' as const,
+        categoryId: limit.categoryId,
+        name: categoryLabel(limit.categoryId, input.categoryNames),
+        spent: readout.spent,
+        ceiling: readout.ceiling,
+        percentageUsed: readout.percentageUsed,
+        mayStillSpend: readout.mayStillSpend,
+        exceededBy: readout.exceededBy,
+        month,
+        monthLabel: monthLabel(month),
+        archived: categoryArchived.has(limit.categoryId),
+        route: `/category/${month}/${limit.categoryId}`,
+      };
+    })
+    .sort((a, b) =>
+      a.archived === b.archived
+        ? byName({ name: a.name, id: a.categoryId }, { name: b.name, id: b.categoryId })
+        : a.archived
+          ? 1
+          : -1,
+    );
+
+  const goals: ReportsGoalGroups = {
+    accumulationTitle: ACCUMULATION_GOALS_TITLE,
+    accumulation,
+    spendingTitle: SPENDING_GOALS_TITLE,
+    spending,
+  };
 
   const historyScale = historyScaleOf(shownSeries);
   const history = shownCurrency ? historyColumns(shownSeries, historyScale, readMonth) : [];
@@ -349,7 +498,8 @@ export function reportsViewModel(input: {
     categoryChartHasNegative,
     goals,
     emptyHistoryMessage: emptyHistoryMessageFor(currencies.length, input.transactions.length > 0),
-    emptyGoalsMessage: goals.length === 0 ? 'Цілей поки немає.' : null,
+    emptyGoalsMessage:
+      accumulation.length === 0 && spending.length === 0 ? 'Цілей поки немає.' : null,
   };
 }
 

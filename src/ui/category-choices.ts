@@ -78,8 +78,11 @@ export function sourceChoicesFor(
   return keepingCurrent(sourceChoices(all), all, currentSourceId);
 }
 
-/** The категорії and джерела of the latest транзакції, most recently used first, each once. */
+/**
+ * The рахунки, категорії and джерела of the latest транзакції, most recently used first, each once.
+ */
 export interface RecentlyUsed {
+  readonly accounts: readonly string[];
   readonly categories: readonly string[];
   readonly sources: readonly string[];
 }
@@ -90,40 +93,40 @@ export interface RecentlyUsed {
  * is the order of use, not a ranking, so the категорія of the last витрата is first and the app
  * has learned nothing it cannot show.
  *
- * `feed` is `listLatest`'s order — newest first. A коригування contributes nothing because the
- * domain fixes its категорія and stores none; a переказ carries neither. Only what the транзакція
- * actually holds counts, so nothing is inferred from an опис or an amount.
+ * `feed` is `listLatest`'s order — newest first. A коригування contributes no категорія because the
+ * domain fixes its own and stores none; a переказ carries neither категорія nor джерело. Only what
+ * the транзакція actually holds counts, so nothing is inferred from an опис or an amount.
+ *
+ * Every type contributes a рахунок, though, and a переказ contributes two — the one the money left
+ * before the one it arrived at, because that is the order the транзакція itself names them and both
+ * are рахунки the owner is using. A коригування counts here where it counts nowhere else: it sits
+ * on a рахунок the owner reconciled, which is a рахунок they are living on.
  */
 export function recentlyUsed(feed: readonly Transaction[], limit: number): RecentlyUsed {
+  const accounts: string[] = [];
   const categories: string[] = [];
   const sources: string[] = [];
+  const account = (id: string) => {
+    if (!accounts.includes(id)) accounts.push(id);
+  };
   for (const t of feed) {
     if (t.type === 'expense' || t.type === 'refund') {
       if (!categories.includes(t.categoryId)) categories.push(t.categoryId);
+      account(t.accountId);
     } else if (t.type === 'income') {
       if (!sources.includes(t.sourceId)) sources.push(t.sourceId);
+      account(t.accountId);
+    } else if (t.type === 'transfer') {
+      account(t.fromAccountId);
+      account(t.toAccountId);
+    } else {
+      account(t.accountId);
     }
-    if (categories.length >= limit && sources.length >= limit) break;
+    if (accounts.length >= limit && categories.length >= limit && sources.length >= limit) break;
   }
-  return { categories: categories.slice(0, limit), sources: sources.slice(0, limit) };
-}
-
-/**
- * The recently used rows to offer ahead of the full list: those `recentlyUsed` named that the
- * picker is offering anyway, in the order they were used.
- *
- * Resolved against `offered` and not against the whole list, so an archived категорія is not
- * resurrected by having been used and «Без джерела» is not offered by having been imported onto —
- * `expenseCategoryChoices` and `sourceChoices` already decide what may be picked, and this adds no
- * second rule. A row may appear here and in the full list both; that is the point of a shortcut.
- */
-export function recentRows<Row extends { readonly id: string }>(
-  recentIds: readonly string[],
-  offered: readonly Row[],
-): Row[] {
-  const byId = new Map(offered.map((row) => [row.id, row]));
-  return recentIds.flatMap((id) => {
-    const row = byId.get(id);
-    return row ? [row] : [];
-  });
+  return {
+    accounts: accounts.slice(0, limit),
+    categories: categories.slice(0, limit),
+    sources: sources.slice(0, limit),
+  };
 }

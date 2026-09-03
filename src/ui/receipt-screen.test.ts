@@ -90,21 +90,19 @@ function storedReceipt(over: Partial<FiscalReceipt> = {}, items: ReceiptItem[] =
 describe('what a транзакція offers', () => {
   it('A grocery витрата offers the scan prominently', () => {
     // By the seeded id, not the name: the owner has renamed it «Продукти».
-    const offer = receiptOffer({ transaction: expense({ categoryId: 'groceries' }) });
+    const offer = receiptOffer({ type: 'expense', categoryId: 'groceries' });
 
     expect(offer).toEqual({ kind: 'scan', label: 'Сканувати QR чека', prominent: true });
   });
 
   it('Another category offers it too', () => {
-    const offer = receiptOffer({ transaction: expense({ categoryId: 'home' }) });
+    const offer = receiptOffer({ type: 'expense', categoryId: 'home' });
 
     expect(offer).toEqual({ kind: 'scan', label: 'Сканувати QR чека', prominent: false });
   });
 
   it('offers the scan on a повернення as well', () => {
-    const offer = receiptOffer({
-      transaction: { ...expense(), type: 'refund' } as Transaction,
-    });
+    const offer = receiptOffer({ type: 'refund', categoryId: 'home' });
 
     expect(offer.kind).toBe('scan');
   });
@@ -119,7 +117,7 @@ describe('what a транзакція offers', () => {
       lineTotal: money(1000, 'UAH'),
     }));
 
-    const offer = receiptOffer({ transaction: expense(), receipt: storedReceipt({}, nine) });
+    const offer = receiptOffer({ type: 'expense', receipt: storedReceipt({}, nine) });
 
     expect(offer).toEqual({
       kind: 'attached',
@@ -129,38 +127,12 @@ describe('what a транзакція offers', () => {
   });
 
   it('A переказ offers no scan', () => {
-    const transfer: Transaction = {
-      type: 'transfer',
-      id: 'tx-9',
-      date: isoDate('2026-04-29'),
-      fromAccountId: 'a',
-      toAccountId: 'b',
-      left: money(1000, 'UAH'),
-      arrived: money(1000, 'UAH'),
-    };
-
-    expect(receiptOffer({ transaction: transfer })).toEqual({ kind: 'none' });
+    expect(receiptOffer({ type: 'transfer' })).toEqual({ kind: 'none' });
   });
 
   it('offers no scan on a дохід or a коригування either', () => {
-    const income: Transaction = {
-      type: 'income',
-      id: 'tx-8',
-      date: isoDate('2026-04-29'),
-      accountId: 'card',
-      amount: money(1000, 'UAH'),
-      sourceId: 'salary',
-    };
-    const correction: Transaction = {
-      type: 'correction',
-      id: 'tx-7',
-      date: isoDate('2026-04-29'),
-      accountId: 'card',
-      amount: money(-1000, 'UAH'),
-    };
-
-    expect(receiptOffer({ transaction: income }).kind).toBe('none');
-    expect(receiptOffer({ transaction: correction }).kind).toBe('none');
+    expect(receiptOffer({ type: 'income' }).kind).toBe('none');
+    expect(receiptOffer({ type: 'correction' }).kind).toBe('none');
   });
 
   it('A retyped переказ still shows its чек, and claims no difference about it', () => {
@@ -174,7 +146,7 @@ describe('what a транзакція offers', () => {
       arrived: money(74230, 'UAH'),
     };
 
-    const offer = receiptOffer({ transaction: transfer, receipt: storedReceipt() });
+    const offer = receiptOffer({ type: transfer.type, receipt: storedReceipt() });
 
     expect(offer.kind).toBe('attached');
     // And the чек opens and reads normally: a переказ has no single сума, so nothing is marked as
@@ -628,7 +600,7 @@ describe('detaching', () => {
     expect(source).not.toContain('transactionsRepo.save');
     expect(source).not.toContain('transactionsRepo.remove');
     // And the транзакція offers the scan again afterwards, because it now carries no чек.
-    expect(receiptOffer({ transaction: expense() }).kind).toBe('scan');
+    expect(receiptOffer({ type: 'expense' }).kind).toBe('scan');
   });
 
   it('Backing out of the confirmation keeps the чек', () => {
@@ -688,7 +660,11 @@ describe('the screens are wired to this module', () => {
   it('the транзакція form asks this module what to offer, and decides nothing itself', () => {
     expect(form).toContain("import { receiptOffer } from '@/ui/receipt-screen'");
     expect(form).toContain('receiptsRepo.forTransaction(id)');
-    expect(form).toContain('receiptOffer({ transaction');
+    // The form's own choice, never the stored транзакція: `form.shape` is what the «Тип» chips
+    // set, so switching to переказ withdraws the offer before the save rather than after it.
+    expect(form).toContain('type={form.shape}');
+    expect(form).not.toContain('receiptOffer({ transaction');
+    expect(form).not.toContain('transaction={original}');
     // The label and the prominence come from the offer, not from anything written out here: both
     // weights render `offer.label`, and the seeded-category rule appears nowhere in the screen.
     expect(form).toContain('title={offer.label}');
@@ -794,5 +770,42 @@ describe('the screens are wired to this module', () => {
       expect(text, name).not.toContain('Це не QR фіскального чека');
       expect(text, name).not.toContain('Немає звʼязку з податковою');
     }
+  });
+});
+
+/**
+ * fiscal-receipts-screen «The scan offer answers the type the form is showing, not the stored one».
+ *
+ * The offer is computed from the values the form holds, so a «Тип» switched to переказ withdraws
+ * it at the tap — the emulator found the old signature keeping «Сканувати QR чека» on screen until
+ * the транзакція was saved.
+ */
+describe('the offer follows the form, not the store', () => {
+  it('Scenario: Choosing переказ withdraws the scan offer', () => {
+    expect(receiptOffer({ type: 'expense', categoryId: 'home' }).kind).toBe('scan');
+
+    expect(receiptOffer({ type: 'transfer', categoryId: 'home' }).kind).toBe('none');
+  });
+
+  it('Scenario: Choosing витрата brings the offer back', () => {
+    expect(receiptOffer({ type: 'transfer' }).kind).toBe('none');
+
+    expect(receiptOffer({ type: 'expense' }).kind).toBe('scan');
+  });
+
+  it('Scenario: The prominence follows the category being chosen', () => {
+    expect(receiptOffer({ type: 'expense', categoryId: 'home' })).toMatchObject({
+      prominent: false,
+    });
+
+    expect(receiptOffer({ type: 'expense', categoryId: 'groceries' })).toMatchObject({
+      prominent: true,
+    });
+  });
+
+  it('Scenario: An attached чек is shown whatever the form says', () => {
+    const offer = receiptOffer({ type: 'transfer', receipt: storedReceipt() });
+
+    expect(offer.kind).toBe('attached');
   });
 });

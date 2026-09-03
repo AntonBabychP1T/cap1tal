@@ -819,8 +819,10 @@ describe('the entry screen after a store', () => {
     expect(refusal).toContain('title="До Рахунків"');
     expect(refusal).toContain("router.push('/accounts')");
     expect(refusal).not.toContain('title="Записати"');
-    // And `offered` is the unarchived рахунки, so «every one archived» is the same case.
-    expect(entryScreen).toContain('activeAccounts(stored.accounts)');
+    // And `offered` is the unarchived рахунки, so «every one archived» is the same case. It comes
+    // from `accountChoicesFor`, whose own tests prove it offers exactly those — passing no current
+    // рахунок, because nothing is being edited here and so there is no carried row to keep.
+    expect(entryScreen).toContain('accountChoicesFor(stored.accounts, undefined)');
   });
 
   it('The confirmation is what the store leaves behind, and no navigation is', () => {

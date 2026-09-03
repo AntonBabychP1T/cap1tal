@@ -12,7 +12,7 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import type { MonobankRate } from '../monobank/currency';
-import { homeViewModel } from './home-screen';
+import { homeViewModel, NEVER_SYNCED_LINE, SYNCING_LINE } from './home-screen';
 
 /**
  * What Головний says. The numbers themselves are proven in `monthly-picture.test.ts` and
@@ -70,6 +70,9 @@ const into = (toAccountId: string, amount: number): Transaction =>
 const balances = (entries: Record<string, Money>): ReadonlyMap<string, Money> =>
   new Map(Object.entries(entries));
 
+/** The moment every test below is read against; every clock in this app is passed in. */
+const NOW = new Date('2026-09-02T12:00:00');
+
 const model = (input: {
   transactions?: readonly Transaction[];
   balances?: ReadonlyMap<string, Money>;
@@ -77,6 +80,8 @@ const model = (input: {
   uncategorised?: number;
   pendingDrafts?: number;
   accounts?: readonly Account[];
+  monobank?: Parameters<typeof homeViewModel>[0]['monobank'];
+  now?: Date;
 }) =>
   homeViewModel({
     month: '2026-09',
@@ -86,6 +91,8 @@ const model = (input: {
     rates: input.rates ?? [],
     uncategorised: input.uncategorised ?? 0,
     pendingDrafts: input.pendingDrafts ?? 0,
+    ...(input.monobank ? { monobank: input.monobank } : {}),
+    now: input.now ?? NOW,
   });
 
 describe('the month status', () => {
@@ -178,6 +185,7 @@ describe('the month status', () => {
       rates: [],
       uncategorised: 0,
       pendingDrafts: 0,
+      now: NOW,
     });
 
     expect(august.status.title).toBe('Залишилось у серпні');
@@ -377,7 +385,7 @@ describe('Головний as the overview', () => {
   });
 
   it('The counted «Без категорії» row leads where those транзакції are marked', () => {
-    const attention = main.slice(main.indexOf('{model.attention.rows.length > 0 ? ('));
+    const attention = main.slice(main.indexOf('{model.attention.rows.length > 0 |'));
     expect(attention.slice(0, attention.indexOf('</ListCard>'))).toContain(
       "router.push('/transactions')",
     );
@@ -406,5 +414,222 @@ describe('Головний as the overview', () => {
     expect(main).not.toContain('monthlyPicture(');
     expect(main).not.toContain('accountTotals(');
     expect(main).not.toContain('approximateTotals(');
+  });
+});
+
+describe('how fresh the bank data is', () => {
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const bank = (over: Partial<NonNullable<Parameters<typeof homeViewModel>[0]['monobank']>> = {}) =>
+    ({ configured: true, linked: 1, syncing: false, ...over }) as NonNullable<
+      Parameters<typeof homeViewModel>[0]['monobank']
+    >;
+
+  it('Scenario: Minutes are stated as minutes', () => {
+    const view = model({ monobank: bank({ lastCompletedAtMs: NOW.getTime() - 3 * MINUTE }) });
+    expect(view.monobank?.freshness).toBe('оновлено 3 хв тому');
+  });
+
+  it('Scenario: Hours are stated as hours', () => {
+    const view = model({ monobank: bank({ lastCompletedAtMs: NOW.getTime() - 5 * HOUR }) });
+    expect(view.monobank?.freshness).toBe('оновлено 5 год тому');
+  });
+
+  it('Scenario: A linked bank that has never synced says so', () => {
+    // No moment at all is not «оновлено щойно» and not an empty age: it is its own sentence.
+    const view = model({ monobank: bank() });
+    expect(view.monobank?.freshness).toBe(NEVER_SYNCED_LINE);
+    expect(view.monobank?.freshness).not.toContain('оновлено');
+  });
+
+  it('Scenario: Without monobank there is no line', () => {
+    // Never connected...
+    expect(model({}).monobank).toBeNull();
+    expect(model({ monobank: bank({ configured: false }) }).monobank).toBeNull();
+    // ...and connected with nothing linked: a token alone syncs nothing, so it says nothing.
+    expect(model({ monobank: bank({ linked: 0 }) }).monobank).toBeNull();
+  });
+
+  it('Scenario: A run in flight is what the line says', () => {
+    const view = model({
+      monobank: bank({ lastCompletedAtMs: NOW.getTime() - 3 * MINUTE, syncing: true }),
+    });
+    expect(view.monobank?.freshness).toBe(SYNCING_LINE);
+    // ...and once it ends the age is back, now stating the moment it moved to.
+    const after = model({ monobank: bank({ lastCompletedAtMs: NOW.getTime() - 10_000 }) });
+    expect(after.monobank?.freshness).toBe('оновлено щойно');
+  });
+
+  it('Scenario: A failed run does not move the line', () => {
+    // The moment is the links', and only a completed account carries one — a run that failed
+    // leaves it exactly where it was, two hours old and now two hours and a little.
+    const twoHoursAgo = NOW.getTime() - 2 * HOUR;
+    const before = model({ monobank: bank({ lastCompletedAtMs: twoHoursAgo }) });
+    const after = model({
+      monobank: bank({
+        lastCompletedAtMs: twoHoursAgo,
+        attempt: { attemptedAtMs: NOW.getTime(), outcome: 'unavailable' },
+      }),
+    });
+    expect(before.monobank?.freshness).toBe('оновлено 2 год тому');
+    expect(after.monobank?.freshness).toBe('оновлено 2 год тому');
+  });
+});
+
+describe('monobank among what needs attention', () => {
+  const HOUR = 60 * 60_000;
+  const bank = (over: Partial<NonNullable<Parameters<typeof homeViewModel>[0]['monobank']>> = {}) =>
+    ({ configured: true, linked: 1, syncing: false, ...over }) as NonNullable<
+      Parameters<typeof homeViewModel>[0]['monobank']
+    >;
+
+  it('Scenario: A rejected token puts the section on the screen', () => {
+    const view = model({
+      uncategorised: 0,
+      pendingDrafts: 0,
+      monobank: bank({
+        lastCompletedAtMs: NOW.getTime() - HOUR,
+        attempt: { attemptedAtMs: NOW.getTime(), outcome: 'invalid-token' },
+      }),
+    });
+
+    expect(view.attention.present).toBe(true);
+    expect(view.attention.monobank).toContain('токен');
+    // The «Без категорії» rows are untouched by it: it is a third kind of row, not one of those.
+    expect(view.attention.rows).toEqual([]);
+  });
+
+  it('Scenario: A transient failure over fresh data puts nothing there', () => {
+    const view = model({
+      monobank: bank({
+        lastCompletedAtMs: NOW.getTime() - HOUR,
+        attempt: { attemptedAtMs: NOW.getTime(), outcome: 'unavailable' },
+      }),
+    });
+
+    expect(view.attention.monobank).toBeNull();
+    expect(view.attention.present).toBe(false);
+  });
+
+  it('a failure over data that has gone stale does put a row there', () => {
+    const view = model({
+      monobank: bank({
+        lastCompletedAtMs: NOW.getTime() - 30 * HOUR,
+        attempt: { attemptedAtMs: NOW.getTime(), outcome: 'unavailable' },
+      }),
+    });
+
+    expect(view.attention.monobank).toContain('не оновлюються');
+    expect(view.attention.present).toBe(true);
+  });
+
+  it('Scenario: The monobank row goes when the problem does', () => {
+    const failed = model({
+      monobank: bank({ attempt: { attemptedAtMs: NOW.getTime(), outcome: 'invalid-token' } }),
+    });
+    expect(failed.attention.present).toBe(true);
+
+    const fixed = model({
+      monobank: bank({
+        lastCompletedAtMs: NOW.getTime(),
+        attempt: { attemptedAtMs: NOW.getTime(), outcome: 'complete' },
+      }),
+    });
+
+    expect(fixed.attention.monobank).toBeNull();
+    // Nothing else was waiting, so the section is gone with the row.
+    expect(fixed.attention.present).toBe(false);
+  });
+
+  it('Scenario: Nothing waiting, no section', () => {
+    // The third thing the section can hold is now monobank, so «nothing waiting» has to mean all
+    // three: no «Без категорії», no чернетка, and monobank needing nobody.
+    const view = model({
+      uncategorised: 0,
+      pendingDrafts: 0,
+      monobank: bank({
+        lastCompletedAtMs: NOW.getTime(),
+        attempt: { attemptedAtMs: NOW.getTime(), outcome: 'complete' },
+      }),
+    });
+
+    expect(view.attention).toEqual({ rows: [], monobank: null, present: false });
+  });
+
+  it('says both situations in Ukrainian, naming no сума and no рахунок', () => {
+    for (const outcome of ['invalid-token', 'unavailable']) {
+      const row = model({
+        monobank: bank({ attempt: { attemptedAtMs: NOW.getTime(), outcome } }),
+      }).attention.monobank;
+      expect(row).toMatch(/[а-яїієґ]/i);
+      expect(row).not.toMatch(/\d/);
+      expect(row).not.toMatch(/UAH|USD|EUR/);
+    }
+  });
+
+  it('a device with no monobank at all has no row and no section', () => {
+    const view = model({ uncategorised: 0, pendingDrafts: 0 });
+    expect(view.attention.monobank).toBeNull();
+    expect(view.attention.present).toBe(false);
+  });
+});
+
+describe('what Головний itself wires', () => {
+  const main = readFileSync(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
+
+  it('Scenario: A run that begins while Головний is open reaches the line', () => {
+    // Subscribed, not read during render: neither opening the app nor coming back to it is a
+    // navigation focus, so a run started by the shell would otherwise never reach this screen.
+    expect(main).toContain('onSyncState(');
+    expect(main).toContain('setSyncing(syncInFlight())');
+    // The same signal re-reads storage, which is how транзакції a run imported appear in the
+    // стрічка without the owner leaving Головний.
+    const at = main.indexOf('onSyncState(');
+    expect(main.slice(at, at + 200)).toContain('reload()');
+  });
+
+  it('Scenario: A pull inside the quiet interval still syncs', () => {
+    // The pull calls the entry point directly and never consults `syncDue`: the interval governs
+    // only the runs the owner did not ask for, and a pull is one they did.
+    expect(main).toContain('startSync(');
+    expect(main).not.toContain('syncDue(');
+  });
+
+  it('Scenario: A pull without monobank changes nothing but the reading', () => {
+    const pull = main.slice(main.indexOf('const pull = useCallback'));
+    const body = pull.slice(0, pull.indexOf('}, ['));
+    // Storage is re-read first and unconditionally; the sync is behind the two conditions, so a
+    // device with no token or no link sends nothing and refuses nothing.
+    expect(body.indexOf('reload()')).toBeLessThan(body.indexOf('startSync('));
+    expect(body).toContain("configured !== true || stored.links.length === 0");
+    expect(body).toContain('return;');
+  });
+
+  it('the spinner is bound to the run, so it ends when the run does', () => {
+    const pull = main.slice(main.indexOf('const pull = useCallback'));
+    const body = pull.slice(0, pull.indexOf('}, ['));
+    expect(body).toContain('setPulling(true)');
+    // In a `finally`, so a run that ends by failing still stops the spinner.
+    expect(body).toContain('finally');
+    expect(body).toContain('setPulling(false)');
+    expect(main).toContain('refreshing={pulling}');
+  });
+
+  it('the freshness line is drawn only when the view model has one', () => {
+    expect(main).toContain('{model.monobank ? (');
+    expect(main).toContain('{model.monobank.freshness}');
+  });
+
+  it('the monobank row leads to the monobank screen and nowhere else', () => {
+    const row = main.slice(main.indexOf('{model.attention.monobank ? ('));
+    expect(row.slice(0, row.indexOf('</View>'))).toContain("router.push('/manage/monobank')");
+  });
+
+  it('nothing on this screen reads the token beyond whether one is kept', () => {
+    // `configured` is a boolean derived at the read; the value itself never lands in state, in a
+    // prop or in the view model.
+    expect(main).toContain('setConfigured(read.kind === \'ok\' && Boolean(read.token))');
+    expect(main).not.toContain('setConfigured(read.token');
+    expect(main.match(/read\.token/g)).toHaveLength(1);
   });
 });

@@ -9,11 +9,11 @@ import {
 import { isMonth, refusesRange, type AnalysisPeriod } from '../analysis/period';
 import type { Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
-import type { Goal } from '../domain/goals';
+import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
 import type { CurrencyCode } from '../domain/money';
 import type { IsoDate, Month, Transaction } from '../domain/transaction';
-import type { AnalysisShareOutcome } from '../platform/analysis-share';
+import type { AnalysisFile, AnalysisShareOutcome } from '../platform/analysis-share';
 import { plural } from './labels';
 import { monthLabel } from './months';
 
@@ -88,13 +88,24 @@ export interface StoredForAnalysis {
   readonly categories: readonly Category[];
   readonly sources: readonly Source[];
   readonly limits: readonly CategoryLimit[];
-  readonly goals: readonly Goal[];
+  readonly goals: readonly AccumulationGoal[];
   readonly rates: readonly DatedRate[];
 }
 
 export interface AiAnalysisPreview {
   /** «Ці дані буде передано застосунку, який ви оберете.» — said before anything can leave. */
   readonly handOver: string;
+  /**
+   * That a запит to the assistant is already inside the файл, beside the numbers, so the owner
+   * need write nothing themselves. The whole point of the hand-off, said before it happens.
+   */
+  readonly requestIncluded: string;
+  /**
+   * Why «Скопіювати запит» is there, said from the moment it is offered and before it is used:
+   * the chosen застосунок may take the файл alone. It names no assistant — the app has no
+   * preference and knows nothing about what the owner picked.
+   */
+  readonly requestHint: string;
   readonly periodLabel: string;
   readonly monthsWithData: number;
   readonly transactions: number;
@@ -126,6 +137,19 @@ export interface AiAnalysisModel {
 }
 
 export const HAND_OVER_SENTENCE = 'Ці дані буде передано застосунку, який ви оберете.';
+/** What the «Що буде передано» card says about the запит that is already inside the файл. */
+export const REQUEST_INCLUDED_SENTENCE =
+  'Разом із числами у файлі вже є запит до асистента: що зробити з даними і що означає кожен ' +
+  'термін. Писати нічого не треба.';
+/**
+ * The standing sentence beside «Скопіювати запит».
+ *
+ * «Застосунок, який ви оберете» and never a name: the app neither knows nor prefers which
+ * assistant the owner uses, and the spec forbids it from singling one out anywhere on the screen.
+ */
+export const REQUEST_HINT_SENTENCE =
+  'Застосунок, який ви оберете, може взяти лише файл — тоді надішліть йому цей запит окремим ' +
+  'повідомленням.';
 export const SHORT_HISTORY_WARNING = 'Один місяць не показує тренду.';
 export const EMPTY_PERIOD_MESSAGE = 'За цей період транзакцій немає — нема чого аналізувати.';
 export const EMPTY_HISTORY_MESSAGE = 'Ще немає жодної транзакції.';
@@ -243,6 +267,8 @@ export function aiAnalysisModel(input: {
     document,
     preview: {
       handOver: HAND_OVER_SENTENCE,
+      requestIncluded: REQUEST_INCLUDED_SENTENCE,
+      requestHint: REQUEST_HINT_SENTENCE,
       periodLabel: labelOf(built.period),
       monthsWithData: built.counts.monthsWithData,
       transactions: built.counts.transactions,
@@ -281,16 +307,37 @@ export function aiAnalysisModel(input: {
 export type RunState =
   | { readonly kind: 'preview' }
   | { readonly kind: 'sharing' }
-  | { readonly kind: 'handed-over' }
+  /** `messageIncluded` is the port's own answer, carried through so no word is invented here. */
+  | { readonly kind: 'handed-over'; readonly messageIncluded: boolean }
   | { readonly kind: 'unavailable' }
   | { readonly kind: 'failed'; readonly reason: string }
-  | { readonly kind: 'copied' };
+  | { readonly kind: 'copied' }
+  | { readonly kind: 'copied-request' };
 
 export type RunEvent =
   | { readonly kind: 'share' }
   | { readonly kind: 'outcome'; readonly outcome: AnalysisShareOutcome }
   | { readonly kind: 'copy' }
+  | { readonly kind: 'copy-request' }
   | { readonly kind: 'choices-changed' };
+
+/**
+ * The port's answer as a state of the screen.
+ *
+ * Spelled out case by case rather than flattened with `{ kind: outcome.kind }`, which is what this
+ * used to be: the flattening dropped every field an outcome carried, and it did so silently. Now
+ * the next outcome that grows one is caught by the compiler and not by a reviewer.
+ */
+function stateOfOutcome(outcome: AnalysisShareOutcome): RunState {
+  switch (outcome.kind) {
+    case 'failed':
+      return { kind: 'failed', reason: outcome.reason };
+    case 'handed-over':
+      return { kind: 'handed-over', messageIncluded: outcome.messageIncluded };
+    case 'unavailable':
+      return { kind: 'unavailable' };
+  }
+}
 
 export function nextState(state: RunState, event: RunEvent): RunState {
   switch (event.kind) {
@@ -299,11 +346,12 @@ export function nextState(state: RunState, event: RunEvent): RunState {
       // `SharingInProgressException` is, and the screen does not start one.
       return state.kind === 'sharing' ? state : { kind: 'sharing' };
     case 'outcome':
-      return event.outcome.kind === 'failed'
-        ? { kind: 'failed', reason: event.outcome.reason }
-        : { kind: event.outcome.kind };
+      return stateOfOutcome(event.outcome);
     case 'copy':
       return state.kind === 'sharing' ? state : { kind: 'copied' };
+    case 'copy-request':
+      // The same rule as «Скопіювати»: refused only while a chooser is open.
+      return state.kind === 'sharing' ? state : { kind: 'copied-request' };
     case 'choices-changed':
       // A changed choice makes the previous outcome about a файл that no longer exists, so the
       // screen goes back to showing what would leave now — but never out of an open chooser.
@@ -324,13 +372,23 @@ export function runOutcomeWords(state: RunState): string | null {
     case 'sharing':
       return null;
     case 'handed-over':
-      return 'Файл передано системі. Що з ним сталося далі, знає лише обраний застосунок.';
+      // The one further thing the spec permits when the phone says the запит travelled: the same
+      // sentence with «Файл» widened to «Файл і запит». Never «надіслано», «доставлено»,
+      // «отримано» or «прочитано» — the app learns none of that about the запит, for exactly the
+      // reason it learns none of it about the файл. When it did not travel, nothing is said of it.
+      return state.messageIncluded
+        ? 'Файл і запит передано системі. Що з ними сталося далі, знає лише обраний застосунок.'
+        : 'Файл передано системі. Що з ним сталося далі, знає лише обраний застосунок.';
     case 'unavailable':
       return 'На цій платформі поділитися файлом не вийде.';
     case 'failed':
       return `Не вдалося підготувати файл: ${state.reason}`;
     case 'copied':
       return 'Скопійовано.';
+    case 'copied-request':
+      // Its own words, not «Скопійовано.»: the owner who taps one of two copy actions has to be
+      // able to tell which one they tapped. And nothing about what happens to it next.
+      return 'Запит у буфері обміну.';
   }
 }
 
@@ -340,11 +398,30 @@ export function runOutcomeWords(state: RunState): string | null {
  * It is `document.text` unchanged, so the text previewed, the text copied and the text handed over
  * are one string and not three that agree.
  */
-export function fileToShare(model: AiAnalysisModel): { name: string; text: string } | null {
-  return model.document ? { name: model.document.name, text: model.document.text } : null;
+export function fileToShare(model: AiAnalysisModel): AnalysisFile | null {
+  return model.document
+    ? {
+        name: model.document.name,
+        text: model.document.text,
+        // Offered beside the файл, best-effort: the platform carries it or it does not, and the
+        // outcome says which. The файл is whole either way — it opens with its own запит.
+        message: model.document.shortRequest,
+      }
+    : null;
 }
 
 /** What «Скопіювати» puts on the clipboard: the same файл, character for character. */
 export function textToCopy(model: AiAnalysisModel): string | null {
   return model.document?.text ?? null;
+}
+
+/**
+ * What «Скопіювати запит» puts on the clipboard: the короткий запит alone, and never the файл.
+ *
+ * The same constant that is offered to the phone beside the файл, read from the same place, so the
+ * запит the owner pastes after a hand-off is the запит that hand-off offered. `null` where there is
+ * no пакет — nothing to preview is nothing to copy.
+ */
+export function shortRequestToCopy(model: AiAnalysisModel): string | null {
+  return model.document?.shortRequest ?? null;
 }

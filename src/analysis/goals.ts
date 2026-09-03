@@ -1,35 +1,55 @@
 import type { Account } from '../domain/account';
-import { goalProgress, isOverdue, isReached, type Goal } from '../domain/goals';
+import {
+  contribution,
+  isOverdue,
+  isReached,
+  sumContributions,
+  type AccumulationGoal,
+} from '../domain/goals';
 import { money, type Money } from '../domain/money';
 import { monthOf, type IsoDate, type Month, type Transaction } from '../domain/transaction';
 import { decimalOf, type Amount } from './decimal';
 
 /**
- * Every ціль as the пакет carries it: what it is for, how far it has come, what remains, and the
- * pace that would reach it by its own дата.
+ * Every ціль-накопичення as the пакет carries it: what it is for, how far it has come, what
+ * remains, and the pace that would reach it by its own дата.
  *
- * The progress is `goalProgress`'s and nothing else — the linked рахунок's розрахунковий баланс,
- * read the one way the app reads it — so a ціль in the пакет can never disagree with the ціль on
- * «Звіти».
+ * Only цілі-накопичення. A **ціль витрат** is the ліміт of its категорія, and the пакет already
+ * carries the ліміти with the сума and the months each was exceeded — a second row for one ceiling
+ * would let the assistant read one ліміт as two (design D13).
  *
- * The рахунок behind it is deliberately absent: not its назва, not its вид, not its id. A ціль is
- * «відкласти N до дати», and which рахунок the money sits on is the owner's arrangement, not
- * something an assistant needs to explain the pace.
+ * The progress is the sum of the внески, and it is carried **only when it is exact**: when every
+ * рахунок of the склад is already in the ціль's currency. That is a pure question over the stored
+ * rows, so this module needs no rate and imports nothing from `src/ui`. A ціль whose progress would
+ * rest on a conversion is carried with its назва, target and дата and no progress at all — the
+ * пакет's own contract is that every сума in it is exact and in one currency, and an approximate
+ * one would break it while a partial one would wear a total's name.
+ *
+ * The рахунки behind a ціль are deliberately absent: not their назви, not their виды, not their
+ * number. Which рахунки the money sits on is the owner's arrangement, not something an assistant
+ * needs to explain the pace.
  */
 
 export interface GoalReport {
   readonly name: string;
   readonly target: Amount;
-  readonly progress: Amount;
-  readonly remaining: Amount;
-  readonly deadline: IsoDate;
-  readonly reached: boolean;
-  readonly overdue: boolean;
+  /** Absent for a ціль with no дата: there is no deadline, so there is nothing to name. */
+  readonly deadline?: IsoDate;
+  /** Absent when the progress would rest on a conversion. */
+  readonly progress?: Amount;
+  readonly remaining?: Amount;
+  readonly reached?: boolean;
+  readonly overdue?: boolean;
   /** Calendar months from the month the пакет is built in through the дата's month, both counted. */
-  readonly monthsLeft: number;
-  /** `remaining / monthsLeft`; null when the ціль is reached or no month is left. */
-  readonly perMonth: Amount | null;
-  // deliberately: no рахунок — not its назва, not its вид, not its id
+  readonly monthsLeft?: number;
+  /** `remaining / monthsLeft`; absent when the ціль is reached or no month is left. */
+  readonly perMonth?: Amount;
+  /**
+   * Set only when the progress is not in the пакет, so the файл can say so rather than leaving a
+   * gap the assistant would fill with a guess.
+   */
+  readonly progressNotInPackage?: true;
+  // deliberately: no рахунок — not its назва, not its вид, not its id, not their number
 }
 
 /**
@@ -67,21 +87,44 @@ function paceOf(remaining: Money, months: number): Money {
 }
 
 export function goalReports(input: {
-  readonly goals: readonly Goal[];
+  readonly goals: readonly AccumulationGoal[];
   readonly accounts: readonly Account[];
   readonly transactions: readonly Transaction[];
   readonly builtOn: IsoDate;
+  /**
+   * The поточна вартість of each інвестиційний рахунок that has one, by рахунок id — from the same
+   * repo the screens read, so the пакет's progress for a ціль is the identical number «Звіти»
+   * shows. Empty until `investments-value` lands, and every caller passes none until then.
+   */
+  readonly currentValues?: ReadonlyMap<string, Money>;
 }): GoalReport[] {
   const accountsById = new Map(input.accounts.map((a) => [a.id, a]));
+  const values = input.currentValues ?? new Map<string, Money>();
 
-  const reports = input.goals.map((goal) => {
-    const account = accountsById.get(goal.accountId);
-    if (!account) {
-      // The same refusal `monthlyPicture` makes: a ціль whose рахунок is not in the list is a
-      // broken state, not a ціль with an unknown progress.
-      throw new Error(`goal "${goal.name}" references unknown account`);
+  const reports = input.goals.map((goal): GoalReport => {
+    const held = goal.accountIds.map((id) => {
+      const account = accountsById.get(id);
+      if (!account) {
+        // The same refusal `monthlyPicture` makes: a ціль whose рахунок is not in the list is a
+        // broken state, not a ціль with an unknown progress.
+        throw new Error(`goal "${goal.name}" references unknown account`);
+      }
+      return account;
+    });
+
+    const target = decimalOf(goal.target);
+    const dated = goal.deadline === undefined ? {} : { deadline: goal.deadline };
+
+    // «Is this progress exact» is «is every рахунок of the склад in the ціль's currency» — a pure
+    // question over the stored rows, needing no rate and no conversion.
+    if (held.some((account) => account.currency !== goal.target.currency)) {
+      return { name: goal.name, target, ...dated, progressNotInPackage: true };
     }
-    const progress = goalProgress(account, input.transactions);
+
+    const progress = sumContributions(
+      goal.target.currency,
+      held.map((account) => contribution(account, input.transactions, values.get(account.id))),
+    );
     const reached = isReached(goal, progress);
     // What remains of a reached ціль is nothing — never a negative сума, which would read as a
     // debt where the owner has in fact overshot.
@@ -89,31 +132,38 @@ export function goalReports(input: {
       reached ? 0 : goal.target.amount - progress.amount,
       goal.target.currency,
     );
-    const months = monthsLeft(input.builtOn, goal.deadline);
+    // No дата means no pace: there is no deadline to be behind, and the ціль is never overdue.
+    const months = goal.deadline === undefined ? undefined : monthsLeft(input.builtOn, goal.deadline);
 
     return {
       name: goal.name,
-      target: decimalOf(goal.target),
+      target,
+      ...dated,
       progress: decimalOf(progress),
       remaining: decimalOf(remaining),
-      deadline: goal.deadline,
       reached,
       overdue: isOverdue(goal, progress, input.builtOn),
-      monthsLeft: months,
-      perMonth: reached || months === 0 ? null : decimalOf(paceOf(remaining, months)),
+      ...(months === undefined
+        ? {}
+        : {
+            monthsLeft: months,
+            ...(reached || months === 0 ? {} : { perMonth: decimalOf(paceOf(remaining, months)) }),
+          }),
     };
   });
 
-  // By дата, then by назва: the nearest ціль first, and never the order the rows were read in.
-  return reports.sort((a, b) =>
-    a.deadline !== b.deadline
-      ? a.deadline < b.deadline
-        ? -1
-        : 1
-      : a.name < b.name
-        ? -1
-        : a.name > b.name
-          ? 1
-          : 0,
-  );
+  // The цілі with a дата first, by that дата and then by назва; the дата-less ones after, by назва.
+  //
+  // Stated rather than left to a comparison against `undefined` — every such comparison is false,
+  // which would make the comparator non-transitive and the пакет's order depend on the order the
+  // stored rows happened to be read in. The пакет's own contract is that it does not.
+  return reports.sort((a, b) => {
+    if ((a.deadline === undefined) !== (b.deadline === undefined)) {
+      return a.deadline === undefined ? 1 : -1;
+    }
+    if (a.deadline !== undefined && b.deadline !== undefined && a.deadline !== b.deadline) {
+      return a.deadline < b.deadline ? -1 : 1;
+    }
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  });
 }
