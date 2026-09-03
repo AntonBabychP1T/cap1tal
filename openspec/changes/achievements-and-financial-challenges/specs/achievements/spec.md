@@ -68,12 +68,17 @@ recorded it, because a розрахунковий баланс is a number about
 Every template SHALL fall under exactly one of the two, and which one it is SHALL be part of the
 template rather than decided per evaluation.
 
-A дата досягнення SHALL NEVER be later than the device's today. A condition dated at the end of a
-місяць — the Nth активний місяць, the Nth місяць holding an інвестиція — falls due on a day that
-has not happened when that місяць is the one now running, and a досягнення stated as reached on a
-future day is the app claiming to know something it cannot. Such a досягнення SHALL be dated today,
-which is the earliest day its condition is known to hold; a місяць already behind the device keeps
-its own last day.
+A дата досягнення SHALL NEVER be **stated** as later than the device's today. A condition dated at
+the end of a місяць — the Nth активний місяць, the Nth місяць holding an інвестиція — falls due on a
+day that has not happened when that місяць is the one now running, and a досягнення stated as
+reached on a future day is the app claiming to know something it cannot. Such a досягнення SHALL be
+dated today, which is the earliest day its condition is known to hold; a місяць already behind the
+device keeps its own last day.
+
+This SHALL hold however the stored row arrived. The system SHALL NOT rewrite a stored дата
+досягнення to satisfy it — an earned row is left exactly as it is — so a row that already carries a
+future дата, whether restored from a бекап made on a phone whose clock ran ahead or written by an
+earlier build, SHALL be **shown** with today's дата and stored unchanged.
 
 The system SHALL also record the moment it wrote the row, distinct from the дата досягнення.
 
@@ -93,6 +98,12 @@ The system SHALL also record the moment it wrote the row, distinct from the да
 - **WHEN** the third активний місяць of the history is the місяць now running, 2026-09, and the
   system evaluates on 2026-09-04
 - **THEN** «3 активні місяці» is dated 2026-09-04 and not 2026-09-30
+
+#### Scenario: A stored future дата is not shown as one
+
+- **WHEN** a бекап restores a досягнення whose дата досягнення is 2026-09-30 onto a device whose
+  today is 2026-09-04
+- **THEN** it is shown as reached on 2026-09-04, and the stored дата is still 2026-09-30
 
 #### Scenario: A balance condition is dated the day it was recorded
 

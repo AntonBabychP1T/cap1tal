@@ -1,10 +1,11 @@
 import { money, type Money } from '../domain/money';
+import type { IsoDate } from '../domain/transaction';
 import type { Candidate, Progress } from '../progress/catalogue';
 import { plural } from '../progress/plural';
 import { newestFirst, type EarnedAchievement, type Evidence } from '../progress/earned';
 import type { Challenge, ChallengeAction, ChallengeProgress } from '../progress/challenges';
 import { formatMoney } from './amount-input';
-import { calendarLabel } from './dates';
+import { calendarLabel, todayIso } from './dates';
 
 /**
  * What «Прогрес», the «Прогрес» section of Головний and the two detail screens say.
@@ -172,7 +173,26 @@ export function whenLabel(
 ): string {
   const dating = candidates.find((one) => one.key === earned.key)?.dating ?? 'history';
   const verb = dating === 'history' ? 'досягнуто' : 'помічено';
-  return `${verb} ${calendarLabel(earned.achievedOn, now)}`;
+  return `${verb} ${calendarLabel(shownDate(earned.achievedOn, now), now)}`;
+}
+
+/**
+ * The дата a досягнення is **stated** with: its own, or today where its own is later.
+ *
+ * The engine already refuses to write a future дата, and that is where the rule belongs — but a
+ * стored row can carry one anyway, by two roads the engine never travels. A бекап restores
+ * `achieved_on` verbatim, so a file made on a phone whose clock ran ahead brings one in; and a row
+ * written by an older build stays exactly as it was, because earning is add-only and a key already
+ * stored is never re-dated (persistence: «storing a досягнення under a key already stored SHALL
+ * leave the stored row exactly as it was»).
+ *
+ * So the rule is kept twice: once when writing, and once here, where the app opens its mouth. The
+ * stored row is the record and is not rewritten to make a screen right; what the screen must never
+ * do is state a fact as reached on a day that has not happened.
+ */
+export function shownDate(achievedOn: IsoDate, now: Date): IsoDate {
+  const today = todayIso(now);
+  return achievedOn > today ? today : achievedOn;
 }
 
 /** Where a досягнення's detail lives. The key carries `:` and `.`, so it is encoded for the route. */

@@ -431,6 +431,36 @@ describe('the details', () => {
     expect(detail.evidence).toBe('30\u00A0000,00 UAH');
   });
 
+  it('Scenario: A stored future дата is not shown as one', () => {
+    // The engine refuses to write one, but a бекап restores `achieved_on` verbatim and an earned
+    // row is never re-dated — so the rule is kept again here, where the app opens its mouth.
+    const stored = earned({ key: 'ledger.active-months:3', achievedOn: '2026-09-30' });
+
+    const detail = achievementDetail({
+      key: 'ledger.active-months:3',
+      candidates: [candidate({ key: 'ledger.active-months:3', dating: 'history', earned: true })],
+      earned: [stored],
+      now: NOW,
+    })!;
+
+    expect(detail.when).toBe('досягнуто 2 вересня');
+    expect(detail.when).not.toContain('30 вересня');
+    // And the stored row is untouched: the record is the record.
+    expect(stored.achievedOn).toBe('2026-09-30');
+
+    // The same on the list.
+    const model = progressViewModel(input({ earned: [stored] }));
+    expect(model.earned[0]!.when).toBe('досягнуто 2 вересня');
+  });
+
+  it('leaves a дата in the past exactly as it is', () => {
+    const model = progressViewModel(
+      input({ earned: [earned({ achievedOn: '2025-04-18' })] }),
+    );
+
+    expect(model.earned[0]!.when).toBe('досягнуто 18 квітня 2025');
+  });
+
   it('Scenario: A balance-dated досягнення says «помічено»', () => {
     const detail = achievementDetail({
       key: 'goal.progress:auto:50',
