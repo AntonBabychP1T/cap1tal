@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Category, Source } from '../domain/category';
 import { money } from '../domain/money';
 import type { Transaction } from '../domain/transaction';
-import { emptyMessage, PAGE_SIZE, searchCriteria, showMore } from './transaction-search';
+import { monthFromRoute, emptyMessage, PAGE_SIZE, searchCriteria, showMore } from './transaction-search';
 
 const categories: readonly Category[] = [
   { id: 'groceries', name: 'Продукти', archived: false },
@@ -175,5 +175,25 @@ describe('the shown list follows storage', () => {
 
   it('The рахунок, категорія and місяць it reads beside them are re-read too', () => {
     expect(screen).toMatch(/const \[stored\] = useReloadOnFocus\(/);
+  });
+});
+
+describe('the місяць a route may ask for', () => {
+  it('opens narrowed to the місяць «Закрий <місяць>» is about', () => {
+    expect(monthFromRoute('2026-08')).toBe('2026-08');
+  });
+
+  it('narrows nothing when the route asks for nothing', () => {
+    expect(monthFromRoute(undefined)).toBeUndefined();
+    expect(monthFromRoute('')).toBeUndefined();
+  });
+
+  it('refuses what is not a calendar місяць, shape or not', () => {
+    // A shape check alone would take «2026-13»; this is `isMonth`'s answer, the app's own.
+    expect(monthFromRoute('2026-13')).toBeUndefined();
+    expect(monthFromRoute('2026-00')).toBeUndefined();
+    expect(monthFromRoute('2026-8')).toBeUndefined();
+    expect(monthFromRoute('серпень')).toBeUndefined();
+    expect(monthFromRoute('2026-08-30')).toBeUndefined();
   });
 });

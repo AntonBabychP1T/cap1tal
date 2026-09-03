@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AccumulationGoal } from '../domain/goals';
+import type { GoalStanding } from './catalogue';
 import { money } from '../domain/money';
 import type { IsoDate, Month } from '../domain/transaction';
 import {
@@ -58,6 +59,21 @@ function input(over: Partial<ChallengeInput> = {}): ChallengeInput {
 const keys = (list: { key: string }[]) => list.map((one) => one.key);
 
 describe('what a виклик carries', () => {
+  it('Scenario: A виклик opens the місяць it is about', () => {
+    const closing = offered(
+      input({
+        summary: summary({
+          months: [monthRow('2026-08', { transactions: 40, uncategorised: 2 })],
+          history: { count: 40 },
+        }),
+      }),
+    )[0]!;
+
+    // The action names the місяць, so the screen it leads to can open narrowed to it rather than
+    // to the whole history.
+    expect(closing.action).toEqual({ kind: 'answer-month', month: '2026-08' });
+  });
+
   it('Scenario: A proposed виклик carries all four', () => {
     const cushion = offered(
       input({
@@ -181,6 +197,62 @@ describe('what a виклик carries', () => {
     });
 
     expect(keys(offered(covered))).not.toContain('reserve-cushion:UAH');
+  });
+});
+
+describe('which ціль the виклик is about', () => {
+  const goal = (id: string, target: number, percent: number): GoalStanding => ({
+    goal: {
+      id,
+      name: id,
+      target: money(target, 'UAH'),
+      accountIds: ['jar'],
+    } satisfies AccumulationGoal,
+    progress: money(Math.floor((target * percent) / 100), 'UAH'),
+  });
+
+  const offeredFor = (goals: GoalStanding[]) =>
+    allChallenges(
+      input({
+        summary: summary({ months: [monthRow('2026-08')], history: { count: 5 } }),
+        goals,
+      }),
+    ).find((one) => one.template === 'goal-next-quarter')?.key;
+
+  it('Scenario: The nearest ціль is the one nearest in share, not in сума', () => {
+    // 3 % short of a quarter on a small ціль, 5 % short on a large one. The сума still missing is
+    // 3 000 against 500 000 — the largest ціль would always win if сум were compared.
+    const small = goal('small', 100_000, 22);
+    const large = goal('large', 10_000_000, 20);
+
+    expect(offeredFor([small, large])).toBe('goal-next-quarter:small');
+    // Order of the input must not decide it.
+    expect(offeredFor([large, small])).toBe('goal-next-quarter:small');
+  });
+
+  it('offers the ціль nearer its quarter even when it is the larger one', () => {
+    expect(offeredFor([goal('small', 100_000, 10), goal('large', 10_000_000, 24)])).toBe(
+      'goal-next-quarter:large',
+    );
+  });
+
+  it('breaks a tie by the ціль`s identifier, so two devices agree', () => {
+    const a = goal('a', 1_000_000, 20);
+    const b = goal('b', 1_000_000, 20);
+
+    expect(offeredFor([b, a])).toBe('goal-next-quarter:a');
+  });
+
+  it('passes over a ціль whose progress is not exact', () => {
+    const inexact = { ...goal('near', 100_000, 24), progress: null };
+
+    expect(offeredFor([inexact, goal('far', 1_000_000, 5)])).toBe('goal-next-quarter:far');
+  });
+
+  it('passes over a ціль that is already reached', () => {
+    expect(offeredFor([goal('done', 100_000, 100), goal('going', 1_000_000, 5)])).toBe(
+      'goal-next-quarter:going',
+    );
   });
 });
 

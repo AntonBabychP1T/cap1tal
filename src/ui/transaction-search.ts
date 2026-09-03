@@ -1,5 +1,6 @@
+import { isMonth } from '../analysis/period';
 import type { Category, Source } from '../domain/category';
-import type { Transaction } from '../domain/transaction';
+import type { Month, Transaction } from '../domain/transaction';
 import { parseAmount } from './amount-input';
 import { folded, nameMatches } from './labels';
 
@@ -76,6 +77,22 @@ function amountOf(text: string): number | undefined {
  * How many транзакції one «показати ще» adds. A hundred to start — a number to tune after the
  * emulator pass, not a rule.
  */
+/**
+ * The місяць «Транзакції» opens narrowed to, read from a `?month=` in the route — and nothing at
+ * all for anything that is not a calendar місяць, an absent parameter included.
+ *
+ * It exists so «Закрий <місяць>» can land the owner on the very місяць it is about instead of on
+ * the whole history. It lives here and not in the screen because it is a *decision* — «is this
+ * text a місяць» — and screen logic `verify` cannot execute is how a wrong answer ships. The check
+ * is `isMonth`'s, the app's existing answer, so «2026-13» is refused as a calendar місяць and not
+ * merely as a shape.
+ *
+ * It is an initial value, never a lock: the picker changes it like any other narrowing.
+ */
+export function monthFromRoute(asked: string | undefined): Month | undefined {
+  return asked !== undefined && isMonth(asked) ? asked : undefined;
+}
+
 export const PAGE_SIZE = 100;
 
 export interface ShownTransactions {

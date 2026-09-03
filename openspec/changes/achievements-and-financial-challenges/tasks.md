@@ -183,6 +183,11 @@
       `npm run typecheck` and `npm run lint` pass, the five tabs are unchanged (progress-screen
       scenario «The tabs are unchanged») and reports-screen scenarios «Прогрес is reachable from
       Звіти» and «The entry is there with nothing earned» have a screen to open.
+- [x] 7.6 Add `monthFromRoute` to `src/ui/transaction-search.ts` — the місяць a `?month=` in the
+      route asks for, decided by `isMonth` rather than by a shape — and open «Транзакції» on it, so
+      «Закрий <місяць>»'s action lands on the місяць it is about; verify
+      `src/ui/transaction-search.test.ts` proves transaction-search scenarios «A виклик opens the
+      місяць it is about» and «Something that is not a місяць narrows nothing».
 - [x] 7.5 Add the норма confirmation step to the «Фінансова подушка» виклик's flow — the proposal,
       the six місяці it came from, and a field the owner may overwrite, refusing a non-positive сума
       in Ukrainian per app-shell — as a step inside `src/app/challenge/[key].tsx`; verify
@@ -225,5 +230,5 @@
 
 ## 10. The gate
 
-- [ ] 10.1 Run `npm run verify` and paste the final lines
+- [x] 10.1 Run `npm run verify` and paste the final lines
 - [ ] 10.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS

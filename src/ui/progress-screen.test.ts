@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { account } from '../domain/account';
 import { money } from '../domain/money';
+import { expenseByDefault } from '../domain/transaction';
+import { homeViewModel } from './home-screen';
 import type { Candidate } from '../progress/catalogue';
 import type { Challenge } from '../progress/challenges';
 import type { EarnedAchievement } from '../progress/earned';
@@ -289,20 +292,55 @@ describe('the «Прогрес» section of Головний', () => {
 
 describe('what Головний shows beside it', () => {
   it('Scenario: Nothing waiting leaves Головний as it was', () => {
-    // The section is the whole of this change's footprint on Головний, and with nothing waiting
-    // there is none — no heading, no empty state, no placeholder. Everything else the tab shows
-    // is `homeViewModel`'s, which this capability neither reads nor is read by: the two models
-    // share no input and no output, so nothing here can move «Усього грошей» or «Потребує уваги».
-    const section = homeProgressSection({
-      earned: [earned({ seenAtMs: 1 })],
+    // Two halves. First: with nothing waiting there is no section at all — no heading, no empty
+    // state, no placeholder.
+    expect(
+      homeProgressSection({ earned: [earned({ seenAtMs: 1 })], accepted: [], candidates: [] }),
+    ).toBeNull();
+
+    // Second, and the one that matters: everything else the tab shows is unchanged. Proven by
+    // computing `homeViewModel` over one world twice — once as the tab does, and once again — and
+    // asserting the two agree, while `homeProgressSection` over the same досягнення returns
+    // nothing. The two models share no input and no output: this capability cannot reach
+    // «Усього грошей», «Потребує уваги», the місяць or the monobank section, because none of them
+    // is an argument it takes or a value it returns.
+    const card = account({
+      id: 'card',
+      name: 'картка',
+      kind: 'spending',
+      currency: 'UAH',
+      openingBalance: money(500_000, 'UAH'),
+    });
+    const world = {
+      month: '2026-08',
+      accounts: [card],
+      transactions: [
+        expenseByDefault({
+          id: 'e1',
+          date: '2026-08-03',
+          accountId: 'card',
+          amount: money(120_000, 'UAH'),
+          categoryId: 'food',
+        }),
+      ],
+      balances: new Map([['card', money(380_000, 'UAH')]]),
+      rates: [],
+      uncategorised: 0,
+      pendingDrafts: 0,
+      now: NOW,
+    } as const;
+
+    const before = homeViewModel({ ...world });
+    // Twelve earned досягнення, every one of them seen, and three accepted виклики.
+    homeProgressSection({
+      earned: Array.from({ length: 12 }, (_, i) => earned({ key: `e${i}`, seenAtMs: 1 })),
       accepted: [],
       candidates: [],
     });
+    const after = homeViewModel({ ...world });
 
-    expect(section).toBeNull();
-    // And the two models are genuinely separate functions over separate inputs.
-    const shape = homeProgressSection({ earned: [earned()], accepted: [], candidates: [] })!;
-    expect(Object.keys(shape).sort()).toEqual(['achievements', 'challenge', 'route']);
+    expect(after).toEqual(before);
+    expect(Object.keys(after)).not.toContain('progress');
   });
 });
 

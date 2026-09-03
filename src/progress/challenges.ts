@@ -2,7 +2,7 @@ import type { AccountKind } from '../domain/account';
 import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
 import { overLimit } from '../domain/limits';
-import type { CurrencyCode, Money } from '../domain/money';
+import { money, type CurrencyCode, type Money } from '../domain/money';
 import type { IsoDate, Month } from '../domain/transaction';
 import type { ChallengeDecision, SpendingNorms } from './earned';
 import type { GoalStanding } from './catalogue';
@@ -240,9 +240,14 @@ function goalNextQuarter(input: ChallengeInput): Challenge | undefined {
       if (next === undefined) {
         return undefined;
       }
-      // How far short of that quarter it stands, in the ціль's own currency — the ordering, and
-      // the number the reason states. Not a percentage: two цілі of different sizes are compared
-      // by the share they have left, so the gap is scaled by the target.
+      // How far short of that quarter it stands, in the ціль's own currency — the number the
+      // reason states — and, scaled by the target, the ordering.
+      //
+      // The **share** still missing, never the сума: a ціль of 100 000 needing 3 % more is nearer
+      // than one of 10 000 000 needing 5 %, and comparing raw сум would always offer the largest
+      // ціль. Scaling by the target is what makes two цілі of different sizes comparable at all,
+      // and it is the same ordering as «percentage points short of the next quarter», which is
+      // this number times a hundred.
       const target = Math.ceil((goal.target.amount * next) / 100);
       return { goal, progress, next, target, gap: (target - progress.amount) / goal.target.amount };
     })
@@ -253,7 +258,10 @@ function goalNextQuarter(input: ChallengeInput): Challenge | undefined {
     return undefined;
   }
   const { goal, progress, next, target } = standing;
-  const left = { amount: target - progress.amount, currency: goal.target.currency };
+  // Through the domain's own constructor like every other сума in this change, even though it is
+  // display-only and non-negative by construction: a сума that skips it is a habit, not an
+  // exception.
+  const left = money(target - progress.amount, goal.target.currency);
   return {
     key: `goal-next-quarter:${goal.id}`,
     template: 'goal-next-quarter',

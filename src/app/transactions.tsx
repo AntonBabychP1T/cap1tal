@@ -18,7 +18,12 @@ import type { Transaction } from '@/domain/transaction';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountChoiceLabel } from '@/ui/labels';
 import { monthLabel, monthsOf } from '@/ui/months';
-import { emptyMessage, searchCriteria, showMore } from '@/ui/transaction-search';
+import {
+  emptyMessage,
+  monthFromRoute,
+  searchCriteria,
+  showMore,
+} from '@/ui/transaction-search';
 import {
   accountsById,
   feedSubtitle,
@@ -65,14 +70,10 @@ export default function TransactionsScreen() {
 
   const [query, setQuery] = useState('');
   const [accountId, setAccountId] = useState(ANY);
-  /**
-   * The місяць the screen opens on. Normally «будь-який»; a `?month=YYYY-MM` in the route opens it
-   * already narrowed, which is how «Закрий <місяць>» lands the owner on the very місяць it is
-   * about rather than on the whole history. It is an initial value and not a lock: the picker
-   * below changes it like any other narrowing.
-   */
+  // The місяць the screen opens on: «будь-який», or the one a `?month=` in the route asked for.
+  // `monthFromRoute` is what decides whether that text is a місяць at all, under `verify`.
   const asked = useLocalSearchParams<{ month?: string }>().month;
-  const [month, setMonth] = useState(/^\d{4}-\d{2}$/.test(asked ?? '') ? asked! : ANY);
+  const [month, setMonth] = useState(monthFromRoute(asked) ?? ANY);
 
   const criteria = useMemo(
     () => searchCriteria(query, stored.categories, stored.sources),
