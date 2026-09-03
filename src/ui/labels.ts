@@ -1,3 +1,4 @@
+import { plural } from '../progress/plural';
 import type { Account, AccountKind } from '../domain/account';
 import type { NameEvidence } from '../domain/name-match';
 import type { TransactionType } from '../domain/transaction';
@@ -146,23 +147,12 @@ export const SPENDING_GOALS_TITLE = 'Ліміти витрат';
 export const OFFERED_CURRENCIES = ['UAH', 'EUR', 'USD'] as const;
 
 /**
- * The Ukrainian three-form plural, in one place: 1 and anything ending in 1 take the singular,
- * 2–4 the few form, everything else the many form — and 11–14 take the many form whatever they
- * end in. Written once because two hand-rolled two-form guesses in one app is how «2 рахунків»
- * happens. It lives here, and not on the first screen that needed it, because the second one
- * («Бекап») counts the same two things.
+ * The Ukrainian three-form plural, re-exported from the one place it is written —
+ * `src/progress/plural.ts`, which is the lower of the two layers that need it. It lived here
+ * first; it moved when a second module needed it, rather than being copied.
  */
-export function plural(n: number, one: string, few: string, many: string): string {
-  const lastTwo = Math.abs(n) % 100;
-  const last = lastTwo % 10;
-  if (lastTwo >= 11 && lastTwo <= 14) {
-    return many;
-  }
-  if (last === 1) {
-    return one;
-  }
-  return last >= 2 && last <= 4 ? few : many;
-}
+export { plural } from '../progress/plural';
+
 
 /** 1 транзакція, 2–4 транзакції, 5 and the rest транзакцій, with the teens exempt. */
 export function transactionCount(n: number): string {

@@ -1,5 +1,6 @@
 import { money, type Money } from '../domain/money';
-import { plural, type Candidate, type Progress } from '../progress/catalogue';
+import type { Candidate, Progress } from '../progress/catalogue';
+import { plural } from '../progress/plural';
 import { newestFirst, type EarnedAchievement, type Evidence } from '../progress/earned';
 import type { Challenge, ChallengeProgress } from '../progress/challenges';
 import { formatMoney } from './amount-input';

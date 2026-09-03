@@ -2,7 +2,7 @@ import type { AccountKind } from '../domain/account';
 import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
 import { overLimit } from '../domain/limits';
-import type { CurrencyCode } from '../domain/money';
+import type { CurrencyCode, Money } from '../domain/money';
 import type { IsoDate, Month } from '../domain/transaction';
 import type { ChallengeDecision, SpendingNorms } from './earned';
 import type { GoalStanding } from './catalogue';
@@ -115,6 +115,12 @@ export interface ChallengeInput {
    * them here would turn the layering of design D14 into a cycle.
    */
   readonly monthLabel: (month: Month) => string;
+  /**
+   * «9 000,00 UAH» from a `Money` — `src/ui/amount-input.ts`'s `formatMoney`, passed in for
+   * `monthLabel`'s reason. A виклик states сум to the owner, and «900000 мінорних одиниць» is the
+   * register of a debugger, not of a financial app.
+   */
+  readonly formatMoney: (amount: Money) => string;
 }
 
 function decisionFor(input: ChallengeInput, key: string): ChallengeDecision | undefined {
@@ -206,17 +212,12 @@ function reserveCushion(input: ChallengeInput): Challenge | undefined {
     key: `reserve-cushion:${currency}`,
     template: 'reserve-cushion',
     name: 'Фінансова подушка',
-    reason: `Резерв у ${currency} — ${held.amount} з ${norm.amount.amount} мінорних одиниць місячної норми витрат.`,
+    reason: `Резерв у ${currency} — ${input.formatMoney(held)} з ${input.formatMoney(norm.amount)} місячної норми витрат.`,
     progress: { kind: 'against', reached: held.amount, target: norm.amount.amount, currency },
     criterion,
     action: { kind: 'record-transfer', accountKind: 'savings' },
     finished: held.amount >= norm.amount.amount,
   };
-}
-
-/** The share of a ціль's target the progress has reached, floored — `percentageOf`'s own rule. */
-function percentage(reached: number, target: number): number {
-  return reached <= 0 ? 0 : Math.floor((reached * 100) / target);
 }
 
 const QUARTERS: readonly number[] = [25, 50, 75, 100];
@@ -228,9 +229,22 @@ function goalNextQuarter(input: ChallengeInput): Challenge | undefined {
         one.progress !== null && one.progress.currency === one.goal.target.currency,
     )
     .map(({ goal, progress }) => {
-      const reached = percentage(progress.amount, goal.target.amount);
-      const next = QUARTERS.find((quarter) => reached < quarter);
-      return next === undefined ? undefined : { goal, progress, next, gap: next - reached };
+      // The next quarter the progress has not reached, as integer arithmetic: a percentage of
+      // money is a comparison, never a division. `reached * 100 < target * q` is exactly
+      // `floor(reached * 100 / target) < q`, so this needs no rounding rule of its own — and
+      // therefore cannot drift from `percentageOf`'s, which is what «до наступних 25 %» is
+      // judged by everywhere else.
+      const next = QUARTERS.find(
+        (quarter) => progress.amount * 100 < goal.target.amount * quarter,
+      );
+      if (next === undefined) {
+        return undefined;
+      }
+      // How far short of that quarter it stands, in the ціль's own currency — the ordering, and
+      // the number the reason states. Not a percentage: two цілі of different sizes are compared
+      // by the share they have left, so the gap is scaled by the target.
+      const target = Math.ceil((goal.target.amount * next) / 100);
+      return { goal, progress, next, target, gap: (target - progress.amount) / goal.target.amount };
     })
     .filter((one): one is NonNullable<typeof one> => one !== undefined)
     // The ціль closest to its next quarter; the id breaks a tie so two devices agree.
@@ -238,13 +252,13 @@ function goalNextQuarter(input: ChallengeInput): Challenge | undefined {
   if (standing === undefined) {
     return undefined;
   }
-  const { goal, progress, next } = standing;
-  const target = Math.ceil((goal.target.amount * next) / 100);
+  const { goal, progress, next, target } = standing;
+  const left = { amount: target - progress.amount, currency: goal.target.currency };
   return {
     key: `goal-next-quarter:${goal.id}`,
     template: 'goal-next-quarter',
     name: `Ціль «${goal.name}» — до наступних 25 %`,
-    reason: `Ціль «${goal.name}» пройшла ${percentage(progress.amount, goal.target.amount)} % — до ${next} % лишилось ${target - progress.amount} мінорних одиниць ${goal.target.currency}.`,
+    reason: `Ціль «${goal.name}»: ${input.formatMoney(progress)} з ${input.formatMoney(goal.target)} — до ${next} % лишилось ${input.formatMoney(left)}.`,
     progress: {
       kind: 'against',
       reached: progress.amount,

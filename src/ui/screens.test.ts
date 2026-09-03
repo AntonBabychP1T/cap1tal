@@ -397,7 +397,14 @@ describe('where the прогрес is evaluated, and where it is not', () => {
   });
 
   it('Scenario: Прогрес is reachable from Звіти, and from Головний when something waits', () => {
-    expect(readScreen(join('(tabs)', 'reports.tsx'))).toContain("router.push('/progress')");
+    const reports = readScreen(join('(tabs)', 'reports.tsx'));
+    expect(reports).toContain("router.push('/progress')");
+    // Scenario: The entry is there with nothing earned — the Pressable is unconditional, not
+    // wrapped in a `{… ? (` the way the sections above it are.
+    const entry = reports.slice(reports.indexOf("router.push('/progress')") - 200);
+    expect(entry.slice(0, 200)).not.toMatch(/\?\s*\($/m);
+    expect(reports).toMatch(/<Pressable onPress=\{\(\) => router\.push\('\/progress'\)\}/);
+
     // Головний renders the section only when `homeProgressSection` returned one.
     const home = readScreen(join('(tabs)', 'index.tsx'));
     expect(home).toContain('homeProgressSection');

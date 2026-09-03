@@ -109,7 +109,9 @@ export default function ChallengeScreen() {
     (action: ChallengeAction) => {
       switch (action.kind) {
         case 'answer-month':
-          router.push('/transactions');
+          // The місяць the виклик is about, not the whole history: «Транзакції» opens already
+          // narrowed to it, which is where those items are actually answered.
+          router.push(`/transactions?month=${action.month}`);
           return;
         case 'record-transfer':
           router.push('/transaction/new');

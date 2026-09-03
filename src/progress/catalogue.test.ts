@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest';
 import type { AccumulationGoal } from '../domain/goals';
 import { money } from '../domain/money';
 import type { IsoDate, Month } from '../domain/transaction';
-import { candidates, plural, type Candidate, type CatalogueInput } from './catalogue';
+import { candidates, type Candidate, type CatalogueInput } from './catalogue';
+import { plural as labelsPlural } from '../ui/labels';
+import { plural } from './plural';
 import type { MonthRow, ProgressSummary } from './summary';
 
 const TODAY: IsoDate = '2026-09-02';
@@ -235,6 +237,12 @@ describe('what the catalogue refuses to reward', () => {
 });
 
 describe('Ukrainian counts', () => {
+  it('is the one the rest of the app uses, not a second guess at the same rule', () => {
+    // «Two hand-rolled two-form guesses in one app is how «2 рахунків» happens.» There is one
+    // implementation; `src/ui/labels.ts` re-exports it rather than carrying a copy.
+    expect(labelsPlural).toBe(plural);
+  });
+
   it('picks the form the number takes', () => {
     expect(plural(1, 'місяць', 'місяці', 'місяців')).toBe('місяць');
     expect(plural(2, 'місяць', 'місяці', 'місяців')).toBe('місяці');

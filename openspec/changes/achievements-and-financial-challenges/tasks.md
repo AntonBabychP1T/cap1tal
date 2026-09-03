@@ -140,8 +140,9 @@
       what is new, and return what was newly earned — and call it at the ten moments of the
       achievements spec: app start in `src/app/_layout.tsx`, and after a транзакція is
       stored/edited/deleted, a monobank sync commits, a чернетка is settled, a Saldo імпорт commits,
-      a відновлення lands, a ціль changes, a ліміт is set or cleared, a рахунок is
-      created/edited/archived, and a норма is confirmed (design D10); verify
+      a відновлення lands, a ціль-накопичення changes, a рахунок is created/edited/archived, and
+      a норма is confirmed. Setting or clearing a **ліміт** is deliberately not among them — a
+      ліміт is a ціль витрат and no досягнення is defined about one (design D10); verify
       `src/progress/run.test.ts` proves achievements scenarios «Recording a транзакція evaluates», «A
       Saldo імпорт earns what it brought», «A відновлення earns what the бекап holds» and «A closed
       app with working import loses nothing».
@@ -186,7 +187,10 @@
       the six місяці it came from, and a field the owner may overwrite, refusing a non-positive сума
       in Ukrainian per app-shell — as a step inside `src/app/challenge/[key].tsx`; verify
       `src/ui/progress-screen.test.ts` proves challenges scenario «The подушка asks for the норма
-      first» and achievements scenario «Raising the норма keeps what was earned».
+      first»; verify `src/progress/run.test.ts` proves achievements scenario «Raising the норма
+      keeps what was earned» — the earned row survives untouched and the progress beside it
+      re-derives to 40 % — since it takes an evaluation before and after the change, which the
+      view model has no way to perform.
 
 ## 8. The бекап and the boundaries
 

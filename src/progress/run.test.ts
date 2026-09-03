@@ -18,6 +18,7 @@ import {
   nthTransactionDateOfFixture,
   ownerShapedSummary,
 } from './fixtures';
+import { candidates } from './catalogue';
 import { runEvaluation, type RunPorts } from './run';
 import { EMPTY_SUMMARY, type ProgressSummary } from './summary';
 
@@ -191,6 +192,67 @@ describe('when the evaluation runs', () => {
 });
 
 describe('the boundaries the evaluation keeps', () => {
+  it('Scenario: Raising the норма keeps what was earned', () => {
+    // The резерв of the owner-shaped зведення is 4 200 000 minor units UAH. A норма of 3 000 000
+    // makes it a whole місяць of витрати over.
+    const phone = device(owner());
+    phone.setNorms(new Map([['UAH', { amount: money(3_000_000, 'UAH'), confirmedAtMs: 0 }]]));
+    runEvaluation(phone.ports);
+    expect([...phone.stored.keys()]).toContain('reserve.norm:100:UAH');
+    const whenEarned = phone.stored.get('reserve.norm:100:UAH')!;
+
+    // The owner raises the норма so that the same резерв now covers only 40 % of it.
+    phone.setNorms(new Map([['UAH', { amount: money(10_500_000, 'UAH'), confirmedAtMs: 1 }]]));
+    const afterRaise = runEvaluation(phone.ports);
+
+    // Earned is permanent: the row is untouched — key, дата, moment and свідчення alike — and the
+    // engine, which only ever adds, wrote nothing about it.
+    expect(phone.stored.get('reserve.norm:100:UAH')).toEqual(whenEarned);
+    expect(afterRaise.map((one) => one.key)).not.toContain('reserve.norm:100:UAH');
+
+    // And the progress shown beside it is re-derived against the new норма: 40 %.
+    const shown = candidates({
+      summary: owner(),
+      today: TODAY,
+      nthTransactionDate: nthTransactionDateOfFixture,
+      firstTransferOntoKind: firstTransferOntoKindOfFixture,
+      goals: [],
+      norms: new Map([['UAH', { amount: money(10_500_000, 'UAH'), confirmedAtMs: 1 }]]),
+    }).find((one) => one.key === 'reserve.norm:100:UAH')!;
+
+    expect(shown.progress).toEqual({ reached: 4_200_000, target: 10_500_000, currency: 'UAH' });
+    expect(Math.floor((shown.progress!.reached * 100) / shown.progress!.target)).toBe(40);
+    // It reads as not earned *now*, and that changes nothing about the stored row above.
+    expect(shown.earned).toBe(false);
+  });
+
+  it('Scenario: A large history is evaluated without reading its транзакції', () => {
+    // The whole evaluation, not only the storage seam: one зведення is read, and the two
+    // single-row lookups are asked for at most once per tier being crossed.
+    const asked: number[] = [];
+    const kinds: string[] = [];
+    const phone = device(owner());
+    const counted: RunPorts = {
+      ...phone.ports,
+      nthTransactionDate: (n) => {
+        asked.push(n);
+        return nthTransactionDateOfFixture(n);
+      },
+      firstTransferOntoKind: (kind) => {
+        kinds.push(kind);
+        return firstTransferOntoKindOfFixture(kind);
+      },
+    };
+
+    runEvaluation(counted);
+
+    expect(phone.reads()).toBe(1);
+    // At most one reading per count tier, and only for the tiers the history actually crossed.
+    expect(asked).toEqual([100, 500, 1000, 2000]);
+    expect(new Set(kinds)).toEqual(new Set(['savings', 'investment']));
+  });
+
+
   it('Scenario: An earned досягнення moves no money', () => {
     const card = account({
       id: 'card',

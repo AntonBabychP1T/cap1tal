@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -65,7 +65,14 @@ export default function TransactionsScreen() {
 
   const [query, setQuery] = useState('');
   const [accountId, setAccountId] = useState(ANY);
-  const [month, setMonth] = useState(ANY);
+  /**
+   * The місяць the screen opens on. Normally «будь-який»; a `?month=YYYY-MM` in the route opens it
+   * already narrowed, which is how «Закрий <місяць>» lands the owner on the very місяць it is
+   * about rather than on the whole history. It is an initial value and not a lock: the picker
+   * below changes it like any other narrowing.
+   */
+  const asked = useLocalSearchParams<{ month?: string }>().month;
+  const [month, setMonth] = useState(/^\d{4}-\d{2}$/.test(asked ?? '') ? asked! : ANY);
 
   const criteria = useMemo(
     () => searchCriteria(query, stored.categories, stored.sources),

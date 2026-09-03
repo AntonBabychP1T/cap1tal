@@ -3,6 +3,7 @@ import type { CurrencyCode, Money } from '../domain/money';
 import { monthOf, type IsoDate } from '../domain/transaction';
 import type { AccountKind } from '../domain/account';
 import type { Evidence, SpendingNorms } from './earned';
+import { plural } from './plural';
 import {
   activeMonths,
   cleanMonths,
@@ -113,21 +114,6 @@ export interface Template {
   readonly group: Group;
   readonly dating: 'history' | 'recorded';
   readonly candidates: (input: CatalogueInput) => Candidate[];
-}
-
-/**
- * Ukrainian counts. 1 (but not 11) takes the singular, 2–4 (but not 12–14) the paucal, everything
- * else the genitive plural — written out because no rule of arithmetic produces «транзакція /
- * транзакції / транзакцій» from a number, and `Intl` would put Vitest on Node and Hermes at risk
- * of disagreeing about the owner's own language.
- */
-export function plural(n: number, one: string, few: string, many: string): string {
-  const mod100 = Math.abs(n) % 100;
-  const mod10 = Math.abs(n) % 10;
-  if (mod100 >= 11 && mod100 <= 14) return many;
-  if (mod10 === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4) return few;
-  return many;
 }
 
 const transactionsWord = (n: number) => plural(n, 'транзакція', 'транзакції', 'транзакцій');

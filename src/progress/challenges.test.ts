@@ -50,6 +50,7 @@ function input(over: Partial<ChallengeInput> = {}): ChallengeInput {
     norms: new Map(),
     decisions: [],
     monthLabel: (month) => month,
+    formatMoney: (amount) => `${amount.amount} ${amount.currency}`,
     ...over,
   };
 }
@@ -68,8 +69,10 @@ describe('what a виклик carries', () => {
       }),
     ).find((one) => one.template === 'reserve-cushion')!;
 
-    expect(cushion.reason).toContain('900000');
-    expect(cushion.reason).toContain('3000000');
+    // Сум, not raw minor units: the виклик speaks the register the rest of the app does.
+    expect(cushion.reason).toContain('900000 UAH');
+    expect(cushion.reason).toContain('3000000 UAH');
+    expect(cushion.reason).not.toContain('мінорних одиниць');
     expect(cushion.progress).toEqual({
       kind: 'against',
       reached: 900_000,

@@ -13,7 +13,9 @@ import { runEvaluation, type RunPorts } from '@/progress/run';
 import type { ProgressSummary } from '@/progress/summary';
 import type { EarnedAchievement } from '@/progress/earned';
 import { todayIso } from '@/ui/dates';
+import { reportFailure } from '@/ui/journal';
 import { monthLabel } from '@/ui/months';
+import { formatMoney } from '@/ui/amount-input';
 import { goalProgress, type Contribution } from '@/ui/goal-progress';
 
 /**
@@ -76,12 +78,16 @@ function exactProgressOf(goal: AccumulationGoal, summary: ProgressSummary): Mone
  * Evaluate now, and return what was newly earned. The call every one of the named moments makes.
  *
  * It never throws into a caller: a досягнення is a nicety beside the транзакція that was just
- * stored, and a failure to notice one must never take down the запис that caused it.
+ * stored, and a failure to notice one must never take down the запис that caused it. It is not
+ * *silent* about it either — the failure goes to the журнал like every other one in this app, so
+ * a свідчення this build cannot encode is visible in a репорт про помилку rather than invisible
+ * forever.
  */
 export function evaluateProgress(): EarnedAchievement[] {
   try {
     return runEvaluation(progressPorts());
-  } catch {
+  } catch (error) {
+    reportFailure('progress-evaluate', error);
     return [];
   }
 }
@@ -131,6 +137,7 @@ export function progressScreenData(now: Date = new Date()): ProgressScreenData {
     norms,
     decisions: progressRepo.listDecisions(),
     monthLabel,
+    formatMoney,
   };
 
   return {

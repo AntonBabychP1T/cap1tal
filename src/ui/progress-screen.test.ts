@@ -53,7 +53,7 @@ function challenge(over: Partial<Challenge> = {}): Challenge {
     key: 'reserve-cushion:UAH',
     template: 'reserve-cushion',
     name: 'Фінансова подушка',
-    reason: 'Резерв у UAH — 900000 з 3000000 мінорних одиниць місячної норми витрат.',
+    reason: 'Резерв у UAH — 9\u00A0000,00 UAH з 30\u00A0000,00 UAH місячної норми витрат.',
     progress: { kind: 'against', reached: 900_000, target: 3_000_000, currency: 'UAH' },
     criterion: 'Резерв у UAH — щонайменше одна місячна норма витрат.',
     action: { kind: 'record-transfer', accountKind: 'savings' },
@@ -287,6 +287,25 @@ describe('the «Прогрес» section of Головний', () => {
   });
 });
 
+describe('what Головний shows beside it', () => {
+  it('Scenario: Nothing waiting leaves Головний as it was', () => {
+    // The section is the whole of this change's footprint on Головний, and with nothing waiting
+    // there is none — no heading, no empty state, no placeholder. Everything else the tab shows
+    // is `homeViewModel`'s, which this capability neither reads nor is read by: the two models
+    // share no input and no output, so nothing here can move «Усього грошей» or «Потребує уваги».
+    const section = homeProgressSection({
+      earned: [earned({ seenAtMs: 1 })],
+      accepted: [],
+      candidates: [],
+    });
+
+    expect(section).toBeNull();
+    // And the two models are genuinely separate functions over separate inputs.
+    const shape = homeProgressSection({ earned: [earned()], accepted: [], candidates: [] })!;
+    expect(Object.keys(shape).sort()).toEqual(['achievements', 'challenge', 'route']);
+  });
+});
+
 describe('the details', () => {
   it('Scenario: The detail explains why it was earned', () => {
     const detail = achievementDetail({
@@ -391,7 +410,7 @@ describe('the details', () => {
       now: NOW,
     })!;
 
-    expect(detail.reason).toContain('900000');
+    expect(detail.reason).toContain('9\u00A0000,00 UAH');
     expect(detail.progress).toBe('9\u00A0000,00 UAH з 30\u00A0000,00 UAH');
     expect(detail.criterion).toBe('Резерв у UAH — щонайменше одна місячна норма витрат.');
     expect(detail.accepted).toBe(false);
