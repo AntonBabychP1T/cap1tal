@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View, type TextInputProps } from 'react-native';
 
+import { Icon } from './icon';
 import { ThemedText } from './themed-text';
 
 import { Radius, Spacing, TouchTarget } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { type IconName } from '@/ui/icons';
 import {
   allOffer,
   COLLAPSE_LABEL,
@@ -47,7 +49,10 @@ export function Field({ label, hint, ...rest }: TextInputProps & { label: string
           {
             color: theme.text,
             // Ruled, not boxed: the line is the field, and it is the only thing that lights up.
-            borderBottomColor: focused ? theme.accent : theme.border,
+            // `cardEdge`, not `border`: this rule *is* the control — the only thing saying where
+            // to type — and `border` is the hairline between two rows, which the retone made
+            // quieter still. An edge that has to be found is not that role.
+            borderBottomColor: focused ? theme.accent : theme.cardEdge,
             borderBottomWidth: focused ? 1.5 : 1,
           },
           rest.style,
@@ -68,19 +73,29 @@ export interface Choice<T extends string> {
 }
 
 /**
- * One chip. Drawn here rather than inside `Choices` because two things paint it — the row of
- * choices below, and the expanded full list of `Picker` further down, which has no overline of its
- * own. Two copies would be two chips that must look identical and diverge the day either is tuned.
+ * One chip. Drawn here rather than inside `Choices` because three things paint it now — the row of
+ * choices below, the expanded full list of `Picker` further down, which has no overline of its own,
+ * and the screens that filter a list by a row of them. Copies would be chips that must look
+ * identical and diverge the day any one of them is tuned, which is why this is exported.
+ *
+ * Two things changed with the redesign, and neither reaches a caller: the shape is a pill rather
+ * than `Radius.chip`, and an unpicked chip is now outlined in `cardEdge` instead of drawn on an
+ * invisible border. On a card that is nearly the page, a fill alone no longer says where a chip
+ * ends — the same reason `cardEdge` carries the card. Every `Choices` and `Picker` call site
+ * renders exactly as it did, with no prop added and no file edited.
  */
-function Chip({
+export function Chip({
   label,
   picked,
   disabled,
+  icon,
   onPress,
 }: {
   label: string;
   picked: boolean;
   disabled?: boolean;
+  /** A glyph before the label — a категорія's own, the вид of a рахунок. Tinted with the label. */
+  icon?: IconName;
   onPress: () => void;
 }) {
   const theme = useTheme();
@@ -95,16 +110,86 @@ function Chip({
         {
           // An outline, not a fill: in a row of eight categories a filled chip shouts.
           backgroundColor: picked ? theme.accentSurface : theme.backgroundSelected,
-          borderColor: picked ? theme.accent : 'transparent',
+          borderColor: picked ? theme.accent : theme.cardEdge,
           opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
         },
       ]}>
+      {icon ? <Icon name={icon} size={14} color={picked ? 'accent' : 'textSecondary'} /> : null}
       <ThemedText
         type={picked ? 'smallBold' : 'small'}
         themeColor={picked ? 'accent' : 'textSecondary'}>
         {label}
       </ThemedText>
     </Pressable>
+  );
+}
+
+/**
+ * The пошук bar.
+ *
+ * It is **not** built on `Field`, and the task that asked for it said it would be. `Field` is a
+ * form's field: it names itself in an overline, it is ruled rather than boxed, and it carries a
+ * hint under it. A search bar has no label, is a box, and is the one input on a screen that is a
+ * control rather than part of a form — so building it on `Field` would have meant making `Field`'s
+ * label optional and adding a presentation flag to the component every form in the app depends on,
+ * to save four lines of focus state. The cost lands on twelve callers; the saving is here.
+ *
+ * What it does share is read from the theme directly — `textMuted` for the placeholder, `text` for
+ * the value — so those cannot drift from `Field` without drifting from the palette first. The
+ * focus treatment genuinely differs: `Field` lights its rule and its label, this lights its border
+ * and its glyph.
+ *
+ * The clear «×» appears only with something to clear, and is its own tap target, so clearing never
+ * means re-focusing.
+ */
+export function SearchBar({
+  value,
+  onChange,
+  placeholder = 'Пошук',
+  autoFocus,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  autoFocus?: boolean;
+}) {
+  const theme = useTheme();
+  const [focused, setFocused] = useState(false);
+
+  return (
+    <View
+      style={[
+        styles.searchBar,
+        {
+          backgroundColor: theme.backgroundInset,
+          borderColor: focused ? theme.accent : theme.cardEdge,
+        },
+      ]}>
+      <Icon name="search" size={18} color={focused ? 'accent' : 'textMuted'} />
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        placeholderTextColor={theme.textMuted}
+        autoFocus={autoFocus}
+        autoCorrect={false}
+        returnKeyType="search"
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={[styles.searchInput, { color: theme.text }]}
+      />
+      {value.length > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Очистити пошук"
+          onPress={() => onChange('')}
+          hitSlop={Spacing.two}>
+          <ThemedText type="subtitle" themeColor="textMuted" style={styles.searchClear}>
+            ×
+          </ThemedText>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -178,7 +263,8 @@ export function Action({
         variant === 'primary' && {
           backgroundColor: disabled ? theme.backgroundSelected : theme.accent,
         },
-        variant === 'secondary' && { borderWidth: 1, borderColor: theme.border },
+        // `cardEdge`: a button's outline is the whole button. See `Field` above.
+        variant === 'secondary' && { borderWidth: 1, borderColor: theme.cardEdge },
         pressed && styles.pressed,
       ]}>
       <ThemedText
@@ -234,7 +320,7 @@ export function RowAction({
       hitSlop={Spacing.two}
       style={({ pressed }) => [
         styles.rowAction,
-        { borderColor: theme.border },
+        { borderColor: theme.cardEdge },
         pressed && styles.pressed,
       ]}>
       {/* One line, said so. The pill is sized to the whole title, so nothing here can ellipsize —
@@ -372,13 +458,27 @@ const styles = StyleSheet.create({
   // it is a way out of the picker, not the screen's action.
   offer: { flexDirection: 'row' },
   choice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.oneHalf,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
-    borderRadius: Radius.chip,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     justifyContent: 'center',
     minHeight: 38,
   },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    borderRadius: Radius.field,
+    borderWidth: 1,
+    paddingHorizontal: Spacing.three,
+    minHeight: TouchTarget,
+  },
+  searchInput: { flex: 1, minWidth: 0, fontSize: 17, paddingVertical: Spacing.two },
+  searchClear: { lineHeight: 24 },
   action: {
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,

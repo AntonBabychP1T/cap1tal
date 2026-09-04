@@ -113,7 +113,9 @@ export function CrashFallback({
         <Text style={[styles.body, { color: theme.text }]}>
           Застосунок спіймав помилку і не закрився. Нижче — те, що він про неї знає.
         </Text>
-        <Text style={[styles.error, { color: theme.textSecondary, borderColor: theme.border }]}>
+        {/* `cardEdge`, not `border`: both outlines on this screen are drawn straight onto
+            `background`, where the retoned `border` is an edge that is present and invisible. */}
+        <Text style={[styles.error, { color: theme.textSecondary, borderColor: theme.cardEdge }]}>
           {error.message}
         </Text>
 
@@ -130,7 +132,10 @@ export function CrashFallback({
             <Text
               accessibilityRole="button"
               onPress={goBack}
-              style={[styles.action, { color: theme.text, borderColor: theme.border, borderWidth: 1 }]}>
+              style={[
+                styles.action,
+                { color: theme.text, borderColor: theme.cardEdge, borderWidth: 1 },
+              ]}>
               Повернутися
             </Text>
           </View>

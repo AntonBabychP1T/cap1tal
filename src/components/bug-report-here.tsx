@@ -251,7 +251,14 @@ export function BugReportHere({ settings }: { settings: CaptureSettings }) {
               accessibilityRole="button"
               accessibilityLabel={HANDLE_LABEL}
               onPress={start}
-              style={[styles.handle, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+              // `backgroundSelected` and `cardEdge`, not `backgroundElement` and `border`: the
+              // маркер floats over all 34 screens, and after the retone a card *is*
+              // `backgroundElement` — the handle would have been #0F0D0B on #0F0D0B. These two
+              // roles are the ones that stay visible against the page and against a card alike.
+              style={[
+                styles.handle,
+                { backgroundColor: theme.backgroundSelected, borderColor: theme.cardEdge },
+              ]}>
               <Text style={[styles.handleMark, { color: theme.accent }]}>⚑</Text>
             </Pressable>
           ) : null}
@@ -284,7 +291,10 @@ export function BugReportHere({ settings }: { settings: CaptureSettings }) {
                 placeholderTextColor={theme.textMuted}
                 multiline
                 autoFocus
-                style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+                // `cardEdge`: this box is outlined against the sheet's own background, and
+                // `border` is the hairline *inside* a card. The retone takes `border` to #1E1A15,
+                // which on this surface is an edge that is there and cannot be seen.
+                style={[styles.input, { color: theme.text, borderColor: theme.cardEdge }]}
               />
 
               <Text style={[styles.label, { color: theme.text }]}>{EXPECTED_LABEL}</Text>
@@ -294,7 +304,7 @@ export function BugReportHere({ settings }: { settings: CaptureSettings }) {
                 placeholder={EXPECTED_HINT}
                 placeholderTextColor={theme.textMuted}
                 multiline
-                style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+                style={[styles.input, { color: theme.text, borderColor: theme.cardEdge }]}
               />
 
               {refusal ? (
@@ -312,7 +322,7 @@ export function BugReportHere({ settings }: { settings: CaptureSettings }) {
                 accessibilityRole="button"
                 disabled={busy || stored}
                 onPress={() => void save(true)}
-                style={[styles.action, { borderColor: theme.border, borderWidth: 1 }]}>
+                style={[styles.action, { borderColor: theme.cardEdge, borderWidth: 1 }]}>
                 <Text style={[styles.actionText, { color: theme.text }]}>
                   {SAVE_AND_HAND_OVER_LABEL}
                 </Text>

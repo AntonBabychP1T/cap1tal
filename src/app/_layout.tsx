@@ -62,7 +62,9 @@ const navigationTheme = {
       background: Colors.dark.background,
       card: Colors.dark.backgroundElement,
       text: Colors.dark.text,
-      border: Colors.dark.border,
+      // React Navigation draws this as the header's bottom edge and the bar's top one — a
+      // surface's edge against the page, which is `cardEdge`, not the rule inside a card.
+      border: Colors.dark.cardEdge,
       primary: Colors.dark.accent,
     },
   },
@@ -73,7 +75,7 @@ const navigationTheme = {
       background: Colors.light.background,
       card: Colors.light.backgroundElement,
       text: Colors.light.text,
-      border: Colors.light.border,
+      border: Colors.light.cardEdge,
       primary: Colors.light.accent,
     },
   },

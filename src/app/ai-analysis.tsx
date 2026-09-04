@@ -187,7 +187,7 @@ export default function AiAnalysisScreen() {
           <Switch
             value={choices.descriptions}
             onValueChange={(descriptions) => change({ descriptions })}
-            trackColor={{ true: theme.accent, false: theme.border }}
+            trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
           />
         </View>
         <View style={styles.row}>
@@ -200,7 +200,7 @@ export default function AiAnalysisScreen() {
           <Switch
             value={choices.transactions}
             onValueChange={(transactions) => change({ transactions })}
-            trackColor={{ true: theme.accent, false: theme.border }}
+            trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
           />
         </View>
       </Card>

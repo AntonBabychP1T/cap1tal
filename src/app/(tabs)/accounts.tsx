@@ -22,6 +22,7 @@ import {
 import { computeBalance, reconcile, type Account } from '@/domain/account';
 import type { Money } from '@/domain/money';
 import { useCurrentRates } from '@/hooks/use-current-rates';
+import { useTheme } from '@/hooks/use-theme';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountFromDraft, blankDraft, type AccountDraft } from '@/ui/account-form';
@@ -52,6 +53,7 @@ const CURRENCY_CHOICES = OFFERED_CURRENCIES.map((c) => ({ value: c, label: c }))
 
 export default function AccountsScreen() {
   const router = useRouter();
+  const theme = useTheme();
 
   /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
   const reportBug = useCallback(
@@ -181,7 +183,12 @@ export default function AccountsScreen() {
               onPress={() => setDraft(blankDraft())}
               accessibilityLabel="Створити рахунок"
               style={({ pressed }) => (pressed ? styles.pressed : undefined)}>
-              <ThemedView type="backgroundElement" style={styles.add}>
+              {/* The edge, not just the fill: after the retone a `backgroundElement` square on
+                  the page is #0F0D0B on #000000, and the «+» would be floating on nothing. A
+                  surface on the page is held by its `cardEdge`, exactly as a card is. */}
+              <ThemedView
+                type="backgroundElement"
+                style={[styles.add, { borderColor: theme.cardEdge }]}>
                 <ThemedText type="subtitle">+</ThemedText>
               </ThemedView>
             </Pressable>
@@ -317,6 +324,7 @@ const styles = StyleSheet.create({
     width: TouchTarget - Spacing.two,
     height: TouchTarget - Spacing.two,
     borderRadius: Radius.control,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -148,7 +148,7 @@ export default function RemindersScreen() {
                 value={section.on}
                 onValueChange={toggle}
                 disabled={busy || !section.permission.switchable}
-                trackColor={{ true: theme.accent, false: theme.border }}
+                trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
               />
             </View>
             <Field

@@ -7,12 +7,15 @@ import {
   type ViewProps,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Circle, Svg } from 'react-native-svg';
 
+import { Icon } from './icon';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
 import { Radius, Spacing, TouchTarget, type ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { type IconName } from '@/ui/icons';
 
 /**
  * The surfaces every screen is built from, so no screen repeats a radius or a hairline colour.
@@ -37,6 +40,7 @@ export function Screen({
   children,
   scrollRef,
   overlay,
+  footer,
   refreshControl,
 }: {
   children: React.ReactNode;
@@ -52,6 +56,13 @@ export function Screen({
    * scrolling cannot live inside the thing being scrolled.
    */
   overlay?: React.ReactNode;
+  /**
+   * A block pinned under the column instead of floating over it — the «Зберегти» a form ends
+   * with. Unlike `overlay` it takes its own height out of the scroll area, so nothing is ever
+   * hidden beneath it and no bottom padding has to be guessed. A screen has one or the other:
+   * `Fab` sits where a footer would be, and the two would land on top of each other.
+   */
+  footer?: React.ReactNode;
   /**
    * The pull-to-refresh of the one screen that has one — Головний, where pulling down re-reads
    * storage and asks monobank for anything new. Passed straight through to the `ScrollView`,
@@ -74,6 +85,7 @@ export function Screen({
           keyboardShouldPersistTaps="handled">
           {children}
         </ScrollView>
+        {footer}
         {overlay}
       </SafeAreaView>
     </ThemedView>
@@ -133,7 +145,10 @@ export function ScreenHeader({
         </Pressable>
       ) : null}
       <View style={styles.headerText}>
-        <ThemedText type="subtitle" themeColor={danger ? 'textDanger' : undefined}>
+        {/* `screenTitle`, not `subtitle`: the header is its own role now, and `subtitle` stays
+            the step a card's own heading wears. The «←» beside it keeps `subtitle` — it is a
+            glyph sized to be tapped, not a word sized to be read. */}
+        <ThemedText type="screenTitle" themeColor={danger ? 'textDanger' : undefined}>
           {title}
         </ThemedText>
         {subtitle ? (
@@ -190,13 +205,22 @@ export function Wordmark() {
  * The one decoration the app draws: two thin accent rings, clipped by the card they sit in, so a
  * hero figure has something behind it instead of a flat rectangle. Nothing is said by it and
  * nothing is tappable — `pointerEvents="none"` keeps the whole card one tap.
+ *
+ * The two opacities are props because the artboards draw the same rings at two strengths — .35/.20
+ * over the Головний hero and .30/.16 over the quieter one — and two components differing by four
+ * hundredths would be two components to keep in step. The defaults are what the one caller already
+ * draws, so passing nothing changes nothing.
  */
-export function CardGlow() {
+export function CardGlow({ outer = 0.35, inner = 0.2 }: { outer?: number; inner?: number } = {}) {
   const theme = useTheme();
   return (
     <View style={styles.glow} pointerEvents="none">
-      <View style={[styles.glowRing, styles.glowOuter, { borderColor: theme.accent }]} />
-      <View style={[styles.glowRing, styles.glowInner, { borderColor: theme.accent }]} />
+      <View
+        style={[styles.glowRing, styles.glowOuter, { borderColor: theme.accent, opacity: outer }]}
+      />
+      <View
+        style={[styles.glowRing, styles.glowInner, { borderColor: theme.accent, opacity: inner }]}
+      />
     </View>
   );
 }
@@ -246,15 +270,19 @@ export function Pill({ children, tone = 'accent' }: { children: string; tone?: '
 }
 
 /**
- * The «›» that says a row leads somewhere. Drawn rather than imported: one glyph, in the muted
- * colour, so a tappable row is told apart from a static one without an icon set.
+ * The «›» that says a row leads somewhere.
+ *
+ * It used to be the character, set in `subtitle` — there was no icon set to take it from. Now
+ * there is, so it is the `chevronRight` glyph, and it changed here rather than in the new rows
+ * beside it: eight rows across Головний and Звіти already draw this one, and a second chevron
+ * next to them would be exactly the private copy of the vocabulary this change exists to stop.
+ * One edit here carries the redesign to all eight.
+ *
+ * `textFaint` rather than `textMuted` — the role added for precisely this. The mark only has to
+ * be *there*; nothing about a chevron is read.
  */
 export function Chevron() {
-  return (
-    <ThemedText type="subtitle" themeColor="textMuted" style={styles.chevron}>
-      ›
-    </ThemedText>
-  );
+  return <Icon name="chevronRight" size={16} color="textFaint" />;
 }
 
 /** One row of a `ListCard`. The last one draws no rule — the card's edge already ends the list. */
@@ -320,17 +348,31 @@ export function Divider() {
  */
 export function SectionLabel({
   children,
+  icon,
+  count,
   note,
   action,
 }: {
   children: string;
+  /** A glyph before the heading, in the same quiet tone the heading is set in. */
+  icon?: IconName;
+  /**
+   * How many things are under the heading, as a pill beside it — «Ліміти 4». A number, so a
+   * section with nothing in it says «0» rather than leaving the caller to decide whether the
+   * count appears at all.
+   */
+  count?: number;
   note?: string;
   /** The way out of the section — «Усі ›». A quiet link, never a second button on the screen. */
   action?: { label: string; onPress: () => void };
 }) {
   return (
     <View style={styles.sectionLabel}>
-      <ThemedText type="overline">{children}</ThemedText>
+      <View style={styles.sectionHeading}>
+        {icon ? <Icon name={icon} size={14} color="textSecondary" /> : null}
+        <ThemedText type="overline">{children}</ThemedText>
+        {count === undefined ? null : <Pill tone="quiet">{String(count)}</Pill>}
+      </View>
       <View style={styles.sectionRight}>
         {note ? (
           <ThemedText type="overline" themeColor="textMuted">
@@ -346,9 +388,20 @@ export function SectionLabel({
 }
 
 /**
- * A filled bar on a track. `value` is a share of the whole, clamped here so no caller can draw
- * past the end of the track — a category at 140 % of its ліміт fills the bar and says the rest in
- * words, which is what the canvas draws.
+ * A share of a whole, as the two things that draw one both need it: between 0 and 1, and never
+ * `NaN`. A category at 140 % of its ліміт fills the bar and says the rest in words; a ціль with no
+ * amount yet must not make a ring vanish or a bar run backwards.
+ *
+ * One function because `Meter` and `ProgressRing` are 300 lines apart in this file and must agree:
+ * a docstring saying "clamped exactly as `Meter` clamps it" is not something that holds itself.
+ */
+function share(value: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+/**
+ * A filled bar on a track. `value` is a share of the whole, clamped by `share` so no caller can
+ * draw past the end of the track.
  */
 export function Meter({
   value,
@@ -360,13 +413,343 @@ export function Meter({
   track?: ThemeColor;
 }) {
   const theme = useTheme();
-  const filled = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+  const filled = share(value);
   return (
     <View style={[styles.meterTrack, { backgroundColor: theme[track] }]}>
       <View
         style={[styles.meterFill, { width: `${filled * 100}%`, backgroundColor: theme[color] }]}
       />
     </View>
+  );
+}
+
+/** The side of a row's icon tile. `RoundIconButton` is drawn at 40 and tapped at `TouchTarget`. */
+const TILE = 36;
+const ROUND_BUTTON = 40;
+
+/**
+ * The square a row's glyph sits in: `Radius.tile` on `backgroundInset`, which is the one step off
+ * a card the dark theme has left now that the card is nearly the page. It is a surface, not a
+ * control — whatever it sits on is what is tappable.
+ */
+export function IconTile({
+  name,
+  tone = 'textSecondary',
+  size = TILE,
+}: {
+  name: IconName;
+  /** The glyph's colour. A категорія over its ліміт tiles in `textDanger`, дохід in `textPositive`. */
+  tone?: ThemeColor;
+  /** The tile's side. The artboards draw one size on rows and a larger one on a hero card. */
+  size?: number;
+}) {
+  const theme = useTheme();
+  return (
+    <View
+      style={[
+        styles.iconTile,
+        { width: size, height: size, backgroundColor: theme.backgroundInset },
+      ]}>
+      <Icon name={name} size={Math.round(size * 0.56)} color={tone} />
+    </View>
+  );
+}
+
+/**
+ * The row nearly every list in the artboards is made of: a glyph in its tile, a title with an
+ * optional quiet line under it, and whatever the row is worth on the right.
+ *
+ * `onPress` is what draws the chevron — a row that leads somewhere says so, and a row that does
+ * not never wears the mark. The chevron is `textFaint`, the tone that exists for exactly this: it
+ * has to be *there*, and nothing about it has to be read.
+ */
+export function IconRow({
+  icon,
+  iconTone,
+  title,
+  note,
+  right,
+  onPress,
+  last,
+}: {
+  icon: IconName;
+  iconTone?: ThemeColor;
+  title: string;
+  /** The second line: a date, the рахунок a транзакція was on, what is left of a ліміт. */
+  note?: string;
+  /** What the row is worth — usually a `ThemedText type="rowAmount"`, sometimes a `Pill`. */
+  right?: React.ReactNode;
+  onPress?: () => void;
+  last?: boolean;
+}) {
+  const body = (
+    <View style={styles.iconRow}>
+      <IconTile name={icon} tone={iconTone} />
+      <View style={styles.iconRowText}>
+        <ThemedText type="rowTitle" numberOfLines={1}>
+          {title}
+        </ThemedText>
+        {note ? (
+          <ThemedText type="caption" themeColor="textSecondary" numberOfLines={1}>
+            {note}
+          </ThemedText>
+        ) : null}
+      </View>
+      {right}
+      {onPress ? <Chevron /> : null}
+    </View>
+  );
+
+  return (
+    <ListRow last={last}>
+      {onPress ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onPress}
+          style={({ pressed }) => (pressed ? styles.pressed : null)}>
+          {body}
+        </Pressable>
+      ) : (
+        body
+      )}
+    </ListRow>
+  );
+}
+
+/**
+ * A control that is one glyph: the way off a screen, the way into пошук. It names itself, because
+ * a glyph on its own says nothing to a screen reader — `label` is required for that reason.
+ *
+ * Drawn at 40 and tapped at 48: `TouchTarget` is the smallest a tappable thing may be whatever its
+ * visible size, and the hit slop is what makes the two agree.
+ */
+export function RoundIconButton({
+  icon,
+  label,
+  onPress,
+  tone = 'quiet',
+}: {
+  icon: IconName;
+  /** What a screen reader says. Not drawn. */
+  label: string;
+  onPress: () => void;
+  /** `accent` is the screen's own action; there is never more than one of those on a screen. */
+  tone?: 'quiet' | 'accent';
+}) {
+  const theme = useTheme();
+  const accent = tone === 'accent';
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      hitSlop={(TouchTarget - ROUND_BUTTON) / 2}
+      style={({ pressed }) => [
+        styles.roundButton,
+        { backgroundColor: accent ? theme.accent : theme.backgroundInset },
+        pressed && styles.pressed,
+      ]}>
+      <Icon name={icon} size={20} color={accent ? 'onAccent' : 'textSecondary'} />
+    </Pressable>
+  );
+}
+
+/**
+ * One cell of the figures grid: a glyph, what the figure is, and the figure. Grows to fill its
+ * share of the row it is in, so a caller lays out two or three per row by putting them in a
+ * `flexDirection: 'row'` with a gap and nothing else.
+ */
+export function StatTile({
+  icon,
+  label,
+  value,
+  tone,
+  note,
+}: {
+  icon: IconName;
+  /** What the figure is — «Витрачено», «Залишилось». Set small; the figure is what is read. */
+  label: string;
+  /** Already formatted. This is a surface: it never touches a сума. */
+  value: string;
+  /** The figure's colour — `textDanger` over a ліміт, `textPositive` for дохід. */
+  tone?: ThemeColor;
+  /** A third line, quieter still: a share, a count, a comparison with last month. */
+  note?: string;
+}) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.statTile, { backgroundColor: theme.backgroundInset }]}>
+      <Icon name={icon} size={16} color="textSecondary" />
+      <ThemedText type="caption" themeColor="textSecondary" numberOfLines={1}>
+        {label}
+      </ThemedText>
+      <ThemedText type="rowAmount" themeColor={tone} numberOfLines={1}>
+        {value}
+      </ThemedText>
+      {note ? (
+        <ThemedText type="caption" themeColor="textMuted" numberOfLines={1}>
+          {note}
+        </ThemedText>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * A `ListRow` built around the one bar the app draws: what the bar is for, what it is worth, and
+ * the bar. The optional second line is where the sentence goes that the bar cannot say — how much
+ * of a ліміт is left, or by how much it is past.
+ */
+export function MeterRow({
+  title,
+  amount,
+  value,
+  color,
+  note,
+  noteTone = 'textSecondary',
+  last,
+}: {
+  title: string;
+  /** Already formatted, and set in `rowAmount` so it lines up with the row above it. */
+  amount: string;
+  /** The bar's share of the whole, clamped by `Meter` itself. */
+  value: number;
+  color?: ThemeColor;
+  note?: string;
+  noteTone?: ThemeColor;
+  last?: boolean;
+}) {
+  return (
+    <ListRow last={last} style={styles.meterRow}>
+      <View style={styles.meterRowHead}>
+        <ThemedText type="rowTitle" numberOfLines={1} style={styles.meterRowTitle}>
+          {title}
+        </ThemedText>
+        <ThemedText type="rowAmount">{amount}</ThemedText>
+      </View>
+      <Meter value={value} color={color} />
+      {note ? (
+        <ThemedText type="caption" themeColor={noteTone}>
+          {note}
+        </ThemedText>
+      ) : null}
+    </ListRow>
+  );
+}
+
+/**
+ * A footnote: the step below `Banner`. A `Banner` is something the owner has to read before going
+ * on; this is something they may want to know and can ignore — how a figure was arrived at, what a
+ * screen does not count. It has one tone on purpose. Anything that has to stop the owner is a
+ * `Banner tone="danger"`, and a footnote that turned red would be pretending to be one.
+ */
+export function NoteBlock({ children, icon }: { children: string; icon?: IconName }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.noteBlock, { backgroundColor: theme.backgroundInset }]}>
+      {icon ? <Icon name={icon} size={14} color="textMuted" /> : null}
+      <ThemedText type="note" themeColor="textMuted" style={styles.noteBlockText}>
+        {children}
+      </ThemedText>
+    </View>
+  );
+}
+
+/**
+ * The ring: a share drawn round instead of along a bar, with whatever the share is *about* in the
+ * middle. The artboards draw it at three sizes — 64 beside a ціль, 96 on a card, 210 as a screen's
+ * one figure — and this is one component, because the only thing that differs between them is the
+ * number: the stroke scales with the diameter so a small ring is not a heavier ring.
+ *
+ * `value` goes through the same `share` as `Meter`'s — one function, so the two cannot drift. At
+ * nought nothing is drawn: a round cap on an empty arc is a dot, and a dot at twelve o'clock reads
+ * as progress that has not happened.
+ */
+export function ProgressRing({
+  value,
+  size = 96,
+  thickness,
+  color = 'accent',
+  track = 'backgroundSelected',
+  children,
+}: {
+  value: number;
+  size?: number;
+  /** Overrides the diameter-proportional default. Rarely wanted; it is here for the odd artboard. */
+  thickness?: number;
+  color?: ThemeColor;
+  track?: ThemeColor;
+  /** What the ring is about, centred in it — a percentage, a сума, a count. */
+  children?: React.ReactNode;
+}) {
+  const theme = useTheme();
+  const stroke = thickness ?? Math.max(4, Math.round(size / 12));
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const filled = share(value);
+  const centre = size / 2;
+
+  return (
+    <View style={{ width: size, height: size }}>
+      <Svg width={size} height={size}>
+        <Circle
+          cx={centre}
+          cy={centre}
+          r={radius}
+          stroke={theme[track]}
+          strokeWidth={stroke}
+          fill="none"
+        />
+        {filled > 0 ? (
+          <Circle
+            cx={centre}
+            cy={centre}
+            r={radius}
+            stroke={theme[color]}
+            strokeWidth={stroke}
+            fill="none"
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference * (1 - filled)}
+            strokeLinecap="round"
+            // SVG starts an arc at three o'clock; a ring the owner reads starts at twelve.
+            transform={`rotate(-90 ${centre} ${centre})`}
+          />
+        ) : null}
+      </Svg>
+      {children ? (
+        <View style={styles.ringCentre} pointerEvents="none">
+          {children}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * The one card a screen leads with: a `Card` at `Radius.hero` with the accent rings behind it.
+ * Never two on a screen — a page with two things to lead with has neither.
+ *
+ * It is `Card` and not a copy of it, so the fill, the edge and the padding stay one decision. What
+ * it adds is the corner and the rings, and the rings' strength is passed through because the
+ * artboards draw them at two.
+ */
+export function HeroCard({
+  glow = 0.35,
+  glowInner = 0.2,
+  style,
+  children,
+  ...rest
+}: ViewProps & {
+  /** The outer ring's opacity — .35 over Головний, .30 over the quieter hero. */
+  glow?: number;
+  /** The inner ring's, which always trails the outer one. */
+  glowInner?: number;
+}) {
+  return (
+    <Card style={[styles.heroCard, style]} {...rest}>
+      <CardGlow outer={glow} inner={glowInner} />
+      {children}
+    </Card>
   );
 }
 
@@ -399,13 +782,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.half,
   },
-  chevron: { lineHeight: 24 },
   glow: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, overflow: 'hidden' },
   glowRing: { position: 'absolute', borderRadius: Radius.pill, borderWidth: 1.5 },
   // Mostly outside the card's top-right corner: what crosses it is an arc, not a circle, and it
   // stays out of the way of the figure the card exists to show.
-  glowOuter: { width: 190, height: 190, top: -104, right: -84, opacity: 0.35 },
-  glowInner: { width: 132, height: 132, top: -74, right: -54, opacity: 0.2 },
+  glowOuter: { width: 190, height: 190, top: -104, right: -84 },
+  glowInner: { width: 132, height: 132, top: -74, right: -54 },
   listRow: { paddingVertical: Spacing.three },
   divider: { height: StyleSheet.hairlineWidth },
   mark: { width: 6, height: 6, borderRadius: 3 },
@@ -420,6 +802,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
     paddingHorizontal: Spacing.two,
+  },
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    // Tighter than the gap to the section's own action: a glyph and a count belong *to* the
+    // heading, and reading as one thing is what says so.
+    gap: Spacing.oneHalf,
+    flexShrink: 1,
   },
   sectionRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   sectionAction: {
@@ -442,6 +832,50 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   fabLabel: { lineHeight: TouchTarget, textAlign: 'center', fontWeight: 400 },
+  iconTile: {
+    borderRadius: Radius.tile,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.twoHalf },
+  // `minWidth: 0` so a long name shortens itself instead of pushing the сума off the row.
+  iconRowText: { flex: 1, minWidth: 0, gap: Spacing.half },
+  roundButton: {
+    width: ROUND_BUTTON,
+    height: ROUND_BUTTON,
+    borderRadius: Radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statTile: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: Radius.field,
+    padding: Spacing.twoHalf,
+    gap: Spacing.half,
+  },
+  meterRow: { gap: Spacing.two },
+  meterRowHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  meterRowTitle: { flex: 1, minWidth: 0 },
+  noteBlock: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.oneHalf,
+    borderRadius: Radius.control,
+    paddingHorizontal: Spacing.twoHalf,
+    paddingVertical: Spacing.two,
+  },
+  noteBlockText: { flex: 1, minWidth: 0 },
+  ringCentre: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroCard: { borderRadius: Radius.hero, overflow: 'hidden' },
   meterTrack: { height: Spacing.one, borderRadius: Spacing.half, overflow: 'hidden' },
   meterFill: { height: '100%' },
 });

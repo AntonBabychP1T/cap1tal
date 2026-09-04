@@ -51,7 +51,7 @@ export default function BugReportsScreen() {
           <Switch
             value={capture.gestureEnabled}
             onValueChange={(gestureEnabled) => set({ ...capture, gestureEnabled })}
-            trackColor={{ true: theme.accent, false: theme.border }}
+            trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
           />
         </View>
         <ThemedText type="small" themeColor="textSecondary">
@@ -63,7 +63,7 @@ export default function BugReportsScreen() {
           <Switch
             value={capture.handleEnabled}
             onValueChange={(handleEnabled) => set({ ...capture, handleEnabled })}
-            trackColor={{ true: theme.accent, false: theme.border }}
+            trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
           />
         </View>
         <ThemedText type="small" themeColor="textSecondary">

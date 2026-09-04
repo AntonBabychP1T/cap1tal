@@ -3,6 +3,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { TABS } from './tabs';
+
 /**
  * What the screens themselves must be true of — read as text, which is the only way `verify` can
  * look at them.
@@ -386,14 +388,24 @@ describe('where the прогрес is evaluated, and where it is not', () => {
 
   it('the прогрес screens are registered beside the other pushed ones, and the tabs are unchanged', () => {
     const layout = readScreen('_layout.tsx');
-    const tabs = readFileSync(join(COMPONENTS, 'app-tabs.tsx'), 'utf8');
 
     for (const name of ['progress', 'achievement/[key]', 'challenge/[key]']) {
       expect(layout).toContain(`<Stack.Screen name="${name}"`);
     }
     // Scenario: The tabs are unchanged — the same five, and «Прогрес» is not among them.
-    const declared = [...tabs.matchAll(/<NativeTabs\.Trigger\s+name="([^"]+)"/g)].map((m) => m[1]);
-    expect(declared).toEqual(['index', 'month', 'accounts', 'reports', 'settings']);
+    //
+    // This used to scrape `<NativeTabs.Trigger name="…">` out of `app-tabs.tsx`. Both bars now
+    // render from one list, so the claim is read from that list instead — the same assertion
+    // against a source that cannot disagree with the other platform. `tabs.test.ts` owns the
+    // order and the labels; what is proven here is only that «Прогрес» never became a вкладка.
+    expect(TABS.map((tab) => tab.routeName)).toEqual([
+      'index',
+      'month',
+      'accounts',
+      'reports',
+      'settings',
+    ]);
+    expect(TABS.some((tab) => tab.routeName === 'progress')).toBe(false);
   });
 
   it('Scenario: Прогрес is reachable from Звіти, and from Головний when something waits', () => {
@@ -417,5 +429,127 @@ describe('where the прогрес is evaluated, and where it is not', () => {
     const limits = readScreen(join('manage', 'limits.tsx'));
 
     expect(limits).not.toContain('evaluateProgress');
+  });
+});
+
+/**
+ * Both tab bars render from `TABS`, and neither writes a вкладка of its own.
+ *
+ * This is the assertion the change is *for*. The web bar came to render four вкладки and omit
+ * «Звіти» because the set was written twice in two `.tsx` files `verify` never loads; moving the
+ * set into `tabs.ts` removed the second copy, but on its own it removes nothing permanently — a
+ * sixth hand-written `Trigger` beside the map, or a bar that quietly stops mapping the list, would
+ * put the copy straight back and `tabs.test.ts` would stay green, because it only ever sees the
+ * list.
+ *
+ * So this reads the two bars as text, the way `.claude/rules/testing.md` prescribes, and asks the
+ * one thing that cannot be asked of the list: that each file renders *from* it and names no route
+ * itself. It cannot see either bar drawn — only the emulator does that — but the drift it is
+ * closing was never visible on screen either. It was visible in the source.
+ */
+describe('Scenario: A second way of drawing the bar offers the same set', () => {
+  const readBar = (name: string) => readFileSync(join(COMPONENTS, name), 'utf8');
+
+  const bars = [
+    // The native bar takes a `routeName`; the web one takes that and an `href`. The lookahead
+    // keeps `<NativeTabs.Trigger.Label>` and `.Icon` — the children of the one trigger — from
+    // counting as triggers of their own.
+    { file: 'app-tabs.tsx', trigger: /<NativeTabs\.Trigger(?![.\w])/g },
+    { file: 'app-tabs.web.tsx', trigger: /<TabTrigger(?![.\w])/g },
+  ] as const;
+
+  for (const { file, trigger } of bars) {
+    it(`${file} renders from the one list`, () => {
+      const bar = readBar(file);
+
+      expect(bar, `${file} must import the set`).toMatch(/import \{[^}]*\bTABS\b[^}]*\} from/);
+      expect(bar, `${file} must map it`).toMatch(/TABS\.map\(/);
+    });
+
+    it(`${file} writes no вкладка of its own`, () => {
+      const bar = readBar(file);
+
+      // Exactly one trigger element in the file: the one inside the map. A second is a вкладка
+      // written by hand, which is how the two bars disagreed in the first place.
+      expect(bar.match(trigger) ?? [], `${file} triggers`).toHaveLength(1);
+
+      // And no route, label or path spelled out beside the map.
+      for (const tab of TABS) {
+        expect(bar, `${file} must not name ${tab.label}`).not.toContain(`"${tab.label}"`);
+        expect(bar, `${file} must not name ${tab.routeName}`).not.toContain(`name="${tab.routeName}"`);
+      }
+    });
+  }
+});
+
+/**
+ * How each bar marks the вкладка being read.
+ *
+ * The gate cannot see either bar drawn, so these read the source — and here that is worth more than
+ * usual, because of where the signal actually lives. On Android the non-colour signal is the
+ * platform's: it names the open tab and leaves the other four to their icons, which the emulator
+ * confirmed and which no assertion here could have. The w700 label does nothing there.
+ *
+ * On the web bar it is the whole of it. That bar draws all five names, so `smallBold` against
+ * `small` is the only thing separating the marked вкладка from the rest once colour is taken away —
+ * and it lives in a file `verify` never loads, which is exactly how this bar came to render four
+ * tabs and omit «Звіти» without anything noticing. A comment asking the next reader not to
+ * "simplify" it away is not a guard. This is.
+ */
+describe('the mark on the вкладка being read', () => {
+  const readBar = (name: string) => readFileSync(join(COMPONENTS, name), 'utf8');
+  /** What the file draws, with the prose that explains it removed. */
+  const withoutComments = (source: string) =>
+    source.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('Scenario: Opening a tab marks it — the native bar marks by tone, and no accent', () => {
+    const bar = readBar('app-tabs.tsx');
+
+    // `text` for the one being read, `textMuted` for the other four, on both icon and label.
+    expect(bar).toMatch(/tintColor=\{colors\.text\}/);
+    expect(bar).toMatch(/iconColor=\{colors\.textMuted\}/);
+    expect(bar).toMatch(/selected:\s*\{[^}]*color:\s*colors\.text\b/);
+    expect(bar).toMatch(/default:\s*\{[^}]*color:\s*colors\.textMuted\b/);
+
+    // `qa-sweep-2026-09`: the accent shall not appear in the tab bar at all. Comments may explain
+    // why, so only what is drawn is checked — and the role name is matched bare rather than in one
+    // access form. `colors.accent`, `colors['accent']` and `themeColor="accent"` all put it back,
+    // and pinning the spelling would have caught only the first. Neither bar has any other use of
+    // the word once comments are gone, so the bare match costs nothing.
+    expect(withoutComments(bar), 'no accent is drawn in the bar').not.toMatch(/accent/i);
+  });
+
+  it('Scenario: Opening a tab marks it — the web bar marks the focused trigger', () => {
+    const bar = readBar('app-tabs.web.tsx');
+
+    expect(bar).toMatch(/isFocused \? 'backgroundSelected' : 'backgroundElement'/);
+    expect(bar).toMatch(/isFocused \? 'text' : 'textSecondary'/);
+
+    expect(withoutComments(bar), 'no accent is drawn in the bar').not.toMatch(/accent/i);
+  });
+
+  it('Scenario: The mark survives without colour — the native bar carries a weight', () => {
+    const bar = readBar('app-tabs.tsx');
+
+    // Kept even though Android never draws two labels at once to compare: the two bars agree on
+    // one mark, and a profile that labels all five gets the signal here too.
+    expect(bar).toMatch(/selected:\s*\{[^}]*fontWeight:\s*'700'/);
+    expect(bar).toMatch(/default:\s*\{[^}]*fontWeight:\s*'600'/);
+
+    // The indicator pill is what the weight replaced; it must not come back as the only signal.
+    expect(bar).toMatch(/indicatorColor="transparent"/);
+  });
+
+  it('Scenario: The mark survives without colour — the web bar carries a weight', () => {
+    const bar = readBar('app-tabs.web.tsx');
+
+    // This bar draws all five names, so the weight is the entire non-colour signal on it.
+    // `smallBold` is w700 and `small` is w500 — asserted in `themed-text.tsx` below, so that
+    // renaming either role cannot quietly flatten the two to one weight.
+    expect(bar).toMatch(/type=\{isFocused \? 'smallBold' : 'small'\}/);
+
+    const text = readFileSync(join(COMPONENTS, 'themed-text.tsx'), 'utf8');
+    expect(text).toMatch(/smallBold:\s*\{[^}]*fontWeight:\s*'?700'?/);
+    expect(text).toMatch(/\bsmall:\s*\{[^}]*fontWeight:\s*'?500'?/);
   });
 });

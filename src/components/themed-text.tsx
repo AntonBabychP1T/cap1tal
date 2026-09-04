@@ -6,10 +6,17 @@ import { useTheme } from '@/hooks/use-theme';
 export type ThemedTextType =
   | 'default'
   | 'title'
+  | 'hero'
+  | 'screenTitle'
+  | 'rowTitle'
+  | 'rowAmount'
   | 'small'
   | 'smallBold'
   | 'subtitle'
   | 'overline'
+  | 'caption'
+  | 'captionBold'
+  | 'note'
   | 'link'
   | 'linkPrimary'
   | 'code';
@@ -48,10 +55,17 @@ export function ThemedText({
       style={[
         type === 'default' && styles.default,
         type === 'title' && styles.title,
+        type === 'hero' && styles.hero,
+        type === 'screenTitle' && styles.screenTitle,
+        type === 'rowTitle' && styles.rowTitle,
+        type === 'rowAmount' && styles.rowAmount,
         type === 'small' && styles.small,
         type === 'smallBold' && styles.smallBold,
         type === 'subtitle' && styles.subtitle,
         type === 'overline' && styles.overline,
+        type === 'caption' && styles.caption,
+        type === 'captionBold' && styles.captionBold,
+        type === 'note' && styles.note,
         type === 'link' && styles.link,
         type === 'linkPrimary' && styles.linkPrimary,
         type === 'code' && styles.code,
@@ -82,17 +96,50 @@ const styles = StyleSheet.create({
   },
   /** The one number a screen leads with — «Залишилось». Always tabular, never a label. */
   title: {
-    fontSize: 40,
-    lineHeight: 44,
+    fontSize: 44,
+    lineHeight: 50,
     fontWeight: 700,
-    letterSpacing: -1,
+    letterSpacing: -1.5,
     fontVariant: ['tabular-nums'],
+  },
+  /**
+   * The number a screen leads with when the screen also has to say something else — «усього
+   * грошей» over a list of рахунки. One step under `title`, and tabular for the same reason.
+   */
+  hero: {
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: 700,
+    letterSpacing: -1.1,
+    fontVariant: ['tabular-nums'],
+  },
+  /** A screen's own name in its header. */
+  screenTitle: {
+    fontSize: 21,
+    lineHeight: 26,
+    fontWeight: 700,
+    letterSpacing: -0.4,
   },
   subtitle: {
     fontSize: 26,
     lineHeight: 32,
     fontWeight: 600,
     letterSpacing: -0.3,
+  },
+  /**
+   * A row in a list: its name on the left, its сума on the right. Smaller and heavier than
+   * `default`, so a column of сумі reads as one block rather than as a stack of sentences.
+   */
+  rowTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: 600,
+  },
+  rowAmount: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: 700,
+    fontVariant: ['tabular-nums'],
   },
   /** Group heading, field label, currency code — the role `smallBold` used to blur into sums. */
   overline: {
@@ -101,6 +148,31 @@ const styles = StyleSheet.create({
     fontWeight: 700,
     letterSpacing: 1,
     textTransform: 'uppercase',
+  },
+  /**
+   * The line *under* a value: a mini-label in a grid cell, «понад ліміт на 170,00» beneath a bar.
+   *
+   * Deliberately the same 11/14 as `overline` and deliberately nothing else like it. `overline` is
+   * a heading — bold, tracked, uppercased — and shouts across a gap; `caption` is a quiet
+   * continuation of the thing above it and must not. The canvas draws the two side by side, one
+   * naming a section and the other qualifying a сума, so one role could not serve both.
+   */
+  caption: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: 500,
+  },
+  /** A caption carrying a number rather than a word — a count, a share. */
+  captionBold: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: 700,
+  },
+  /** A status sentence or a footnote: one step under `small`, still meant to be read. */
+  note: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: 500,
   },
   link: {
     fontSize: 14,

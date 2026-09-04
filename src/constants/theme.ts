@@ -15,6 +15,12 @@ export const Colors = {
     background: '#F7F4EE',
     backgroundElement: '#FFFDF8',
     backgroundSelected: '#ECE5D8',
+    /**
+     * A surface set *into* a card: the tile behind a row's icon, the block a collapsed remainder
+     * sits on. One visible step off `backgroundElement`, in whichever direction the theme has room
+     * for — darker here, lighter on dark, where the card is already almost the page.
+     */
+    backgroundInset: '#F1ECE2',
     /** Hairline inside a card — the rule between two rows. */
     border: '#E2DACB',
     /**
@@ -22,10 +28,15 @@ export const Colors = {
      * it, so the card needs an outline to read as an object rather than as a patch of lighter
      * paint; on the light theme the same edge is quieter than the rule inside.
      */
-    cardEdge: '#EAE3D5',
+    cardEdge: '#E7DFD0',
     textSecondary: '#6B6459',
     /** Placeholder and archived text — not meant to be read, so it need not carry contrast. */
     textMuted: '#918878',
+    /**
+     * One step below `textMuted`: a chevron, a pairing arrow, a mark that only has to be *there*.
+     * Nothing the owner must read is drawn in it — if it carries a word, use `textMuted`.
+     */
+    textFaint: '#B0A797',
     /** The one accent: the screen's main action and the current choice. */
     accent: '#9A6A12',
     /** Text on an accent fill. Dark on ochre, never white. */
@@ -42,12 +53,18 @@ export const Colors = {
   dark: {
     text: '#E8E1D5',
     background: '#000000',
-    backgroundElement: '#1A1714',
+    /**
+     * A card is now nearly as dark as the page it sits on: black stays black, and what makes a
+     * card an object is its edge, not a patch of lighter paint. `cardEdge` carries that weight.
+     */
+    backgroundElement: '#0F0D0B',
     backgroundSelected: '#26221D',
-    border: '#2B2721',
-    cardEdge: '#2F2A23',
+    backgroundInset: '#141210',
+    border: '#1E1A15',
+    cardEdge: '#221E19',
     textSecondary: '#9C948A',
     textMuted: '#6B645B',
+    textFaint: '#4A443C',
     accent: '#D9A441',
     onAccent: '#17150F',
     accentSurface: '#2A2115',
@@ -65,8 +82,14 @@ export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
  */
 export const Radius = {
   chip: 9,
+  /** The square a row's leading glyph sits in. */
+  tile: 10,
   control: 12,
+  /** A typed-into or tapped-through field: the search bar, a numpad key, a half-width tile. */
+  field: 14,
   card: 16,
+  /** The one card a screen leads with, when it leads with one. Never two on a screen. */
+  hero: 18,
   sheet: 22,
   pill: 999,
 } as const;
@@ -99,7 +122,9 @@ export const Fonts = Platform.select({
 export const Spacing = {
   half: 2,
   one: 4,
+  oneHalf: 6,
   two: 8,
+  twoHalf: 12,
   three: 16,
   four: 24,
   five: 32,
