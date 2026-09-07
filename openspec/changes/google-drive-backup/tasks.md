@@ -49,24 +49,65 @@
       plugin entry (design D2, D9). Note `app.config.js` wraps `app.json` and is not where config
       goes; verify: `npx expo-doctor` and `scripts/android.sh up` still build, install and launch
       the app. **Blocked on 2.3 for the scheme itself.**
-- [ ] 2.3 **Owner's task — the agent cannot and must not do this.** Create the Google Cloud OAuth
-      client (Android type, package `com.antonbabychp1t.cap1tal`, plus the debug and release
-      signing certificates' SHA-1) and its consent screen, and confirm the publishing status and
-      the current classification of the `drive.appdata` scope — design D3's named pre-check,
-      because a client left in *Testing* expires the authorisation every seven days. Then two
-      edits to `app.json`, both of which the code is already written against:
+- [ ] 2.3 **Owner's task — the agent cannot and must not do this.**
 
-      ```json
-      "extra": { "googleOAuthClientId": "<the id>.apps.googleusercontent.com" },
-      "scheme": ["cap1tal", "com.googleusercontent.apps.<the id>"]
+      **First settle the client type empirically — it is genuinely unsettled.** Google has
+      restricted custom URI schemes for *new* Android-type OAuth clients, and the research split
+      on what that means here: either create an **iOS**-type client (no package, no SHA-1, and the
+      `com.googleusercontent.apps.<id>:/oauthredirect` redirect this app already builds is that
+      type's own convention), or an **Android**-type client with the "Custom URI scheme" toggle
+      enabled under Advanced settings. The five-minute test that decides it, before any rebuild:
+      create a client, then open this in a desktop browser with your own id substituted —
+
+      ```
+      https://accounts.google.com/o/oauth2/v2/auth?client_id=<ID>.apps.googleusercontent.com&redirect_uri=com.googleusercontent.apps.<ID>:/oauthredirect&response_type=code&scope=https://www.googleapis.com/auth/drive.appdata&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256
       ```
 
-      There is no client secret in an installed-app PKCE flow, so nothing here is a credential and
-      nothing goes into `.env`. Until it is done, `src/platform/google-auth-device.ts` answers
-      `not-configured`, which `src/ui/drive-backup.ts` shows as «Ця збірка застосунку не
-      налаштована на Google Drive» — a real state with its own sentence, not a crash; verify: the
-      id is present, no client secret exists anywhere in the repo, and D3's answer (appdata as
-      designed, or the `drive.file` fallback) is written into design.md.
+      A normal consent screen means that redirect is accepted — stop, do not click Allow. `Error
+      400: redirect_uri_mismatch` or `invalid_request` means it is not, and the other client type
+      (or the `com.antonbabychp1t.cap1tal:/oauthredirect` package form, which is what
+      `expo-auth-session`'s own Google provider uses on Android) is the answer. Report which one
+      reached the consent screen; if it is not the reversed-id form, `redirectUri()` in
+      `src/platform/google-auth-device.ts` needs its one line changed, and the doc comments there
+      and in `design.md` D2 that say "Android type" need correcting with it.
+
+      **Then, whichever type won:** enable the **Google Drive API** in the same project (without
+      it every Drive call answers 403 however good the token is); set Audience to **External**,
+      never Internal (Internal binds the project to the `monobank.ua` Workspace, wrong for a
+      personal app and lost at offboarding); add the three scopes `drive.appdata`, `openid`,
+      `userinfo.email` — all three are **non-sensitive**, so no verification review is needed;
+      and **publish the app to "In production" before connecting for the first time**. That last
+      one is design D3's pre-check and it is not optional: a consent screen left in *Testing*
+      issues refresh tokens that expire after seven days, `drive.appdata` is outside the
+      name/email/profile exemption, and the app would degrade to «підключіть знову» every week.
+      A token minted under Testing keeps its seven-day fate, so if you have already connected,
+      disconnect and reconnect after publishing.
+
+      **If the Android type wins**, its SHA-1 must come from the keystore gradle actually signs
+      with — `android/app/debug.keystore`, which `expo prebuild` generates, **not**
+      `~/.android/debug.keystore`. The agent cannot read it (`guard-bash.sh` blocks keystores, and
+      rightly). Note also that one Android client holds exactly one package and one fingerprint,
+      so a release build later needs a **second** client, a second `googleOAuthClientId` and a
+      second scheme — this task's earlier wording, "one client plus the debug and release
+      certificates' SHA-1", was wrong.
+
+      **The two `app.json` edits** (not `app.config.js`, which only wraps it and already spreads
+      `extra`):
+
+      ```json
+      "scheme": ["cap1tal", "com.googleusercontent.apps.<ID>"],
+      "extra": { "googleOAuthClientId": "<ID>.apps.googleusercontent.com" }
+      ```
+
+      `cap1tal` must stay first — it is the app's own deep-link scheme. Then `npx expo-doctor`,
+      `npm run verify`, and `scripts/android.sh up`: a Metro reload is **not** enough, because
+      `expo-constants` bakes `extra` into the APK at build time and the scheme is compiled into
+      `AndroidManifest.xml`. Confirm with `grep googleusercontent android/app/src/main/AndroidManifest.xml`.
+
+      Verify: the id is in `app.json`, `npx expo config --type public` shows it under `extra`, no
+      client secret exists anywhere in the repo (there is none for a PKCE installed-app client —
+      the id is public configuration and is safe to commit), and D3's answer plus the settled
+      client type and redirect are written into `design.md`.
 
 ## 3. The envelope and the код відновлення — pure, and the heart of the change
 
