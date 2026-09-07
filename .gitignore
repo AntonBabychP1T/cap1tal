@@ -55,3 +55,9 @@ CLAUDE.local.md
 .DS_Store
 *.log
 npm-debug.log*
+
+# the icon generator's contact sheet (scripts/icon/build.py --preview)
+/icon-preview.png
+
+# python bytecode from the icon generator
+__pycache__/
