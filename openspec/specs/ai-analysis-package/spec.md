@@ -328,7 +328,8 @@ A пакет для аналізу SHALL NOT carry: any identifier of a раху
 правило, ліміт or ціль; the назва of any рахунок; the monobank token or any key, cursor or
 identifier of the monobank connection; any баланс банку; the stored payload of any captured bank
 notification, any pending чернетка with its text, or any fingerprint; any відстежуваний
-застосунок; the бекап or its envelope; any device or installation identifier. An опис that a
+застосунок; the бекап or its envelope; any device or installation identifier; any **досягнення**,
+its **свідчення**, any decision about a **виклик**, or any **місячна норма витрат**. An опис that a
 confirmed чернетка left on its транзакція is an опис like any other — the bank's text, as an
 imported monobank опис is — and leaves only under the «Продавці» choice, never by default.
 Whether описи and individual транзакції are carried SHALL be decided by the owner's explicit
@@ -357,6 +358,12 @@ choice for that run, off by default and never remembered between runs.
 
 - **WHEN** the owner has not chosen to include описи
 - **THEN** no опис of any транзакція appears in the пакет, and no merchant list appears
+
+#### Scenario: The прогрес state stays on the phone
+
+- **WHEN** a пакет is built on a device holding twenty earned досягнення, two accepted виклики and
+  a confirmed UAH норма
+- **THEN** the serialised пакет holds none of them, in no form and under no name
 
 ### Requirement: Описи and individual транзакції are separate opt-ins
 
