@@ -27,6 +27,11 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   balance the app believes.
 - **Bank balance** (баланс банку) — the balance the bank reports where an API exists; shown next
   to the computed one, never overwriting it.
+- **Contributed** (вкладено) — for an інвестиційний рахунок: that рахунок's розрахунковий баланс —
+  its початковий залишок plus every транзакція touching it, which for such a рахунок is what went
+  in minus what came back out. Money that was already there before the app started counts as
+  вкладено too. It is never a second, separately kept total: what was put in is what the
+  транзакції say, and a number beside them could disagree with them.
 - **Current value** (поточна вартість) — what an інвестиційний рахунок is worth today, as the owner
   types it in: a сума in the рахунок's own currency with the дата it was entered, at most one per
   рахунок, replaced when entered again and clearable. Entering it creates **no транзакція** and
@@ -155,8 +160,12 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   available to spend. Equivalently, income = spent + invested + saved + lent + left.
 - **Approximate UAH equivalent** (приблизно в гривні) — a secondary conversion of non-UAH amounts
   at monobank's current rate **[current rate: PROPOSED]**; the per-currency numbers are the truth.
-- **Gain / loss** (прибуток / збиток) — for an investment account: hand-entered current value
-  minus money put in.
+- **Gain / loss** (прибуток / збиток) — for an інвестиційний рахунок: its поточна вартість minus
+  its вкладено, in that рахунок's own currency. A рахунок with no поточна вартість has no
+  прибуток / збиток at all — вкладено alone is what is known about it — and equal amounts are a
+  прибуток of zero, which is a different answer from having none. It is **not** a monthly number:
+  it is neither дохід nor інвестовано, it reaches залишилось nowhere, and it is listed here beside
+  them only so it is never mistaken for one of them.
 
 ## Progress
 

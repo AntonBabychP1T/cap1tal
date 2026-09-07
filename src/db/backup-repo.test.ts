@@ -25,6 +25,7 @@ import { categoriesRepo } from './categories-repo';
 import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { importRepo } from './import-repo';
+import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
 import { notificationsRepo } from './notifications-repo';
@@ -521,6 +522,7 @@ describe('the whole stored state replaced by a snapshot, as one unit', () => {
       achievements: [],
       challengeDecisions: [],
       norms: [],
+      investmentValues: [],
     };
   }
 
@@ -938,6 +940,7 @@ describe('the round trip a бекап promises', () => {
         achievements: [],
         challengeDecisions: [],
         norms: [],
+        investmentValues: [],
       },
       MADE_AT,
     ).bytes;
@@ -1103,6 +1106,7 @@ describe('the round trip a бекап promises', () => {
         achievements: [],
         challengeDecisions: [],
         norms: [],
+        investmentValues: [],
       },
       MADE_AT,
     ).bytes;
@@ -1453,6 +1457,7 @@ describe('the прогрес travels: досягнення, виклики and �
       })),
       challengeDecisions: [],
       norms: [],
+      investmentValues: [],
     };
 
     backupRepo(target.db).replaceAll(four);
@@ -1554,5 +1559,86 @@ describe('the прогрес travels: досягнення, виклики and �
 
     expect(refusal !== 'ok' && isRefusal(refusal) && refusal.kind).toBe('damaged');
     expect(target.db.select().from(spendingNorms).all()).toEqual([]);
+  });
+});
+
+describe('the поточна вартість travels, and a restore replaces the ones it finds', () => {
+  let source: TestStorage;
+  let target: TestStorage;
+
+  beforeEach(() => {
+    source = openTestDb();
+    seedWorld(source.db);
+    target = openTestDb();
+  });
+  afterEach(() => {
+    source.close();
+    target.close();
+  });
+
+  it('Scenario: A вартість survives the round trip', async () => {
+    investmentsRepo(source.db).set('invest', {
+      amount: money(560_000, 'UAH'),
+      asOf: '2026-08-28',
+    });
+
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+
+    expect(investmentsRepo(target.db).get('invest')).toEqual({
+      amount: money(560_000, 'UAH'),
+      asOf: '2026-08-28',
+    });
+    // And the рахунок's own money is untouched by the вартість travelling with it.
+    const restored = accountsRepo(target.db).list().find((a) => a.id === 'invest')!;
+    expect(computeBalance(restored, transactionsRepo(target.db).listByAccount('invest'))).toEqual(
+      computeBalance(invest, transactionsRepo(source.db).listByAccount('invest')),
+    );
+  });
+
+  it('Scenario: A restore replaces the вартості it finds', async () => {
+    investmentsRepo(source.db).set('invest', {
+      amount: money(560_000, 'UAH'),
+      asOf: '2026-08-28',
+    });
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+
+    // The phone being restored onto holds a вартість of its own — on the same рахунок id, since
+    // `seedWorld` builds the same world — and it is the бекап's figure that must stand afterwards.
+    seedWorld(target.db);
+    investmentsRepo(target.db).set('invest', {
+      amount: money(999_000, 'UAH'),
+      asOf: '2026-01-01',
+    });
+
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+
+    expect(investmentsRepo(target.db).all()).toEqual(
+      new Map([['invest', { amount: money(560_000, 'UAH'), asOf: '2026-08-28' }]]),
+    );
+  });
+
+  it('A restore onto a phone that holds a вартість is not refused by a foreign key', async () => {
+    // The рахунки are deleted and rebuilt by `replaceAll`, and `investment_values.account_id` is
+    // `onDelete: 'restrict'`: without the delete that goes before them, this restore fails whole.
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    seedWorld(target.db);
+    investmentsRepo(target.db).set('invest', {
+      amount: money(999_000, 'UAH'),
+      asOf: '2026-01-01',
+    });
+
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+    // The бекап named none, so the phone has none — nothing of the replaced state is left behind.
+    expect(investmentsRepo(target.db).all()).toEqual(new Map());
+  });
+
+  it('Scenario: A бекап written before вартості existed still restores', async () => {
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+    expect(investmentsRepo(target.db).all()).toEqual(new Map());
+    // ...and everything else arrived: the вартості being absent is not the restore failing.
+    expect(accountsRepo(target.db).list()).toHaveLength(accountsRepo(source.db).list().length);
   });
 });

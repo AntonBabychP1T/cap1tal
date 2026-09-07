@@ -38,9 +38,20 @@ not available money, and no monthly number moves because of it.
 - **Modified `persistence`** — a поточна вартість survives a restart, arrives by a new
   append-only migration that keeps every stored row, and is rejected unless it names a stored
   рахунок of вид `investment` and carries that рахунок's own currency.
-- **Documentation** — docs/glossary.md gains «Вкладено» and «Поточна вартість» as terms (the
-  glossary defines «Прибуток / збиток» by them already), and the tech-task §5 roadmap row for
-  step 10 moves to ✅.
+- **Modified `backup-file`** — a бекап carries every поточна вартість and a restore puts them
+  back, replacing wholesale like the rest of the state; a вартість naming a рахунок the бекап does
+  not hold, a рахунок of another вид, another currency or a negative сума refuses the бекап whole.
+  A вартість is hand-entered and derivable from nothing, so a бекап that dropped it would lose the
+  only record of what an інвестиція is worth.
+- **The цілі finally get what they were promised** — the `goals` capability already says an
+  інвестиційний рахунок's внесок **is** its поточна вартість where the app holds one; until now the
+  app held none, and the four places that read a внесок carry an unfed вартості map each marked
+  «empty until `investments-value` lands». This change feeds them: the ціль's own screen, the цілі
+  group on Звіти and the пакет for the AI-аналіз. It is the one thing a вартість moves, and the
+  investments spec says so where it says a вартість moves nothing else.
+- **Documentation** — docs/glossary.md gains «Вкладено» (it already defines «Поточна вартість»,
+  which the goals change put there, and «Прибуток / збиток» by both), and the tech-task §5 roadmap
+  row for step 10 moves to ✅.
 
 Non-goals of this change (deliberate):
 
@@ -59,7 +70,13 @@ Non-goals of this change (deliberate):
 - No rate conversion: вкладено, вартість and прибуток live in the рахунок's own currency and are
   never summed across рахунки or converted. The приблизний підсумок у гривні stays the Місяць
   screen's concern.
-- No «Звіти» change: the history series stay витрачено / дохід / інвестовано.
+- The Звіти history series stay витрачено / дохід / інвестовано: no прибуток joins them, and no
+  chart of вартість over time exists. The цілі group on that screen does start counting a вартість
+  as the внесок — that is the goals capability's own requirement, not a new series.
+- No звірка is taken away: «Звірити» against a typed фактичний залишок stays offered on every
+  unarchived рахунок, інвестиційний included. What this change refuses is a звірка **of the
+  поточна вартість** against the розрахунковий баланс, which would turn a прибуток into a
+  коригування and so into дохід.
 
 ## Capabilities
 
@@ -73,19 +90,29 @@ Non-goals of this change (deliberate):
 ### Modified Capabilities
 
 - `accounts-screen`: an інвестиційний рахунок's row shows вкладено / поточна вартість (with its
-  дата) / прибуток, and is where the вартість is entered, replaced and cleared.
+  дата) / прибуток, and is where the вартість is entered, replaced and cleared. No «Звірити» is
+  offered against the вартість; the рахунок's own звірка against a typed фактичний залишок is
+  untouched.
 - `persistence`: the поточна вартість round-trips through storage under a new append-only
   migration, one per рахунок, and is rejected unless its рахунок is stored, of вид `investment`
   and of the same currency.
+- `backup-file`: a бекап carries every поточна вартість, a restore replaces them wholesale, and a
+  вартість the бекап cannot stand behind refuses the бекап whole.
 
 ## Impact
 
-- New code: `src/domain/investments.ts` (вкладено, прибуток/збиток), `src/db/investments-repo.ts`
-  and one new table with its append-only migration under `drizzle/`; names indicative, final
-  layout in design.md.
+- New code: `src/domain/investments.ts` (вкладено, прибуток/збиток, the `CurrentValue` type
+  `src/ui/goal-screen.ts` declared ahead of it), `src/db/investments-repo.ts` and one new table
+  with its append-only migration under `drizzle/`; names indicative, final layout in design.md.
 - Touched code: `src/ui/account-groups.ts` (the Рахунки row view model gains the three
   investment numbers), `src/app/(tabs)/accounts.tsx` (showing and entering them),
-  `src/db/schema.ts`, `src/db/repos.ts`, `src/db/migrations.test.ts`, `src/ui/labels.ts` if a
-  label is needed; `docs/glossary.md` and `docs/tech-task.md`.
+  `src/ui/amount-input.ts` (the zero-or-positive parser), `src/db/schema.ts`, `src/db/repos.ts`,
+  `src/db/migrations.test.ts`; `docs/glossary.md` and `docs/tech-task.md`.
+- The бекап: `src/backup/format.ts` (the carried shape, the table list and the storage-shape
+  version), `src/backup/canonical.ts` if the shape needs an ordering, `src/db/backup-repo.ts`
+  (snapshot, and the delete that must happen before `accounts` under `onDelete: 'restrict'`), with
+  their tests.
+- The consumers of a внесок, each of which already takes a вартості map and is handed none:
+  `src/app/goal/[id].tsx`, `src/app/(tabs)/reports.tsx` and `src/ui/ai-analysis-screen.ts`.
 - No new dependencies, no native module, no permission, no Expo config change, and no network
   call anywhere in this change — `npm run verify` stays Node-only and under a minute.

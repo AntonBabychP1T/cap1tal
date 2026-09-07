@@ -15,19 +15,27 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import {
   accounts as accountsRepo,
+  investments as investmentsRepo,
   monobank as monobankRepo,
   rates as ratesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { computeBalance, reconcile, type Account } from '@/domain/account';
+import { contributed } from '@/domain/investments';
 import type { Money } from '@/domain/money';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useTheme } from '@/hooks/use-theme';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountFromDraft, blankDraft, type AccountDraft } from '@/ui/account-form';
-import { accountRows, groupAccountsByKind, reconcileConfirmation } from '@/ui/account-groups';
+import {
+  accountRows,
+  clearValueConfirmation,
+  groupAccountsByKind,
+  reconcileConfirmation,
+} from '@/ui/account-groups';
 import { accountTotals, approximateTotals, totalsLine } from '@/ui/account-totals';
+import { parseCurrentValue } from '@/ui/amount-input';
 import { todayIso } from '@/ui/dates';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
@@ -66,7 +74,12 @@ export default function AccountsScreen() {
     useCallback(() => {
       const all = accountsRepo.list();
       const balances = new Map(
-        all.map((a) => [a.id, computeBalance(a, transactionsRepo.listByAccount(a.id))]),
+        all.map((a) => {
+          const own = transactionsRepo.listByAccount(a.id);
+          // The same number either way — an інвестиційний рахунок's розрахунковий баланс **is** its
+          // вкладено — asked for by the name this screen shows it under.
+          return [a.id, a.kind === 'investment' ? contributed(a, own) : computeBalance(a, own)];
+        }),
       );
       // The bank's own side, joined at the screen and not on the `Account`: a link keyed by
       // рахунок id, and the last known баланс банку of the monobank account it names.
@@ -77,7 +90,15 @@ export default function AccountsScreen() {
           bankBalances.set(link.accountId, bankAccount.bankBalance);
         }
       }
-      return { all, balances, bankBalances, rates: ratesRepo.all() };
+      // The поточні вартості, read on focus like everything else here: one row per інвестиційний
+      // рахунок that has one, which is single digits.
+      return {
+        all,
+        balances,
+        bankBalances,
+        currentValues: investmentsRepo.all(),
+        rates: ratesRepo.all(),
+      };
     }, []),
   );
 
@@ -102,12 +123,14 @@ export default function AccountsScreen() {
   const rowsById = useMemo(
     () =>
       new Map(
-        accountRows(stored.all, stored.balances, stored.bankBalances).map((row) => [
-          row.account.id,
-          row,
-        ]),
+        accountRows(
+          stored.all,
+          stored.balances,
+          stored.bankBalances,
+          stored.currentValues,
+        ).map((row) => [row.account.id, row]),
       ),
-    [stored.all, stored.balances, stored.bankBalances],
+    [stored.all, stored.balances, stored.bankBalances, stored.currentValues],
   );
   const [draft, setDraft] = useState<AccountDraft | undefined>();
 
@@ -166,6 +189,77 @@ export default function AccountsScreen() {
       ]);
     },
     [reload, reportBug, rowsById, stored.balances, stored.bankBalances],
+  );
+
+  /**
+   * «Записати вартість»: the сума the owner is typing for one інвестиційний рахунок, and which
+   * рахунок it is for. One at a time — the form opens on the row it belongs to, so two of them
+   * would be two forms claiming the same keyboard.
+   */
+  const [valueDraft, setValueDraft] = useState<{ accountId: string; typed: string } | undefined>();
+
+  /**
+   * The вартість the owner typed, in the рахунок's own currency, dated the day it was entered
+   * (design D5 — no дата field is offered). Nothing else moves: no транзакція is written, and the
+   * розрахунковий баланс this row shows is the same number afterwards.
+   */
+  const saveValue = useCallback(() => {
+    if (!valueDraft) return;
+    const account = stored.all.find((a) => a.id === valueDraft.accountId);
+    if (!account) return;
+    try {
+      investmentsRepo.set(account.id, {
+        amount: parseCurrentValue(valueDraft.typed, account.currency),
+        asOf: todayIso(new Date()),
+      });
+      setValueDraft(undefined);
+      reload();
+    } catch (error) {
+      Alert.alert(
+        ...failureAlert({
+          title: 'Не збережено',
+          where: 'account-current-value',
+          error,
+          report: reportBug,
+        }),
+      );
+    }
+  }, [reload, reportBug, stored.all, valueDraft]);
+
+  /**
+   * Clearing is confirmed first, like «Звірити» — not because money moves (none does) but because
+   * what goes is the app's only record of what this інвестиція is worth, and nothing can recompute
+   * it. The sentence says exactly that before anything is removed.
+   */
+  const confirmClearValue = useCallback(
+    (a: Account) => {
+      const row = rowsById.get(a.id);
+      if (!row?.investment?.value) return;
+      Alert.alert('Забрати вартість', clearValueConfirmation(row), [
+        { text: 'Скасувати', style: 'cancel' },
+        {
+          text: 'Забрати',
+          style: 'destructive',
+          onPress: () => {
+            try {
+              investmentsRepo.clear(a.id);
+              setValueDraft(undefined);
+              reload();
+            } catch (error) {
+              Alert.alert(
+                ...failureAlert({
+                  title: 'Не збережено',
+                  where: 'account-current-value-clear',
+                  error,
+                  report: reportBug,
+                }),
+              );
+            }
+          },
+        },
+      ]);
+    },
+    [reload, reportBug, rowsById],
   );
 
   return (
@@ -264,6 +358,39 @@ export default function AccountsScreen() {
                         </ThemedText>
                       </View>
                     ) : null}
+                    {/* An інвестиційний рахунок's three numbers. The amount above is named rather
+                        than repeated — it **is** вкладено — and the вартість, its дата and the
+                        прибуток stand under it, each labelled so none is read as another. */}
+                    {row?.investment ? (
+                      <>
+                        <ThemedText
+                          type="small"
+                          themeColor="textSecondary"
+                          style={styles.underAmount}>
+                          {row.investment.contributedLabel}
+                        </ThemedText>
+                        {row.investment.value ? (
+                          <>
+                            <View style={styles.line}>
+                              <ThemedText type="small" themeColor="textSecondary">
+                                поточна вартість на {row.investment.value.asOf}
+                              </ThemedText>
+                              <ThemedText type="small" tabular themeColor="textSecondary">
+                                {row.investment.value.amount}
+                              </ThemedText>
+                            </View>
+                            <View style={styles.line}>
+                              <ThemedText type="small" themeColor="textSecondary">
+                                {row.investment.value.gainLossLabel}
+                              </ThemedText>
+                              <ThemedText type="small" tabular themeColor="textSecondary">
+                                {row.investment.value.gainLoss}
+                              </ThemedText>
+                            </View>
+                          </>
+                        ) : null}
+                      </>
+                    ) : null}
                   </Pressable>
                   {/* The difference is in the button, so what «Звірити» would write is readable
                       before it is tapped. */}
@@ -272,6 +399,43 @@ export default function AccountsScreen() {
                       <RowAction
                         title={`Звірити · ${row.difference}`}
                         onPress={() => confirmReconcile(a)}
+                      />
+                    </View>
+                  ) : null}
+                  {/* Recording, replacing and clearing happen on the рахунок's own row. Nothing
+                      here writes a транзакція, and no «Звірити» is offered for the difference
+                      between a вартість and вкладено — that difference is the прибуток. */}
+                  {row?.investment && valueDraft?.accountId !== a.id ? (
+                    <View style={styles.reconcile}>
+                      <RowAction
+                        title={row.investment.recordLabel}
+                        onPress={() => setValueDraft({ accountId: a.id, typed: '' })}
+                      />
+                      {row.investment.value ? (
+                        <RowAction
+                          title="Забрати"
+                          tone="danger"
+                          onPress={() => confirmClearValue(a)}
+                        />
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {valueDraft?.accountId === a.id ? (
+                    <View style={styles.valueForm}>
+                      <Field
+                        label="Поточна вартість"
+                        value={valueDraft.typed}
+                        onChangeText={(typed) => setValueDraft({ accountId: a.id, typed })}
+                        keyboardType="numbers-and-punctuation"
+                        placeholder="0,00"
+                        hint={`${a.currency} — станом на сьогодні`}
+                        autoFocus
+                      />
+                      <Action title="Зберегти" onPress={saveValue} />
+                      <Action
+                        variant="secondary"
+                        title="Скасувати"
+                        onPress={() => setValueDraft(undefined)}
                       />
                     </View>
                   ) : null}
@@ -340,6 +504,8 @@ const styles = StyleSheet.create({
   },
   name: { flex: 1 },
   amount: { fontWeight: 600 },
-  reconcile: { flexDirection: 'row', justifyContent: 'flex-end' },
+  reconcile: { flexDirection: 'row', justifyContent: 'flex-end', gap: Spacing.two },
+  underAmount: { textAlign: 'right' },
+  valueForm: { gap: Spacing.two },
   pressed: { opacity: 0.7 },
 });

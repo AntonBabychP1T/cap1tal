@@ -9,6 +9,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   goals as goalsRepo,
+  investments as investmentsRepo,
   limits as limitsRepo,
   rates as ratesRepo,
   transactions as transactionsRepo,
@@ -300,6 +301,9 @@ export default function ReportsScreen() {
         // stored rates to be approximated at all. Both are read here and changed nowhere.
         limits: limitsRepo.list(),
         rates: ratesRepo.all(),
+        // An інвестиційний рахунок's внесок to a ціль is its поточна вартість where the app holds
+        // one; the дата is the ціль's own screen's concern, so only the суми come this far.
+        currentValues: investmentsRepo.amounts(),
       }),
       [],
     ),
@@ -321,6 +325,7 @@ export default function ReportsScreen() {
         limits: stored.limits,
         categories: stored.categories,
         rates: stored.rates,
+        currentValues: stored.currentValues,
         shownCurrency,
         chosenCategoryId,
         chosenMonth,

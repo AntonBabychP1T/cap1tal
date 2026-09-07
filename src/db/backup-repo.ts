@@ -16,6 +16,7 @@ import {
   fiscalReceipts,
   goalAccounts,
   goals,
+  investmentValues,
   monobankAccounts,
   monobankImportedItems,
   monobankLinks,
@@ -254,6 +255,18 @@ export function backupRepo(db: Storage): BackupStore {
             amount: money(row.amount, row.currency),
             confirmedAtMs: row.confirmedAt.getTime(),
           })),
+        // What the owner said each інвестиційний рахунок is worth. No транзакція explains it and
+        // nothing can recompute it, so it travels or it is lost.
+        investmentValues: db
+          .select()
+          .from(investmentValues)
+          .orderBy(asc(investmentValues.accountId))
+          .all()
+          .map((row) => ({
+            accountId: row.accountId,
+            amount: money(row.amount, row.currency),
+            asOf: row.asOf,
+          })),
         // The one setting a бекап carries about the app's own voice, and only when the owner has
         // ever set it: an absent one restores as off rather than as somebody else's 21:00.
         ...(reminder
@@ -322,6 +335,11 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(earnedAchievements).run();
         tx.delete(challengeDecisions).run();
         tx.delete(spendingNorms).run();
+        // The вартості go immediately before the рахунки they name. This is not tidiness: the
+        // reference is `onDelete: 'restrict'` like every other reference to a рахунок and foreign
+        // keys are on, so leaving one here would refuse the whole restore on any phone where the
+        // owner had ever recorded what an інвестиція is worth — the чернетки's trap exactly.
+        tx.delete(investmentValues).run();
         tx.delete(accounts).run();
         tx.delete(categories).run();
         tx.delete(sources).run();
@@ -495,6 +513,16 @@ export function backupRepo(db: Storage): BackupStore {
               currency: norm.amount.currency,
               amount: norm.amount.amount,
               confirmedAt: new Date(norm.confirmedAtMs),
+            })
+            .run();
+        }
+        for (const value of state.investmentValues) {
+          tx.insert(investmentValues)
+            .values({
+              accountId: value.accountId,
+              amount: value.amount.amount,
+              currency: value.amount.currency,
+              asOf: value.asOf,
             })
             .run();
         }

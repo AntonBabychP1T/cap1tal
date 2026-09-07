@@ -34,6 +34,13 @@ them could disagree with them.
 - **THEN** its вкладено is 500000 minor units UAH, while March's інвестовано is 300000 and
   April's інвестовано is 200000 minor units UAH
 
+#### Scenario: A cross-currency переказ is вкладено in the рахунок's own currency
+
+- **WHEN** a USD `investment` рахунок with a початковий залишок of 0 receives a переказ that left a
+  UAH картка as 410000 minor units UAH and arrived as 10000 minor units USD
+- **THEN** its вкладено is 10000 minor units USD — the leg that arrived, in the рахунок's own
+  currency; the UAH that left is the картка's side of the same переказ and is never вкладено
+
 #### Scenario: A рахунок of another вид has no вкладено
 
 - **WHEN** вкладено is asked of a рахунок of вид `spending`
@@ -92,6 +99,19 @@ It SHALL NOT change the рахунок's розрахунковий баланс
 turning a прибуток into a коригування would make it дохід and destroy the difference this
 capability exists to show. A real profit reaches the app only as the owner records it — a coupon
 paid back is a дохід with its own джерело, entered like any other.
+
+There is one number a поточна вартість does move, and it is not a monthly one: the внесок an
+інвестиційний рахунок brings to a ціль-накопичення, which the goals capability already defines as
+that рахунок's поточна вартість where the app holds one and its розрахунковий баланс otherwise.
+Recording, replacing or clearing a вартість SHALL therefore change the прогрес of every ціль whose
+склад names that рахунок, and SHALL change nothing else anywhere.
+
+#### Scenario: A вартість moves the прогрес of a ціль that holds the рахунок
+
+- **WHEN** an `investment` рахунок whose розрахунковий баланс is 500000 minor units UAH stands in
+  the склад of a ціль-накопичення, and a поточна вартість of 560000 minor units UAH is recorded
+- **THEN** that ціль's прогрес counts 560000 minor units UAH for that рахунок instead of 500000,
+  while the рахунок's розрахунковий баланс, its транзакції and every monthly number are unchanged
 
 #### Scenario: A вартість above вкладено leaves the баланс where it was
 

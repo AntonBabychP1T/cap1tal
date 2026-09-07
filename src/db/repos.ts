@@ -6,6 +6,7 @@ import { db } from './client';
 import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { importRepo } from './import-repo';
+import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
 import { notificationsRepo } from './notifications-repo';
@@ -38,6 +39,8 @@ export const monobank = monobankRepo(db);
 /** The ліміти categories carry, and the цілі — what the owner wants, beside what already is. */
 export const limits = limitsRepo(db);
 export const goals = goalsRepo(db);
+/** The поточна вартість of each інвестиційний рахунок — what the owner last said it is worth. */
+export const investments = investmentsRepo(db);
 /** What bank notifications have come to: the watched apps, the fingerprints, the чернетки. */
 export const notifications = notificationsRepo(db);
 /** The фіскальні чеки beneath транзакції, with their позиції. Nothing here moves any money. */

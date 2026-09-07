@@ -7,6 +7,7 @@ import {
   formatSignedMoney,
   parseActualBalance,
   parseAmount,
+  parseCurrentValue,
   parseOpeningBalance,
 } from './amount-input';
 
@@ -197,5 +198,34 @@ describe('formatSignedMoney', () => {
 
   it('Zero carries no sign', () => {
     expect(formatSignedMoney(money(0, 'UAH'))).toBe('0,00 UAH');
+  });
+});
+
+describe('parseCurrentValue', () => {
+  it('Scenario: A negative вартість is rejected, zero is not', () => {
+    // An інвестиція can be worth nothing, never less than nothing.
+    expect(() => parseCurrentValue('-100', 'UAH')).toThrow(/менш/);
+    expect(() => parseCurrentValue('-0,01', 'UAH')).toThrow(/менш/);
+    // The minus the app itself prints, not only the one on the keyboard.
+    expect(() => parseCurrentValue('\u2212100', 'UAH')).toThrow(/менш/);
+
+    expect(parseCurrentValue('0', 'UAH')).toEqual(money(0, 'UAH'));
+    expect(parseCurrentValue('0,00', 'UAH')).toEqual(money(0, 'UAH'));
+  });
+
+  it('A вартість is the digits the owner typed, comma or dot', () => {
+    expect(parseCurrentValue('5600', 'UAH')).toEqual(money(560000, 'UAH'));
+    expect(parseCurrentValue('5600,50', 'UAH')).toEqual(money(560050, 'UAH'));
+    expect(parseCurrentValue('5600.50', 'USD')).toEqual(money(560050, 'USD'));
+  });
+
+  it('An untouched field is not «it is worth nothing»', () => {
+    expect(() => parseCurrentValue('', 'UAH')).toThrow(/напишіть/);
+    expect(() => parseCurrentValue('   ', 'UAH')).toThrow(/напишіть/);
+  });
+
+  it("What is not a number is refused in the owner's own words", () => {
+    expect(() => parseCurrentValue('десь тисяч п`ять', 'UAH')).toThrow(/це не сума/);
+    expect(() => parseCurrentValue('5600,505', 'UAH')).toThrow(/після коми/);
   });
 });

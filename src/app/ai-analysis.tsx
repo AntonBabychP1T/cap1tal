@@ -10,6 +10,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   goals as goalsRepo,
+  investments as investmentsRepo,
   limits as limitsRepo,
   rates as ratesRepo,
   sources as sourcesRepo,
@@ -71,6 +72,9 @@ export default function AiAnalysisScreen() {
         limits: limitsRepo.list(),
         goals: goalsRepo.list(),
         rates: ratesRepo.all(),
+        // What each інвестиційний рахунок is worth: the внесок it brings to a ціль, so the пакет
+        // describes the прогрес the ціль's own screen shows and not a second, older number.
+        currentValues: investmentsRepo.amounts(),
       }),
       [],
     ),

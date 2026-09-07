@@ -50,6 +50,7 @@ function state(): BackupState {
     achievements: [],
     challengeDecisions: [],
     norms: [],
+    investmentValues: [],
   };
 }
 

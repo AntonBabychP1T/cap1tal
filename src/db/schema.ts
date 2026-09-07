@@ -1065,3 +1065,45 @@ export const driveBackup = sqliteTable(
 
 export type DriveBackupRow = typeof driveBackup.$inferSelect;
 export type NewDriveBackupRow = typeof driveBackup.$inferInsert;
+
+/**
+ * The поточна вартість of an інвестиційний рахунок: what the owner last said it is worth, and the
+ * дата they said it on. One row per рахунок — the primary key **is** «at most one вартість per
+ * рахунок», so recording is an upsert, clearing a delete, and a second row is not representable.
+ * This is `category_limits` again (limits-goals-reports design D1), for its reasons: nullable
+ * columns on `accounts` would thread вартість-awareness through every mapper and every screen that
+ * builds an `Account`, and would make a half-set pair — a сума without its currency — a shape.
+ *
+ * The currency column stays although the рахунок has one, for the reason the цілі kept theirs: an
+ * amount stored without its currency code beside it would be the first such amount in this schema.
+ * That the two agree is `investments-repo`'s read-and-compare, together with «this рахунок is of
+ * вид `investment`» — SQLite cannot express either without a trigger.
+ *
+ * `amount >= 0` rather than `> 0`: an інвестиція may be worth nothing, never less than nothing.
+ * `as_of` is the domain's `IsoDate` verbatim, TEXT 'YYYY-MM-DD', a calendar date like a
+ * транзакція's, so no device timezone can move it. `onDelete: 'restrict'` like every other
+ * reference to a рахунок — рахунки archive, never delete, and an archived one keeps its вартість.
+ */
+export const investmentValues = sqliteTable(
+  'investment_values',
+  {
+    accountId: text('account_id')
+      .primaryKey()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+    /** Integer minor units, beside the currency code it is measured in — never one without the other. */
+    amount: integer('amount').notNull(),
+    currency: text('currency').notNull(),
+    /** The day the owner entered this вартість, not a day they chose: a вартість is as old as it is. */
+    asOf: text('as_of').notNull(),
+  },
+  (t) => [
+    check('investment_values_amount_not_negative', sql`${t.amount} >= 0`),
+    check(
+      'investment_values_as_of_iso',
+      sql`${t.asOf} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+  ],
+);
+
+export type InvestmentValueRow = typeof investmentValues.$inferSelect;
+export type NewInvestmentValueRow = typeof investmentValues.$inferInsert;

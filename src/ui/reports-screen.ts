@@ -309,8 +309,10 @@ export function reportsViewModel(input: {
   /** The stored monobank rates — what makes an approximate progress possible, and marks it «≈». */
   rates?: readonly MonobankRate[];
   /**
-   * The поточна вартість of each інвестиційний рахунок that has one, by рахунок id. Empty until
-   * `investments-value` lands; passing it here is what keeps the пакет and this tab on one number.
+   * The поточна вартість of each інвестиційний рахунок that has one, by рахунок id. Read from
+   * `investments-repo` by the tab; passing it here is what keeps the пакет and this tab on one
+   * number. Empty on a device where no вартість has been entered, which is every device until one
+   * is.
    */
   currentValues?: ReadonlyMap<string, Money>;
   /** What the owner switched to; ignored when the history does not hold it. */

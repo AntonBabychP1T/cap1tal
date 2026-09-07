@@ -140,8 +140,8 @@ export interface AnalysisInput {
   /**
    * The поточна вартість of each інвестиційний рахунок that has one, by рахунок id — from the same
    * repo the screens read, so the пакет's progress for a ціль is the identical number «Звіти»
-   * shows (design D13). Empty until `investments-value` lands, and absent from every caller
-   * until then; the seam exists on both sides so the two cannot drift the day it does.
+   * shows (design D13). Absent on a device where no вартість has been entered; the seam exists on
+   * both sides so the пакет and the screens cannot drift.
    */
   readonly currentValues?: ReadonlyMap<string, Money>;
   readonly rates: readonly DatedRate[];

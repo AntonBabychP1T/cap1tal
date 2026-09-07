@@ -1,6 +1,8 @@
 import type { Account, AccountKind } from '../domain/account';
+import { gainLoss, type CurrentValue } from '../domain/investments';
 import { money, subtract, type Money } from '../domain/money';
-import { formatMoney } from './amount-input';
+import type { IsoDate } from '../domain/transaction';
+import { formatMoney, formatSignedMoney } from './amount-input';
 
 /**
  * The Рахунки sections as pure data, so the screen only renders them. Archived accounts never
@@ -65,6 +67,33 @@ export interface AccountRow {
   readonly reconcilable: boolean;
   /** The signed difference «Звірити» would record, when there is one to record. */
   readonly difference?: string;
+  /** Set for a рахунок of вид `investment` and for no other — the three numbers of §10. */
+  readonly investment?: InvestmentNumbers;
+}
+
+/**
+ * What an інвестиційний рахунок's row says beyond its balance, and the words that keep the numbers
+ * apart. `computed` above **is** the вкладено — the розрахунковий баланс of such a рахунок is what
+ * went in minus what came back out — so it is named here rather than repeated as a second amount.
+ *
+ * The вартість, its дата and the прибуток arrive together or not at all: without a вартість there
+ * is no прибуток, and «worth exactly what went in» (a прибуток of zero) is a different answer from
+ * «we do not know what it is worth» (no block at all).
+ */
+export interface InvestmentNumbers {
+  /** The name the row's main amount carries here. */
+  readonly contributedLabel: string;
+  /** The поточна вартість with the дата it describes and the прибуток / збиток between the two. */
+  readonly value?: {
+    readonly amount: string;
+    readonly asOf: IsoDate;
+    /** Signed, always: «+60 000,00 UAH» and «−50 000,00 UAH» read differently from «60 000,00». */
+    readonly gainLoss: string;
+    /** «прибуток» or «збиток» — zero is a прибуток of nothing, not a збиток. */
+    readonly gainLossLabel: string;
+  };
+  /** What the row offers: recording the first вартість, or replacing the one it shows. */
+  readonly recordLabel: string;
 }
 
 /**
@@ -79,6 +108,7 @@ export function accountRows(
   accounts: readonly Account[],
   computed: ReadonlyMap<string, Money>,
   bankBalances: ReadonlyMap<string, Money> = new Map(),
+  currentValues: ReadonlyMap<string, CurrentValue> = new Map(),
 ): AccountRow[] {
   return accounts.map((a) => {
     const own = computed.get(a.id) ?? money(0, a.currency);
@@ -91,8 +121,53 @@ export function accountRows(
       ...(comparable ? { bankBalance: formatMoney(comparable) } : {}),
       reconcilable: difference !== undefined && difference.amount !== 0,
       ...(difference && difference.amount !== 0 ? { difference: formatMoney(difference) } : {}),
+      ...(a.kind === 'investment'
+        ? { investment: investmentNumbers(a, own, currentValues.get(a.id)) }
+        : {}),
     };
   });
+}
+
+/**
+ * The block one інвестиційний рахунок's row carries. An archived one keeps it: archiving hides a
+ * рахунок from the pickers, it does not un-invest the money or forget what the owner said it is
+ * worth.
+ *
+ * A вартість in another currency than the рахунок is dropped rather than shown, the way a foreign
+ * баланс банку is above: `gainLoss` would refuse to subtract across currencies, and the only writer
+ * refuses to store such a вартість, so one arriving here could only come from a row that should not
+ * exist.
+ */
+function investmentNumbers(
+  account: Account,
+  contributed: Money,
+  value: CurrentValue | undefined,
+): InvestmentNumbers {
+  const own = value && value.amount.currency === account.currency ? value : undefined;
+  const difference = gainLoss(own?.amount, contributed);
+  return {
+    contributedLabel: 'вкладено',
+    ...(own && difference
+      ? {
+          value: {
+            amount: formatMoney(own.amount),
+            asOf: own.asOf,
+            gainLoss: formatSignedMoney(difference),
+            gainLossLabel: difference.amount < 0 ? 'збиток' : 'прибуток',
+          },
+        }
+      : {}),
+    recordLabel: own ? 'Змінити вартість' : 'Записати вартість',
+  };
+}
+
+/**
+ * What clearing a поточна вартість is confirmed with. Unlike «Звірити» below, nothing is written
+ * and no транзакція is created — which is exactly why the sentence says so: the owner is giving up
+ * the app's only record of what this інвестиція is worth, and none of their money moves with it.
+ */
+export function clearValueConfirmation(row: AccountRow): string {
+  return `Забрати поточну вартість «${row.account.name}» (${row.investment?.value?.amount})? Залишиться саме вкладено (${row.computed}); жодна транзакція не створюється і жоден баланс не змінюється.`;
 }
 
 /**

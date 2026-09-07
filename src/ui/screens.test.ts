@@ -553,3 +553,94 @@ describe('the mark on the вкладка being read', () => {
     expect(text).toMatch(/\bsmall:\s*\{[^}]*fontWeight:\s*'?500'?/);
   });
 });
+
+/**
+ * The поточні вартості reach the screens that read a внесок. The models take the map as an
+ * optional argument and default it to empty, so a screen that stopped passing one would go on
+ * computing a прогрес from розрахункові баланси and every test of those models would stay green —
+ * which is exactly the regression this reads the `.tsx` to catch.
+ */
+describe('what an інвестиційний рахунок is worth reaches the screens that read it', () => {
+  const readScreen = (relative: string) => readFileSync(join(APP, relative), 'utf8');
+
+  it('Scenario: A вартість moves the прогрес of a ціль that holds the рахунок', () => {
+    // The ціль's own screen wants the дата too — it says «поточна вартість на …» — so it takes
+    // `all()`; the two that need only the сума take `amounts()`.
+    expect(readScreen(join('goal', '[id].tsx'))).toMatch(
+      /currentValues:\s*investmentsRepo\.all\(\)/,
+    );
+    expect(readScreen(join('goal', '[id].tsx'))).toMatch(
+      /currentValues:\s*stored\.currentValues/,
+    );
+
+    for (const screen of [join('(tabs)', 'reports.tsx'), 'ai-analysis.tsx']) {
+      expect(readScreen(screen), screen).toMatch(/currentValues:\s*investmentsRepo\.amounts\(\)/);
+    }
+    expect(readScreen(join('(tabs)', 'reports.tsx'))).toMatch(
+      /currentValues:\s*stored\.currentValues/,
+    );
+    // `ai-analysis.tsx` spreads its whole `stored` into the пакет, so the read above is the whole
+    // of the wiring there — asserted so a later refactor to named fields cannot drop this one.
+    expect(readScreen('ai-analysis.tsx')).toMatch(/\.\.\.input\.stored|stored,/);
+  });
+
+  it('Scenario: No коригування is ever offered for a вартість', () => {
+    const accounts = readScreen(join('(tabs)', 'accounts.tsx'));
+
+    // «Звірити» on Рахунки is drawn from `reconcilable`, which `account-groups.ts` sets from the
+    // баланс банку alone — never from the investment block (proven behaviourally in
+    // `account-groups.test.ts`). What is read here is that the button's condition stays that one,
+    // and that the block's own actions are the вартість's, with no звірка among them.
+    expect(accounts).toMatch(/row\?\.reconcilable \? \(/);
+    expect(accounts).toMatch(/title=\{row\.investment\.recordLabel\}/);
+    expect(accounts).not.toMatch(/Звірити[^\n]*investment/);
+    expect(accounts).not.toMatch(/investment[^\n]*Звірити/);
+  });
+
+  it('Scenario: A rejected вартість changes nothing', () => {
+    const accounts = readScreen(join('(tabs)', 'accounts.tsx'));
+
+    // The refusal `investments-repo` raises reaches the owner as «Не збережено», through the same
+    // `failureAlert` every other refusal on this screen uses — and the write is the only thing in
+    // the `try`, so a rejected one leaves the numbers exactly as they were: nothing else ran.
+    expect(accounts).toMatch(/title: 'Не збережено',\s*where: 'account-current-value'/);
+    expect(accounts).toMatch(/investmentsRepo\.set\(/);
+  });
+
+  it('Scenario: A recorded вартість appears at once / Replacing shows the newer figure and дата', () => {
+    const accounts = readScreen(join('(tabs)', 'accounts.tsx'));
+
+    // The дата is today's, taken at entry and never asked for (design D5); recording and replacing
+    // are the one call, because storage upserts. `reload()` is what makes the row show it at once.
+    expect(accounts).toMatch(/investmentsRepo\.set\([\s\S]{0,300}?asOf: todayIso\(new Date\(\)\)/);
+    expect(accounts).toMatch(/investmentsRepo\.set\([\s\S]{0,500}?reload\(\)/);
+    // No date field is offered anywhere in the form the owner types the сума into.
+    expect(accounts).not.toMatch(/label="Дата"/);
+  });
+
+  it('Scenario: Clearing returns the рахунок to вкладено alone', () => {
+    const accounts = readScreen(join('(tabs)', 'accounts.tsx'));
+
+    // Behind a confirmation, like «Звірити» — and it removes the row rather than storing a zero.
+    expect(accounts).toMatch(/clearValueConfirmation\(row\)/);
+    expect(accounts).toMatch(/investmentsRepo\.clear\(a\.id\)/);
+    expect(accounts).toMatch(/investmentsRepo\.clear\([\s\S]{0,300}?reload\(\)/);
+  });
+
+  it("Scenario: The рахунок's own звірка is untouched", () => {
+    const movements = readScreen(join('account', '[id].tsx'));
+
+    // Every unarchived рахунок keeps «Звірити» against a typed фактичний залишок — інвестиційний
+    // included. This change scopes away the звірка *of a вартість*, and takes none away.
+    expect(movements).toMatch(/reconcileTyped/);
+    expect(movements).toMatch(/Звірити/);
+    // The фактичний залишок is parsed by `parseActualBalance`, through `reconcileTyped` — the
+    // parser this change did not touch, beside the new `parseCurrentValue` it added.
+    expect(readFileSync(join(import.meta.dirname, 'account-movements.ts'), 'utf8')).toMatch(
+      /parseActualBalance/,
+    );
+    // And nothing on that screen has learned about a вартість: the звірка compares the фактичний
+    // залишок with the розрахунковий баланс and with nothing else.
+    expect(movements).not.toMatch(/investmentsRepo|currentValue|поточна вартість/i);
+  });
+});

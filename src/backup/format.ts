@@ -32,7 +32,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * breaks `verify` until someone opens this file and asks whether a бекап still holds everything it
  * should. A бекап naming a higher one is refused; a lower one is restored (design D5).
  */
-export const BACKUP_SCHEMA_VERSION = 20;
+export const BACKUP_SCHEMA_VERSION = 21;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -125,6 +125,12 @@ export const BACKUP_TABLES: readonly string[] = [
   'earned_achievements',
   'challenge_decisions',
   'spending_norms',
+  // What the owner said each інвестиційний рахунок is worth. Alone among the numbers this file
+  // carries, a поточна вартість is explained by no транзакція and derivable from nothing: a бекап
+  // that dropped it would leave a restored phone showing вкладено alone for рахунки whose worth
+  // the owner had already told the app, and no re-fetch could put it back. It is their money data,
+  // which is the line drawn above — what is excluded is this *phone's* facts, never theirs.
+  'investment_values',
 ];
 
 /** A правило, with the `createdAt` that breaks ties between two equally specific ones as epoch ms. */
@@ -273,6 +279,18 @@ export interface BackupSpendingNorm {
 }
 
 /**
+ * The поточна вартість of one інвестиційний рахунок: what the owner last said it is worth, and the
+ * calendar day they said it on. The дата is the domain's `IsoDate`, carried verbatim like a
+ * транзакція's — a вартість is as old as the day it was typed, and a restored phone must not
+ * present a June figure as today's.
+ */
+export interface BackupInvestmentValue {
+  readonly accountId: string;
+  readonly amount: Money;
+  readonly asOf: IsoDate;
+}
+
+/**
  * The owner's whole state, in the shape a бекап carries and storage restores. Every instant is
  * epoch milliseconds rather than a `Date`, because this value is written to a file and read back
  * from one: a shape that survives `JSON.parse` unchanged needs no second mapping layer to be the
@@ -301,6 +319,8 @@ export interface BackupState {
   readonly achievements: readonly BackupAchievement[];
   readonly challengeDecisions: readonly BackupChallengeDecision[];
   readonly norms: readonly BackupSpendingNorm[];
+  /** One per рахунок that has one. Empty on a бекап written before вартості existed. */
+  readonly investmentValues: readonly BackupInvestmentValue[];
 }
 
 /** The whole file: the marker, the versions, the moment, the integrity value and the contents. */
@@ -716,6 +736,22 @@ function normAt(value: unknown, at: string): BackupSpendingNorm {
   return { amount, confirmedAtMs: integerAt(row.confirmedAtMs, `${at}.confirmedAtMs`) };
 }
 
+function investmentValueAt(value: unknown, at: string): BackupInvestmentValue {
+  const row = objectAt(value, at);
+  const amount = moneyAt(row.amount, `${at}.amount`);
+  // Storage refuses a negative вартість by CHECK; a hand-edited file is refused here, in the
+  // owner's words, before storage is touched at all. Zero is not refused: an інвестиція may be
+  // worth nothing, never less than nothing.
+  if (amount.amount < 0) {
+    fail(`${at}.amount не є поточною вартістю: сума не може бути меншою за нуль`);
+  }
+  return {
+    accountId: stringAt(row.accountId, `${at}.accountId`),
+    amount,
+    asOf: dateAt(row.asOf, `${at}.asOf`),
+  };
+}
+
 function watchAt(value: unknown, at: string): BackupWatch {
   const row = objectAt(value, at);
   return {
@@ -758,6 +794,9 @@ export function parseState(value: unknown): BackupState {
     achievements: listAt(data, 'achievements', achievementAt),
     challengeDecisions: listAt(data, 'challengeDecisions', challengeDecisionAt),
     norms: listAt(data, 'norms', normAt),
+    // A бекап written before поточні вартості existed names none, and comes back with none — the
+    // same way `watches` and the чеки already do (design D5).
+    investmentValues: listAt(data, 'investmentValues', investmentValueAt),
   };
 }
 
@@ -839,6 +878,24 @@ export function checkConsistent(state: BackupState): void {
   }
   for (const watch of state.watches) {
     needsAccount(watch.accountId, `відстежуваний застосунок «${watch.packageName}»`);
+  }
+  // The вартість contradictions: the same three `investments-repo` refuses, asked here so the
+  // owner reads which рахунок is wrong rather than watching a restore roll back on a constraint.
+  const valued = new Set<string>();
+  for (const value of state.investmentValues) {
+    const what = `поточна вартість рахунку «${accounts.get(value.accountId)?.name ?? value.accountId}»`;
+    needsAccount(value.accountId, what);
+    const account = accounts.get(value.accountId)!;
+    if (account.kind !== 'investment') {
+      fail(`${what} стоїть на рахунку, який не є інвестиційним`);
+    }
+    if (value.amount.currency !== account.currency) {
+      fail(`${what} — у ${value.amount.currency}, а сам рахунок — у ${account.currency}`);
+    }
+    if (valued.has(value.accountId)) {
+      fail(`${what} названа двічі — рахунок має щонайбільше одну поточну вартість`);
+    }
+    valued.add(value.accountId);
   }
   for (const account of state.monobankAccounts) {
     if (account.bankBalance.currency !== account.currency) {

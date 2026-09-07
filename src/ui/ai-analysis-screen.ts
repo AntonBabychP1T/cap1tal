@@ -11,7 +11,7 @@ import type { Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
 import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
-import type { CurrencyCode } from '../domain/money';
+import type { CurrencyCode, Money } from '../domain/money';
 import type { IsoDate, Month, Transaction } from '../domain/transaction';
 import type { AnalysisFile, AnalysisShareOutcome } from '../platform/analysis-share';
 import { plural } from './labels';
@@ -90,6 +90,12 @@ export interface StoredForAnalysis {
   readonly limits: readonly CategoryLimit[];
   readonly goals: readonly AccumulationGoal[];
   readonly rates: readonly DatedRate[];
+  /**
+   * The поточна вартість of each інвестиційний рахунок that has one, by рахунок id — the внесок
+   * such a рахунок brings to a ціль, which the пакет's goals section reads. Absent on a device
+   * where no вартість has been entered, which is every device until one is.
+   */
+  readonly currentValues?: ReadonlyMap<string, Money>;
 }
 
 export interface AiAnalysisPreview {

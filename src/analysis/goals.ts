@@ -94,7 +94,7 @@ export function goalReports(input: {
   /**
    * The поточна вартість of each інвестиційний рахунок that has one, by рахунок id — from the same
    * repo the screens read, so the пакет's progress for a ціль is the identical number «Звіти»
-   * shows. Empty until `investments-value` lands, and every caller passes none until then.
+   * shows. Empty on a device where no вартість has been entered.
    */
   readonly currentValues?: ReadonlyMap<string, Money>;
 }): GoalReport[] {

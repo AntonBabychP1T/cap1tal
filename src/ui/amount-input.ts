@@ -84,6 +84,30 @@ export function parseActualBalance(typed: string, currency: CurrencyCode): Money
 }
 
 /**
+ * A поточна вартість — what the owner says an інвестиційний рахунок is worth today. It is neither
+ * of the two above: zero is a real answer (an інвестиція may be worth nothing) and below zero is
+ * not one (it may never be worth less than nothing), so it gets its own entry point rather than a
+ * caller that parses one of the others and then post-checks a sign. What each kind of amount may
+ * be stays in the one module that parses amounts.
+ *
+ * An empty field is refused for `parseActualBalance`'s reason: «I have not typed it yet» must not
+ * silently become «it is worth nothing».
+ */
+export function parseCurrentValue(typed: string, currency: CurrencyCode): Money {
+  const trimmed = typed.trim();
+  if (trimmed === '') {
+    throw new Error('напишіть поточну вартість — скільки цей рахунок вартий зараз');
+  }
+  if (trimmed.startsWith('-') || trimmed.startsWith('\u2212')) {
+    throw new Error(
+      `поточна вартість не може бути меншою за нуль, а «${typed}» — менша; ` +
+        'інвестиція може коштувати нічого, але не менше',
+    );
+  }
+  return TYPED_ZERO.test(trimmed) ? money(0, currency) : parseAmount(trimmed, currency);
+}
+
+/**
  * Minor units as the major-unit text an input field shows and can parse back — no currency code,
  * so it round-trips through `parseOpeningBalance` unchanged.
  */

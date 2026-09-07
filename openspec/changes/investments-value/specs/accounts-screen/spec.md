@@ -38,8 +38,11 @@ From an інвестиційний рахунок on the Рахунки screen t
 that рахунок's own currency, replace it with a newer one, and clear it — with the semantics the
 investments capability defines, including its rejections. The дата the recorded вартість carries
 SHALL be the day it was entered. Nothing on the screen SHALL write a транзакція for it: the
-рахунок's розрахунковий баланс SHALL be unchanged by recording, replacing or clearing, and
-«Звірити» SHALL be offered for no part of this.
+рахунок's розрахунковий баланс SHALL be unchanged by recording, replacing or clearing, and no
+«Звірити» SHALL be offered **against the поточна вартість** — the difference between a вартість and
+a розрахунковий баланс is a прибуток, and a коригування for it would make it дохід. The звірка an
+інвестиційний рахунок already has — against a фактичний залишок the owner types on the рахунок's
+рухи — is untouched by this and stays exactly as it is for every вид of рахунок.
 
 #### Scenario: A recorded вартість appears at once
 
@@ -68,4 +71,11 @@ SHALL be the day it was entered. Nothing on the screen SHALL write a транз�
 #### Scenario: No коригування is ever offered for a вартість
 
 - **WHEN** an `investment` рахунок's поточна вартість differs from its вкладено
-- **THEN** «Звірити» is not offered on that рахунок and no коригування is created
+- **THEN** nothing offers to звірити the two and no коригування is created for that difference
+
+#### Scenario: The рахунок's own звірка is untouched
+
+- **WHEN** the owner opens the рухи of that same `investment` рахунок
+- **THEN** «Звірити» against a typed фактичний залишок is offered there exactly as it is for every
+  other unarchived рахунок, and it compares the фактичний залишок with the розрахунковий баланс and
+  never with the поточна вартість

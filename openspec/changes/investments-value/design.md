@@ -29,8 +29,12 @@ immutable, and `npm run verify` stays Node-only and under a minute.
 
 - No history of вартості and no shape that could later be mistaken for one: one row per рахунок,
   replaced in place.
-- No approximate-UAH figure and no total across інвестиційні рахунки on Рахунки — the screen has
-  never had one and this change does not introduce the first.
+- No new total on Рахунки. The screen already carries a total per вид and one across every
+  unarchived рахунок, and both keep summing розрахункові баланси — so an інвестиційний рахунок
+  counts toward «Усього грошей» by its вкладено, not by its вартість. That is deliberate: the
+  totals answer «скільки всього грошей», which is money the транзакції explain, and a market's
+  opinion of it is not. The ціль-накопичення is the one place the вартість replaces the баланс,
+  because the goals capability says so.
 - No new screen: the three numbers and their entry live on the row that already shows the
   рахунок.
 
@@ -124,10 +128,16 @@ this kind of amount may be" in the one module that parses amounts.
 
 ### D7. One migration, generated
 
-`npm run db:generate` produces `0007_*` adding `investment_values`; `drizzle/migrations.js` is
-regenerated. `src/db/migrations.test.ts` gains the checks `.claude/rules/database.md` demands: a
-fresh database from migrations alone stores a вартість, and rows stored under 0000–0006 survive
-0007 unchanged with no рахунок gaining an invented вартість.
+The tree holds twenty committed migrations, `0000`–`0019`. `npm run db:generate` produces `0020_*`
+adding `investment_values`; `drizzle/migrations.js` is regenerated. `src/db/migrations.test.ts`
+gains the checks `.claude/rules/database.md` demands: a fresh database from migrations alone stores
+a вартість, and rows stored under `0000`–`0019` survive `0020` unchanged with no рахунок gaining an
+invented вартість.
+
+The migration count is not free-standing: `BACKUP_SCHEMA_VERSION` in `src/backup/format.ts` is
+pinned to it by a test, deliberately, so that no table can be added without someone answering
+whether a бекап still holds everything it should. It goes from 20 to 21 with this migration, and
+D9 is that answer.
 
 ### D8. The glossary gains the two terms the code will use
 
@@ -136,6 +146,43 @@ entries. This change adds «Вкладено» and «Поточна вартіс
 «Прибуток / збиток» at them, so hard rule 7 ("glossary terms verbatim, no synonyms") has the terms
 `contributed` / `currentValue` / `gainLoss` actually stand for. No behaviour follows from this
 task; it is what keeps the vocabulary one vocabulary.
+
+### D9. The бекап carries the вартості, and the restore deletes them before the рахунки
+
+`investment_values` joins `BACKUP_TABLES`. A вартість is hand-entered and derivable from nothing —
+unlike every balance in the app it is not explained by транзакції — so a бекап that dropped it
+would leave a restored phone showing вкладено alone for рахунки whose worth the owner had already
+told it. It is the owner's own money data, which is the line `format.ts` draws: what is excluded is
+this *phone's* facts (its failures, its habits, its caches), never theirs.
+
+`backup-repo`'s `replaceAll` gains `tx.delete(investmentValues)` **before** `tx.delete(accounts)`.
+This is not tidiness: the reference is `onDelete: 'restrict'` like every other reference to a
+рахунок, foreign keys are on, and a restore on a phone that holds one вартість would otherwise fail
+on a FOREIGN KEY constraint — the exact trap that file already documents for чернетки and the
+entry default. «A restore either lands whole or does not happen» would still hold, but it would
+never land.
+
+The carried shape is `{ accountId, amount (minor units + currency), asOf }`, and `checkConsistent`
+refuses a вартість whose рахунок the бекап does not hold, is not of вид `investment`, is in another
+currency, is named twice, or whose сума is negative — the same shapes `investments-repo` refuses,
+so a бекап cannot carry in what storage would not accept. `BACKUP_FORMAT_VERSION` does **not**
+move: an older бекап simply names no вартість, and a phone restoring one ends with none, which is
+true of it.
+
+### D10. The цілі are fed from the same repo call the screen already makes
+
+`goals` requires an інвестиційний рахунок's внесок to **be** its поточна вартість where the app
+holds one. `contribution` in `src/domain/goals.ts` has taken the вартість as an argument since that
+change; four callers thread a `currentValues` map through and every one of them is currently handed
+nothing, each with a comment saying «empty until `investments-value` lands». This change is that.
+
+The three screens that own those calls — `src/app/goal/[id].tsx`, `src/app/(tabs)/reports.tsx` and
+`src/ui/ai-analysis-screen.ts`'s caller — read `investments.all()` on focus beside the queries they
+already make, and pass it down. Nothing in the domain or the view models changes: the sockets exist
+and are typed. `src/ui/goal-screen.ts` and `src/app/goal/[id].tsx` want the дата too (they show
+«поточна вартість на …»), so `CurrentValue` moves to `src/domain/investments.ts` — where the entity
+now lives — and `goal-screen.ts` re-exports it rather than declaring a second one; the two places
+that need only the сума keep taking a `Money` map, built from the same call.
 
 ## Risks / Trade-offs
 
@@ -153,12 +200,14 @@ task; it is what keeps the vocabulary one vocabulary.
 
 ## Migration Plan
 
-1. Extend `src/db/schema.ts` with `investment_values`; `npm run db:generate` → `0007_*`;
-   regenerate `drizzle/migrations.js`. Committed migrations 0000–0006 are untouched.
+1. Extend `src/db/schema.ts` with `investment_values`; `npm run db:generate` → `0020_*`;
+   regenerate `drizzle/migrations.js`. Committed migrations 0000–0019 are untouched.
 2. Migration tests per D7 before any repo or screen work.
 3. `src/db/investments-repo.ts` with the D4 checks, wired through `src/db/repos.ts`.
 4. `src/domain/investments.ts`, then the view model, then the screen.
-5. Rollback is git-revert before commit; after commit the migration is immutable — a follow-up
+5. The бекап (D9) — carried shape, table list, version, snapshot and the delete order in
+   `replaceAll` — and then the three screens that read a внесок (D10).
+6. Rollback is git-revert before commit; after commit the migration is immutable — a follow-up
    migration would drop the table if it ever had to go.
 
 No new dependency, no native module, no permission, no Expo config change, no network call.

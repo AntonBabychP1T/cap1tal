@@ -47,6 +47,7 @@ function state(over: Partial<BackupState> = {}): BackupState {
     achievements: [],
     challengeDecisions: [],
     norms: [],
+    investmentValues: [],
     ...over,
   };
 }

@@ -115,6 +115,9 @@ describe('what a бекап holds', () => {
       // serve it again — so a restore reproduces it without the network.
       'fiscal_receipts',
       'receipt_items',
+      // What the owner said each інвестиційний рахунок is worth: hand-entered, explained by no
+      // транзакція, and recoverable from nothing if a бекап leaves it behind.
+      'investment_values',
     ]) {
       expect(BACKUP_TABLES).toContain(held);
     }
@@ -178,6 +181,7 @@ describe('what a бекап holding чеки may not contradict', () => {
     achievements: [],
     challengeDecisions: [],
     norms: [],
+    investmentValues: [],
   };
 
   it('Scenario: A чек pointing outside the бекап stops the restore', () => {
@@ -365,6 +369,7 @@ describe('a ціль in a бекап', () => {
     achievements: [],
     challengeDecisions: [],
     norms: [],
+    investmentValues: [],
   };
 
   const withGoals = (goals: BackupState['goals']): BackupState => ({ ...held, goals });
@@ -497,5 +502,120 @@ describe('a ціль in a бекап', () => {
         ]),
       ),
     ).not.toThrow();
+  });
+});
+
+describe('what a бекап holding поточні вартості may not contradict', () => {
+  const bonds = {
+    id: 'bonds',
+    name: 'ОВДП',
+    kind: 'investment' as const,
+    currency: 'UAH',
+    openingBalance: money(0, 'UAH'),
+    archived: false,
+  };
+  const jar = {
+    id: 'jar',
+    name: 'Подушка',
+    kind: 'savings' as const,
+    currency: 'UAH',
+    openingBalance: money(0, 'UAH'),
+    archived: false,
+  };
+
+  const held: BackupState = {
+    accounts: [bonds, jar],
+    categories: [],
+    sources: [],
+    rules: [],
+    limits: [],
+    goals: [],
+    transactions: [],
+    monobankAccounts: [],
+    monobankLinks: [],
+    monobankImportedItems: [],
+    watches: [],
+    receipts: [],
+    receiptItems: [],
+    achievements: [],
+    challengeDecisions: [],
+    norms: [],
+    investmentValues: [],
+  };
+
+  const withValues = (values: BackupState['investmentValues']): BackupState => ({
+    ...held,
+    investmentValues: values,
+  });
+
+  it('A вартість on an інвестиційний рахунок of the бекап stands', () => {
+    expect(() =>
+      checkConsistent(
+        withValues([{ accountId: 'bonds', amount: money(560000, 'UAH'), asOf: '2026-08-28' }]),
+      ),
+    ).not.toThrow();
+    // Zero stands too: an інвестиція may be worth nothing.
+    expect(() =>
+      checkConsistent(
+        withValues([{ accountId: 'bonds', amount: money(0, 'UAH'), asOf: '2026-08-28' }]),
+      ),
+    ).not.toThrow();
+  });
+
+  it('Scenario: A вартість pointing outside the бекап stops the restore', () => {
+    expect(() =>
+      checkConsistent(
+        withValues([{ accountId: 'nowhere', amount: money(560000, 'UAH'), asOf: '2026-08-28' }]),
+      ),
+    ).toThrow(/рахунок/);
+  });
+
+  it('Scenario: A вартість on the wrong вид or in the wrong currency stops the restore', () => {
+    expect(() =>
+      checkConsistent(
+        withValues([{ accountId: 'jar', amount: money(560000, 'UAH'), asOf: '2026-08-28' }]),
+      ),
+    ).toThrow(/інвестиційним/);
+    expect(() =>
+      checkConsistent(
+        withValues([{ accountId: 'bonds', amount: money(10000, 'USD'), asOf: '2026-08-28' }]),
+      ),
+    ).toThrow(/USD/);
+  });
+
+  it('A рахунок named twice stops the restore — there is at most one вартість per рахунок', () => {
+    expect(() =>
+      checkConsistent(
+        withValues([
+          { accountId: 'bonds', amount: money(560000, 'UAH'), asOf: '2026-08-28' },
+          { accountId: 'bonds', amount: money(575000, 'UAH'), asOf: '2026-09-30' },
+        ]),
+      ),
+    ).toThrow(/двічі/);
+  });
+
+  it('A negative вартість is refused while reading, before storage is touched', () => {
+    expect(() =>
+      parseState({
+        ...held,
+        investmentValues: [
+          { accountId: 'bonds', amount: { amount: -100, currency: 'UAH' }, asOf: '2026-08-28' },
+        ],
+      }),
+    ).toThrow(/менш/);
+  });
+
+  it('Scenario: A бекап written before вартості existed still restores', () => {
+    const { investmentValues: _dropped, ...withoutTheList } = held;
+    expect(parseState(withoutTheList).investmentValues).toEqual([]);
+  });
+
+  it('A вартість round-trips through the parser with its дата', () => {
+    const parsed = parseState(
+      withValues([{ accountId: 'bonds', amount: money(560000, 'UAH'), asOf: '2026-08-28' }]),
+    );
+    expect(parsed.investmentValues).toEqual([
+      { accountId: 'bonds', amount: money(560000, 'UAH'), asOf: '2026-08-28' },
+    ]);
   });
 });

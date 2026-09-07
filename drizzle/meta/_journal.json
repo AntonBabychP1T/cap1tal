@@ -141,6 +141,13 @@
       "when": 1788769378952,
       "tag": "0019_damp_stellaris",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1788780668433,
+      "tag": "0020_uneven_bishop",
+      "breakpoints": true
     }
   ]
 }

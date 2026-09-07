@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
   goals as goalsRepo,
+  investments as investmentsRepo,
   rates as ratesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
@@ -38,6 +39,9 @@ export default function GoalScreen() {
         accounts: accountsRepo.list(),
         transactions: transactionsRepo.listAll(),
         rates: ratesRepo.all(),
+        // An інвестиційний рахунок's внесок is its поточна вартість where the app holds one; the
+        // рахунки without one keep contributing their розрахунковий баланс (goals capability).
+        currentValues: investmentsRepo.all(),
       }),
       [id],
     ),
@@ -50,6 +54,7 @@ export default function GoalScreen() {
         accounts: stored.accounts,
         transactions: stored.transactions,
         rates: stored.rates,
+        currentValues: stored.currentValues,
         now: new Date(),
       }),
     [stored],

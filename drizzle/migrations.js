@@ -21,6 +21,7 @@ import m0016 from './0016_futuristic_triathlon.sql';
 import m0017 from './0017_uneven_bucky.sql';
 import m0018 from './0018_normal_sentinels.sql';
 import m0019 from './0019_damp_stellaris.sql';
+import m0020 from './0020_uneven_bishop.sql';
 
   export default {
     journal,
@@ -44,7 +45,8 @@ m0015,
 m0016,
 m0017,
 m0018,
-m0019
+m0019,
+m0020
     }
   }
   

@@ -1,6 +1,6 @@
 import type { Account } from '../domain/account';
 import { contribution, isOverdue, type AccumulationGoal } from '../domain/goals';
-import type { Money } from '../domain/money';
+import type { CurrentValue } from '../domain/investments';
 import type { IsoDate, Transaction } from '../domain/transaction';
 import { formatMoney } from './amount-input';
 import { todayIso } from './dates';
@@ -21,16 +21,15 @@ import {
  * same транзакції under the ціль's name is exactly what this change refuses to build.
  */
 
-/** The поточна вартість of one інвестиційний рахунок, with the дата that вартість describes. */
-export interface CurrentValue {
-  readonly amount: Money;
-  /**
-   * The day the owner entered it. Display-only, and deliberately not part of `contribution`: the
-   * domain computes a сума, and a дата is not one. It is here because a hand-entered вартість is as
-   * old as the day it was typed, and a progress resting on one should say when that was.
-   */
-  readonly asOf: IsoDate;
-}
+/**
+ * The поточна вартість of one інвестиційний рахунок, with the дата that вартість describes —
+ * `src/domain/investments.ts`'s own type, re-exported here because this screen was reading one
+ * before there was anywhere to store it. The дата is display-only and deliberately not part of
+ * `contribution`: the domain computes a сума, and a дата is not one. It is carried because a
+ * hand-entered вартість is as old as the day it was typed, and a progress resting on one should
+ * say when that was.
+ */
+export type { CurrentValue };
 
 /** One рахунок of the склад, and what it brought. */
 export interface GoalAccountRow {
@@ -72,7 +71,7 @@ export function goalScreenModel(input: {
   /** The whole stored history — `transactionsRepo.listAll()`, as «Звіти» reads it. */
   readonly transactions: readonly Transaction[];
   readonly rates: readonly { readonly currency: string; readonly rateMillionths: number }[];
-  /** The поточні вартості by рахунок id; empty until `investments-value` lands. */
+  /** The поточні вартості by рахунок id, from `investments-repo`; empty on a device with none. */
   readonly currentValues?: ReadonlyMap<string, CurrentValue>;
   readonly now: Date;
 }): GoalScreenModel {

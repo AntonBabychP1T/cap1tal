@@ -28,6 +28,7 @@ import {
   fiscalReceipts,
   goalAccounts,
   goals,
+  investmentValues,
   journal,
   monobankAccounts,
   monobankImportedItems,
@@ -2904,6 +2905,167 @@ describe("migrations — the request pace and each link's turn", () => {
       ).toThrow();
     } finally {
       storage.close();
+    }
+  });
+});
+
+/**
+ * The поточна вартість: one new table, keyed by рахунок, on a device whose рахунки, транзакції,
+ * ліміти and цілі are already there.
+ */
+describe('migrations — the поточна вартість of an інвестиційний рахунок', () => {
+  /** Every migration but this change's, so «before» is a real device from the previous release. */
+  const BEFORE_VALUES = 20;
+
+  const bonds = account({ id: 'bonds', name: 'ОВДП', kind: 'investment', currency: 'UAH' });
+
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    storage.db
+      .insert(accounts)
+      .values([toAccountRow(card), toAccountRow(jar), toAccountRow(bonds)])
+      .run();
+  });
+
+  afterEach(() => storage.close());
+
+  it('Scenario: A fresh database holds поточні вартості', () => {
+    expect(storage.db.select().from(investmentValues).all()).toEqual([]);
+
+    storage.db
+      .insert(investmentValues)
+      .values({ accountId: 'bonds', amount: 560000, currency: 'UAH', asOf: '2026-08-28' })
+      .run();
+
+    expect(storage.db.select().from(investmentValues).all()).toEqual([
+      { accountId: 'bonds', amount: 560000, currency: 'UAH', asOf: '2026-08-28' },
+    ]);
+    expect(storage.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+  });
+
+  it('The migrated shape keeps one вартість per рахунок', () => {
+    storage.db
+      .insert(investmentValues)
+      .values({ accountId: 'bonds', amount: 560000, currency: 'UAH', asOf: '2026-08-28' })
+      .run();
+    expect(() =>
+      storage.db
+        .insert(investmentValues)
+        .values({ accountId: 'bonds', amount: 575000, currency: 'UAH', asOf: '2026-09-30' })
+        .run(),
+    ).toThrow();
+  });
+
+  it('The migrated shape refuses a negative сума and accepts zero', () => {
+    expect(() =>
+      storage.db
+        .insert(investmentValues)
+        .values({ accountId: 'bonds', amount: -100, currency: 'UAH', asOf: '2026-08-28' })
+        .run(),
+    ).toThrow();
+
+    // Nothing left behind by the refusal, and zero — an інвестиція worth nothing — goes in.
+    storage.db
+      .insert(investmentValues)
+      .values({ accountId: 'bonds', amount: 0, currency: 'UAH', asOf: '2026-08-28' })
+      .run();
+    expect(storage.db.select().from(investmentValues).all()[0]?.amount).toBe(0);
+  });
+
+  it('The migrated shape refuses a дата that is not a calendar date, and an unknown рахунок', () => {
+    expect(() =>
+      storage.db
+        .insert(investmentValues)
+        .values({ accountId: 'bonds', amount: 560000, currency: 'UAH', asOf: '28/08/2026' })
+        .run(),
+    ).toThrow();
+    expect(() =>
+      storage.db
+        .insert(investmentValues)
+        .values({ accountId: 'nowhere', amount: 560000, currency: 'UAH', asOf: '2026-08-28' })
+        .run(),
+    ).toThrow();
+  });
+
+  it('Scenario: Existing financial data survives the migration', () => {
+    const staged = openTestDbMigratedTo(BEFORE_VALUES);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db
+        .insert(accounts)
+        .values([toAccountRow(card), toAccountRow(jar), toAccountRow(bonds)])
+        .run();
+      for (const t of oneOfEachType) {
+        staged.db.insert(transactions).values(toTransactionRow(t)).run();
+      }
+      staged.db
+        .insert(categoryLimits)
+        .values({ categoryId: UNCATEGORISED_CATEGORY_ID, amount: 500000, currency: 'UAH' })
+        .run();
+      staged.db
+        .insert(goals)
+        .values({ id: 'g-car', name: 'Авто', amount: 20000000, currency: 'UAH', deadline: null })
+        .run();
+      staged.db.insert(goalAccounts).values({ goalId: 'g-car', accountId: 'jar' }).run();
+
+      const accountsBefore = staged.db.select().from(accounts).all();
+      const transactionsBefore = staged.db.select().from(transactions).all();
+      const limitsBefore = staged.db.select().from(categoryLimits).all();
+      const goalsBefore = staged.db.select().from(goals).all();
+      const compositionBefore = staged.db.select().from(goalAccounts).all();
+
+      staged.migrateToLatest();
+
+      expect(staged.db.select().from(accounts).all()).toEqual(accountsBefore);
+      expect(staged.db.select().from(transactions).all()).toEqual(transactionsBefore);
+      expect(staged.db.select().from(categoryLimits).all()).toEqual(limitsBefore);
+      expect(staged.db.select().from(goals).all()).toEqual(goalsBefore);
+      expect(staged.db.select().from(goalAccounts).all()).toEqual(compositionBefore);
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('Scenario: No рахунок gains an invented вартість', () => {
+    const staged = openTestDbMigratedTo(BEFORE_VALUES);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(bonds)]).run();
+      staged.db
+        .insert(transactions)
+        .values(
+          toTransactionRow(
+            transfer({
+              id: 't1',
+              date: '2026-03-10',
+              fromAccountId: 'card',
+              toAccountId: 'bonds',
+              left: money(500000, 'UAH'),
+              arrived: money(500000, 'UAH'),
+            }),
+          ),
+        )
+        .run();
+
+      staged.migrateToLatest();
+
+      // The інвестиційний рахунок came through the migration with its money and without a
+      // вартість: the app knows what went in and says nothing about what it is worth.
+      expect(staged.db.select().from(investmentValues).all()).toEqual([]);
+      expect(
+        staged.db
+          .select()
+          .from(investmentValues)
+          .where(eq(investmentValues.accountId, 'bonds'))
+          .get(),
+      ).toBeUndefined();
+      expect(staged.db.select().from(transactions).all()).toHaveLength(1);
+    } finally {
+      staged.close();
     }
   });
 });
