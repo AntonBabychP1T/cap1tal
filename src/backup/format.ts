@@ -32,7 +32,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * breaks `verify` until someone opens this file and asks whether a бекап still holds everything it
  * should. A бекап naming a higher one is refused; a lower one is restored (design D5).
  */
-export const BACKUP_SCHEMA_VERSION = 18;
+export const BACKUP_SCHEMA_VERSION = 19;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -70,6 +70,19 @@ export const BACKUP_KIND = 'backup';
  * this phone last tried to sync and how that went. A moment carried in from another device would
  * make this one skip a sync it never made, or wear a failure it never had; a restored phone simply
  * has not tried yet, and tries the moment it is opened.
+ *
+ * `monobank_request_pace` is absent for exactly the attempt's reason, one layer lower: it is when
+ * this phone last sent the bank a request, which is what keeps the next run inside the API's one
+ * request a minute. A moment carried in from another device would make a restored phone sit out a
+ * request it never sent, or fire one the bank will refuse.
+ *
+ * `monobank_links.last_attempted_at` is the one *column* excluded from a table that is otherwise
+ * carried whole, so it is said here rather than left to the list below — `BACKUP_TABLES` names
+ * tables and the tests over it check tables, so nothing else would say it. `src/db/backup-repo.ts`
+ * names the link columns it snapshots and restores one by one, and that one is not among them: a
+ * link's turn is when *this* phone last asked the bank about it, the same class of fact as the
+ * pace above, while the link's cursor, its sync boundary and its last completed sync are the
+ * owner's own state and are carried. A restored link has had no turn, which is true.
  *
  * `entry_defaults` is deliberately absent, and it is the one exclusion that is not about secrecy:
  * it holds which рахунок the entry form on *this* phone opens on — a habit the device learned from

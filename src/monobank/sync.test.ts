@@ -9,7 +9,7 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import { MAX_STATEMENT_WINDOW_MS, STATEMENT_PAGE_SIZE, type StatementItem } from './api';
-import { continueWindow, isFullAnswer, mapStatement, planWindows } from './sync';
+import { continueWindow, isFullAnswer, mapStatement, planWindows, syncOrder } from './sync';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** An arbitrary "now" — the planner has no clock of its own, so every test hands it one. */
@@ -317,3 +317,91 @@ describe('an item imports at most once, forever', () => {
     expect([...first.seenNow]).toEqual(['a1']);
   });
 });
+
+describe('syncOrder — whose turn a run takes first', () => {
+  const link = (monobankAccountId: string, lastAttemptedAtMs: number | null) => ({
+    monobankAccountId,
+    lastAttemptedAtMs,
+  });
+  const order = (links: readonly { monobankAccountId: string }[]) =>
+    syncOrder(links as never).map((l) => l.monobankAccountId);
+
+  it('Scenario: An account that has never had a turn goes first', () => {
+    // An hour is not long, but «never» is longer than any moment there is. The ids are chosen so
+    // that alphabetical order says the opposite: this fails under the sort this replaced.
+    expect(order([link('a-turned', NOW - 60 * 60 * 1000), link('z-never', null)])).toEqual([
+      'z-never',
+      'a-turned',
+    ]);
+  });
+
+  it('Scenario: The longest-waiting account goes first', () => {
+    // Ids again in the reverse of the expected order, so nothing but the moments can produce it.
+    expect(
+      order([
+        link('a-minute', NOW - 60 * 1000),
+        link('z-days', NOW - 3 * DAY_MS),
+        link('m-hour', NOW - 60 * 60 * 1000),
+      ]),
+    ).toEqual(['z-days', 'm-hour', 'a-minute']);
+  });
+
+  it('Scenario: Accounts that have waited equally are ordered reproducibly', () => {
+    const links = [link('mono-c', null), link('mono-a', null), link('mono-b', null)];
+
+    // Two links that have waited exactly as long are ordered by their monobank account id, and a
+    // second run over the same state repeats it — a run's order is not a coin flip.
+    expect(order(links)).toEqual(['mono-a', 'mono-b', 'mono-c']);
+    expect(order(links)).toEqual(order(links));
+
+    // Same again for two links whose turns fall in the same millisecond.
+    const together = [link('mono-z', NOW), link('mono-y', NOW)];
+    expect(order(together)).toEqual(['mono-y', 'mono-z']);
+  });
+
+  it('A turn of zero is a turn, not the absence of one', () => {
+    // 1970 is a moment; `null` is not. Ordering them the other way round would put a link that
+    // was asked about at the epoch ahead of one that has never been asked about at all.
+    expect(order([link('epoch', 0), link('never', null)])).toEqual(['never', 'epoch']);
+  });
+
+  it('The input is left alone', () => {
+    const links = [link('mono-b', 2), link('mono-a', 1)];
+    syncOrder(links);
+    expect(links.map((l) => l.monobankAccountId)).toEqual(['mono-b', 'mono-a']);
+  });
+
+  it('Every link comes back exactly once, whatever the moments are', () => {
+    fc.assert(
+      fc.property(
+        fc.uniqueArray(
+          fc.record({
+            monobankAccountId: fc.string({ minLength: 1, maxLength: 6 }),
+            lastAttemptedAtMs: fc.option(fc.integer({ min: 0, max: NOW }), { nil: null }),
+          }),
+          { selector: (l) => l.monobankAccountId, maxLength: 12 },
+        ),
+        (links) => {
+          const ordered = syncOrder(links);
+          expect(ordered).toHaveLength(links.length);
+          expect([...ordered].sort(byId)).toEqual([...links].sort(byId));
+          // Never-turned links first, then non-decreasing moments: the order is total.
+          const moments = ordered.map((l) => l.lastAttemptedAtMs);
+          const firstMoment = moments.findIndex((m) => m !== null);
+          if (firstMoment >= 0) {
+            expect(moments.slice(0, firstMoment).every((m) => m === null)).toBe(true);
+            const rest = moments.slice(firstMoment) as number[];
+            expect(rest.every((m, i) => i === 0 || rest[i - 1]! <= m)).toBe(true);
+          }
+        },
+      ),
+    );
+  });
+});
+
+function byId(
+  a: { monobankAccountId: string },
+  b: { monobankAccountId: string },
+): number {
+  return a.monobankAccountId < b.monobankAccountId ? -1 : a.monobankAccountId > b.monobankAccountId ? 1 : 0;
+}

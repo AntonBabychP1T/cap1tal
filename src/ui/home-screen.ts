@@ -8,6 +8,7 @@ import { accountTotals, approximateTotals, totalsLine } from './account-totals';
 import { byCurrency } from './amount-input';
 import { freshnessLabel } from './dates';
 import { transactionCount } from './labels';
+import { syncedCountLine } from './monobank-screen';
 import { emptyMessageFor, NO_INCOME_NOTE } from './month-screen';
 import { monthInLabel } from './months';
 
@@ -87,8 +88,42 @@ const ATTENTION_WORDS: Readonly<Record<OwnerSituation, string>> = {
 
 /** The monobank line on Головний: how fresh the bank data is, and nothing else. */
 export interface HomeMonobank {
-  /** «оновлено 3 хв тому», «Синхронізація…», or that nothing has synced yet. */
+  /**
+   * «оновлено 3 хв тому» once every linked рахунок has synced, «Синхронізовано 3 з 9 рахунків»
+   * while only some have, «Синхронізація…» while a run is going on, or that nothing has synced
+   * yet.
+   */
   readonly freshness: string;
+}
+
+/**
+ * The freshness line, in Головний's shorter words — the same three-way reading the monobank
+ * screen states at length, over the same coverage.
+ *
+ * The age is the **oldest** completed sync's, and only when every linked рахунок has one: an age
+ * read off the рахунки that did sync would tell the owner their picture is fresh while most of
+ * their money is missing from it. While it is partial the count replaces the age outright, so
+ * there is no flattering number on the screen to misread.
+ */
+function freshnessOf(
+  bank: {
+    readonly linked: number;
+    readonly synced: number;
+    readonly oldestCompletedAtMs?: number;
+    readonly syncing: boolean;
+  },
+  now: Date,
+): string {
+  if (bank.syncing) {
+    return SYNCING_LINE;
+  }
+  if (bank.synced === 0) {
+    return NEVER_SYNCED_LINE;
+  }
+  if (bank.oldestCompletedAtMs === undefined) {
+    return syncedCountLine({ linked: bank.linked, synced: bank.synced });
+  }
+  return `оновлено ${freshnessLabel(bank.oldestCompletedAtMs, now)}`;
 }
 
 export interface HomeViewModel {
@@ -133,14 +168,20 @@ export function homeViewModel(input: {
   /** How many чернетки await an answer. Counted for nothing but whether the section exists. */
   pendingDrafts: number;
   /**
-   * The monobank connection as this screen sees it, or absent on a device with none. `linked` is
-   * how many рахунки are linked; `lastCompletedAtMs` the most recent completed sync among them,
-   * absent when none ever has; `syncing` whether a run is going on right now, whoever started it.
+   * The monobank connection as this screen sees it, or absent on a device with none.
+   *
+   * The coverage — `linked`, `synced` and `oldestCompletedAtMs` — is `syncCoverage`'s own answer,
+   * read once where the links are and passed in whole. A reading, not a table: this view model
+   * does not take links and should not start to. `syncing` is whether a run is going on right
+   * now, whoever started it.
    */
   monobank?: {
     readonly configured: boolean;
     readonly linked: number;
-    readonly lastCompletedAtMs?: number;
+    /** How many linked рахунки a sync has ever completed for. */
+    readonly synced: number;
+    /** The oldest of those moments — present only when every linked рахунок has one. */
+    readonly oldestCompletedAtMs?: number;
     readonly syncing: boolean;
     readonly attempt?: SyncAttempt;
   };
@@ -169,20 +210,18 @@ export function homeViewModel(input: {
   const situation = connected
     ? needsOwner({
         attempt: bank.attempt,
-        ...(bank.lastCompletedAtMs === undefined
+        // The whole-bank moment, not the freshest рахунок's: a bank the app has never wholly
+        // heard from is not fresh data whatever its best corner says, so a failing run over it is
+        // a failure over stale data and the row appears. Deciding this from the newest moment is
+        // what let one рахунок of nine silence the row entirely.
+        ...(bank.oldestCompletedAtMs === undefined
           ? {}
-          : { lastCompletedAtMs: bank.lastCompletedAtMs }),
+          : { lastCompletedAtMs: bank.oldestCompletedAtMs }),
         nowMs: input.now.getTime(),
       })
     : undefined;
   const monobank: HomeMonobank | null = connected
-    ? {
-        freshness: bank.syncing
-          ? SYNCING_LINE
-          : bank.lastCompletedAtMs === undefined
-            ? NEVER_SYNCED_LINE
-            : `оновлено ${freshnessLabel(bank.lastCompletedAtMs, input.now)}`,
-      }
+    ? { freshness: freshnessOf(bank, input.now) }
     : null;
   const attentionRow = situation === undefined ? null : ATTENTION_WORDS[situation];
 

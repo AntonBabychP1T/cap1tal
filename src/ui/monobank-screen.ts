@@ -115,44 +115,83 @@ export const NEVER_SYNCED_ACCOUNT = 'Ще не синхронізовано';
 export const NEVER_SYNCED_DEVICE = 'Синхронізації на цьому пристрої ще не було';
 
 /**
- * The screen's own last sync: the most recent moment among the linked accounts, said in the
- * owner's words — or plainly that there has not been one. `null` only where there is nothing to
- * say it about: a device with no link has no sync to have missed.
+ * The screen's own last sync — how much of the bank it has heard from, and how old that is.
  *
- * The most recent, not the oldest: the question the line answers is "when did this app last hear
- * from the bank", and the newest answer is what answers it.
+ * `null` only where there is nothing to say it about: a device with no link has no sync to have
+ * missed. Otherwise one of three answers, and which one is the whole point:
+ *
+ * - nothing synced → «Синхронізації на цьому пристрої ще не було»;
+ * - some but not all → «Синхронізовано 3 з 9 рахунків», and **no moment at all**;
+ * - all of them → the *oldest* of their moments.
+ *
+ * The oldest, not the newest. The question the line answers is "how old is what I am looking at",
+ * and the owner's money is the whole of it — a bank whose freshest рахунок synced a minute ago and
+ * whose oldest synced three days ago is three days old. Stating the newest is what let a phone
+ * with nine рахунки, one of them synced, say «Остання синхронізація — сьогодні о 20:34» while
+ * eight of them had never synced once.
  */
 export function lastSyncLine(input: {
   readonly links: readonly (MonobankLink & { readonly lastSyncedAtMs?: number | null })[];
   readonly now: Date;
 }): string | null {
-  if (input.links.length === 0) {
+  const coverage = syncCoverage(input.links);
+  if (coverage.linked === 0) {
     return null;
   }
-  const latest = lastCompletedSyncMs(input.links);
-  if (latest === undefined) {
+  if (coverage.synced === 0) {
     return NEVER_SYNCED_DEVICE;
   }
-  return `Остання синхронізація — ${momentLabel(latest, input.now)}`;
+  if (coverage.oldestCompletedMs === undefined) {
+    return syncedCountLine(coverage);
+  }
+  return `Остання синхронізація — ${momentLabel(coverage.oldestCompletedMs, input.now)}`;
+}
+
+/** How much of the bank has synced, and how old the whole of it is. */
+export interface SyncCoverage {
+  /** How many рахунки are linked. */
+  readonly linked: number;
+  /** How many of them a sync has ever completed for. */
+  readonly synced: number;
+  /**
+   * The oldest of those completed moments — present **only** when every linked рахунок has one,
+   * because until then there is no moment that is true of the whole picture.
+   */
+  readonly oldestCompletedMs?: number;
 }
 
 /**
- * The moment the most recently synced of these links completed, or `undefined` when none ever has.
+ * How much of the bank has synced, from the links themselves.
  *
- * Exported because two screens state the same moment in different words — this screen names it,
- * Головний ages it into «оновлено 3 хв тому» — and the main-screen spec requires them to be the
- * same moment. Two reducers would be two answers the day one of them started filtering
+ * Exported because two screens say the same thing in different words — this screen names the
+ * moment, Головний ages it into «оновлено 3 хв тому» — and the main-screen spec requires them to
+ * be the same reading. Two reducers would be two answers the day one of them started filtering
  * differently; there is one, and it is under `verify`.
  *
- * Only a completed account carries a moment (`markSynced`), so a failed run cannot move this.
+ * Only a completed account carries a moment (`markSynced`), so a failed run cannot move any of it.
  */
-export function lastCompletedSyncMs(
+export function syncCoverage(
   links: readonly { readonly lastSyncedAtMs?: number | null }[],
-): number | undefined {
+): SyncCoverage {
   const moments = links
     .map((link) => link.lastSyncedAtMs)
     .filter((ms): ms is number => ms !== null && ms !== undefined);
-  return moments.length > 0 ? Math.max(...moments) : undefined;
+  const coverage = { linked: links.length, synced: moments.length };
+  return moments.length > 0 && moments.length === links.length
+    ? { ...coverage, oldestCompletedMs: Math.min(...moments) }
+    : coverage;
+}
+
+/**
+ * «Синхронізовано 3 з 9 рахунків».
+ *
+ * The noun is fixed rather than taken from `accountCount`: after «з» it is the genitive plural for
+ * every number there is, so «з 2 рахунків» and «з 3 рахунків» as much as «з 9 рахунків», where
+ * `accountCount` would render the nominative «3 рахунки». The partial answer is only reachable
+ * with at least two links, so no singular case exists.
+ */
+export function syncedCountLine(coverage: SyncCoverage): string {
+  return `Синхронізовано ${coverage.synced} з ${coverage.linked} рахунків`;
 }
 
 /** The state the screen is in as far as monobank's own answer is concerned. */

@@ -615,7 +615,10 @@ describe('syncLinkedAccounts', () => {
     const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
 
     expect(run.accounts.map((a) => a.outcome)).toEqual(['invalid-token', 'invalid-token']);
-    // One statement request, for the account that failed; the second was never asked.
+    // One statement request, for the account that failed; the second was never asked. Which of
+    // the two goes first is `syncOrder`'s tie-break — neither has had a turn, so it is the
+    // monobank account id, `mono-card` before `mono-white` («Accounts that have waited equally
+    // are ordered reproducibly»).
     expect(statements()).toHaveLength(1);
   });
 
@@ -628,6 +631,239 @@ describe('syncLinkedAccounts', () => {
     // client-info goes first with no wait; the statement request waits out the gap.
     expect(waits).toEqual([1_000]);
     expect(progress.filter((p) => p.kind === 'waiting')).toEqual([{ kind: 'waiting', ms: 1_000 }]);
+  });
+
+  /**
+   * `n` рахунки, `n` monobank accounts and `n` links, plus the client-info body that shows them
+   * all — what a phone with more than a couple of cards actually looks like, and the only shape in
+   * which the order a run works in can be seen at all.
+   */
+  function manyLinks(n: number): { clientInfo: () => { status: number; body: unknown } } {
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const id = `mono-${i}`;
+      const accountId = `acc-${i}`;
+      accountsRepo(storage.db).save(
+        account({ id: accountId, name: `картка ${i}`, kind: 'spending', currency: 'UAH' }),
+      );
+      repo.upsertAccounts(
+        [{ id, kind: 'card', name: `card ${i}`, currency: 'UAH', bankBalance: money(0, 'UAH') }],
+        new Date(RUN_AT),
+      );
+      link(id, accountId);
+      rows.push({
+        id,
+        currencyCode: 980,
+        balance: 0,
+        creditLimit: 0,
+        maskedPan: [`53754100000000${i}`],
+        type: 'black',
+      });
+    }
+    return {
+      clientInfo: () => ({
+        status: 200,
+        body: { clientId: 'x', name: 'Власник', accounts: rows, jars: [] },
+      }),
+    };
+  }
+
+  /** Which monobank account each statement request in `calls` was about, in order. */
+  const asked = (statements: readonly string[]): string[] =>
+    statements.map((url) => url.split('/statement/')[1]!.split('/')[0]!);
+
+  it('Scenario: A run cut short leaves different accounts first next time', async () => {
+    const { clientInfo } = manyLinks(9);
+    const first = scriptedFetch({ clientInfo, statement: () => ({ status: 200, body: [] }) });
+
+    // The owner leaves after three рахунки — nine of them need nine minutes of the app being
+    // open, which is the whole of the reported bug.
+    await syncLinkedAccounts(
+      portsWith(first.fetchImpl, { cancelled: () => first.statements().length >= 3 }),
+    );
+    const firstThree = asked(first.statements());
+    expect(firstThree).toEqual(['mono-0', 'mono-1', 'mono-2']);
+
+    const second = scriptedFetch({ clientInfo, statement: () => ({ status: 200, body: [] }) });
+    await syncLinkedAccounts(
+      portsWith(second.fetchImpl, { cancelled: () => second.statements().length >= 3 }),
+    );
+
+    // Not the same three again: the six that have not had a turn go first, so a run cut short
+    // over and over still reaches every рахунок instead of looping on a prefix.
+    const nextThree = asked(second.statements());
+    expect(nextThree).toEqual(['mono-3', 'mono-4', 'mono-5']);
+    expect(nextThree.some((id) => firstThree.includes(id))).toBe(false);
+  });
+
+  it('Scenario: An account that never completes does not hold the queue', async () => {
+    const { clientInfo } = manyLinks(3);
+    // `mono-0` is the first of the three and its statement never answers.
+    const broken = (url: string) =>
+      url.includes('mono-0') ? { status: 500, body: {} } : { status: 200, body: [] };
+
+    const first = scriptedFetch({ clientInfo, statement: broken });
+    await syncLinkedAccounts(portsWith(first.fetchImpl, { cancelled: () => first.statements().length >= 1 }));
+    expect(asked(first.statements())).toEqual(['mono-0']);
+
+    const second = scriptedFetch({ clientInfo, statement: broken });
+    await syncLinkedAccounts(portsWith(second.fetchImpl, { cancelled: () => second.statements().length >= 1 }));
+
+    // Its failed turn still counted as a turn. Ordered on the completed sync instead, `mono-0`
+    // would head every run for good and the other two would never be asked about at all.
+    expect(asked(second.statements())).toEqual(['mono-1']);
+    expect(repo.linkOf('mono-0')?.lastSyncedAtMs).toBeNull();
+    expect(repo.linkOf('mono-0')?.lastAttemptedAtMs).not.toBeNull();
+  });
+
+  it('Scenario: An account no request is spent on keeps its place', async () => {
+    link('mono-card', 'card');
+    repo.upsertAccounts(
+      [{ id: 'mono-gone', kind: 'card', name: 'gone', currency: 'UAH', bankBalance: money(0, 'UAH') }],
+      new Date(RUN_AT),
+    );
+    link('mono-gone', 'jar');
+    // Client-info shows only `mono-card`: the token no longer covers the other one.
+    const { fetchImpl, statements } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+
+    const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
+
+    expect(run.accounts.find((a) => a.monobankAccountId === 'mono-gone')?.outcome).toBe('unavailable');
+    expect(asked(statements())).toEqual(['mono-card']);
+    // No request was spent on it, so no turn was taken: it costs nothing to leave at the head of
+    // the order, and the next run will pass over it just as cheaply.
+    expect(repo.linkOf('mono-gone')?.lastAttemptedAtMs).toBeNull();
+  });
+
+  it('Scenario: A run stopped while it waits spends no request and takes no turn', async () => {
+    link('mono-card', 'card');
+    const { fetchImpl, statements } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+    // «Зупинити» pressed while the run sits out the gap before the statement request. A gap is a
+    // whole minute, which is long enough to leave the screen.
+    const run = ran(
+      await syncLinkedAccounts(portsWith(fetchImpl, { cancelled: () => waits.length >= 1 })),
+    );
+
+    expect(run.accounts.map((a) => a.outcome)).toEqual(['cancelled']);
+    // Not sent: a request after the owner stopped is one nobody asked for, and it would spend the
+    // device's one-a-minute budget on it.
+    expect(statements()).toHaveLength(0);
+    // And no turn was taken, so the next run finds this рахунок exactly where it was in the order.
+    expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBeNull();
+  });
+
+  it('Scenario: Giving an account its turn does not reorder the run it is in', async () => {
+    const { clientInfo } = manyLinks(3);
+    // Turns that put the order at odds with the account ids: `mono-2` has waited longest and
+    // `mono-0` least, so the run goes backwards through them. An expectation of `mono-0` first
+    // would pass under the alphabetical sort this replaced; this one cannot.
+    repo.noteTurn('mono-0', new Date(RUN_AT - 60_000));
+    repo.noteTurn('mono-1', new Date(RUN_AT - 2 * 60_000));
+    repo.noteTurn('mono-2', new Date(RUN_AT - 3 * 60_000));
+    const { fetchImpl, statements } = scriptedFetch({
+      clientInfo,
+      statement: () => ({ status: 200, body: [] }),
+    });
+
+    await syncLinkedAccounts(portsWith(fetchImpl));
+
+    // The order is taken once, before the first request, and each рахунок is asked about exactly
+    // once. Recomputed after each account, a рахунок that had just had its turn would sort to the
+    // back of the run's own queue and the loop would be a priority queue over state it is
+    // mutating — a run over N accounts could then not be said to make N requests.
+    expect(asked(statements())).toEqual(['mono-2', 'mono-1', 'mono-0']);
+  });
+
+  it('Scenario: The first run on a device does not wait', async () => {
+    link('mono-card', 'card');
+    const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+
+    await syncLinkedAccounts(portsWith(fetchImpl));
+
+    // One wait, for the statement request — the client-info request went out at once, because
+    // this device had never sent one.
+    expect(waits).toEqual([1_000]);
+  });
+
+  it('Scenario: A run started immediately after another waits', async () => {
+    link('mono-card', 'card');
+    // The previous run's last request, a moment ago — a pull-to-refresh right after a sync ends.
+    repo.noteRequest(new Date(clockMs));
+    const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+
+    await syncLinkedAccounts(portsWith(fetchImpl));
+
+    // The client-info request waits too, instead of firing at once and being refused with a 429
+    // that would be remembered as rate-limited on every рахунок of the run.
+    expect(waits).toEqual([1_000, 1_000]);
+    // And the wait is announced before anything else happens, so a screen watching the run can
+    // say a sync is going on rather than looking frozen — main-screen's «A pull that must wait
+    // out the request gap says a sync is going on».
+    expect(progress[0]).toEqual({ kind: 'started', accounts: 1 });
+    expect(progress[1]).toEqual({ kind: 'waiting', ms: 1_000 });
+  });
+
+  it('Scenario: A run started long after another does not wait', async () => {
+    link('mono-card', 'card');
+    repo.noteRequest(new Date(clockMs - 5_000));
+    const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+
+    await syncLinkedAccounts(portsWith(fetchImpl));
+
+    expect(waits).toEqual([1_000]);
+  });
+
+  it('Scenario: A clock moved forward does not stall sync', async () => {
+    link('mono-card', 'card');
+    // A moment a year in the future: an NTP correction, or a clock set by hand.
+    repo.noteRequest(new Date(clockMs + 365 * 24 * 60 * 60 * 1_000));
+    const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+
+    await syncLinkedAccounts(portsWith(fetchImpl));
+
+    // One gap, not a year. Waiting out the difference would disable sync until the phone's own
+    // clock caught up, which for a year-ahead clock is forever.
+    expect(waits).toEqual([1_000, 1_000]);
+  });
+
+  it('Scenario: A failed run still moves the remembered moment', async () => {
+    link('mono-card', 'card');
+    const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 429, body: {} }) });
+
+    const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
+
+    expect(run.accounts.map((a) => a.outcome)).toEqual(['rate-limited']);
+    // A request that came back 429 was still sent, so the next run paces itself from it.
+    expect(repo.lastRequestAtMs()).toBe(clockMs);
+  });
+
+  it('Scenario: Storage that will not remember the moment does not stop the run', async () => {
+    link('mono-card', 'card');
+    const refusing = {
+      ...repo,
+      lastRequestAtMs: () => {
+        throw new Error('storage');
+      },
+      noteRequest: () => {
+        throw new Error('storage');
+      },
+      noteTurn: () => {
+        throw new Error('storage');
+      },
+    };
+    const { fetchImpl } = scriptedFetch({
+      statement: () => ({
+        status: 200,
+        body: [item({ id: 'a1', timeSeconds: 1787900000, description: 'СІЛЬПО', amount: -12_550 })],
+      }),
+    });
+
+    const run = ran(await syncLinkedAccounts(portsWith(fetchImpl, { storage: refusing })));
+
+    // The run imported what it could. A write whose only job is to make the *next* run better
+    // paced must never cost this one.
+    expect(run.accounts.map((a) => a.outcome)).toEqual(['complete']);
+    expect(run.imported).toBe(1);
   });
 
   it('Cancelling stops the run and leaves every unfinished account retryable', async () => {
@@ -648,7 +884,9 @@ describe('syncLinkedAccounts', () => {
     const { fetchImpl, statements } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
     let stop = false;
     const ports = portsWith(fetchImpl, { cancelled: () => stop });
-    // Stop as soon as the first account has finished.
+    // Stop as soon as the first account has finished. Which one that is comes from `syncOrder`'s
+    // tie-break — neither link has had a turn, so it is the monobank account id.
+    
     const watching: SyncPorts = {
       ...ports,
       onProgress: (event) => {

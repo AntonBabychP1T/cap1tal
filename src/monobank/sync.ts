@@ -20,6 +20,48 @@ import { MAX_STATEMENT_WINDOW_MS, STATEMENT_PAGE_SIZE, type StatementItem } from
  * out, so the only memory this app has of an import is the one the caller stores (design D7).
  */
 
+/**
+ * What ordering a run needs of a link, and nothing more: which monobank account it is, and when a
+ * run last sent the bank a request about it.
+ */
+export interface OrderableLink {
+  readonly monobankAccountId: string;
+  /** Epoch milliseconds of the last turn, or `null` for a link that has never had one. */
+  readonly lastAttemptedAtMs: number | null;
+}
+
+/**
+ * The linked accounts in the order a run should give them their turns: longest since its turn
+ * first, a link that has never had one before every link that has, and the monobank account id as
+ * the tie-break so a run is reproducible.
+ *
+ * A **turn** is a run sending the bank a request about that link — taken whatever the answer was.
+ * Rationing on the turn rather than on the last *completed* sync is the whole of the fairness
+ * argument: monobank allows one request a minute, so a run over nine accounts needs nine minutes
+ * of the app being open and may end at any point before that. Ordered by anything that does not
+ * move when a link fails, a link that can never complete would head every run for good and the
+ * rest would never be reached at all — which is exactly the bug this exists to remove, and what an
+ * order fixed at the account id did to every link after the third.
+ *
+ * Returns a new array; the input is not touched.
+ */
+export function syncOrder<T extends OrderableLink>(links: readonly T[]): T[] {
+  return [...links].sort((a, b) => {
+    if (a.lastAttemptedAtMs !== b.lastAttemptedAtMs) {
+      // `null` is «has waited longest», not «waited no time»: a link no run has spent a request
+      // on is the one the app knows nothing about, and it goes first.
+      if (a.lastAttemptedAtMs === null) return -1;
+      if (b.lastAttemptedAtMs === null) return 1;
+      return a.lastAttemptedAtMs - b.lastAttemptedAtMs;
+    }
+    return a.monobankAccountId < b.monobankAccountId
+      ? -1
+      : a.monobankAccountId > b.monobankAccountId
+        ? 1
+        : 0;
+  });
+}
+
 /** One statement request's span, epoch milliseconds, both ends inclusive. */
 export interface StatementWindow {
   readonly fromMs: number;

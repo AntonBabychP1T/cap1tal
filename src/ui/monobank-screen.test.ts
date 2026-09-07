@@ -12,6 +12,7 @@ import {
   syncControl,
   CLIPBOARD_NO_TOKEN,
   lastSyncLine,
+  syncCoverage,
   linkChoices,
   linkSetConfirmation,
   MONOBANK_TOKEN_PAGE_URL,
@@ -188,21 +189,61 @@ describe('when a sync last completed', () => {
     );
   });
 
-  it('Scenario: The screen’s last sync is the most recent of the accounts', () => {
+  it('Scenario: The screen’s last sync is the oldest of the accounts', () => {
     const august30 = { ...linkedBlack, lastSyncedAtMs: new Date(2026, 7, 30, 9, 0).getTime() };
     const september1 = { ...linkedWhite, lastSyncedAtMs: new Date(2026, 8, 1, 9, 30).getTime() };
 
+    // Both have synced, so the screen dates the picture by its oldest corner: what the owner is
+    // looking at is only as fresh as the рахунок that has not been heard from since 30 August.
     expect(lastSyncLine({ links: [august30, september1], now })).toBe(
-      'Остання синхронізація — сьогодні о 09:30',
+      'Остання синхронізація — 30 серпня о 09:00',
     );
-    // The order the links come in changes nothing: it is the newest moment, not the last one seen.
+    // The order the links come in changes nothing: it is the oldest moment, not the first seen.
     expect(lastSyncLine({ links: [september1, august30], now })).toBe(
-      'Остання синхронізація — сьогодні о 09:30',
+      'Остання синхронізація — 30 серпня о 09:00',
     );
-    // And an account that has never synced does not drag the screen's answer down with it.
-    expect(lastSyncLine({ links: [september1, linkedBlack], now })).toBe(
-      'Остання синхронізація — сьогодні о 09:30',
+  });
+
+  it('Scenario: A partly synced bank is stated as a count, not as a moment', () => {
+    const september1 = { ...linkedWhite, lastSyncedAtMs: new Date(2026, 8, 1, 9, 30).getTime() };
+
+    // One of two synced: the count replaces the date outright, so there is no flattering moment
+    // on the screen to misread. This is the reported bug in miniature — nine рахунки, one synced,
+    // and a screen that said «Остання синхронізація — сьогодні о 20:34».
+    const line = lastSyncLine({ links: [september1, linkedBlack], now });
+    expect(line).toBe('Синхронізовано 1 з 2 рахунків');
+    expect(line).not.toContain('Остання синхронізація');
+  });
+
+  it('Scenario: The count reads as Ukrainian for every number of accounts', () => {
+    const synced = { ...linkedWhite, lastSyncedAtMs: new Date(2026, 8, 1, 9, 30).getTime() };
+    const third = { ...linkedBlack, monobankAccountId: 'mono-third', accountId: 'third' };
+
+    // «рахунків» whatever the number: after «з» the noun is the genitive plural, so 2, 3 and 4
+    // take it exactly as 9 does. `accountCount` would render the nominative «3 рахунки» here.
+    expect(lastSyncLine({ links: [synced, linkedBlack, third], now })).toBe(
+      'Синхронізовано 1 з 3 рахунків',
     );
+  });
+
+  it('syncCoverage tells the three states apart', () => {
+    const synced = { ...linkedWhite, lastSyncedAtMs: new Date(2026, 8, 1, 9, 30).getTime() };
+    const earlier = { ...linkedBlack, lastSyncedAtMs: new Date(2026, 7, 30, 9, 0).getTime() };
+
+    const never = { ...linkedBlack, lastSyncedAtMs: null };
+
+    expect(syncCoverage([])).toEqual({ linked: 0, synced: 0 });
+    expect(syncCoverage([never, { ...linkedWhite, lastSyncedAtMs: null }])).toEqual({
+      linked: 2,
+      synced: 0,
+    });
+    // Some but not all: no moment at all, because none is true of the whole picture.
+    expect(syncCoverage([synced, never])).toEqual({ linked: 2, synced: 1 });
+    expect(syncCoverage([synced, earlier])).toEqual({
+      linked: 2,
+      synced: 2,
+      oldestCompletedMs: earlier.lastSyncedAtMs,
+    });
   });
 
   it('An unlinked account has no moment at all — sync does not visit it', () => {

@@ -16,7 +16,7 @@ import {
 import { suggestKind } from '../monobank/link';
 import { accountsRepo } from './accounts-repo';
 import { monobankRepo, type FetchedMonobankAccount, type MonobankRepo } from './monobank-repo';
-import { monobankSyncAttempt } from './schema';
+import { monobankRequestPace, monobankSyncAttempt } from './schema';
 import { openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
 
@@ -90,6 +90,7 @@ describe('monobankRepo — accounts and links', () => {
         syncStartDate: '2026-08-28',
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
+        lastAttemptedAtMs: null,
       },
     ]);
     // The link is what makes the account take part in sync; the boundary is where it starts.
@@ -144,6 +145,7 @@ describe('monobankRepo — accounts and links', () => {
         syncStartDate: '2026-08-28',
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
+        lastAttemptedAtMs: null,
       },
     ]);
   });
@@ -173,6 +175,7 @@ describe('monobankRepo — accounts and links', () => {
       syncStartDate: '2026-08-01',
       cursorMs: boundaryMs,
       lastSyncedAtMs: null,
+      lastAttemptedAtMs: null,
     });
   });
 
@@ -317,6 +320,7 @@ describe('monobankRepo — across a restart', () => {
           syncStartDate: '2026-08-01',
           cursorMs,
           lastSyncedAtMs: null,
+          lastAttemptedAtMs: null,
         },
       ]);
       expect(repo.getAccount('mono-card')).toEqual({ ...monoCard, obtainedAt });
@@ -747,6 +751,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         syncStartDate: '2026-08-01',
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
+        lastAttemptedAtMs: null,
       },
       {
         monobankAccountId: 'mono-jar',
@@ -754,6 +759,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         syncStartDate: '2026-08-01',
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
+        lastAttemptedAtMs: null,
       },
       {
         monobankAccountId: 'mono-white',
@@ -761,6 +767,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         syncStartDate: '2026-08-01',
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
+        lastAttemptedAtMs: null,
       },
     ]);
     // The рахунок a proposal promised to create exists, with the currency the link demands.
@@ -948,6 +955,172 @@ describe('the last sync attempt', () => {
       // or a rejected token would keep needing the owner while a run is going on.
       repo.beginAttempt(new Date('2026-09-02T09:00:00.000Z'));
       expect(repo.attempt()).toEqual({ attemptedAtMs: Date.UTC(2026, 8, 2, 9, 0, 0) });
+    } finally {
+      storage.close();
+    }
+  });
+});
+
+describe('the moment each link last had a turn', () => {
+  let storage: TestStorage;
+  let repo: MonobankRepo;
+
+  const turnAt = new Date('2026-09-04T17:30:00.000Z');
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    accountsRepo(storage.db).save(card);
+    accountsRepo(storage.db).save(dollars);
+    repo = monobankRepo(storage.db);
+    repo.upsertAccounts([monoCard, monoJar], obtainedAt);
+    repo.link({
+      monobankAccountId: 'mono-card',
+      accountId: 'card',
+      syncStartDate: '2026-08-01',
+      cursorMs: boundaryMs,
+    });
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: A link that has never had a turn says so', () => {
+    // `null`, and distinguishable from a moment of zero exactly as the completed sync is.
+    expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBeNull();
+
+    repo.noteTurn('mono-card', new Date(0));
+    expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBe(0);
+  });
+
+  it("Scenario: A link's turn is read back as it was written", () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'cap1tal-turn-')), 'turn.db');
+    const opened = openFileDb(path);
+    try {
+      const seeded = monobankRepo(opened.db);
+      seedReferences(opened.db, VOCABULARY);
+      accountsRepo(opened.db).save(card);
+      seeded.upsertAccounts([monoCard], obtainedAt);
+      seeded.link({
+        monobankAccountId: 'mono-card',
+        accountId: 'card',
+        syncStartDate: '2026-08-01',
+        cursorMs: boundaryMs,
+      });
+      seeded.noteTurn('mono-card', turnAt);
+    } finally {
+      opened.close();
+    }
+
+    const reopened = openFileDb(path);
+    try {
+      expect(monobankRepo(reopened.db).linkOf('mono-card')?.lastAttemptedAtMs).toBe(
+        turnAt.getTime(),
+      );
+    } finally {
+      reopened.close();
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('Scenario: A failed turn moves only the turn', () => {
+    const synced = new Date('2026-09-03T06:00:00.000Z');
+    repo.markSynced('mono-card', synced);
+
+    // Today's turn ended `unavailable`: the run asked, and nothing completed.
+    repo.noteTurn('mono-card', turnAt);
+
+    const link = repo.linkOf('mono-card');
+    expect(link?.lastAttemptedAtMs).toBe(turnAt.getTime());
+    expect(link?.lastSyncedAtMs).toBe(synced.getTime());
+  });
+
+  it('Scenario: Relinking starts the turns again', () => {
+    repo.noteTurn('mono-card', turnAt);
+    repo.unlink('mono-card');
+    repo.link({
+      monobankAccountId: 'mono-card',
+      accountId: 'card',
+      syncStartDate: '2026-09-04',
+      cursorMs: boundaryMs,
+    });
+
+    // A new link has had no turn — and the imported ids of that bank account are untouched by
+    // any of it, which is what keeps "at most once, forever" true across a relink.
+    expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBeNull();
+  });
+
+  it('Two links keep their turns apart, and a turn for a link that is gone is silent', () => {
+    repo.link({
+      monobankAccountId: 'mono-jar',
+      accountId: 'usd',
+      syncStartDate: '2026-08-01',
+      cursorMs: boundaryMs,
+    });
+    const earlier = new Date('2026-09-01T09:00:00.000Z');
+
+    repo.noteTurn('mono-card', turnAt);
+    repo.noteTurn('mono-jar', earlier);
+    expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBe(turnAt.getTime());
+    expect(repo.linkOf('mono-jar')?.lastAttemptedAtMs).toBe(earlier.getTime());
+
+    expect(() => repo.noteTurn('mono-nothing', turnAt)).not.toThrow();
+  });
+});
+
+describe('the moment of the last personal-API request', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'cap1tal-pace-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('Scenario: The moment is read back as it was written', () => {
+    const path = join(dir, 'pace.db');
+    const at = new Date('2026-09-04T17:34:00.000Z');
+
+    const opened = openFileDb(path);
+    try {
+      monobankRepo(opened.db).noteRequest(at);
+    } finally {
+      opened.close();
+    }
+
+    const reopened = openFileDb(path);
+    try {
+      expect(monobankRepo(reopened.db).lastRequestAtMs()).toBe(at.getTime());
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('Scenario: A later request replaces the earlier moment', () => {
+    const storage = openTestDb();
+    try {
+      const repo = monobankRepo(storage.db);
+      repo.noteRequest(new Date('2026-09-04T17:33:00.000Z'));
+      const later = new Date('2026-09-04T17:34:00.000Z');
+      repo.noteRequest(later);
+
+      expect(repo.lastRequestAtMs()).toBe(later.getTime());
+      // One row, not a history: pacing reads the latest and nothing else.
+      expect(storage.db.select().from(monobankRequestPace).all()).toHaveLength(1);
+    } finally {
+      storage.close();
+    }
+  });
+
+  it('Scenario: A device that never sent a request says so', () => {
+    const storage = openTestDb();
+    try {
+      // `undefined`, not zero: a moment of zero is 1970, which would make the next run wait for
+      // nothing at all rather than send at once.
+      expect(monobankRepo(storage.db).lastRequestAtMs()).toBeUndefined();
     } finally {
       storage.close();
     }

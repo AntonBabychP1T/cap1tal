@@ -48,7 +48,7 @@ import {
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { homeViewModel } from '@/ui/home-screen';
 import { homeProgressSection } from '@/ui/progress-screen';
-import { lastCompletedSyncMs } from '@/ui/monobank-screen';
+import { syncCoverage } from '@/ui/monobank-screen';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { failureAlert } from '@/ui/failure-alert';
 import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
@@ -322,10 +322,13 @@ export default function MainScreen() {
   );
 
   /**
-   * The most recent moment a linked рахунок completed a sync, or nothing when none ever has.
-   * Only a completed account carries one, so a failed run leaves this exactly where it was.
+   * How much of the bank has synced, and how old the whole of it is — `syncCoverage`'s own answer,
+   * read here and passed into the view model whole. The monobank screen reads the same one, which
+   * is what keeps the two lines from ever saying different things.
+   *
+   * Only a completed account carries a moment, so a failed run leaves this exactly where it was.
    */
-  const lastCompletedAtMs = useMemo(() => lastCompletedSyncMs(stored.links), [stored.links]);
+  const coverage = useMemo(() => syncCoverage(stored.links), [stored.links]);
 
   /**
    * Everything the screen says about the month, the money held and what is waiting. No number is
@@ -344,16 +347,19 @@ export default function MainScreen() {
         pendingDrafts: drafts.length,
         monobank: {
           configured: configured === true,
-          linked: stored.links.length,
-          // The most recent completed sync among the linked рахунки — the same moment the
-          // monobank screen states, in shorter words.
-          ...(lastCompletedAtMs === undefined ? {} : { lastCompletedAtMs }),
+          linked: coverage.linked,
+          synced: coverage.synced,
+          // Present only when every linked рахунок has synced — the age of the whole picture,
+          // which is the same moment the monobank screen names, in shorter words.
+          ...(coverage.oldestCompletedMs === undefined
+            ? {}
+            : { oldestCompletedAtMs: coverage.oldestCompletedMs }),
           syncing,
           ...(stored.attempt ? { attempt: stored.attempt } : {}),
         },
         now: new Date(),
       }),
-    [configured, drafts.length, lastCompletedAtMs, stored, syncing],
+    [configured, coverage, drafts.length, stored, syncing],
   );
 
   /**

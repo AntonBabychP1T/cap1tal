@@ -33,6 +33,7 @@ import {
   monobankImportedItems,
   monobankLinks,
   monobankRates,
+  monobankRequestPace,
   monobankSyncAttempt,
   notificationDrafts,
   notificationFingerprints,
@@ -788,6 +789,7 @@ describe('migrations — monobank links, progress and описи', () => {
         syncStartDate: '2026-08-01',
         cursorMs: new Date('2026-08-27T21:00:00.000Z'),
         lastSyncedAt: new Date('2026-09-01T06:30:00.000Z'),
+        lastAttemptedAt: null,
       },
     ]);
     expect(everyColumn(db)).toContain('last_synced_at');
@@ -1938,6 +1940,7 @@ describe('migrations — the moment a link last completed a sync', () => {
           syncStartDate: '2026-08-01',
           cursorMs: new Date('2026-08-27T21:00:00.000Z'),
           lastSyncedAt: null,
+          lastAttemptedAt: null,
         },
       ]);
       // And its imported item ids and its last known баланс банку are untouched.
@@ -2356,15 +2359,13 @@ describe('migrations — the last sync attempt', () => {
         obtainedAt: new Date('2026-09-01T06:00:00.000Z'),
       })
       .run();
-    db.insert(monobankLinks)
-      .values({
-        monobankAccountId: 'mono-card',
-        accountId: 'card',
-        syncStartDate: '2026-08-01',
-        cursorMs: new Date('2026-09-01T05:00:00.000Z'),
-        lastSyncedAt: new Date('2026-09-01T06:00:00.000Z'),
-      })
-      .run();
+    // Raw, because the staged schema predates `last_attempted_at` and Drizzle's insert names every
+    // column of the table it knows.
+    db.run(
+      sql`INSERT INTO monobank_links
+            (monobank_account_id, account_id, sync_start_date, cursor_ms, last_synced_at)
+          VALUES ('mono-card', 'card', '2026-08-01', 1788238800000, 1788242400000)`,
+    );
     db.insert(monobankImportedItems).values({ monobankAccountId: 'mono-card', itemId: 'a1' }).run();
   }
 
@@ -2392,15 +2393,25 @@ describe('migrations — the last sync attempt', () => {
       }
       seedMonobank(staged.db);
       const before = staged.db.select().from(transactions).all().map(toTransaction);
-      const linksBefore = staged.db.select().from(monobankLinks).all();
 
       staged.migrateToLatest();
 
       expect(staged.db.select().from(transactions).all().map(toTransaction)).toEqual(before);
       expect(staged.db.select().from(accounts).all()).toHaveLength(2);
       // The link keeps its cursor and the moment it last completed a sync — the attempt is a
-      // different fact, about the run, and adding it may not disturb either.
-      expect(staged.db.select().from(monobankLinks).all()).toEqual(linksBefore);
+      // different fact, about the run, and adding it may not disturb either. Written out rather
+      // than captured before the migration: the staged schema has no `last_attempted_at`, so a
+      // Drizzle select over it cannot run there at all.
+      expect(staged.db.select().from(monobankLinks).all()).toEqual([
+        {
+          monobankAccountId: 'mono-card',
+          accountId: 'card',
+          syncStartDate: '2026-08-01',
+          cursorMs: new Date('2026-09-01T05:00:00.000Z'),
+          lastSyncedAt: new Date('2026-09-01T06:00:00.000Z'),
+          lastAttemptedAt: null,
+        },
+      ]);
       expect(staged.db.select().from(monobankImportedItems).all()).toHaveLength(1);
       expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
 
@@ -2710,6 +2721,189 @@ describe('migrations — the прогрес: досягнення, виклик�
       expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
     } finally {
       staged.close();
+    }
+  });
+});
+
+/**
+ * The request pace and each link's turn — one new single-row table and one nullable column on a
+ * table that already holds live links on the owner's device.
+ */
+describe("migrations — the request pace and each link's turn", () => {
+  /** Every migration but this change's, so «before» is a real device from the previous release. */
+  const BEFORE_PACE = 18;
+
+  it('Scenario: The migration adds storage and touches nothing', () => {
+    const staged = openTestDbMigratedTo(BEFORE_PACE);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      for (const t of oneOfEachType) {
+        staged.db.insert(transactions).values(toTransactionRow(t)).run();
+      }
+      staged.db
+        .insert(monobankAccounts)
+        .values({
+          id: 'mono-card',
+          kind: 'card',
+          name: 'black ··1234',
+          currency: 'UAH',
+          bankBalanceAmount: 5000000,
+          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
+        })
+        .run();
+      // Raw, because the staged schema predates `last_attempted_at` and Drizzle's insert names
+      // every column of the table it knows.
+      staged.db.run(
+        sql`INSERT INTO monobank_links
+              (monobank_account_id, account_id, sync_start_date, cursor_ms, last_synced_at)
+            VALUES ('mono-card', 'card', '2026-08-01', 1788238800000, 1788242400000)`,
+      );
+      staged.db
+        .insert(monobankImportedItems)
+        .values({ monobankAccountId: 'mono-card', itemId: 'item-1' })
+        .run();
+      staged.db
+        .insert(monobankSyncAttempt)
+        .values({
+          id: 'attempt',
+          attemptedAt: new Date('2026-09-02T08:15:00.000Z'),
+          outcome: 'complete',
+        })
+        .run();
+      const before = staged.db.select().from(transactions).all().map(toTransaction);
+
+      staged.migrateToLatest();
+
+      expect(staged.db.select().from(transactions).all().map(toTransaction)).toEqual(before);
+      expect(staged.db.select().from(accounts).all()).toHaveLength(2);
+      expect(staged.db.select().from(monobankImportedItems).all()).toEqual([
+        { monobankAccountId: 'mono-card', itemId: 'item-1' },
+      ]);
+      expect(staged.db.select().from(monobankAccounts).get()?.bankBalanceAmount).toBe(5000000);
+      // The remembered attempt is a different fact from the pace, and gaining the pace may not
+      // disturb it.
+      expect(staged.db.select().from(monobankSyncAttempt).all()).toHaveLength(1);
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
+
+      // ...and the table is there, empty, ready for the first request.
+      expect(staged.db.select().from(monobankRequestPace).all()).toEqual([]);
+      staged.db
+        .insert(monobankRequestPace)
+        .values({ id: 'pace', lastRequestAt: new Date('2026-09-04T17:34:00.000Z') })
+        .run();
+      expect(staged.db.select().from(monobankRequestPace).all()).toHaveLength(1);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('Scenario: Links that existed before the migration have had no turn', () => {
+    const staged = openTestDbMigratedTo(BEFORE_PACE);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      staged.db
+        .insert(monobankAccounts)
+        .values({
+          id: 'mono-card',
+          kind: 'card',
+          name: 'black ··1234',
+          currency: 'UAH',
+          bankBalanceAmount: 5000000,
+          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
+        })
+        .run();
+      staged.db.run(
+        sql`INSERT INTO monobank_links
+              (monobank_account_id, account_id, sync_start_date, cursor_ms, last_synced_at)
+            VALUES ('mono-card', 'card', '2026-08-01', 1788238800000, 1788242400000)`,
+      );
+
+      staged.migrateToLatest();
+
+      // The link keeps its cursor, its boundary and the moment it last completed a sync, and its
+      // turn is absent rather than backfilled from any of them: this device cannot prove when a
+      // run last asked about it, and the ordering reads the absence as «has waited longest».
+      expect(staged.db.select().from(monobankLinks).all()).toEqual([
+        {
+          monobankAccountId: 'mono-card',
+          accountId: 'card',
+          syncStartDate: '2026-08-01',
+          cursorMs: new Date('2026-09-01T05:00:00.000Z'),
+          lastSyncedAt: new Date('2026-09-01T06:00:00.000Z'),
+          lastAttemptedAt: null,
+        },
+      ]);
+
+      // Nothing was backfilled: a null here is distinguishable from a moment of zero, which is
+      // 1970 and a turn that happened.
+      staged.db
+        .update(monobankLinks)
+        .set({ lastAttemptedAt: new Date(0) })
+        .where(eq(monobankLinks.monobankAccountId, 'mono-card'))
+        .run();
+      expect(staged.db.select().from(monobankLinks).get()?.lastAttemptedAt).toEqual(new Date(0));
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('Scenario: An empty database reaches the current shape', () => {
+    const storage = openTestDb();
+    try {
+      expect(storage.db.select().from(monobankRequestPace).all()).toEqual([]);
+      storage.db
+        .insert(monobankRequestPace)
+        .values({ id: 'pace', lastRequestAt: new Date('2026-09-04T17:34:00.000Z') })
+        .run();
+
+      const [row] = storage.db.select().from(monobankRequestPace).all();
+      // `timestamp_ms`, so it comes back a Date and not a number.
+      expect(row?.lastRequestAt).toBeInstanceOf(Date);
+
+      // ...and a link's turn, the other half of what this migration adds, writes and reads back
+      // on the same fresh database.
+      seedReferences(storage.db, VOCABULARY);
+      storage.db.insert(accounts).values(toAccountRow(card)).run();
+      storage.db
+        .insert(monobankAccounts)
+        .values({
+          id: 'mono-card',
+          kind: 'card',
+          name: 'black ··1234',
+          currency: 'UAH',
+          bankBalanceAmount: 5000000,
+          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
+        })
+        .run();
+      storage.db
+        .insert(monobankLinks)
+        .values({
+          monobankAccountId: 'mono-card',
+          accountId: 'card',
+          syncStartDate: '2026-08-01',
+          cursorMs: new Date('2026-09-01T05:00:00.000Z'),
+          lastAttemptedAt: new Date('2026-09-04T17:34:00.000Z'),
+        })
+        .run();
+      expect(storage.db.select().from(monobankLinks).get()?.lastAttemptedAt).toBeInstanceOf(Date);
+    } finally {
+      storage.close();
+    }
+  });
+
+  it('The migrated shape keeps the pace to one row', () => {
+    const storage = openTestDb();
+    try {
+      expect(() =>
+        storage.db
+          .insert(monobankRequestPace)
+          .values({ id: 'not-pace', lastRequestAt: new Date(1) })
+          .run(),
+      ).toThrow();
+    } finally {
+      storage.close();
     }
   });
 });

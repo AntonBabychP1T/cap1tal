@@ -133,6 +133,11 @@
 
 ## 9. Blocking: the archive order
 
+- [ ] 9.0 **And do not archive `monobank-sync-fairness` before this change.** That change MODIFIES
+      the main-screen requirement «Головний says how fresh the bank data is» which this one ADDS,
+      and REMOVES the monobank-sync-screen requirement this one MODIFIES, so it has no target
+      until this change is archived — see its own task 7.1. The whole order is
+      `home-daily-overview` → `monobank-auto-sync` → `monobank-sync-fairness`.
 - [ ] 9.1 **Do not archive this change before `home-daily-overview` is archived.** The main-screen
       delta here MODIFIES «Потребує уваги», which that change ADDS and which is therefore not in
       `openspec/specs/main-screen/spec.md` yet. `openspec validate --strict` passes either way — it

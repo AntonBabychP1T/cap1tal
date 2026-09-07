@@ -65,6 +65,10 @@ describe('what a бекап holds', () => {
       'journal',
       // A cache; it re-fetches itself.
       'monobank_rates',
+      // When this phone last sent the bank a request — what keeps the next run inside the API's
+      // one request a minute. Another device's moment would make this one sit out a request it
+      // never sent, or fire one the bank refuses.
+      'monobank_request_pace',
       // When this phone last tried to sync and how it went — the same class as `alerts`. Another
       // device's attempt would make this one skip a sync it never made.
       'monobank_sync_attempt',

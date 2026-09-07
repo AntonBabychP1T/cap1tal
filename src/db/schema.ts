@@ -290,6 +290,21 @@ export const monobankLinks = sqliteTable(
      * link is the thing that syncs, and a relinked account has not synced under its new boundary.
      */
     lastSyncedAt: integer('last_synced_at', { mode: 'timestamp_ms' }),
+    /**
+     * When a run last sent the bank a request about this link — its *turn* — or nothing at all for
+     * a link no run has ever spent a request on, which is what every row written before this
+     * column reads back as.
+     *
+     * Beside `last_synced_at` and deliberately not the same thing: a turn is taken whatever the
+     * answer was, a completed sync only when the account finished. That difference is the whole
+     * of the ordering rule — a рахунок whose statement always fails would keep `last_synced_at`
+     * null forever and, ordered on it, would head every run for good while the rest starved.
+     *
+     * On the link, so unlinking takes it and a relinked account starts with no turn. Unlike
+     * `last_synced_at` it is left out of a бекап (`src/db/backup-repo.ts` names the columns it
+     * carries): it is what *this* phone last asked, and a restored phone has asked nothing.
+     */
+    lastAttemptedAt: integer('last_attempted_at', { mode: 'timestamp_ms' }),
   },
   (t) => [
     check(
@@ -358,8 +373,37 @@ export type NewMonobankAccountRow = typeof monobankAccounts.$inferInsert;
 export type MonobankLinkRow = typeof monobankLinks.$inferSelect;
 export type NewMonobankLinkRow = typeof monobankLinks.$inferInsert;
 export type MonobankImportedItemRow = typeof monobankImportedItems.$inferSelect;
+/**
+ * The moment this device last sent a request to the monobank personal API, whatever that request
+ * answered.
+ *
+ * One row, `'pace'`, the single-row idiom `monobank_sync_attempt` keeps, CHECK and all.
+ *
+ * Its own table rather than a fourth column on the attempt because the two have different
+ * lifetimes: `withdrawAttempt()` **deletes** the attempt row when a run finds no token and no
+ * link, and the pace of requests the device really did send must not go with it. Without this the
+ * minute between requests would be a variable inside one run, and a run started seconds after
+ * another ended — a pull-to-refresh right after a sync finishes — would fire at once and be
+ * refused by the bank.
+ *
+ * Not in a бекап (`src/backup/format.ts`), for the attempt's reason: a moment carried in from
+ * another phone would make this one wait out a request it never sent.
+ */
+export const monobankRequestPace = sqliteTable(
+  'monobank_request_pace',
+  {
+    /** Always `'pace'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    /** The moment of the last request sent — ok, refused or unanswered alike. */
+    lastRequestAt: integer('last_request_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [check('monobank_request_pace_single_row', sql`${t.id} = 'pace'`)],
+);
+
 export type MonobankSyncAttemptRow = typeof monobankSyncAttempt.$inferSelect;
 export type NewMonobankSyncAttemptRow = typeof monobankSyncAttempt.$inferInsert;
+export type MonobankRequestPaceRow = typeof monobankRequestPace.$inferSelect;
+export type NewMonobankRequestPaceRow = typeof monobankRequestPace.$inferInsert;
 
 /**
  * A category's ліміт: the optional monthly ceiling the limits capability defines. Its own table

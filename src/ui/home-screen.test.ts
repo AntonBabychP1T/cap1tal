@@ -12,7 +12,9 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import type { MonobankRate } from '../monobank/currency';
+import { freshnessLabel, momentLabel } from './dates';
 import { homeViewModel, NEVER_SYNCED_LINE, SYNCING_LINE } from './home-screen';
+import { lastSyncLine, syncCoverage } from './monobank-screen';
 
 /**
  * What Головний says. The numbers themselves are proven in `monthly-picture.test.ts` and
@@ -421,17 +423,21 @@ describe('how fresh the bank data is', () => {
   const MINUTE = 60_000;
   const HOUR = 60 * MINUTE;
   const bank = (over: Partial<NonNullable<Parameters<typeof homeViewModel>[0]['monobank']>> = {}) =>
-    ({ configured: true, linked: 1, syncing: false, ...over }) as NonNullable<
+    ({ configured: true, linked: 1, synced: 0, syncing: false, ...over }) as NonNullable<
       Parameters<typeof homeViewModel>[0]['monobank']
     >;
 
   it('Scenario: Minutes are stated as minutes', () => {
-    const view = model({ monobank: bank({ lastCompletedAtMs: NOW.getTime() - 3 * MINUTE }) });
+    const view = model({
+      monobank: bank({ synced: 1, oldestCompletedAtMs: NOW.getTime() - 3 * MINUTE }),
+    });
     expect(view.monobank?.freshness).toBe('оновлено 3 хв тому');
   });
 
   it('Scenario: Hours are stated as hours', () => {
-    const view = model({ monobank: bank({ lastCompletedAtMs: NOW.getTime() - 5 * HOUR }) });
+    const view = model({
+      monobank: bank({ synced: 1, oldestCompletedAtMs: NOW.getTime() - 5 * HOUR }),
+    });
     expect(view.monobank?.freshness).toBe('оновлено 5 год тому');
   });
 
@@ -452,11 +458,116 @@ describe('how fresh the bank data is', () => {
 
   it('Scenario: A run in flight is what the line says', () => {
     const view = model({
-      monobank: bank({ lastCompletedAtMs: NOW.getTime() - 3 * MINUTE, syncing: true }),
+      monobank: bank({ synced: 1, oldestCompletedAtMs: NOW.getTime() - 3 * MINUTE, syncing: true }),
     });
     expect(view.monobank?.freshness).toBe(SYNCING_LINE);
     // ...and once it ends the age is back, now stating the moment it moved to.
-    const after = model({ monobank: bank({ lastCompletedAtMs: NOW.getTime() - 10_000 }) });
+    const after = model({
+      monobank: bank({ synced: 1, oldestCompletedAtMs: NOW.getTime() - 10_000 }),
+    });
+    expect(after.monobank?.freshness).toBe('оновлено щойно');
+  });
+
+  it("Scenario: The age is the oldest account's, not the newest", () => {
+    // Two рахунки, one synced a minute ago and one five hours ago, read through the reducer both
+    // screens read. The line dates the picture by its oldest corner: what the owner is looking at
+    // is only as fresh as the рахунок that has not been heard from since this morning.
+    const links = [
+      { monobankAccountId: 'mono-a', accountId: 'a', lastSyncedAtMs: NOW.getTime() - 60_000 },
+      { monobankAccountId: 'mono-b', accountId: 'b', lastSyncedAtMs: NOW.getTime() - 5 * HOUR },
+    ];
+    const coverage = syncCoverage(links);
+
+    const view = model({
+      monobank: bank({ ...coverage, oldestCompletedAtMs: coverage.oldestCompletedMs }),
+    });
+
+    expect(view.monobank?.freshness).toBe('оновлено 5 год тому');
+    expect(view.monobank?.freshness).not.toBe('оновлено щойно');
+  });
+
+  it('says the same thing as the monobank screen, over the same links', () => {
+    // main-screen: «the same moment the monobank screen states, in shorter words». One reducer
+    // answers both, so the day one of them starts filtering differently this fails.
+    const cases = [
+      [],
+      [{ monobankAccountId: 'a', accountId: 'a', lastSyncedAtMs: null }],
+      [
+        { monobankAccountId: 'a', accountId: 'a', lastSyncedAtMs: NOW.getTime() - HOUR },
+        { monobankAccountId: 'b', accountId: 'b', lastSyncedAtMs: null },
+      ],
+      [
+        { monobankAccountId: 'a', accountId: 'a', lastSyncedAtMs: NOW.getTime() - HOUR },
+        { monobankAccountId: 'b', accountId: 'b', lastSyncedAtMs: NOW.getTime() - 5 * HOUR },
+      ],
+    ];
+
+    for (const links of cases) {
+      const coverage = syncCoverage(links);
+      const screen = lastSyncLine({ links, now: NOW });
+      const home = model({
+        monobank: bank({ ...coverage, oldestCompletedAtMs: coverage.oldestCompletedMs }),
+      }).monobank?.freshness;
+
+      if (links.length === 0) {
+        // No link, nothing to miss: neither screen says anything at all.
+        expect(screen).toBeNull();
+        expect(home).toBeUndefined();
+      } else if (coverage.synced === 0) {
+        expect(screen).toBe('Синхронізації на цьому пристрої ще не було');
+        expect(home).toBe(NEVER_SYNCED_LINE);
+      } else if (coverage.oldestCompletedMs === undefined) {
+        // The same count, word for word, on both screens.
+        expect(home).toBe(screen);
+      } else {
+        // The same moment: this screen names it, Головний ages it.
+        expect(screen).toContain(momentLabel(coverage.oldestCompletedMs, NOW));
+        expect(home).toBe(`оновлено ${freshnessLabel(coverage.oldestCompletedMs, NOW)}`);
+      }
+    }
+  });
+
+  it('Scenario: A partly synced bank is stated as a count', () => {
+    // Three of nine — the reported bug exactly. An age read off the three that did sync would
+    // say «оновлено 3 хв тому» while two thirds of the owner's money was missing from the app.
+    const view = model({ monobank: bank({ linked: 9, synced: 3 }) });
+    expect(view.monobank?.freshness).toBe('Синхронізовано 3 з 9 рахунків');
+    expect(view.monobank?.freshness).not.toContain('оновлено');
+  });
+
+  it('Scenario: The count reads as Ukrainian for every number of рахунки', () => {
+    // «рахунків» whatever the number: after «з» the noun is the genitive plural, so 3 takes it
+    // exactly as 9 does — the nominative «3 рахунки» would be wrong here.
+    expect(model({ monobank: bank({ linked: 3, synced: 1 }) }).monobank?.freshness).toBe(
+      'Синхронізовано 1 з 3 рахунків',
+    );
+  });
+
+  it('Scenario: A pull that must wait out the request gap says a sync is going on', () => {
+    // The owner pulls within a minute of the last request any run sent, so the run they started
+    // sits out the rest of the gap before its first request (`coordinator.test.ts`, «A run started
+    // immediately after another waits»). The line must say a sync is going on for the whole of
+    // that wait — not an age, and not a count — or the wait would read as the app doing nothing.
+    const waiting = model({
+      monobank: bank({ linked: 9, synced: 3, syncing: true }),
+    });
+    expect(waiting.monobank?.freshness).toBe(SYNCING_LINE);
+
+    // The same while a whole-bank age is available: the run in flight outranks the reading.
+    const alsoWaiting = model({
+      monobank: bank({
+        linked: 2,
+        synced: 2,
+        oldestCompletedAtMs: NOW.getTime() - 5 * HOUR,
+        syncing: true,
+      }),
+    });
+    expect(alsoWaiting.monobank?.freshness).toBe(SYNCING_LINE);
+
+    // ...and when the run ends the reading is back.
+    const after = model({
+      monobank: bank({ linked: 2, synced: 2, oldestCompletedAtMs: NOW.getTime() - 10_000 }),
+    });
     expect(after.monobank?.freshness).toBe('оновлено щойно');
   });
 
@@ -464,10 +575,13 @@ describe('how fresh the bank data is', () => {
     // The moment is the links', and only a completed account carries one — a run that failed
     // leaves it exactly where it was, two hours old and now two hours and a little.
     const twoHoursAgo = NOW.getTime() - 2 * HOUR;
-    const before = model({ monobank: bank({ lastCompletedAtMs: twoHoursAgo }) });
+    const before = model({
+      monobank: bank({ synced: 1, oldestCompletedAtMs: twoHoursAgo }),
+    });
     const after = model({
       monobank: bank({
-        lastCompletedAtMs: twoHoursAgo,
+        synced: 1,
+        oldestCompletedAtMs: twoHoursAgo,
         attempt: { attemptedAtMs: NOW.getTime(), outcome: 'unavailable' },
       }),
     });
@@ -479,7 +593,7 @@ describe('how fresh the bank data is', () => {
 describe('monobank among what needs attention', () => {
   const HOUR = 60 * 60_000;
   const bank = (over: Partial<NonNullable<Parameters<typeof homeViewModel>[0]['monobank']>> = {}) =>
-    ({ configured: true, linked: 1, syncing: false, ...over }) as NonNullable<
+    ({ configured: true, linked: 1, synced: 0, syncing: false, ...over }) as NonNullable<
       Parameters<typeof homeViewModel>[0]['monobank']
     >;
 
@@ -488,7 +602,8 @@ describe('monobank among what needs attention', () => {
       uncategorised: 0,
       pendingDrafts: 0,
       monobank: bank({
-        lastCompletedAtMs: NOW.getTime() - HOUR,
+        synced: 1,
+        oldestCompletedAtMs: NOW.getTime() - HOUR,
         attempt: { attemptedAtMs: NOW.getTime(), outcome: 'invalid-token' },
       }),
     });
@@ -502,7 +617,8 @@ describe('monobank among what needs attention', () => {
   it('Scenario: A transient failure over fresh data puts nothing there', () => {
     const view = model({
       monobank: bank({
-        lastCompletedAtMs: NOW.getTime() - HOUR,
+        synced: 1,
+        oldestCompletedAtMs: NOW.getTime() - HOUR,
         attempt: { attemptedAtMs: NOW.getTime(), outcome: 'unavailable' },
       }),
     });
@@ -514,7 +630,24 @@ describe('monobank among what needs attention', () => {
   it('a failure over data that has gone stale does put a row there', () => {
     const view = model({
       monobank: bank({
-        lastCompletedAtMs: NOW.getTime() - 30 * HOUR,
+        synced: 1,
+        oldestCompletedAtMs: NOW.getTime() - 30 * HOUR,
+        attempt: { attemptedAtMs: NOW.getTime(), outcome: 'unavailable' },
+      }),
+    });
+
+    expect(view.attention.monobank).toContain('не оновлюються');
+    expect(view.attention.present).toBe(true);
+  });
+
+  it('Scenario: A failing run over a partly synced bank needs the owner', () => {
+    // Six of nine have never synced, and the last run ended unavailable. A bank the app has never
+    // wholly heard from is not fresh data whatever its best corner says — deciding this from the
+    // newest moment is what let one рахунок of nine silence the row entirely.
+    const view = model({
+      monobank: bank({
+        linked: 9,
+        synced: 3,
         attempt: { attemptedAtMs: NOW.getTime(), outcome: 'unavailable' },
       }),
     });
@@ -531,7 +664,8 @@ describe('monobank among what needs attention', () => {
 
     const fixed = model({
       monobank: bank({
-        lastCompletedAtMs: NOW.getTime(),
+        synced: 1,
+        oldestCompletedAtMs: NOW.getTime(),
         attempt: { attemptedAtMs: NOW.getTime(), outcome: 'complete' },
       }),
     });
@@ -548,7 +682,8 @@ describe('monobank among what needs attention', () => {
       uncategorised: 0,
       pendingDrafts: 0,
       monobank: bank({
-        lastCompletedAtMs: NOW.getTime(),
+        synced: 1,
+        oldestCompletedAtMs: NOW.getTime(),
         attempt: { attemptedAtMs: NOW.getTime(), outcome: 'complete' },
       }),
     });

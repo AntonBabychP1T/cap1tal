@@ -10,7 +10,14 @@ import {
   type StatementItem,
 } from './api';
 import type { MonobankTokenStore } from '../platform/monobank-token';
-import { continueWindow, isFullAnswer, mapStatement, planWindows, type StatementWindow } from './sync';
+import {
+  continueWindow,
+  isFullAnswer,
+  mapStatement,
+  planWindows,
+  syncOrder,
+  type StatementWindow,
+} from './sync';
 
 /**
  * One foreground sync run: the effectful half that `api.ts` and `sync.ts` deliberately are not.
@@ -18,9 +25,10 @@ import { continueWindow, isFullAnswer, mapStatement, planWindows, type Statement
  * Everything that is not a pure decision is a port — the token, the authenticated fetch, storage,
  * the правила, the clock, the device's calendar, the wait between requests and id generation — so
  * every path below runs under `npm run verify` against synthetic answers, with no network, no
- * timer and no emulator (design D5). What the coordinator itself owns is the order: one run end
- * captured at the start, links processed one after another, windows oldest first, a page committed
- * the moment it is read, and a cursor that moves only when the whole window behind it is done.
+ * timer and no emulator (design D5). What the coordinator itself owns is the sequence: one run end
+ * captured at the start, links processed one after another in the order `syncOrder` gives — taken
+ * once and never recomputed — windows oldest first, a page committed the moment it is read, and a
+ * cursor that moves only when the whole window behind it is done.
  *
  * The token is read into a local variable and goes no further: it is not in a progress event, not
  * in a result, not in an error. An `invalid-token` answer stops the run rather than offering the
@@ -30,6 +38,14 @@ import { continueWindow, isFullAnswer, mapStatement, planWindows, type Statement
 /** monobank's personal API allows one request a minute; the run paces itself to that. */
 export const MIN_REQUEST_GAP_MS = 60_000;
 
+/**
+ * What a paced call answers when the owner stopped the run while it was waiting out the gap.
+ *
+ * A sentinel rather than an exception: every failure in this module is a value, and this one is
+ * not even a failure. Nothing was sent, so there is nothing to report to the bank's account.
+ */
+const STOPPED = Symbol('sync stopped while waiting');
+
 /** What storage has to offer a run. `src/db/monobank-repo.ts` is the implementation. */
 export interface SyncStorage {
   listLinks(): readonly StoredMonobankLink[];
@@ -38,6 +54,18 @@ export interface SyncStorage {
   commitStatementAnswer(answer: StatementAnswer): void;
   /** Records that a sync completed for this link. Called for a `complete` account and no other. */
   markSynced(monobankAccountId: string, at: Date): void;
+  /**
+   * Records that this link has had its turn — that a request about it was sent, whatever the
+   * answer. What `syncOrder` rations the next run by, and deliberately not `markSynced`.
+   */
+  noteTurn(monobankAccountId: string, at: Date): void;
+  /**
+   * The moment this device last sent a request to the personal API, or `undefined` if it never
+   * has. Seeds the pacing, so the minute between requests belongs to the phone and not to one run.
+   */
+  lastRequestAtMs(): number | undefined;
+  /** A request was sent. Called for every request, ok or refused alike. */
+  noteRequest(at: Date): void;
 }
 
 export interface SyncPorts {
@@ -141,9 +169,10 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
   // The one variable the secret lives in for the whole run. Nothing below puts it anywhere else.
   const token = stored.token;
 
-  const links = [...ports.storage.listLinks()].sort((a, b) =>
-    a.monobankAccountId < b.monobankAccountId ? -1 : a.monobankAccountId > b.monobankAccountId ? 1 : 0,
-  );
+  // Longest since its turn first (`sync.ts`), taken once here and never recomputed: an order that
+  // followed the run's own progress would be a priority queue over state the loop is mutating,
+  // and a run over N accounts could no longer be said to make N requests.
+  const links = syncOrder(ports.storage.listLinks());
   if (links.length === 0) {
     return { kind: 'no-links' };
   }
@@ -155,19 +184,41 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
    */
   const runToMs = ports.nowMs();
   const rules = ports.rules();
-  let lastRequestMs: number | undefined;
+  /**
+   * Seeded from storage, not from `undefined`: the gap belongs to the device, so a run started
+   * seconds after the last one ended waits out the rest of it instead of firing at once and being
+   * refused. A device that has never sent a request has no moment and does not wait.
+   */
+  let lastRequestMs: number | undefined = remembered(() => ports.storage.lastRequestAtMs());
 
-  /** The API's minimum gap, waited out rather than slept through: the wait is a port. */
-  async function paced<T>(request: () => Promise<T>): Promise<T> {
+/**
+   * The API's minimum gap, waited out rather than slept through: the wait is a port.
+   *
+   * Answers `STOPPED` for a run the owner stopped *while it was waiting*. A gap is a whole minute
+   * — long enough to leave the screen and press «Зупинити» — and a request sent after that is one
+   * nobody asked for: it spends the device's one-a-minute budget and, being a request, would take
+   * the account's turn with it.
+   */
+  async function paced<T>(request: () => Promise<T>): Promise<T | typeof STOPPED> {
     if (lastRequestMs !== undefined) {
       const since = ports.nowMs() - lastRequestMs;
       if (since < gap) {
-        const ms = gap - since;
+        // Never longer than one gap. A remembered moment in the future — an NTP correction, a
+        // clock set by hand — would otherwise stall sync until the phone's own clock caught up,
+        // which for a year-ahead clock is forever. `syncDue` guards the same hazard the same way.
+        const ms = Math.min(gap, gap - since);
         report({ kind: 'waiting', ms });
         await ports.wait(ms);
       }
     }
-    lastRequestMs = ports.nowMs();
+    if (cancelled()) {
+      return STOPPED;
+    }
+    const sentAt = ports.nowMs();
+    lastRequestMs = sentAt;
+    // Remembered before the answer, because a request that comes back 429 was still sent — and
+    // wrapped, because a storage hiccup must not become a sync that will not start.
+    remember(() => ports.storage.noteRequest(ports.now()));
     return request();
   }
 
@@ -196,6 +247,14 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
   // One client-info answer for the whole run: it is what the balances committed with every page
   // come from, and asking again per account would spend the request budget on nothing new.
   const info = await paced(() => fetchClientInfo(ports.fetch, token));
+  if (info === STOPPED) {
+    // Stopped before a single request went out: nothing was asked and nothing is blamed on the
+    // bank for the owner's own decision.
+    for (const link of links) {
+      finish(link, 'cancelled', 0);
+    }
+    return { kind: 'ran', imported: 0, accounts: results };
+  }
   if (info.kind !== 'ok') {
     const outcome = outcomeOf(info);
     for (const link of links) {
@@ -287,7 +346,7 @@ async function syncOneAccount(input: {
   readonly runToMs: number;
   readonly rules: readonly Rule[];
   readonly ports: SyncPorts;
-  readonly paced: <T>(request: () => Promise<T>) => Promise<T>;
+  readonly paced: <T>(request: () => Promise<T>) => Promise<T | typeof STOPPED>;
   readonly cancelled: () => boolean;
 }): Promise<{ outcome: AccountOutcome; imported: number }> {
   const { link, bankAccount, obtainedAt, token, runToMs, rules, ports, paced, cancelled } = input;
@@ -303,14 +362,24 @@ async function syncOneAccount(input: {
         return { outcome: 'cancelled', imported };
       }
       const request: StatementWindow = window;
-      const answer = await paced(() =>
-        fetchStatement(ports.fetch, token, {
+      const answer = await paced(() => {
+        // This link's turn, written inside the paced call and therefore *after* the gap has been
+        // waited out: a run stopped during that wait spends no request, and the spec says a turn
+        // is not taken when no request is spent. The next run's order is rationed by this and not
+        // by whether the account goes on to complete.
+        remember(() => ports.storage.noteTurn(link.monobankAccountId, ports.now()));
+        return fetchStatement(ports.fetch, token, {
           accountId: link.monobankAccountId,
           fromMs: request.fromMs,
           toMs: request.toMs,
           context: { currency: bankAccount.currency, dateOf: ports.dateOf },
-        }),
-      );
+        });
+      });
+      if (answer === STOPPED) {
+        // Stopped while this account sat out the gap. No request was sent, so no turn was taken
+        // and the next run finds this рахунок exactly where it was in the order.
+        return { outcome: 'cancelled', imported };
+      }
       if (answer.kind !== 'ok') {
         // Nothing advances: the cursor, the imported ids and the транзакції are as they were, and
         // this exact window is what the next run asks for again.
@@ -400,6 +469,31 @@ function commitCursor(
     });
   } catch {
     // The next run plans the same window again; nothing was lost.
+  }
+}
+
+/**
+ * A write whose only job is to make the *next* run better paced or better ordered.
+ *
+ * Wrapped for the reason `upsertAccounts` and `commitStatementAnswer` are: storage that refuses a
+ * write must not end a run. A refused `noteRequest` costs at most one unpaced first request next
+ * time and a refused `noteTurn` at most one repeated turn — while an unwrapped throw here would
+ * cost the whole sync, which is the failure this change exists to remove.
+ */
+function remember(write: () => void): void {
+  try {
+    write();
+  } catch {
+    // Nothing to do and nothing to say: the run carries on and imports what it can.
+  }
+}
+
+/** The same for a read: a device whose storage will not answer simply paces as a fresh one does. */
+function remembered(read: () => number | undefined): number | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
   }
 }
 

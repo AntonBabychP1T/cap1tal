@@ -10,6 +10,7 @@ import {
   monobankAccounts,
   monobankImportedItems,
   monobankLinks,
+  monobankRequestPace,
   monobankSyncAttempt,
   transactions as transactionsTable,
 } from './schema';
@@ -59,6 +60,12 @@ export interface StoredMonobankLink extends MonobankLink {
    * screen says them differently.
    */
   readonly lastSyncedAtMs: number | null;
+  /**
+   * Epoch milliseconds of this link's last *turn* — the last time a run sent the bank a request
+   * about it — or `null` for a link no run has ever spent a request on. What `syncOrder` rations
+   * runs by, and deliberately not `lastSyncedAtMs`: a turn is taken whatever the answer was.
+   */
+  readonly lastAttemptedAtMs: number | null;
 }
 
 /**
@@ -77,6 +84,9 @@ export interface StoredSyncAttempt {
 
 /** The one row's key; the CHECK in the schema is what keeps the table to it. */
 const ATTEMPT_ROW = 'attempt';
+
+/** The same, for the remembered request moment. */
+const PACE_ROW = 'pace';
 
 /** One statement answer, whole — the unit `commitStatementAnswer` either stores or does not. */
 export interface StatementAnswer {
@@ -132,6 +142,7 @@ function toStoredLink(row: {
   syncStartDate: string;
   cursorMs: Date;
   lastSyncedAt: Date | null;
+  lastAttemptedAt: Date | null;
 }): StoredMonobankLink {
   return {
     monobankAccountId: row.monobankAccountId,
@@ -139,6 +150,7 @@ function toStoredLink(row: {
     syncStartDate: row.syncStartDate,
     cursorMs: row.cursorMs.getTime(),
     lastSyncedAtMs: row.lastSyncedAt?.getTime() ?? null,
+    lastAttemptedAtMs: row.lastAttemptedAt?.getTime() ?? null,
   };
 }
 
@@ -456,6 +468,22 @@ export function monobankRepo(db: Storage) {
         .run();
     },
 
+    /**
+     * Records that a run has given this link a turn — that it sent the bank a request about it,
+     * whatever the answer was. Separate from `markSynced` on purpose: a turn is what the run's
+     * order rations, and rationing on the completed sync would let a link that can never complete
+     * head every run for good while the rest waited.
+     *
+     * A link that is gone takes no moment — the same silence as any other write to nothing.
+     */
+    noteTurn(monobankAccountId: string, at: Date): void {
+      db
+        .update(monobankLinks)
+        .set({ lastAttemptedAt: at })
+        .where(eq(monobankLinks.monobankAccountId, monobankAccountId))
+        .run();
+    },
+
     /** The link of one monobank account, when it has one. */
     linkOf(monobankAccountId: string): StoredMonobankLink | undefined {
       const row = db
@@ -525,6 +553,28 @@ export function monobankRepo(db: Storage) {
      */
     withdrawAttempt(): void {
       db.delete(monobankSyncAttempt).where(eq(monobankSyncAttempt.id, ATTEMPT_ROW)).run();
+    },
+
+    /**
+     * The moment this device last sent a request to the personal API, or `undefined` on a device
+     * that has sent none. What seeds a run's pacing, so the minute between requests is a property
+     * of the phone rather than of one run.
+     */
+    lastRequestAtMs(): number | undefined {
+      const row = db.select().from(monobankRequestPace).get();
+      return row?.lastRequestAt.getTime();
+    },
+
+    /**
+     * A request was sent, whatever it answered. Replaces whatever was remembered; there is one row
+     * — a history of requests is not what pacing needs, and the latest is the only one it reads.
+     */
+    noteRequest(at: Date): void {
+      db
+        .insert(monobankRequestPace)
+        .values({ id: PACE_ROW, lastRequestAt: at })
+        .onConflictDoUpdate({ target: monobankRequestPace.id, set: { lastRequestAt: at } })
+        .run();
     },
 
     /** Whether this exact pair is already remembered — the read behind "at most once, forever". */

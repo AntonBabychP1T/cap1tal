@@ -60,6 +60,7 @@ const STORED_AT = new Date('2026-08-28T08:00:01.000Z');
 const MADE_AT = new Date('2026-08-30T18:20:00.000Z');
 const CURSOR_MS = Date.UTC(2026, 7, 1, 21, 0, 0);
 const SYNCED_AT = new Date('2026-08-28T08:05:00.000Z');
+const TURNED_AT = new Date('2026-09-04T17:34:00.000Z');
 
 const card = account({
   id: 'card',
@@ -141,6 +142,10 @@ function seedWorld(db: TestDb): void {
     storedAt: STORED_AT,
   });
   monobank.markSynced('mono-card', SYNCED_AT);
+  // ...and a turn, which is a different fact: a run asked the bank about this link. Seeded here
+  // so «A restored link has had no turn» is a claim about the бекап path and not about a device
+  // that never had one.
+  monobank.noteTurn('mono-card', TURNED_AT);
 
   notificationsRepo(db).addWatch({ packageName: 'ua.privatbank.ap24', accountId: 'card' });
 
@@ -407,6 +412,20 @@ describe('the whole stored state as one snapshot', () => {
     const written = JSON.stringify(snapshot);
     expect(written).not.toContain('invalid-token');
     expect(Object.keys(snapshot)).not.toContain('attempt');
+    // ...while the money and the links of that same device are in it whole.
+    expect(snapshot.accounts).toHaveLength(5);
+    expect(snapshot.monobankLinks.length).toBeGreaterThan(0);
+  });
+
+  it('Scenario: A бекап carries no request moment', () => {
+    // When this phone last asked the bank is what keeps its next run inside the API's one request
+    // a minute — a fact about this device, and about no other.
+    monobankRepo(storage.db).noteRequest(new Date('2026-09-04T17:34:00.000Z'));
+
+    const snapshot = repo.snapshot();
+
+    expect(Object.keys(snapshot)).not.toContain('requestPace');
+    expect(JSON.stringify(snapshot)).not.toContain('lastRequestAt');
     // ...while the money and the links of that same device are in it whole.
     expect(snapshot.accounts).toHaveLength(5);
     expect(snapshot.monobankLinks.length).toBeGreaterThan(0);
@@ -724,6 +743,17 @@ describe('the whole stored state replaced by a snapshot, as one unit', () => {
     });
   });
 
+  it('Scenario: A restore leaves this phone`s request moment alone', () => {
+    // Same argument as the attempt above, one layer lower: a moment carried in from another phone
+    // would make this one sit out a request it never sent, or fire one the bank refuses.
+    const at = new Date('2026-09-04T17:34:00.000Z');
+    monobankRepo(storage.db).noteRequest(at);
+
+    repo.replaceAll(smallState());
+
+    expect(monobankRepo(storage.db).lastRequestAtMs()).toBe(at.getTime());
+  });
+
   it('Scenario: The rate cache and the fingerprints survive a replacement', () => {
     ratesRepo(storage.db).upsert({ currency: 'USD', rateMillionths: 41_000_000 }, OBTAINED_AT);
     storage.db.insert(notificationFingerprints).values({ fingerprint: 'seen-1' }).run();
@@ -849,10 +879,32 @@ describe('the round trip a бекап promises', () => {
       // The moment a sync last completed travels with the cursor it belongs to: the restored
       // phone says the рахунок was synced when it was, not that it never has been.
       lastSyncedAtMs: SYNCED_AT.getTime(),
+      // The turn is not in the file, so the restored link has none — see the scenario below.
+      lastAttemptedAtMs: null,
     });
     expect(notificationsRepo(target.db).watches()).toEqual([
       { packageName: 'ua.privatbank.ap24', accountId: 'card', currency: 'UAH' },
     ]);
+  });
+
+  it('Scenario: A restored link has had no turn', async () => {
+    // The source device really has one — `seedWorld` calls `noteTurn` — so what follows is a
+    // claim about the бекап path, not about a device that never asked the bank anything.
+    expect(monobankRepo(source.db).linkOf('mono-card')?.lastAttemptedAtMs).toBe(TURNED_AT.getTime());
+
+    const { bytes } = await saveBackup(backupRepo(source.db), MADE_AT);
+
+    // Not in the file at all: the turn is what *this* phone last asked about this link, the same
+    // class of fact as the request pace, and neither travels.
+    expect(bytes).not.toContain('lastAttemptedAt');
+
+    expect(await restoreBackup(backupRepo(target.db), bytes)).toBe('ok');
+    const link = monobankRepo(target.db).linkOf('mono-card');
+    expect(link?.lastAttemptedAtMs).toBeNull();
+    // ...while the cursor, the boundary and the completed sync it belongs beside are restored.
+    expect(link?.cursorMs).toBe(CURSOR_MS);
+    expect(link?.syncStartDate).toBe('2026-08-01');
+    expect(link?.lastSyncedAtMs).toBe(SYNCED_AT.getTime());
   });
 
   it('Scenario: What the бекап does not hold is gone', async () => {

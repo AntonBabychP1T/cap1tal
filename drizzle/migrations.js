@@ -19,6 +19,7 @@ import m0014 from './0014_solid_darwin.sql';
 import m0015 from './0015_large_rachel_grey.sql';
 import m0016 from './0016_futuristic_triathlon.sql';
 import m0017 from './0017_uneven_bucky.sql';
+import m0018 from './0018_normal_sentinels.sql';
 
   export default {
     journal,
@@ -40,7 +41,8 @@ m0013,
 m0014,
 m0015,
 m0016,
-m0017
+m0017,
+m0018
     }
   }
   
