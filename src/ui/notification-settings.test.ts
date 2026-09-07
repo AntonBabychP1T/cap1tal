@@ -333,7 +333,7 @@ describe('watched apps', () => {
  * could not be asked has not said "none", and its picker keeps the whole list.
  */
 describe('the known bank apps the picker offers', () => {
-  const OSCHAD = 'ua.oschadbank.online';
+  const OSCHAD = 'ua.oschadbank.flumo';
   const names = (choices: readonly { readonly packageName: string }[]) =>
     choices.map((app) => app.packageName);
 
@@ -366,5 +366,17 @@ describe('the known bank apps the picker offers', () => {
   it('An installed app that is not one of the known ones is not invented', () => {
     // The list is curated; being installed does not put an app on it.
     expect(appChoices({ watches: [], installed: ['com.example.unrelated'] })).toEqual([]);
+  });
+
+  it('Every known app is a distinct, well-formed package name', () => {
+    const packages = KNOWN_BANK_APPS.map((app) => app.packageName);
+    // Twice in the list would be offered twice, and the second pick "already watched".
+    expect(new Set(packages).size).toBe(packages.length);
+    // The phone is asked by exactly these strings: a stray space or capital hides a bank for good.
+    for (const name of packages) {
+      expect(name, `${name} is not an Android package name`).toMatch(
+        /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u,
+      );
+    }
   });
 });

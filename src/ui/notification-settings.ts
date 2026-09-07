@@ -29,19 +29,45 @@ export interface KnownBankApp {
  * own API with real ids and сума, and a second, weaker path over the same рахунки could only
  * manufacture duplicates of what the sync already knows.
  *
- * Guessed packages are harmless — an app that never posts under that name simply captures nothing —
- * and correcting one is a change to this constant, never to the spec or the schema. Anything not
+ * Every package is the one Google Play lists for that app, checked on 2026-09-07 — none is
+ * guessed. A guess is not harmless: the picker offers only the apps this phone has, and it asks
+ * the phone by exactly these strings, so a wrong package does not stay quietly silent — it hides
+ * the bank from the picker altogether (the first list guessed five of eight, and OTP was not on
+ * it at all). A bank that moved to a new app under a new package keeps its previous package
+ * listed too: a phone still running the old app still gets its сповіщення from it, and the
+ * picker shows whichever one is installed.
+ *
+ * Adding or correcting a bank is a change to this constant and to the module manifest's
+ * `<queries>` — a test holds the two together — never to the spec or the schema. Anything not
  * listed is added by hand, so no bank is out of reach for being missing here.
  */
 export const KNOWN_BANK_APPS: readonly KnownBankApp[] = [
   { packageName: 'ua.privatbank.ap24', name: 'Приват24' },
-  { packageName: 'ua.oschadbank.online', name: 'Ощад' },
-  { packageName: 'ua.abank24.mobileapp', name: 'A-Bank' },
-  { packageName: 'com.ukrsibbank.client.android', name: 'UKRSIB online' },
-  { packageName: 'ua.pumb.mobile', name: 'ПУМБ Online' },
-  { packageName: 'ua.sensebank.mobile', name: 'Sense SuperApp' },
-  { packageName: 'ua.raiffeisen.mobile', name: 'Raiffeisen MyBank' },
-  { packageName: 'ua.creditagricole.mobile', name: 'CA Mobile' },
+  { packageName: 'ua.oschadbank.flumo', name: 'Ощад' },
+  { packageName: 'ua.oschadbank.online', name: 'Ощад 24/7 (попередній застосунок)' },
+  { packageName: 'com.fuib.android.spot.online', name: 'ПУМБ Online' },
+  { packageName: 'ua.raiffeisen.myraif', name: 'MyRaif (Райффайзен)' },
+  { packageName: 'ua.aval.dbo.client.android', name: 'Raiffeisen Online (попередній застосунок)' },
+  { packageName: 'com.ukrsibbank.uso.android', name: 'UKRSIB online' },
+  { packageName: 'com.ukrsibbank.client.android', name: 'UKRSIB online (попередній застосунок)' },
+  { packageName: 'ua.alfabank.mobile.android', name: 'Sense SuperApp' },
+  { packageName: 'ua.com.abank', name: 'àbank24 (А-Банк)' },
+  { packageName: 'ua.otpbank.android', name: 'OTP Bank UA' },
+  { packageName: 'ua.creditagricole.mobile.app', name: 'CA+ (Credit Agricole)' },
+  { packageName: 'com.ugb.app', name: 'Екобанк Онлайн (Укргазбанк)' },
+  { packageName: 'com.eximb.enter', name: 'Enter EXIM (Укрексімбанк)' },
+  { packageName: 'ua.izibank.app', name: 'izibank' },
+  { packageName: 'com.tas.tas2u', name: 'TAS2U (Таскомбанк)' },
+  { packageName: 'ua.android.kredobank.prod', name: 'KredoBank' },
+  { packageName: 'com.bank.pivdenny', name: 'Pivdenny Online (Південний)' },
+  { packageName: 'com.vostok.bv', name: 'VST bank (Восток)' },
+  { packageName: 'com.creditdnepr.mb', name: 'FreeBank (Кредит Дніпро)' },
+  { packageName: 'com.t18.bone.personal.globus', name: 'GlobusPlus (Глобус Банк)' },
+  { packageName: 'ua.ideabank.obank', name: 'O.Bank (Idea Bank)' },
+  { packageName: 'ua.monvel.bankalliance', name: 'Alliance (Банк Альянс)' },
+  { packageName: 'bank.sky.app', name: 'SkyBank' },
+  { packageName: 'com.ua.mtb.bank', name: 'MTB360 (МТБ Банк)' },
+  { packageName: 'online.kapowai.accordbank', name: 'Accordbank' },
 ];
 
 /**

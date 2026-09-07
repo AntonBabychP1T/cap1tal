@@ -15,13 +15,31 @@
   -->
   <queries>
     <package android:name="ua.privatbank.ap24" />
+    <package android:name="ua.oschadbank.flumo" />
     <package android:name="ua.oschadbank.online" />
-    <package android:name="ua.abank24.mobileapp" />
+    <package android:name="com.fuib.android.spot.online" />
+    <package android:name="ua.raiffeisen.myraif" />
+    <package android:name="ua.aval.dbo.client.android" />
+    <package android:name="com.ukrsibbank.uso.android" />
     <package android:name="com.ukrsibbank.client.android" />
-    <package android:name="ua.pumb.mobile" />
-    <package android:name="ua.sensebank.mobile" />
-    <package android:name="ua.raiffeisen.mobile" />
-    <package android:name="ua.creditagricole.mobile" />
+    <package android:name="ua.alfabank.mobile.android" />
+    <package android:name="ua.com.abank" />
+    <package android:name="ua.otpbank.android" />
+    <package android:name="ua.creditagricole.mobile.app" />
+    <package android:name="com.ugb.app" />
+    <package android:name="com.eximb.enter" />
+    <package android:name="ua.izibank.app" />
+    <package android:name="com.tas.tas2u" />
+    <package android:name="ua.android.kredobank.prod" />
+    <package android:name="com.bank.pivdenny" />
+    <package android:name="com.vostok.bv" />
+    <package android:name="com.creditdnepr.mb" />
+    <package android:name="com.t18.bone.personal.globus" />
+    <package android:name="ua.ideabank.obank" />
+    <package android:name="ua.monvel.bankalliance" />
+    <package android:name="bank.sky.app" />
+    <package android:name="com.ua.mtb.bank" />
+    <package android:name="online.kapowai.accordbank" />
   </queries>
   <application>
     <!--
