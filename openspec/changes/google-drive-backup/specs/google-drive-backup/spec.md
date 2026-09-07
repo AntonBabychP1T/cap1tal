@@ -64,7 +64,7 @@ to open SHALL be refused, and refusing SHALL change nothing on the phone.
 
 - **WHEN** a бекап holding the owner's рахунки and транзакції is uploaded
 - **THEN** the uploaded bytes contain neither the бекап's contents nor any рахунок name,
-  сума or транзакція readable without the key
+  сума, транзакція or фіскальний чек readable without the key
 
 #### Scenario: An altered upload does not open
 
@@ -80,10 +80,13 @@ to open SHALL be refused, and refusing SHALL change nothing on the phone.
 
 ### Requirement: Connecting produces a код відновлення and it is the only other way in
 
-Connecting Google Drive SHALL produce a **код відновлення** — the sealing key written so a
-person can copy it down — and SHALL show it to the owner, requiring them to acknowledge that
-they have kept it before the connection is complete. While connected, the app SHALL be able
-to show it again on the owner's explicit request. The код відновлення SHALL NOT be written
+Connecting Google Drive on a phone that starts a new line of версії бекапу SHALL produce a
+**код відновлення** — the sealing key written so a person can copy it down — and SHALL show it to
+the owner, requiring them to acknowledge that they have kept it before the connection is complete.
+(Connecting into a line that already exists asks for that line's код відновлення instead; the
+requirement below says what happens then, and entering it correctly is that connection's
+acknowledgement.) While connected, the app SHALL be able to show it again on the owner's explicit
+request. The код відновлення SHALL NOT be written
 among the owner's financial data and SHALL NOT be uploaded. A phone whose secure storage does
 not hold the key SHALL be able to open an uploaded бекап with the код відновлення and by no
 other means. A код відновлення that was copied down wrongly SHALL be refused as wrong before
@@ -91,8 +94,9 @@ anything is opened or replaced.
 
 #### Scenario: The connection is not complete until the code is acknowledged
 
-- **WHEN** the owner connects Google Drive and has not yet acknowledged the код відновлення
-- **THEN** the connection is not complete
+- **WHEN** the owner connects Google Drive on a phone starting a new line and has not yet
+  acknowledged the код відновлення
+- **THEN** the connection is not complete, and no бекап is uploaded
 
 #### Scenario: A new phone opens the бекап with the код відновлення
 
@@ -112,14 +116,75 @@ anything is opened or replaced.
 - **THEN** it is refused as wrong before any бекап is opened, nothing on the phone is
   replaced, and the owner may enter it again
 
+### Requirement: One line of версії бекапу has one код відновлення
+
+Every версія бекапу SHALL carry, readable without the key, which sealing key it was sealed
+under, so the app can say which версії it can open without opening any of them.
+
+Connecting on a phone that holds no sealing key, where the Drive folder already holds версії
+бекапу, SHALL offer continuing a line: the app SHALL ask for a код відновлення and, when it opens
+a версія бекапу in the folder, SHALL adopt that key as this phone's own — so the версії of that
+line stay openable and the ones this phone uploads next join them. Where the folder holds версії of
+more than one line, the line adopted SHALL be the one the entered code opens. Restoring a версія
+бекапу with a код відновлення SHALL adopt that key in the same way and for the same reason.
+
+A код відновлення entered correctly SHALL itself complete the connection: the owner who typed the
+code has demonstrated they hold it, so the app SHALL NOT ask them to acknowledge it again, and the
+connection SHALL be complete and its daily uploads SHALL begin.
+
+The owner who no longer has the код відновлення SHALL be able to start a new line instead. Before
+they do, the app SHALL say that the версії already in Drive will no longer be openable by this
+phone. Starting a new line SHALL NOT delete them.
+
+The app SHALL NOT delete a версія бекапу it cannot open. Removing older версії — the requirement
+"A new upload never destroys the last good one" — SHALL apply only to версії of the line the app is
+currently uploading.
+
+#### Scenario: A new phone continues the same backup line
+
+- **WHEN** the owner connects Google Drive on a new phone, the folder already holds версії
+  бекапу, and they enter the код відновлення of that line
+- **THEN** the phone adopts that key, every версія already there stays openable, and the next
+  бекап this phone uploads is sealed under the same key
+
+#### Scenario: A версія the phone cannot open is not deleted
+
+- **WHEN** the owner starts a new line because they no longer have the old код відновлення, and
+  enough new версії бекапу are uploaded to pass the number the app keeps
+- **THEN** every версія of the old line is still in the folder, and only версії of the new line
+  are removed
+
+#### Scenario: Restoring with the код відновлення joins that line too
+
+- **WHEN** a phone holding no key restores a версія бекапу by entering its код відновлення, and
+  a бекап is uploaded from that phone afterwards
+- **THEN** the uploaded бекап is sealed under the same key, and it joins the версії that were
+  already there rather than starting a second line
+
+#### Scenario: Connecting with the code needs no second acknowledgement
+
+- **WHEN** the owner connects on a keyless phone, the folder already holds версії бекапу, and
+  they enter a код відновлення that opens one
+- **THEN** the connection is complete without a further acknowledgement being asked for, and the
+  app uploads when a бекап is next due
+
+#### Scenario: A версія from another line is named as such, not as a mistyped code
+
+- **WHEN** the owner restores and chooses a версія бекапу sealed under a key other than the one
+  this phone holds
+- **THEN** the app says that версія belongs to another код відновлення rather than saying the
+  code was entered wrongly
+
 ### Requirement: The current бекап is uploaded at least once every 24 hours, best-effort
 
 While Google Drive is connected, the app SHALL upload the current бекап when at least 24
 hours have passed since the last successful upload and the system gives the app the chance to
 run. When the system did not give it that chance, the app SHALL upload at the next opportunity
 after the app is opened. The app SHALL NOT state a clock time at which a backup will happen.
-When the current бекап is identical to the one last uploaded, the app SHALL make no new upload
-and SHALL leave the last successful upload standing.
+When the current бекап holds the same state as the one last uploaded — the same integrity value
+over its contents, which is the only sameness a бекап can have, since every one records the moment
+it was made — the app SHALL make no new upload and SHALL leave the last successful upload
+standing.
 
 #### Scenario: A due backup runs in the background
 
@@ -135,7 +200,8 @@ and SHALL leave the last successful upload standing.
 
 #### Scenario: An unchanged бекап is not uploaded again
 
-- **WHEN** a backup is due and the current бекап is byte-for-byte what was last uploaded
+- **WHEN** a backup is due and the current бекап holds exactly the state the last uploaded one
+  held, carrying the same integrity value
 - **THEN** no new upload is made and the last successful upload's date is unchanged
 
 #### Scenario: A disconnected app never uploads

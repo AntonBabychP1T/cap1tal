@@ -75,6 +75,10 @@ Non-goals (deliberate, and some of them are vision §14 lines this change stays 
   analytics, no third-party sync provider.
 - **No local notification when a backup fails** — actionable alerts are step 13
   (`reminders-and-alerts`, FR-N2). Here a failure is visible in Налаштування and nowhere else.
+  Vision §13 does name "local or Google Drive backup" among the failures that may raise a
+  сповіщення про збій, and step 13's own delta enumerates its alerting subjects without a Drive
+  entry — so **step 13's list needs one added when this change archives**, and that is recorded in
+  Impact below rather than taken here.
 - **No бекап file format work**: format, versioning, integrity and the import that replaces
   local state are `backup-file`'s (FR-B1–B2). This change adds an encryption envelope *around*
   that file and does not change what is inside it.
@@ -138,6 +142,11 @@ Non-goals (deliberate, and some of them are vision §14 lines this change stays 
 - **The Налаштування footer changes meaning**: «Назовні йдуть лише запити до monobank з вашим
   токеном» is exactly the sentence this change makes conditionally false, which is why
   `settings-screen` is a modified capability rather than an untouched one.
-- **Docs**: `docs/glossary.md` gains **бекап**, **код відновлення** and **версія бекапу** so
-  the specs and screens use owner-facing terms verbatim; `docs/tech-task.md` §5 row 12 moves
-  from ⏳ to its real state at archive time.
+- **Docs**: `docs/glossary.md` already defines **бекап** and **відновлення** (step 11 added
+  them); it gains **версія бекапу** and **код відновлення**, the latter with a line in the
+  distinctions table saying it is the key written down and not an act of restoring.
+  `docs/tech-task.md` §5 row 12 moves from ⏳ to its real state at archive time.
+- **A hand-off to `reminders-and-alerts` (step 13)**: its alerting subjects must gain a Drive
+  entry, and its own `settings-screen` delta rewrites the same requirement block this change
+  rewrites. Both are recorded as a note in that change's `tasks.md`, the way `fiscal-receipts`
+  recorded its note here — whichever of the two archives second reconciles.

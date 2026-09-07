@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
-import { SETTINGS_SECTIONS } from './settings-sections';
+import { outboundTrafficNote, SETTINGS_SECTIONS } from './settings-sections';
 
 describe('the Налаштування sections', () => {
   it('Scenario: The tab opens on its sections', () => {
@@ -16,6 +18,7 @@ describe('the Налаштування sections', () => {
       'Сповіщення банків',
       'Нагадування',
       'Бекап',
+      'Google Drive',
       'Репорти про помилки',
     ]);
   });
@@ -57,6 +60,18 @@ describe('the Налаштування sections', () => {
     expect(backup.href).toBe('/manage/backup');
     expect(backup.hint).toContain('файл');
     expect(backup.hint).toContain('відновити');
+  });
+
+  it('Scenario: The Google Drive section opens backup management', () => {
+    const drive = SETTINGS_SECTIONS.find((section) => section.title === 'Google Drive')!;
+
+    // One flow: the connection state, the last successful бекап and both actions live behind it.
+    expect(drive.href).toBe('/manage/drive-backup');
+    expect(drive.hint).toContain('Drive');
+    // Beside «Бекап», which is the same subject by hand — the two sections are siblings and the
+    // hints are what tell them apart.
+    const titles = SETTINGS_SECTIONS.map((section) => section.title);
+    expect(titles.indexOf('Google Drive')).toBe(titles.indexOf('Бекап') + 1);
   });
 
   it('Scenario: The bank-notifications section opens access and watches', () => {
@@ -127,5 +142,64 @@ describe('the hints name what the section actually holds', () => {
 
   it('«Ліміти» says a ліміт is also the категорія’s ціль витрат', () => {
     expect(hintOf('/manage/limits')).toContain('ціль витрат');
+  });
+});
+
+describe('the tab tells the truth about what leaves the phone', () => {
+  it('Scenario: Not connected names what the app sends without Google Drive', () => {
+    const note = outboundTrafficNote(false);
+
+    // Every outbound connection the app actually makes, and no бекап among them. All three exist
+    // in the tree: `src/monobank/api.ts`, `src/monobank/currency.ts` and `src/fiscal/chk-all-web.ts`.
+    expect(note).toContain('monobank з вашим токеном');
+    expect(note).toContain('курсів monobank без токена');
+    expect(note).toContain('чеків до податкової');
+    expect(note).not.toContain('Drive');
+    // And the чек lookup is said to be the owner's own act, not something the app does by itself.
+    expect(note).toContain('коли ви скануєте чек');
+  });
+
+  it('Scenario: Connected names the backup too', () => {
+    const note = outboundTrafficNote(true);
+
+    // The same three, and the бекап as well — the sentence «усе лежить на цьому телефоні» alone
+    // is exactly what this requirement forbids while Drive is connected.
+    expect(note).toContain('monobank з вашим токеном');
+    expect(note).toContain('курсів monobank без токена');
+    expect(note).toContain('чеків до податкової');
+    expect(note).toContain('запечатаний бекап');
+    expect(note).toContain('ваш власний Drive');
+    // The requirement's SHALL NOT, asserted rather than merely commented: while Drive is connected
+    // the tab may not claim that everything stays on the phone. It is the one sentence in the app
+    // that promises where the owner's money lives, and it has to stop being said the moment it
+    // stops being true.
+    expect(note).not.toContain('Усе лежить на цьому телефоні');
+  });
+
+  it('names the same three connections whether or not Drive is connected', () => {
+    // The two answers differ only by the бекап: a change that made one say *less* than the other
+    // about monobank or the чеки would be a lie by omission in whichever direction it went.
+    const shared =
+      'Назовні йдуть лише запити до monobank з вашим токеном, запит курсів monobank без токена і ' +
+      'запити чеків до податкової — тільки коли ви скануєте чек.';
+    expect(outboundTrafficNote(false)).toContain(shared);
+    expect(outboundTrafficNote(true)).toContain(shared);
+    // And the disconnected one may still say it, because there it is true.
+    expect(outboundTrafficNote(false)).toContain('Усе лежить на цьому телефоні');
+  });
+});
+
+describe('the tab reads the connection when it is looked at', () => {
+  it('re-reads on focus rather than once at mount', () => {
+    const screen = readFileSync(new URL('../app/(tabs)/settings.tsx', import.meta.url), 'utf8');
+
+    // Connecting Google Drive happens on a route pushed *above* the tabs, so popping back does not
+    // re-render this screen on its own. Read once at mount, the owner would return to «Усе лежить
+    // на цьому телефоні» while a sealed бекап was already going to Drive — the one thing the
+    // outbound-traffic requirement forbids, and invisible to a test of the sentence alone.
+    expect(screen).toContain('useReloadOnFocus');
+    expect(screen).toContain('isConnected(driveBackupState.read())');
+    // And the sentence itself comes from `settings-sections.ts`, not built inline.
+    expect(screen).toContain('outboundTrafficNote(driveConnected)');
   });
 });

@@ -1020,3 +1020,48 @@ export type NewEarnedAchievementRow = typeof earnedAchievements.$inferInsert;
 export type ChallengeDecisionRow = typeof challengeDecisions.$inferSelect;
 export type ChallengeDecisionInsert = typeof challengeDecisions.$inferInsert;
 export type SpendingNormRow = typeof spendingNorms.$inferSelect;
+
+/**
+ * The **Google Drive backup**: what the section shows, and nothing a secret could hide in.
+ *
+ * One row, `'drive'`, kept to one by the CHECK — the `saldo_import` idiom. There is no column here
+ * for the Google authorisation, for the sealing key or for the код відновлення, and there must
+ * never be one: all three live in the device's secure storage (`src/platform/google-auth.ts` and
+ * `src/platform/backup-key.ts`), which is the `monobank_accounts` precedent. What this table holds
+ * is what the owner reads on «Google Drive» — which account, whether the код відновлення has been
+ * acknowledged, when the last бекап went up, and what the last failure was.
+ *
+ * Connectedness has exactly one definition and it lives here: `account_label` present **and**
+ * `recovery_code_acknowledged_at` present (design D11). A connection abandoned on the
+ * код-відновлення step is therefore not connected anywhere in the app, and a phone that joined an
+ * existing line by typing its код відновлення sets the acknowledgement from that typing — both
+ * doors of design D14 set the column, or the new-phone flow would connect and never upload.
+ *
+ * `last_uploaded_checksum` is what implements «an unchanged бекап is not uploaded again»: the
+ * бекап's own CRC-32 over its body, compared here and never read back from Drive.
+ *
+ * The table is deliberately **not** in `BACKUP_TABLES`: a бекап restored on a new phone must not
+ * arrive claiming a Google connection that phone does not have (design D1's fourth point).
+ */
+export const driveBackup = sqliteTable(
+  'drive_backup',
+  {
+    /** Always `'drive'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    /** Which Google account holds the версії бекапу — an email address, for the screen to show. */
+    accountLabel: text('account_label'),
+    /** When the owner confirmed they kept the код відновлення, or typed one that opened a версія. */
+    recoveryCodeAcknowledgedAt: integer('recovery_code_acknowledged_at', { mode: 'timestamp_ms' }),
+    /** The moment of the last upload that completed. A failure never clears it. */
+    lastSuccessAt: integer('last_success_at', { mode: 'timestamp_ms' }),
+    /** The бекап's own integrity value as last uploaded, so an unchanged one is not sent again. */
+    lastUploadedChecksum: text('last_uploaded_checksum'),
+    /** Which failure it was, as the union's own name — turned into Ukrainian in `src/ui/`. */
+    lastFailureKind: text('last_failure_kind'),
+    lastFailureAt: integer('last_failure_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [check('drive_backup_single_row', sql`${t.id} = 'drive'`)],
+);
+
+export type DriveBackupRow = typeof driveBackup.$inferSelect;
+export type NewDriveBackupRow = typeof driveBackup.$inferInsert;

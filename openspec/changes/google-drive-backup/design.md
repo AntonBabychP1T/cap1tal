@@ -4,9 +4,9 @@
 
 See proposal.md — Why. What shapes every decision below:
 
-- **`backup-file` (step 11) is a prerequisite and does not exist yet.** This design names the
-  seam it must expose (D1) rather than inventing a бекап format; if step 11 lands with a
-  different seam, this document is what gets reconciled, not the specs.
+- **`backup-file` (step 11) has landed** (archived 2026-09-01). D1 was written before it and named
+  the seam it *should* expose; it has since been reconciled against the seam that actually shipped,
+  which is what this document existed to absorb. The specs did not move for it.
 - **The repo's platform idiom is settled and this change repeats it exactly.** Anything that
   touches a device, a network or a keystore lives behind a port in `src/platform/` with an
   in-memory double beside it and a device adapter that `npm run verify` never loads —
@@ -45,25 +45,37 @@ See proposal.md — Why. What shapes every decision below:
 
 ## Decisions
 
-**D1. The seam `backup-file` must expose, stated here so step 11 is built against a known consumer.**
-This change consumes exactly four things and nothing else:
+**D1. The seam `backup-file` exposes — reconciled against what step 11 actually shipped
+(2026-09-01, `src/backup/backup.ts`).** This change consumes exactly four things and nothing else:
 
-1. `makeBackup(): Promise<BackupSnapshot>` — the current бекап as `{ bytes, schemaVersion,
-   formatVersion, createdAt, checksum }`, where `bytes` is the complete versioned бекап step 11
-   already defines and `checksum` is step 11's own integrity value over those bytes.
-2. `readBackup(bytes): BackupHeader | invalid` — a pure parse of a бекап's own header
-   (`schemaVersion`, `createdAt`, and whatever step 11 counts for a restore preview), used to
-   verify and to preview *before* anything local is touched.
-3. `restoreBackup(bytes): Promise<'ok' | typed refusal>` — step 11's atomic replace-everything
-   import. Atomicity is its contract, not this change's: this design only guarantees it is never
-   called with bytes that failed to open, failed their checksum, or carry an unknown schema.
-4. **An explicit exclusion list.** The бекап snapshot must not contain the Drive state table
-   (D11) — a бекап restored on a new phone must not arrive claiming a Google connection that
-   phone does not have. Step 11 enumerates the tables it snapshots; this table is not among
-   them, and a test in this change asserts it.
+1. `saveBackup(store, now): Promise<BackupSnapshot>` — the current бекап as `{ bytes,
+   formatVersion, schemaVersion, createdAt, checksum, figures }`. (`makeBackup(state, now)` is the
+   synchronous pure core beneath it; the one-call form this change uses is `saveBackup`.)
+2. `readBackup(bytes): BackupHeader | BackupRefusal` — a pure read of a бекап that yields its
+   `createdAt`, `formatVersion`, `schemaVersion`, `figures` and parsed `state`, or one of five
+   named refusals. Used to verify and to preview *before* anything local is touched.
+3. `applyRestore(store, header): Promise<'ok' | BackupRefusal>` — the atomic replace-everything
+   import, over a бекап **already read**. This change calls `applyRestore` and not
+   `restoreBackup(store, bytes)` deliberately: the latter re-parses the text, and restoring must
+   apply exactly the бекап whose date and figures the owner was just shown. Atomicity is step 11's
+   contract; this design only guarantees the header handed over came from bytes that opened,
+   checksummed and carried a known schema.
+4. **An explicit exclusion list.** `BACKUP_TABLES` in `src/backup/format.ts` enumerates the
+   snapshot, and `format.test.ts` asserts the excluded set exhaustively. The Drive state table
+   (D11) joins that excluded set — a бекап restored on a new phone must not arrive claiming a
+   Google connection that phone does not have.
 
-Nothing here reaches into step 11's format. If step 11's snapshot is a stream rather than a
-buffer, only D5's call sites change.
+Two consequences of the real seam, which the original D1 guessed at:
+
+- **`bytes` is a `string`, not a buffer** — "the whole file as UTF-8 text". The envelope therefore
+  encodes it with `TextEncoder` when sealing and decodes with `TextDecoder` when opening (D6), and
+  the Drive port's `upload(name, bytes)` takes the sealed `Uint8Array`. The string↔octets edge
+  lives in `envelope.ts` and nowhere else.
+- **`checksum` is `crc32(canonicalJson(state))`** — a CRC-32 over the бекап's *body*, not over the
+  file. It is an integrity value and not an authenticator: it catches a damaged бекап, and the
+  envelope's AEAD tag is what catches a deliberately altered one. That is why the head carries it
+  (D6) — for the preview and for D11's "has anything changed since the last upload" — and never as
+  a security claim.
 
 **D2. OAuth by PKCE through the system browser, with `expo-auth-session`; no client secret exists.**
 An installed-app OAuth client (Android type, bound to the package name and the signing
@@ -115,18 +127,47 @@ hardware AES. Throughput is irrelevant at the size of a бекап of ~5 000 т�
 happens off the interaction path anyway.
 
 **D6. The envelope's header is plaintext and authenticated.**
-Layout: a fixed magic (`cap1tal-drive`), an envelope-format version (1), the бекап's own
-`schemaVersion` and `createdAt` from D1, and step 11's plaintext checksum — then the 24-byte
-nonce, then the ciphertext. The header is passed as the AEAD's associated data, so it cannot be
-edited to make the app open a бекап under wrong assumptions, and it is plaintext so that
-`Відновити` can list versions by their real dates and refuse a newer schema **before** asking for
-a код відновлення or downloading a full body. The envelope-format version is separate from the
-бекап's schema version on purpose: changing the cipher later must not look like a database
-migration.
+Layout, as two newline-terminated lines followed by binary:
+
+```
+cap1tal-drive\n
+{"envelopeVersion":1,"schemaVersion":19,"createdAt":"…","keyId":"…"}\n
+<24 bytes of nonce><ciphertext and its tag>
+```
+
+The head is passed as the AEAD's associated data, so it cannot be edited to make the app open a
+бекап under wrong assumptions, and it is plaintext so that `Відновити` can read a версія's real
+date, refuse a newer schema and tell which код відновлення it needs **before** asking for one and
+before a whole body is fetched. Being newline-delimited makes it a *prefix*: a range read of
+`ENVELOPE_HEAD_MAX_BYTES` (512) answers a listing, so listing five версії costs a few kilobytes
+rather than five whole бекапи. Reading the head is therefore a claim, and opening is what proves
+it. The envelope-format version is separate from the бекап's schema version on purpose: changing
+the cipher later must not look like a database migration.
+
+`keyId` is D14's addition: eight bytes of keystream under the sealing key at a reserved fixed
+nonce, as hex. It is a PRF output, so it names the key without revealing anything about it, and it
+is what lets the app say *which* код відновлення a версія needs and refuse to prune a версія it
+cannot open — both decidable from a 512-byte read.
+
+**The бекап's checksum is deliberately *not* in the head**, though an earlier draft of this design
+put it there. Nothing needs it in the clear: the date, the schema version and the key are what a
+listing reads; D11 keeps `last_uploaded_checksum` on the phone, so the "has anything changed" test
+never reads Drive; and `readBackup` re-verifies the бекап's own integrity value once the envelope
+has opened, which is the only check that means anything. Leaving it plaintext would have published
+a 32-bit fingerprint of the owner's whole state to anyone holding the folder — enough to tell that
+two версії are identical, or that a phone's state matches a guessed one. It costs nothing to leave
+out, so it is left out: the head carries exactly what a listing must decide from and not one field
+more.
 
 **D7. The код відновлення is the key in Crockford base32 with a checksum, in groups.**
-32 random bytes → 52 base32 characters + 2 check characters, shown as eight groups of seven so a
-person can copy it onto paper without losing their place. Crockford's alphabet folds `I/L/1` and
+32 random bytes → 52 base32 characters + 4 check characters, shown as eight groups of seven so a
+person can copy it onto paper without losing their place. (Four check characters and not the two
+this decision first named: 52 + 2 is 54, which does not divide into eight groups of seven, and the
+two extra characters cost the owner nothing while widening the check from 10 bits to 20.) The
+check runs over the code's own **symbols**, not over the key's bytes — a person mistypes a
+character, so a substitution must move exactly one symbol by 1…31 and can never cancel out; taken
+over the bytes instead, two different codes decode to the same key, because the last character
+carries one significant bit and four of padding. Crockford's alphabet folds `I/L/1` and
 `O/0` on read, which is exactly the transcription mistake to survive; the check characters are
 what let the app say "цей код неправильний" before it downloads or decrypts anything, which is
 the spec's "refused as wrong before anything is opened". Rejected: BIP-39 words (a wordlist and a
@@ -160,7 +201,8 @@ confirmed upload.**
 File name `cap1tal-YYYYMMDDTHHmmssZ.c1b` in the app folder — sortable by name, so listing needs
 no metadata read, and the date the owner sees in `Відновити` comes from the authenticated header
 (D6), never from the file name. Upload → read back the created file's id and size → only then
-delete anything older than the newest five. Drive's own file revisions were rejected: revision
+delete anything older than the newest five **of the same line** (D14): a версія this phone cannot
+open is never a candidate for pruning, however old it is. Drive's own file revisions were rejected: revision
 retention on appDataFolder is not something the app controls, and "five files we delete
 ourselves" is a rule the spec can state and a test can prove. Which version is "current" is simply
 the newest; there is no mutable pointer file to get out of step with reality.
@@ -169,10 +211,23 @@ the newest; there is no mutable pointer file to get out of step with reality.
 Columns: `id` (CHECK single row, the `saldo_import` idiom), `account_label`, `recovery_code_-
 acknowledged_at`, `last_success_at`, `last_uploaded_checksum`, `last_failure_kind`,
 `last_failure_at`. No token, no key, no code — the `monobank_accounts` precedent: secrets live in
-the keystore and the table exists to say what the screen shows. `last_uploaded_checksum` is what
-implements "an unchanged бекап is not uploaded again". Connectedness is `account_label IS NOT
-NULL AND recovery_code_acknowledged_at IS NOT NULL`, one definition, so a connection abandoned on
-the код-відновлення step is not connected anywhere in the app. One generated migration plus a
+the keystore and the table exists to say what the screen shows.
+
+`last_uploaded_checksum` is what implements "an unchanged бекап is not uploaded again" — the
+бекап's own CRC-32 over its body, compared locally and never read back from Drive. Two things
+follow and are accepted: a CRC-32 collision would skip one upload until the state changes again
+(nothing is lost, the copy is a day older), and the owner must be told the copy is *current* rather
+than left reading an ageing date as a silent failure, which is why the screen spec has a scenario
+about exactly that.
+
+Connectedness is `account_label IS NOT NULL AND recovery_code_acknowledged_at IS NOT NULL`, one
+definition, so a connection abandoned on the код-відновлення step is not connected anywhere in the
+app. **Both doors of D14 set that column.** A phone that mints a key sets it when the owner
+acknowledges the code they were shown; a phone joining an existing line sets it the moment the код
+відновлення they typed opens a версія — typing the code *is* the demonstration that they hold it,
+and asking for an acknowledgement afterwards would be asking twice. Without this, the flagship
+new-phone flow would connect, register no background task and never upload, which is the defect the
+spec review caught in D14's first draft. One generated migration plus a
 migration test, per rules/database.md; the exclusion from the snapshot is D1's fourth item.
 
 **D12. Ports, doubles, and where each rule is proven.**
@@ -192,6 +247,36 @@ Ukrainian UI; the spec here therefore has a requirement about it, and the implem
 failure→sentence mapping in `src/ui/` where `verify` reaches it, with a test that every member of
 the failure union maps to a Ukrainian sentence that names a next step. No refusal reaches the
 screen as a raw outcome name.
+
+**D14. One line of версії has one key; a new phone joins the line rather than starting a second.**
+This is the hole the spec review found, and it is the one that loses history. D8 makes the key at
+*first connect*; on a new phone that is a **new** key, so the версії already in Drive become
+unopenable — and D10, keeping only the newest five, would prune every one of them within five days
+of a phone the owner replaced. The change would then have failed at exactly the thing it exists to
+do, in the one scenario it exists for.
+
+The resolution has three parts, all of them decidable from the 512-byte head:
+
+1. **The head names its key** (`keyId`, D6) — eight bytes of keystream under the key at a reserved
+   fixed nonce, as hex. A PRF output: it identifies the key without weakening it. Publishing
+   keystream at a nonce that is never used for real data reveals nothing, and a random 24-byte
+   nonce colliding with the reserved one is a 2⁻¹⁹² event.
+2. **A phone with no key joins the line it finds.** Connecting where the folder already holds
+   версії asks for a код відновлення and adopts the key it decodes, rather than minting one — and
+   because part 3 leaves abandoned lines in the folder, two can coexist, so the line adopted is
+   *whichever one the entered code opens*, decided by `keyId` and not by asking the owner which is
+   which. Restoring with a код відновлення adopts it the same way. Reconnecting on a phone that
+   still holds the key keeps it, exactly as D8 already said. So «the same backup line continues» is
+   one rule with three doors into it, and a code that opens nothing in the folder is refused by all
+   three.
+3. **The app never deletes a версія it cannot open.** Rotation is scoped to the current `keyId`.
+   An owner who lost the код відновлення may start afresh — after being told what it costs — and
+   the old версії simply stay, unopenable and unpruned, which is the honest outcome and cheap
+   (five files).
+
+Rejected: sealing under a new key and re-uploading everything (the app cannot open the old версії
+to re-seal them, which is the entire point), and deriving the key from the Google account (it would
+make Google able to open the бекапи, which is what the sealing exists to prevent).
 
 ## Risks / Trade-offs
 
@@ -234,7 +319,8 @@ screen as a raw outcome name.
 ## Open Questions
 
 - How many версії бекапу to keep: five is D10's proposal and the spec deliberately says "several
-  most recent", so the number can change without touching a requirement.
+  most recent", so the number can change without touching a requirement. It counts версії of the
+  current line only (D14).
 - Whether the daily run should also fire on a Wi-Fi-only constraint. WorkManager can express it;
   the owner has not asked, and a бекап of this size on mobile data is negligible. Deferred until
   the owner says otherwise — it changes no requirement, only the task's registration options.

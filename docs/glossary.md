@@ -197,11 +197,25 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   кожне рішення про виклик і кожна підтверджена місячна норма витрат — жодне з них не рахується з
   транзакцій, тож без них відновлений телефон виглядав би так, ніби нічого не досягнуто. It never
   holds the monobank token, the чернетки awaiting a word, or the text of the notifications behind
-  them. It is not encrypted: whoever holds the file can read the
-  money in it.
+  them. The file the owner saves by hand is not encrypted: whoever holds it can read the money in
+  it. The copy that goes to Google Drive is a different matter — it is sealed under the owner's own
+  key before it leaves the phone, and only the код відновлення opens it elsewhere.
 - **Restore** (відновлення) — putting a бекап back. It **replaces** everything now on the phone —
   it never merges, and there is no undo — so the app shows what the бекап holds beside what is on
   the phone, and asks, before anything changes. It either lands whole or does not happen.
+- **Версія бекапу** (backup version) — one бекап as it sits in the owner's Google Drive: sealed,
+  named by the moment it was made, and carrying which key it was sealed under. The app keeps
+  several of the most recent ones and never removes one while it holds no newer complete one, so a
+  бекап written from data that had already gone wrong is not the only thing left to go back to.
+- **Код відновлення** (recovery code) — the key that seals the версії бекапу, written so a person
+  can copy it onto paper: eight groups of seven characters, with check characters that catch a
+  mistyped one before anything is opened. It is made when Google Drive is first connected, shown
+  once with the owner asked to confirm they have kept it, and shown again on request while
+  connected. It lives in the phone's secure storage and nowhere else — never among the owner's
+  financial data, never in a бекап, never uploaded — so a phone lost together with the код
+  відновлення loses the копії with it. A new phone that has it joins the same line of версії;
+  a new phone without it can start a fresh line, and the копії already there are left alone rather
+  than deleted.
 
 ## The fiscal receipt
 
@@ -340,6 +354,7 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 | Original-currency amount | The expense | the expense is the UAH the bank charged **[PROPOSED]** |
 | Draft (чернетка) | Transaction | it only proposes; nothing counts it until the owner confirms it |
 | Restore (відновлення) | Import (імпорт) | an import adds to what is there; a restore replaces all of it with the бекап's |
+| Код відновлення | Відновлення | the код is a key written down — a thing the owner keeps; the відновлення is the act of putting a бекап back. Having the код restores nothing by itself, and a відновлення on the phone that made the бекап needs no код at all |
 | Reminder (нагадування) | Failure alert (сповіщення про збій) | the нагадування asks the owner to do something; the сповіщення says the app failed to |
 | Failure alert (сповіщення про збій) | Bank notification (сповіщення банку) | one the app posts about itself; the other is what another bank's app posted and this app read |
 | Фіскальний чек | Квитанція | the чек is what the seller's реєстратор registered with the tax service and names the позиції; a квитанція (monobank's `receiptId`, check.gov.ua) only proves a payment happened and names no product — it cannot be used to find a чек |

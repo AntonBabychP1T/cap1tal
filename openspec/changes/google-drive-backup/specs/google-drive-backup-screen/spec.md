@@ -7,6 +7,11 @@ account, reads whether their history is safe and how recently, keeps the код 
 saves or restores a версія бекапу by hand, and disconnects — every state and every refusal
 said in Ukrainian, in words that name what to do next.
 
+It is a section beside «Бекап», not inside it, and the two say which is which: «Бекап» is the
+file the owner makes and keeps themselves, and it is not encrypted; «Google Drive» is the sealed
+copy that goes to the owner's own Drive by itself. The sealing this capability defines is the
+Drive copy's alone and changes nothing about the file «Бекап» writes.
+
 ## ADDED Requirements
 
 ### Requirement: The Google Drive section says where the app stands
@@ -14,9 +19,11 @@ said in Ukrainian, in words that name what to do next.
 The «Google Drive» section SHALL show whether Google Drive is connected. While it is not
 connected, it SHALL say what connecting does — a sealed copy of everything the app holds, in
 the owner's own Google Drive, about once a day — and SHALL offer connecting as the only
-action. While it is connected, it SHALL show which Google account holds the copies, the date
+action. While it is connected, it SHALL show which Google account holds the версії бекапу, the date
 of the last successful бекап or that there is none yet, and the last failure with its reason
-when there is one.
+when there is one. When no upload has been made because the бекап has not changed since the last
+one, the section SHALL say the copy is still current, so an ageing date is not read as a silent
+failure.
 
 #### Scenario: Not connected states what connecting does
 
@@ -24,11 +31,24 @@ when there is one.
 - **THEN** the section explains that a sealed copy of everything goes to their own Google
   Drive about once a day, and offers connecting
 
+#### Scenario: The section says how it differs from «Бекап»
+
+- **WHEN** the owner opens «Google Drive» in any state
+- **THEN** it says that this copy is sealed and goes to their Drive by itself, which is what
+  distinguishes it from the file «Бекап» writes
+
 #### Scenario: Connected shows the account and the last backup
 
 - **WHEN** Google Drive is connected and the last бекап went up yesterday
 - **THEN** the section shows the connected Google account and yesterday as the last
   successful бекап
+
+#### Scenario: An unchanged бекап does not read as a stale one
+
+- **WHEN** nothing has changed on the phone since the last successful бекап, so no new upload has
+  been made for several days
+- **THEN** the section says the copy in Drive is still current rather than showing only an ageing
+  date, and reports no failure
 
 #### Scenario: A failure is shown next to the last success
 
@@ -40,7 +60,7 @@ when there is one.
 
 Connecting from the section SHALL take the owner through their Google account and SHALL end
 by showing the код відновлення with what it is for — that it is the only way a new phone
-opens these copies, and that the app cannot recover it for them if they lose it together with
+opens these версії бекапу, and that the app cannot recover it for them if they lose it together with
 this phone. The section SHALL offer copying it, and SHALL require an explicit acknowledgement
 that it has been kept before the connection counts as complete.
 
@@ -55,6 +75,29 @@ that it has been kept before the connection counts as complete.
 - **WHEN** the owner leaves the section while the код відновлення is shown and returns
 - **THEN** the section does not present Google Drive as connected and shows the код
   відновлення again for acknowledgement
+
+### Requirement: Connecting where версії бекапу already exist offers to continue that line
+
+When connecting on a phone that holds no sealing key and the Drive folder already holds версії
+бекапу, the section SHALL say so and SHALL ask for a код відновлення instead of producing a new
+one. When the code entered opens a версія бекапу in the folder, the section SHALL say the phone has
+joined the версії already there, and the connection SHALL be complete without a further
+acknowledgement being asked for. The section SHALL also offer starting afresh for an owner who no
+longer has that code, and SHALL first say that the версії бекапу already in Drive will no longer be
+openable by this phone and that they will not be deleted.
+
+#### Scenario: A new phone is offered the existing line
+
+- **WHEN** the owner connects Google Drive on a phone holding no key and the folder already
+  holds версії бекапу
+- **THEN** the section says версії бекапу already exist and asks for a код відновлення rather than
+  showing a new one, and entering one that opens a версія completes the connection
+
+#### Scenario: Starting afresh says what it costs first
+
+- **WHEN** the owner chooses to start afresh because they no longer have the код відновлення
+- **THEN** the section says the версії бекапу already in Drive will not be openable by this phone
+  and will not be deleted, and asks for confirmation
 
 ### Requirement: The код відновлення can be retrieved while connected
 
@@ -118,6 +161,12 @@ replaced. When this phone does not hold the sealing key, the section SHALL ask f
 - **WHEN** the owner enters a код відновлення that is wrong
 - **THEN** the section says it is wrong, nothing is replaced, and the owner can enter it again
 
+#### Scenario: A версія from another line is named as such
+
+- **WHEN** the owner chooses a версія бекапу sealed under a key other than this phone's
+- **THEN** the section says it belongs to another код відновлення, rather than saying the code
+  was typed wrongly, and nothing is replaced
+
 ### Requirement: «Від'єднати Google Drive» stops backups and says what stays
 
 While connected, the section SHALL offer «Від'єднати Google Drive», which SHALL require
@@ -128,7 +177,7 @@ Drive stay there and that the код відновлення still opens them.
 #### Scenario: Disconnecting is confirmed and explained first
 
 - **WHEN** the owner chooses «Від'єднати Google Drive»
-- **THEN** the section says the copies already in Drive stay and the код відновлення still
+- **THEN** the section says the версії бекапу already in Drive stay and the код відновлення still
   opens them, and asks for confirmation
 
 #### Scenario: After disconnecting the section is back to its offer

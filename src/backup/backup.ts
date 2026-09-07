@@ -104,6 +104,18 @@ export function isRefusal(read: BackupHeader | BackupRefusal): read is BackupRef
 }
 
 /**
+ * A state's integrity value — the one definition of what makes two бекапи the same.
+ *
+ * Over the canonical serialisation of the body, never over the file's own bytes, so the value can
+ * be recomputed from the parsed бекап and survives re-indentation (design D4). Exported because
+ * `google-drive-backup` asks the same question of a state without making a бекап of it — «has
+ * anything changed since the last upload» — and two spellings of this rule would be two answers.
+ */
+export function checksumOf(state: BackupState): string {
+  return crc32(canonicalJson(state));
+}
+
+/**
  * One state as one бекап, made at `now`.
  *
  * The envelope's marker and versions are written before its contents, deliberately: a half-written
@@ -111,9 +123,7 @@ export function isRefusal(read: BackupHeader | BackupRefusal): read is BackupRef
  * never one.
  */
 export function makeBackup(state: BackupState, now: Date): BackupSnapshot {
-  // Over the canonical serialisation of the body, never over the file's own bytes — so the value
-  // can be recomputed from the parsed бекап and survives re-indentation (design D4).
-  const checksum = crc32(canonicalJson(state));
+  const checksum = checksumOf(state);
   const envelope: BackupEnvelope = {
     app: BACKUP_APP,
     kind: BACKUP_KIND,

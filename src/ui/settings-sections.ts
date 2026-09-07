@@ -16,6 +16,30 @@ export interface SettingsSection {
   readonly hint: string;
 }
 
+/**
+ * What the tab says leaves the phone — and it has to be true of the app as it actually is, not of
+ * the app as it was when the sentence was written.
+ *
+ * Three connections exist today whatever the owner does: the monobank personal API with their
+ * token, monobank's tokenless exchange-rate endpoint, and the tax service, asked for a фіскальний
+ * чек only when the owner scans one. A fourth appears while Google Drive is connected. A change
+ * that adds a fifth changes this function, and the settings-screen requirement is where that is
+ * written down.
+ */
+export function outboundTrafficNote(driveConnected: boolean): string {
+  // Named once and shared, so the two answers cannot disagree about what the app sends.
+  const outbound =
+    'Назовні йдуть лише запити до monobank з вашим токеном, запит курсів monobank без токена і ' +
+    'запити чеків до податкової — тільки коли ви скануєте чек.';
+  // The opening claim is exactly what the requirement forbids while Drive is connected, so it
+  // belongs to the disconnected answer alone and is not merely qualified afterwards: a sentence
+  // that says «усе лежить на цьому телефоні» and then contradicts itself is still a false first
+  // sentence, and this is the one place in the app that promises where the owner's money lives.
+  return driveConnected
+    ? `${outbound} А поки підключено Google Drive, туди ж іде запечатаний бекап — у ваш власний Drive.`
+    : `Усе лежить на цьому телефоні. ${outbound}`;
+}
+
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { href: '/onboarding', title: 'Перші кроки', hint: 'Що потрібно застосунку, щоб працювати' },
   { href: '/manage/categories', title: 'Категорії', hint: 'Куди пішли гроші' },
@@ -36,6 +60,11 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     hint: 'Щоденне нагадування і що застосунок повідомляє',
   },
   { href: '/manage/backup', title: 'Бекап', hint: 'Зберегти все у файл і відновити з нього' },
+  {
+    href: '/manage/drive-backup',
+    title: 'Google Drive',
+    hint: 'Запечатана копія у вашому Drive — щодня, без нагадувань',
+  },
   {
     href: '/manage/bug-reports',
     title: 'Репорти про помилки',

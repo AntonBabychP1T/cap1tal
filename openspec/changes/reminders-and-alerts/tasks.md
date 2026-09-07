@@ -171,6 +171,25 @@
       exists, reopen the app, and screenshot the сповіщення про збій and «Сповіщення банків» it
       leads to; confirm reopening a second time adds no second one.
 
+## 11. Note from `google-drive-backup` (2026-09-07)
+
+- [ ] 11.1 This change and `google-drive-backup` both hold a MODIFIED block on the *same*
+      `settings-screen` requirement, «The Налаштування tab hosts the management sections». A
+      MODIFIED requirement replaces the whole block, so whichever archives **second** silently
+      drops the other's section. `google-drive-backup` re-copied the block from the main spec as
+      it stood on 2026-09-07 and appended «Google Drive»; this change's block appends
+      «Нагадування» to an older baseline and is missing «Google Drive» and «Репорти про помилки».
+      Before archiving this change, re-copy the block from `openspec/specs/settings-screen/spec.md`
+      **as it stands then** and append «Нагадування» to it, keeping every scenario already there;
+      verify: the delta's requirement text equals the current main spec's plus «Нагадування», and
+      `npm run verify`'s `openspec validate` stays green.
+- [ ] 11.2 Vision §13 names "local or Google Drive backup" among the failures that may raise a
+      сповіщення про збій, and this change's alerting subjects do not include the Drive backup —
+      `google-drive-backup` deliberately left the alert to step 13 (its proposal's non-goals say
+      so). Add a Drive-backup subject to the alerting list and its Ukrainian sentence; verify: the
+      exhaustive-over-the-union test in `src/ui/alerting.test.ts` covers it and names the section
+      it leads to.
+
 ## 10. Verification
 
 - [x] 10.1 Run `npm run verify` and paste the final lines

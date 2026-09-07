@@ -32,7 +32,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * breaks `verify` until someone opens this file and asks whether a бекап still holds everything it
  * should. A бекап naming a higher one is refused; a lower one is restored (design D5).
  */
-export const BACKUP_SCHEMA_VERSION = 19;
+export const BACKUP_SCHEMA_VERSION = 20;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';

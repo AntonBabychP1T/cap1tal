@@ -35,6 +35,9 @@ import { notificationCapture } from '@/platform/notification-capture-device';
 import { CrashFallback } from '@/components/crash-fallback';
 import { syncDue } from '@/monobank/auto';
 import { syncPorts } from '@/hooks/monobank-ports';
+import { runBackup } from '@/backup/drive/run-backup';
+import { driveBackupPorts } from '@/hooks/drive-backup-ports';
+import { syncDriveBackupTask } from '@/platform/drive-backup-task';
 import { ALERT_PORTS } from '@/hooks/use-alerting';
 import { reportCollection } from '@/ui/alerting';
 import { dateOfEpochMs } from '@/ui/dates';
@@ -343,6 +346,45 @@ export default function RootLayout() {
   useEffect(syncQuietly, [syncQuietly]);
 
   useOnForeground(syncQuietly);
+
+  /**
+   * The Google Drive бекап, on the same two triggers — so a window Android never granted is caught
+   * up the moment the owner opens the app (design D9).
+   *
+   * Nothing is decided here. `runBackup` asks `isBackupDue`, the same pure function the background
+   * task asks, so the daily run and the catch-up cannot drift apart; and on a phone that has not
+   * connected it answers `not-connected` without a single request to Google.
+   *
+   * Registration follows the connection rather than being set once: connecting registers the task,
+   * disconnecting takes it away, and this re-asserts it on every launch so a phone whose
+   * registration the system dropped gets it back.
+   */
+  const lastDriveAttempt = useRef(0);
+  const backUpQuietly = useCallback(() => {
+    if (!success) {
+      return;
+    }
+    void syncDriveBackupTask();
+    // A бекап has to be *made* to know whether it differs from the one last uploaded, and making
+    // one serialises the whole database. Once a day has passed and nothing has changed, every
+    // return to the foreground would otherwise repeat that work for a run that will skip. An hour
+    // between attempts costs the owner nothing — the window this catches up on is 24 hours wide —
+    // and it is in memory only, so a relaunch always tries.
+    const sinceLast = Date.now() - lastDriveAttempt.current;
+    if (lastDriveAttempt.current !== 0 && sinceLast < 60 * 60 * 1000) {
+      return;
+    }
+    lastDriveAttempt.current = Date.now();
+    // Answers with values and does not throw; the `catch` is for storage refusing outright, which
+    // on the launch path would otherwise be an unhandled rejection nobody can act on.
+    runBackup(driveBackupPorts(), new Date()).catch((thrown: unknown) => {
+      reportFailure('backup', thrown);
+    });
+  }, [success]);
+
+  useEffect(backUpQuietly, [backUpQuietly]);
+
+  useOnForeground(backUpQuietly);
 
   /**
    * The нагадування, re-asserted rather than checked, once the migrations have run — the storage

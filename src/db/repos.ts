@@ -1,5 +1,6 @@
 import { accountsRepo } from './accounts-repo';
 import { backupRepo } from './backup-repo';
+import { driveBackupRepo } from './drive-backup-repo';
 import { categoriesRepo } from './categories-repo';
 import { db } from './client';
 import { entryDefaultsRepo } from './entry-defaults-repo';
@@ -43,6 +44,9 @@ export const notifications = notificationsRepo(db);
 export const receipts = receiptsRepo(db);
 /** The whole state as one snapshot, and the atomic replacement a відновлення is. */
 export const backup = backupRepo(db);
+/** Which Google account the бекапи go to, when the last one went up, and what last went wrong.
+ *  No token, no key and no код відновлення: those three are in the device's secure storage. */
+export const driveBackupState = driveBackupRepo(db);
 /** The daily нагадування's setting, and the сповіщення про збій still outstanding. */
 export const reminders = remindersRepo(db);
 /** The рахунок the entry form opens on — written by Головний's hand-entry path and nothing else. */

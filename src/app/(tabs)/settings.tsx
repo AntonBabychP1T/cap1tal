@@ -1,10 +1,14 @@
 import { useRouter } from 'expo-router';
+import { useCallback } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 
-import { SETTINGS_SECTIONS } from '@/ui/settings-sections';
+import { outboundTrafficNote, SETTINGS_SECTIONS } from '@/ui/settings-sections';
+import { isConnected } from '@/backup/drive/state';
+import { driveBackupState } from '@/db/repos';
+import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 
 import { Spacing } from '@/constants/theme';
 
@@ -18,6 +22,17 @@ import { Spacing } from '@/constants/theme';
 
 export default function SettingsScreen() {
   const router = useRouter();
+  /**
+   * Re-read whenever the tab comes back into focus — not once at mount.
+   *
+   * Connecting Google Drive happens on a route pushed *above* the tabs, so popping back does not
+   * re-render this screen on its own. Read once, the owner would return to «Усе лежить на цьому
+   * телефоні» while a sealed бекап was already going to Drive, which is the one thing the
+   * outbound-traffic requirement forbids. One row of synchronous SQLite per focus.
+   */
+  const [driveConnected] = useReloadOnFocus(
+    useCallback(() => isConnected(driveBackupState.read()), []),
+  );
 
   return (
     <Screen>
@@ -44,7 +59,7 @@ export default function SettingsScreen() {
       </ListCard>
 
       <ThemedText type="small" themeColor="textMuted">
-        Усе лежить на цьому телефоні. Назовні йдуть лише запити до monobank з вашим токеном.
+        {outboundTrafficNote(driveConnected)}
       </ThemedText>
     </Screen>
   );

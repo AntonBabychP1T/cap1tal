@@ -57,6 +57,12 @@ describe('what a бекап holds', () => {
       // owner's money, and none of it true of another phone. They leave only by «Передати».
       'bug_report_screenshots',
       'bug_reports',
+      // Which Google account this phone backs up to, whether its код відновлення was acknowledged,
+      // and when it last succeeded — facts about *this* device's connection, never the owner's
+      // money. A бекап that carried them would arrive on a new phone claiming a Google connection
+      // that phone does not have, and the sealing key it would need is not in the бекап either
+      // (google-drive-backup design D1's fourth point, D11).
+      'drive_backup',
       // Which рахунок the entry form on *this* phone opens on: a habit the device learned, not a
       // setting the owner chose and not their money. A restored phone learns it again.
       'entry_defaults',
