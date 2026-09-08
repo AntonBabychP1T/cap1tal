@@ -39,12 +39,35 @@ import {
 export const MIN_REQUEST_GAP_MS = 60_000;
 
 /**
- * What a paced call answers when the owner stopped the run while it was waiting out the gap.
+ * What a paced call answers when the run stopped while it was waiting out the gap, and why.
  *
- * A sentinel rather than an exception: every failure in this module is a value, and this one is
- * not even a failure. Nothing was sent, so there is nothing to report to the bank's account.
+ * A value rather than an exception: every failure in this module is a value, and this one is not
+ * even a failure. Nothing was sent, so there is nothing to report to the bank's account. It
+ * carries the reason because the two reasons are not the same word to the owner — `cancelled` is
+ * their own decision, `postponed` is a run out of time or out of foreground — and the account the
+ * wait belonged to is reported under whichever it was.
  */
 const STOPPED = Symbol('sync stopped while waiting');
+
+/** Why a run stopped between requests: the two outcomes that are not the bank's answer. */
+type StoppedOutcome = Extract<AccountOutcome, 'cancelled' | 'postponed'>;
+
+interface Stopped {
+  readonly kind: typeof STOPPED;
+  readonly outcome: StoppedOutcome;
+}
+
+function stoppedWith(outcome: StoppedOutcome): Stopped {
+  return { kind: STOPPED, outcome };
+}
+
+function isStopped<T>(answer: T | Stopped): answer is Stopped {
+  return (
+    typeof answer === 'object' &&
+    answer !== null &&
+    (answer as { readonly kind?: unknown }).kind === STOPPED
+  );
+}
 
 /** What storage has to offer a run. `src/db/monobank-repo.ts` is the implementation. */
 export interface SyncStorage {
@@ -87,17 +110,31 @@ export interface SyncPorts {
   readonly onProgress?: (progress: SyncProgress) => void;
   /** Asked before each request and after each wait, so leaving the screen can stop a long run. */
   readonly cancelled?: () => boolean;
+  /**
+   * Asked wherever `cancelled` is, and answered after it: whether the run has run out of the time
+   * it was given, or out of the foreground it was started in. A yes ends the run exactly as a
+   * cancellation does, under the word `postponed` — nothing is wrong and the next run continues
+   * from the cursors this one committed. Absent for a run that may take as long as it needs
+   * (design D3, D5).
+   */
+  readonly postponed?: () => boolean;
   /** Overridden in tests, which must never wait a real minute. */
   readonly minRequestGapMs?: number;
 }
 
 /**
  * How one linked account finished. The four the screen spec names, plus `cancelled` for an
- * account the owner stopped the run before: calling that one «недоступно» would blame the bank
- * for the owner's own decision.
+ * account the owner stopped the run before and `postponed` for one the run itself stopped before:
+ * calling either «недоступно» would blame the bank for a decision that was not the bank's.
+ *
+ * `cancelled` and `postponed` are two words because they are two facts. The owner pressing
+ * «Зупинити» is a decision; a background run reaching the end of its budget, or a run in front of
+ * the owner losing the foreground, is the app running out of time. Only the second means "nothing
+ * is wrong, the next run continues from here", and that is what the screen, the remembered
+ * attempt and the сповіщення про збій each have to tell apart.
  *
  * A storage failure is `unavailable` on purpose. From where the owner stands it is the same
- * answer — nothing was imported, the cursor did not move, try again — and inventing a fifth word
+ * answer — nothing was imported, the cursor did not move, try again — and inventing another word
  * for it would ask them to care which side of the device failed.
  */
 export type AccountOutcome =
@@ -105,7 +142,26 @@ export type AccountOutcome =
   | 'invalid-token'
   | 'rate-limited'
   | 'unavailable'
-  | 'cancelled';
+  | 'cancelled'
+  | 'postponed';
+
+/**
+ * Every outcome, as data — so a caller that has to be total over them (the screen's legend, the
+ * urgency order) reads the list rather than keeping its own copy of it.
+ *
+ * Derived from a record keyed by the union, so adding an outcome breaks the build here until this
+ * line is updated, rather than quietly leaving a word the screen never names.
+ */
+const EVERY_OUTCOME: Readonly<Record<AccountOutcome, true>> = {
+  complete: true,
+  'invalid-token': true,
+  'rate-limited': true,
+  unavailable: true,
+  cancelled: true,
+  postponed: true,
+};
+
+export const ACCOUNT_OUTCOMES = Object.keys(EVERY_OUTCOME) as readonly AccountOutcome[];
 
 export interface AccountResult {
   readonly monobankAccountId: string;
@@ -143,7 +199,9 @@ export type SyncProgress =
   | { readonly kind: 'finished-account'; readonly result: AccountResult };
 
 /** The API failure of a client-info or statement answer, as an account outcome. */
-function outcomeOf(answer: Outcome<unknown>): Exclude<AccountOutcome, 'complete' | 'cancelled'> {
+function outcomeOf(
+  answer: Outcome<unknown>,
+): Exclude<AccountOutcome, 'complete' | 'cancelled' | 'postponed'> {
   switch (answer.kind) {
     case 'invalid-token':
       return 'invalid-token';
@@ -156,7 +214,17 @@ function outcomeOf(answer: Outcome<unknown>): Exclude<AccountOutcome, 'complete'
 
 export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
   const gap = ports.minRequestGapMs ?? MIN_REQUEST_GAP_MS;
-  const cancelled = () => ports.cancelled?.() ?? false;
+  /**
+   * Whether the run stops here, and under which word. The owner is asked first, so a run that is
+   * both stopped and out of time is reported as the owner's decision: it is the more informative
+   * of the two, and the one they will look for on the screen.
+   */
+  const stopping = (): StoppedOutcome | undefined => {
+    if (ports.cancelled?.()) {
+      return 'cancelled';
+    }
+    return ports.postponed?.() ? 'postponed' : undefined;
+  };
   const report = (progress: SyncProgress) => ports.onProgress?.(progress);
 
   const stored = await ports.tokenStore.read();
@@ -199,7 +267,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
    * nobody asked for: it spends the device's one-a-minute budget and, being a request, would take
    * the account's turn with it.
    */
-  async function paced<T>(request: () => Promise<T>): Promise<T | typeof STOPPED> {
+  async function paced<T>(request: () => Promise<T>): Promise<T | Stopped> {
     if (lastRequestMs !== undefined) {
       const since = ports.nowMs() - lastRequestMs;
       if (since < gap) {
@@ -211,8 +279,9 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
         await ports.wait(ms);
       }
     }
-    if (cancelled()) {
-      return STOPPED;
+    const stop = stopping();
+    if (stop) {
+      return stoppedWith(stop);
     }
     const sentAt = ports.nowMs();
     lastRequestMs = sentAt;
@@ -225,8 +294,8 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
   const results: AccountResult[] = [];
   const finish = (link: StoredMonobankLink, outcome: AccountOutcome, imported: number): void => {
     // Only a completed account moves its moment. An account that ends invalid-token, rate-limited,
-    // unavailable or cancelled keeps whatever moment it had, so the screen never dates a sync that
-    // did not happen. Here rather than inside `commitStatementAnswer`: that call is one page of a
+    // unavailable, cancelled or postponed keeps whatever moment it had, so the screen never dates a
+    // sync that did not happen. Here rather than inside `commitStatementAnswer`: that call is one page of a
     // paginated sync, and an account stopped halfway would otherwise have committed pages and
     // claimed a finished sync (design D9).
     if (outcome === 'complete') {
@@ -247,11 +316,12 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
   // One client-info answer for the whole run: it is what the balances committed with every page
   // come from, and asking again per account would spend the request budget on nothing new.
   const info = await paced(() => fetchClientInfo(ports.fetch, token));
-  if (info === STOPPED) {
-    // Stopped before a single request went out: nothing was asked and nothing is blamed on the
-    // bank for the owner's own decision.
+  if (isStopped(info)) {
+    // Stopped before a single request went out: nothing was asked, no turn was taken by anybody,
+    // and nothing is blamed on the bank for a decision that was not the bank's. Every рахунок
+    // keeps its place at the head of the next run's order.
     for (const link of links) {
-      finish(link, 'cancelled', 0);
+      finish(link, info.outcome, 0);
     }
     return { kind: 'ran', imported: 0, accounts: results };
   }
@@ -278,12 +348,14 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
 
   for (const [index, link] of links.entries()) {
     if (stopped) {
-      // Everything after an invalid token or a cancellation, without a single further request.
+      // Everything after an invalid token, a cancellation or a run out of time, without a single
+      // further request.
       finish(link, stopped, 0);
       continue;
     }
-    if (cancelled()) {
-      stopped = 'cancelled';
+    const stop = stopping();
+    if (stop) {
+      stopped = stop;
       finish(link, stopped, 0);
       continue;
     }
@@ -313,9 +385,13 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
       rules,
       ports,
       paced,
-      cancelled,
+      stopping,
     });
-    if (account.outcome === 'invalid-token' || account.outcome === 'cancelled') {
+    if (
+      account.outcome === 'invalid-token' ||
+      account.outcome === 'cancelled' ||
+      account.outcome === 'postponed'
+    ) {
       stopped = account.outcome;
     }
     finish(link, account.outcome, account.imported);
@@ -346,10 +422,10 @@ async function syncOneAccount(input: {
   readonly runToMs: number;
   readonly rules: readonly Rule[];
   readonly ports: SyncPorts;
-  readonly paced: <T>(request: () => Promise<T>) => Promise<T | typeof STOPPED>;
-  readonly cancelled: () => boolean;
+  readonly paced: <T>(request: () => Promise<T>) => Promise<T | Stopped>;
+  readonly stopping: () => StoppedOutcome | undefined;
 }): Promise<{ outcome: AccountOutcome; imported: number }> {
-  const { link, bankAccount, obtainedAt, token, runToMs, rules, ports, paced, cancelled } = input;
+  const { link, bankAccount, obtainedAt, token, runToMs, rules, ports, paced, stopping } = input;
 
   let cursorMs = link.cursorMs;
   let seenIds: ReadonlySet<string> = ports.storage.importedIds(link.monobankAccountId);
@@ -358,8 +434,12 @@ async function syncOneAccount(input: {
   for (const planned of planWindows(cursorMs, runToMs)) {
     let window: StatementWindow | undefined = planned;
     while (window) {
-      if (cancelled()) {
-        return { outcome: 'cancelled', imported };
+      const stop = stopping();
+      if (stop) {
+        // Between windows: whatever this account committed stays committed, its cursor stays where
+        // those pages moved it, and its turn — taken with the request that fetched them — stays
+        // taken. Its moment does not move, because it did not complete.
+        return { outcome: stop, imported };
       }
       const request: StatementWindow = window;
       const answer = await paced(() => {
@@ -375,10 +455,10 @@ async function syncOneAccount(input: {
           context: { currency: bankAccount.currency, dateOf: ports.dateOf },
         });
       });
-      if (answer === STOPPED) {
+      if (isStopped(answer)) {
         // Stopped while this account sat out the gap. No request was sent, so no turn was taken
         // and the next run finds this рахунок exactly where it was in the order.
-        return { outcome: 'cancelled', imported };
+        return { outcome: answer.outcome, imported };
       }
       if (answer.kind !== 'ok') {
         // Nothing advances: the cursor, the imported ids and the транзакції are as they were, and

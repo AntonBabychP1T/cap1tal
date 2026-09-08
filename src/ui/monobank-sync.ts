@@ -1,4 +1,9 @@
-import { syncLinkedAccounts, type SyncPorts, type SyncRun } from '../monobank/coordinator';
+import {
+  syncLinkedAccounts,
+  type AccountOutcome,
+  type SyncPorts,
+  type SyncRun,
+} from '../monobank/coordinator';
 import { worstOutcome, type SyncAttempt } from '../monobank/auto';
 import { clear as clearAlert, raise as raiseAlert, type AlertPorts } from './alerting';
 
@@ -107,6 +112,17 @@ function reachedTheBank(run: SyncRun): run is Extract<SyncRun, { kind: 'ran' }> 
 }
 
 /**
+ * Whether the one outcome a run is remembered by is a failure — something that did not arrive
+ * because the bank or the token said no.
+ *
+ * `cancelled` and `postponed` are the two that are not, and `undefined` — a run with no accounts,
+ * which the coordinator does not produce — is not one either.
+ */
+function failed(outcome: AccountOutcome | undefined): boolean {
+  return outcome !== undefined && outcome !== 'cancelled' && outcome !== 'postponed';
+}
+
+/**
  * Starts a sync, unless one is already going on.
  *
  * The attempt's moment is written *before* the coordinator is called and its outcome after,
@@ -141,10 +157,14 @@ export async function startSync(ports: StartSyncPorts): Promise<SyncStart> {
       // Success clears, whoever asked for the run: a сповіщення left standing by a failure the
       // owner was away for must not outlive the sync that fixed it. A failure raises one only
       // when nobody is watching — `decideAlert` answers `attended` with silence, and the row on
-      // Головний is what the owner meets instead.
-      await (outcome === 'complete'
-        ? clearAlert('monobank-sync', ports.alerts)
-        : raiseAlert('monobank-sync', { attended: ports.attended }, ports.alerts));
+      // Головний is what the owner meets instead. A run that merely *stopped* — the owner's own
+      // «Зупинити», or a run out of the time or the foreground it was given — raises nothing:
+      // a run that stopped is not a run that failed, and the next one continues it.
+      if (outcome === 'complete') {
+        await clearAlert('monobank-sync', ports.alerts);
+      } else if (failed(outcome)) {
+        await raiseAlert('monobank-sync', { attended: ports.attended }, ports.alerts);
+      }
     }
     return result;
   })();

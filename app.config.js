@@ -53,6 +53,8 @@ function git(command) {
  */
 const BUILD_SOURCES = [
   'src',
+  // The bundle's entry: `package.json`'s `main`, and where the background tasks are defined.
+  'index.ts',
   'assets',
   'modules',
   'types',

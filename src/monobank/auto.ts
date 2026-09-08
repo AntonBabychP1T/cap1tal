@@ -4,7 +4,7 @@ import type { AccountOutcome, AccountResult } from './coordinator';
  * When a sync may start on its own, what a finished run is remembered as, and whether what it
  * came to is something the owner has to do anything about.
  *
- * Three pure functions and two constants. Nothing here reads a clock, storage or the network: the
+ * Four pure functions and two constants. Nothing here reads a clock, storage or the network: the
  * moments arrive as arguments, exactly as `src/domain/` requires and for the same reason —
  * «відкрив застосунок → тихо запустився sync» is a rule about time, and a rule about time that
  * reads its own clock cannot be tested. `src/ui/monobank-sync.ts` is the half that acts on these
@@ -59,19 +59,43 @@ export interface SyncAttempt {
  * ordering a single remembered outcome can usefully have.
  *
  * `cancelled` sits below every failure and above `complete` on purpose: the owner stopped the run
- * themselves, so it is not a failure to report, but it is not a completed sync either.
+ * themselves, so it is not a failure to report, but it is not a completed sync either. `postponed`
+ * sits between the two: neither needs the owner, and when both appear in one run — a run the owner
+ * stopped that was also out of time — their own decision is the more informative word.
  */
 const BY_URGENCY: readonly AccountOutcome[] = [
   'invalid-token',
   'rate-limited',
   'unavailable',
   'cancelled',
+  'postponed',
   'complete',
 ];
 
 /** A remembered string as an outcome this module knows, or `undefined` for anything else. */
 function outcomeOf(stored: string | undefined): AccountOutcome | undefined {
   return BY_URGENCY.find((known) => known === stored);
+}
+
+/**
+ * A remembered attempt as `syncDue` wants it: a moment and what it came to, or nothing at all on a
+ * device that has attempted none.
+ *
+ * Spelled out because `attemptedAtMs: undefined` and an absent key are the same thing to `syncDue`
+ * but not to `exactOptionalPropertyTypes` — and written once, because both callers that ask
+ * whether a sync is due (the app shell and the background run) need exactly this shape.
+ */
+export function attemptInput(attempt: SyncAttempt | undefined): {
+  attemptedAtMs?: number;
+  outcome?: string;
+} {
+  if (attempt === undefined) {
+    return {};
+  }
+  return {
+    attemptedAtMs: attempt.attemptedAtMs,
+    ...(attempt.outcome === undefined ? {} : { outcome: attempt.outcome }),
+  };
 }
 
 /**
@@ -88,6 +112,11 @@ export function syncDue(input: {
   readonly links: number;
   /** The moment of the last attempt, or `undefined` on a device that has attempted none. */
   readonly attemptedAtMs?: number;
+  /**
+   * What that attempt is remembered as, when it is remembered as anything. Only one word changes
+   * the answer, and it is `postponed`.
+   */
+  readonly outcome?: string;
   readonly nowMs: number;
   /** Overridden in tests; the app always uses `QUIET_INTERVAL_MS`. */
   readonly quietIntervalMs?: number;
@@ -98,6 +127,12 @@ export function syncDue(input: {
   if (input.attemptedAtMs === undefined) {
     return true;
   }
+  // The quiet interval exists to stop repeated openings spending the bank's budget on runs that
+  // have nothing to do. A run that stopped for want of time or of foreground has, by definition,
+  // something left to do, and the requests it did not spend are still owed.
+  if (outcomeOf(input.outcome) === 'postponed') {
+    return true;
+  }
   // An attempt dated in the future — an NTP correction, a clock set by hand — is due rather than
   // never due. Waiting it out would disable automatic sync until the phone's own clock caught up,
   // which for a year-ahead clock is forever; running once costs one run and heals the attempt,
@@ -106,6 +141,27 @@ export function syncDue(input: {
     return true;
   }
   return input.nowMs - input.attemptedAtMs >= (input.quietIntervalMs ?? QUIET_INTERVAL_MS);
+}
+
+/**
+ * Whether the run that just ended has to be finished at once by a full one.
+ *
+ * A second rule beside `syncDue` rather than a second reading of it, and deliberately so. Every
+ * run announces its end, including one that never reached the bank and withdrew its attempt; on a
+ * phone with links and no token — the state removing the token leaves — `syncDue` over a withdrawn
+ * attempt is true again, so asking it here would be a run that withdraws, announces, starts,
+ * withdraws, for as long as the app is open. Deciding from the finished run's own outcome cannot
+ * loop: the follow-up runs in front of the owner without a budget, so it ends complete, failed,
+ * or — if the app left meanwhile — postponed with the app no longer in front, and none of those is
+ * followed by anything (design D6).
+ */
+export function followUpDue(input: {
+  /** The attempt the run that just ended wrote, or `undefined` when it withdrew it. */
+  readonly attempt: SyncAttempt | undefined;
+  /** Whether the app is in front of the owner right now. */
+  readonly inForeground: boolean;
+}): boolean {
+  return input.inForeground && outcomeOf(input.attempt?.outcome) === 'postponed';
 }
 
 /**
@@ -146,9 +202,10 @@ export function needsOwner(input: {
   if (outcome === 'invalid-token') {
     return 'token-rejected';
   }
-  // The owner stopped it themselves. Calling their own decision a problem — however old the data
-  // is by now — would blame the bank for it.
-  if (outcome === 'cancelled') {
+  // The owner stopped it themselves, or the run ran out of the time it was given. Calling either a
+  // problem — however old the data is by now — would blame the bank for it: nothing failed, and in
+  // the postponed case the next run continues from where this one stopped.
+  if (outcome === 'cancelled' || outcome === 'postponed') {
     return undefined;
   }
   const staleAfter = input.staleAfterMs ?? STALE_AFTER_MS;

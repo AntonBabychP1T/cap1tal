@@ -64,6 +64,30 @@ const CLIENT_INFO = {
   jars: [],
 };
 
+/** The same token's client-info when three рахунки are linked, so a run can end part-done. */
+const CLIENT_INFO_THREE = {
+  ...CLIENT_INFO,
+  accounts: [
+    ...CLIENT_INFO.accounts,
+    {
+      id: 'mono-white',
+      currencyCode: 980,
+      balance: 15_000,
+      creditLimit: 0,
+      maskedPan: ['537541******9999'],
+      type: 'white',
+    },
+    {
+      id: 'mono-plat',
+      currencyCode: 980,
+      balance: 5_000,
+      creditLimit: 0,
+      maskedPan: ['537541******7777'],
+      type: 'platinum',
+    },
+  ],
+};
+
 function bindTestJournal(): () => readonly JournalEntry[] {
   const entries: JournalEntry[] = [];
   resetJournalForTests();
@@ -118,6 +142,34 @@ describe('the one place a sync is started', () => {
       syncStartDate: '2026-09-01',
       cursorMs: startOfLocalDayMs('2026-09-01' as IsoDate),
     });
+  }
+
+  /** Two more linked рахунки beside `linkCard`'s, for a run that gets through only some of them. */
+  function linkTwoMoreCards(): void {
+    for (const [monobankAccountId, accountId, name] of [
+      ['mono-white', 'card-white', 'white ··9999'],
+      ['mono-plat', 'card-plat', 'platinum ··7777'],
+    ] as const) {
+      accountsRepo(storage.db).save(
+        account({
+          id: accountId,
+          name,
+          kind: 'spending',
+          currency: 'UAH',
+          openingBalance: money(0, 'UAH'),
+        }),
+      );
+      repo.upsertAccounts(
+        [{ id: monobankAccountId, kind: 'card', name, currency: 'UAH', bankBalance: money(0, 'UAH') }],
+        new Date(RUN_AT - 86_400_000),
+      );
+      repo.link({
+        monobankAccountId,
+        accountId,
+        syncStartDate: '2026-09-01',
+        cursorMs: startOfLocalDayMs('2026-09-01' as IsoDate),
+      });
+    }
   }
 
   /** A bank that answers from a script; `hold` lets a test keep a run in flight. */
@@ -404,6 +456,51 @@ describe('the one place a sync is started', () => {
 
       expect(phone.posted()).toEqual([ALERT_NOTICES['monobank-sync'].id]);
       expect(reminders.outstandingKinds()).toEqual(['monobank-sync']);
+    });
+
+    it('Scenario: A run that yielded raises no сповіщення про збій', async () => {
+      linkCard();
+      linkTwoMoreCards();
+      let statements = 0;
+      const answering = bank({ clientInfo: () => ({ status: 200, body: CLIENT_INFO_THREE }) });
+      const fetchImpl: AuthFetchLike = (url, headers) => {
+        if (url.includes('/statement/')) {
+          statements += 1;
+        }
+        return answering(url, headers);
+      };
+
+      // A run the owner started on the monobank screen and then left: `attended: false` is that
+      // screen's own answer, and the run is out of the foreground it was started in after the
+      // first рахунок.
+      const answer = await startSync(
+        ports(fetchImpl, { attended: false, sync: { postponed: () => statements >= 1 } }),
+      );
+
+      const run = answer.kind === 'ran' ? answer.run : undefined;
+      expect(run?.kind === 'ran' ? run.accounts.map((a) => a.outcome) : []).toEqual([
+        'complete',
+        'postponed',
+        'postponed',
+      ]);
+      // A run that stopped is not a run that failed: nothing in the shade, nothing outstanding,
+      // and not even a журнал line about a сповіщення, because none was decided.
+      expect(phone.posted()).toEqual([]);
+      expect(reminders.outstandingKinds()).toEqual([]);
+      expect(journalOf()).toEqual([]);
+      expect(repo.attempt()?.outcome).toBe('postponed');
+    });
+
+    it('Scenario: A run the owner stopped raises no сповіщення про збій', async () => {
+      linkCard();
+
+      // «Зупинити», and the owner is no longer looking at the screen when the run ends.
+      await startSync(ports(bank(), { attended: false, sync: { cancelled: () => true } }));
+
+      expect(phone.posted()).toEqual([]);
+      expect(reminders.outstandingKinds()).toEqual([]);
+      expect(journalOf()).toEqual([]);
+      expect(repo.attempt()?.outcome).toBe('cancelled');
     });
 
     it('Scenario: A run that works clears what an earlier failure left standing', async () => {

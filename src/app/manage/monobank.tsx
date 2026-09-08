@@ -22,6 +22,7 @@ import { monobankConnection, type ConnectionResult } from '@/monobank/connection
 import { suggestLinks } from '@/monobank/link';
 import type { SyncProgress, SyncRun } from '@/monobank/coordinator';
 import { syncPorts } from '@/hooks/monobank-ports';
+import { syncMonobankSyncTask } from '@/platform/monobank-sync-task';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { evaluateProgress } from '@/hooks/progress-ports';
@@ -46,6 +47,7 @@ import {
   linkChoices,
   linkSetConfirmation,
   MONOBANK_TOKEN_PAGE_URL,
+  backgroundNote,
   lastSyncLine,
   monobankAccountRows,
   newAccountDraft,
@@ -525,6 +527,18 @@ export default function MonobankScreen() {
   const control = syncControl({ inFlight: elsewhere, busy });
 
   /**
+   * Linking and unlinking are exactly what turn background runs on and off, so the registration is
+   * re-asserted whenever the number of linked рахунки changes.
+   *
+   * Nothing is decided here: the rule is `backgroundTurnsWanted`'s and `syncMonobankSyncTask`
+   * reads it. The app shell re-asserts it on launch and on every return to the foreground too, so
+   * a call missed here would cost at most one opening (design D9).
+   */
+  useEffect(() => {
+    void syncMonobankSyncTask();
+  }, [stored.links.length]);
+
+  /**
    * Opening the route reads the connection state and, when a token is kept, asks monobank once
    * (design D6). The cached accounts are already on screen by then, so an offline opening still
    * shows the inventory whole and only the banner says it is stale. Without a token nothing goes
@@ -843,6 +857,13 @@ export default function MonobankScreen() {
               : `Приєднано рахунків: ${stored.links.length}. Банк дозволяє один запит на хвилину, тож перша синхронізація може тривати.`}
           </ThemedText>
         )}
+        {backgroundNote(stored.links) !== null && (
+          // Only with a link: with none there is no рахунок for a background run to sync, and no
+          // chance is asked for either (spec: monobank-sync-screen).
+          <ThemedText type="small" themeColor="textSecondary">
+            {backgroundNote(stored.links)}
+          </ThemedText>
+        )}
         {control === 'stop' ? (
           <Action
             variant="destructive"
@@ -869,10 +890,11 @@ export default function MonobankScreen() {
         )}
       </Card>
 
-      {/* The four outcomes named once, so the result lines above read without guessing. */}
+      {/* Every outcome a result line can carry, named once, so those lines read without guessing. */}
       <ThemedText type="small" themeColor="textMuted">
         Можливі стани рахунку: {outcomeLabel('complete')}, {outcomeLabel('invalid-token')},{' '}
-        {outcomeLabel('rate-limited')}, {outcomeLabel('unavailable')}.
+        {outcomeLabel('rate-limited')}, {outcomeLabel('unavailable')}, {outcomeLabel('cancelled')},{' '}
+        {outcomeLabel('postponed')}.
       </ThemedText>
     </Screen>
   );

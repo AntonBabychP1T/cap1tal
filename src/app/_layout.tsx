@@ -9,7 +9,7 @@ import {
 } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { AppState, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
@@ -33,17 +33,18 @@ import {
 import { notificationAccess } from '@/platform/notification-access-device';
 import { notificationCapture } from '@/platform/notification-capture-device';
 import { CrashFallback } from '@/components/crash-fallback';
-import { syncDue } from '@/monobank/auto';
+import { attemptInput, followUpDue, syncDue } from '@/monobank/auto';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { runBackup } from '@/backup/drive/run-backup';
 import { driveBackupPorts } from '@/hooks/drive-backup-ports';
 import { syncDriveBackupTask } from '@/platform/drive-backup-task';
+import { syncMonobankSyncTask } from '@/platform/monobank-sync-task';
 import { ALERT_PORTS } from '@/hooks/use-alerting';
 import { reportCollection } from '@/ui/alerting';
 import { dateOfEpochMs } from '@/ui/dates';
 import { newId } from '@/ui/id';
 import { bindJournal, journal, reportFailure } from '@/ui/journal';
-import { startSync } from '@/ui/monobank-sync';
+import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { drainCaptures } from '@/ui/notification-drain';
 import { reconcileOnLaunch } from '@/ui/reminder-schedule';
 import { sweepCaptures } from '@/ui/bug-report-here';
@@ -167,16 +168,6 @@ export function ErrorBoundary({ error, retry }: { error: Error; retry: () => Pro
  * that remembers what is outstanding and when the нагадування is set for.
  */
 const NOTIFY = { notifications: localNotifications, storage: remindersRepo, now: () => new Date() };
-
-/**
- * The last sync attempt as `syncDue` wants it: a moment, or nothing at all on a device that has
- * attempted none. Spelled out here because `attemptedAtMs: undefined` and an absent key are the
- * same thing to `syncDue` but not to `exactOptionalPropertyTypes`.
- */
-function attemptOf(): { attemptedAtMs?: number } {
-  const attempt = monobankRepo.attempt();
-  return attempt ? { attemptedAtMs: attempt.attemptedAtMs } : {};
-}
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -304,10 +295,12 @@ export default function RootLayout() {
    * the quiet interval has passed, and that two runs never overlap. What is left is the trigger,
    * and one thing only this file knows — whether storage is ready.
    *
-   * No `cancelled` port, deliberately (design D4). Pages commit as they are read and an account's
-   * moment moves only when it completes, so a run the OS suspends either resumes and finishes or
-   * leaves a cursor that is valid to resume from; cancelling on background would mean a first sync
-   * of three рахунки, which needs four minutes, never finishing at all.
+   * No `cancelled` port, deliberately: «Зупинити» is the monobank screen's, not this run's. The
+   * run does yield when the app leaves the foreground — that is `syncPorts()`'s own `wait` and
+   * `postponed` (design D5) — and what it leaves behind is a `postponed` attempt, which is due at
+   * once when the owner comes back and which the background chances continue meanwhile. That is
+   * what makes yielding safe where `monobank-auto-sync` D4 could not: a first sync of nine
+   * рахунки no longer needs the app to stay open for nine minutes.
    *
    * `attended: true` is a fact, not a guess: this run exists *because* the app was opened or
    * foregrounded, so the owner is in it, and Головний says what happened in «Потребує уваги» in
@@ -317,10 +310,19 @@ export default function RootLayout() {
     if (!success) {
       return;
     }
-    if (!syncDue({ links: monobankRepo.listLinks().length, nowMs: Date.now(), ...attemptOf() })) {
+    // The outcome travels with the moment because one word changes the answer: an attempt
+    // remembered as `postponed` is due at once, however recent it is — that run stopped for want
+    // of time or of foreground, and the requests it did not spend are still owed.
+    if (
+      !syncDue({
+        links: monobankRepo.listLinks().length,
+        ...attemptInput(monobankRepo.attempt()),
+        nowMs: Date.now(),
+      })
+    ) {
       return;
     }
-    // No `onProgress` and no `cancelled`: this run reports nowhere and stops for nothing.
+    // No `onProgress` and no `cancelled`: this run reports nowhere and nobody stops it.
     await startSync({
       sync: syncPorts(),
       attempts: monobankRepo,
@@ -346,6 +348,63 @@ export default function RootLayout() {
   useEffect(syncQuietly, [syncQuietly]);
 
   useOnForeground(syncQuietly);
+
+  /**
+   * The chances the phone gives, asked for while a рахунок is linked and not otherwise — the same
+   * re-asserted registration the бекап uses, and for the same reason (design D9).
+   */
+  const askForChances = useCallback(() => {
+    if (success) {
+      void syncMonobankSyncTask();
+    }
+  }, [success]);
+
+  useEffect(askForChances, [askForChances]);
+
+  useOnForeground(askForChances);
+
+  /**
+   * A run that ended postponed while the owner is here is finished at once, without a budget — so
+   * a run the background began does not wait for the next chance when the app is open anyway
+   * (design D6).
+   *
+   * Decided from the outcome of the run that just ended and from nothing else. Asking `syncDue`
+   * again here would loop: every run announces its end, including one that never reached the bank
+   * and withdrew its attempt, and on a phone with links and no token `syncDue` over a withdrawn
+   * attempt is true again — a run that withdraws, announces, starts, withdraws, forever.
+   * `followUpDue` cannot: the follow-up ends complete, failed, or postponed with the app no longer
+   * in front, and none of those is followed.
+   */
+  useEffect(() => {
+    if (!success) {
+      return;
+    }
+    return onSyncState(() => {
+      if (syncInFlight()) {
+        return;
+      }
+      if (
+        !followUpDue({
+          attempt: monobankRepo.attempt(),
+          inForeground: AppState.currentState === 'active',
+        })
+      ) {
+        return;
+      }
+      startSync({
+        sync: syncPorts(),
+        attempts: monobankRepo,
+        alerts: ALERT_PORTS,
+        attended: true,
+      })
+        .then(() => {
+          evaluateProgress();
+        })
+        .catch((thrown: unknown) => {
+          reportFailure('monobank-sync', thrown);
+        });
+    });
+  }, [success]);
 
   /**
    * The Google Drive бекап, on the same two triggers — so a window Android never granted is caught

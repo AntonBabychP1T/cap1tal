@@ -5,6 +5,7 @@ import { runBackup } from '@/backup/drive/run-backup';
 import { isConnected } from '@/backup/drive/state';
 import { driveBackupState } from '@/db/repos';
 import { driveBackupPorts } from '@/hooks/drive-backup-ports';
+import { prepareBackgroundStorage, reconcileTask } from '@/platform/background-turn';
 
 /**
  * The daily бекап, run without the owner asking — `expo-background-task` over WorkManager (design
@@ -24,17 +25,11 @@ import { driveBackupPorts } from '@/hooks/drive-backup-ports';
 /** The task's name on the device. Versioned, so a later shape cannot collide with this one. */
 export const DRIVE_BACKUP_TASK = 'cap1tal.drive-backup.v1';
 
-/**
- * How often WorkManager is asked to give the app a turn.
- *
- * Not a promise and not a clock time: Android batches these against doze, charging and network,
- * so what actually happens is "about once a day, when the phone is willing". Fifteen minutes is
- * WorkManager's own floor and a day is what the spec asks for.
- */
-const INTERVAL_MINUTES = 12 * 60;
-
 TaskManager.defineTask(DRIVE_BACKUP_TASK, async () => {
   try {
+    // A chance can land on a dead process, which has run no migrations and bound no журнал: this
+    // is where that happens when it has to (design D4).
+    await prepareBackgroundStorage();
     const outcome = await runBackup(driveBackupPorts(), new Date());
     // `skipped` is a success with nothing to do — nothing was due, or the бекап is what went up
     // last. Reporting it as a failure would make WorkManager back the task off for no reason.
@@ -42,9 +37,10 @@ TaskManager.defineTask(DRIVE_BACKUP_TASK, async () => {
       ? BackgroundTask.BackgroundTaskResult.Failed
       : BackgroundTask.BackgroundTaskResult.Success;
   } catch {
-    // `runBackup` answers with values and does not throw, so this is storage or the module itself
-    // refusing. Swallowed deliberately: an unhandled rejection in a background task is a crash the
-    // owner never sees and cannot act on, and the failure is already recorded where they will.
+    // `runBackup` answers with values and does not throw, so this is the migrations, storage or
+    // the module itself refusing. Swallowed deliberately: an unhandled rejection in a background
+    // task is a crash the owner never sees and cannot act on, and the failure is already recorded
+    // where they will.
     return BackgroundTask.BackgroundTaskResult.Failed;
   }
 });
@@ -56,26 +52,13 @@ TaskManager.defineTask(DRIVE_BACKUP_TASK, async () => {
  * connecting" is not only about what the run does, but about whether it exists at all. Called on
  * every launch and after connecting or disconnecting, so the registration follows the state rather
  * than being set once and forgotten.
+ *
+ * The interval is not this task's to choose. Every registered task rides one WorkManager request
+ * whose delay is whichever task registered last, so the app has one interval and `reconcileTask`
+ * is where it is applied (design D2). A chance every quarter of an hour costs this task nothing:
+ * `runBackup` asks `isBackupDue` first and answers `not-due` from one row read, and "at least once
+ * every 24 hours, best-effort" is untouched.
  */
-export async function syncDriveBackupTask(): Promise<void> {
-  const connected = isConnected(driveBackupState.read());
-  let registered: boolean;
-  try {
-    registered = await TaskManager.isTaskRegisteredAsync(DRIVE_BACKUP_TASK);
-  } catch {
-    return;
-  }
-
-  try {
-    if (connected && !registered) {
-      await BackgroundTask.registerTaskAsync(DRIVE_BACKUP_TASK, {
-        minimumInterval: INTERVAL_MINUTES,
-      });
-    } else if (!connected && registered) {
-      await BackgroundTask.unregisterTaskAsync(DRIVE_BACKUP_TASK);
-    }
-  } catch {
-    // A device that refuses background work is a phone that backs up when it is opened instead —
-    // which is exactly the catch-up path, and is why that path is not an optimisation.
-  }
+export function syncDriveBackupTask(): Promise<void> {
+  return reconcileTask(DRIVE_BACKUP_TASK, isConnected(driveBackupState.read()));
 }

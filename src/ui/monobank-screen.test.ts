@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
 import { money } from '../domain/money';
+import { ACCOUNT_OUTCOMES } from '../monobank/coordinator';
 import type { MonobankLink } from '../monobank/link';
 import { accountCount, transactionCount } from './labels';
 import {
+  backgroundNote,
+  BACKGROUND_SYNC_NOTE,
   boundaryConfirmation,
   FOREIGN_RUN_FINISHED,
   FOREIGN_RUN_RUNNING,
@@ -18,6 +21,7 @@ import {
   MONOBANK_TOKEN_PAGE_URL,
   monobankAccountRows,
   newAccountDraft,
+  outcomeLabel,
   progressLabel,
   proposalRows,
   removeTokenConfirmation,
@@ -394,6 +398,28 @@ describe('syncSummary', () => {
     expect(summary.replaceTokenOffered).toBe(false);
   });
 
+  it('Scenario: A run that yielded reads as postponed and offers the retry', () => {
+    const summary = syncSummary(
+      {
+        kind: 'ran',
+        imported: 2,
+        accounts: [
+          { monobankAccountId: 'mono-black', accountId: 'card', outcome: 'complete', imported: 2 },
+          { monobankAccountId: 'mono-white', accountId: 'jar', outcome: 'postponed', imported: 0 },
+        ],
+      },
+      names,
+    );
+
+    expect(summary.accounts[0]?.text).toBe('black ··1234: готово, 2 транзакції');
+    // «перенесено», not «скасовано»: nobody stopped it, and not «відкладено», which in this app
+    // means money put into a банка.
+    expect(summary.accounts[1]?.text).toBe('white ··9999: перенесено');
+    // Unfinished work, so once no run is going on the screen offers repeating it.
+    expect(summary.retryOffered).toBe(true);
+    expect(summary.replaceTokenOffered).toBe(false);
+  });
+
   it('Scenario: An invalid stored token asks for replacement', () => {
     const summary = syncSummary(
       {
@@ -730,6 +756,21 @@ describe('whether a finished sync is a failure the owner has to hear about', () 
     ).toBe(false);
   });
 
+  it('is not a failure when the run ran out of time', () => {
+    // A run that stopped for want of time or of foreground is not a run that failed: the pages it
+    // committed are committed and the next run continues from its cursor.
+    expect(
+      syncFailed({
+        kind: 'ran',
+        imported: 1,
+        accounts: [
+          { monobankAccountId: 'a', accountId: 'card', outcome: 'complete', imported: 1 },
+          { monobankAccountId: 'b', accountId: 'jar', outcome: 'postponed', imported: 0 },
+        ],
+      }),
+    ).toBe(false);
+  });
+
   it('is not a failure when there was nothing set up to sync', () => {
     // Nothing was attempted and nothing silently stopped arriving: a сповіщення here would be the
     // app complaining about work the owner never asked for.
@@ -891,5 +932,43 @@ describe('a run this screen did not start', () => {
     }
     // Neither names a рахунок, a сума or anything else the owner did not already have on screen.
     expect(FOREIGN_RUN_RUNNING).not.toMatch(/\d/);
+  });
+});
+
+describe('what the screen says about the background', () => {
+  const link = (monobankAccountId: string): MonobankLink => ({
+    monobankAccountId,
+    accountId: 'card',
+  });
+
+  it('Scenario: A linked bank is told about the background', () => {
+    expect(backgroundNote([link('mono-card')])).toBe(BACKGROUND_SYNC_NOTE);
+    // About every quarter of an hour, when the phone allows it — and no clock time, because
+    // Doze, standby buckets and the manufacturer's battery saver each defer a chance at will.
+    expect(BACKGROUND_SYNC_NOTE).toContain('чверть години');
+    expect(BACKGROUND_SYNC_NOTE).toContain('коли телефон це дозволяє');
+    expect(BACKGROUND_SYNC_NOTE).not.toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it('Scenario: Nothing linked, nothing said about the background', () => {
+    // Nothing linked is nothing for a background run to do, and no chance is asked for either.
+    expect(backgroundNote([])).toBeNull();
+  });
+
+  it('the screen renders it, and only when a link exists', () => {
+    expect(screen).toContain('backgroundNote(stored.links)');
+  });
+
+  it('Scenario: Every outcome is named on the screen', () => {
+    // The legend at the foot of the screen has to name every outcome a result line can carry —
+    // otherwise «black ··1234: перенесено» is a word the owner has met nowhere else.
+    const legend = screen.slice(screen.indexOf('Можливі стани рахунку'));
+    // Read from the coordinator's own list rather than listed here, so an outcome added later
+    // fails this test instead of leaving a word on a result line the legend never names.
+    for (const outcome of ACCOUNT_OUTCOMES) {
+      expect(legend).toContain(`outcomeLabel('${outcome}')`);
+      // And each is a word, in the owner's language.
+      expect(outcomeLabel(outcome)).toMatch(/[а-яїієґ]/i);
+    }
   });
 });

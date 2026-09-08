@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  followUpDue,
   needsOwner,
   QUIET_INTERVAL_MS,
   STALE_AFTER_MS,
@@ -8,10 +9,10 @@ import {
   worstOutcome,
   type SyncAttempt,
 } from './auto';
-import type { AccountOutcome, AccountResult } from './coordinator';
+import { ACCOUNT_OUTCOMES, type AccountOutcome, type AccountResult } from './coordinator';
 
 /**
- * The three decisions behind «відкрив застосунок → тихо запустився sync», with no clock, no
+ * The four decisions behind «відкрив застосунок → тихо запустився sync», with no clock, no
  * storage and no network anywhere near them. Every moment below is a number this file chose.
  */
 
@@ -49,6 +50,31 @@ describe('when a sync may start on its own', () => {
     expect(syncDue({ links: 1, attemptedAtMs: attemptedAtMs + 1, nowMs: NOW })).toBe(false);
   });
 
+  it('Scenario: Opening after a postponed run syncs at once', () => {
+    // Inside the quiet interval, and due anyway: that run stopped for want of time or of
+    // foreground, not for want of need, and the requests it did not spend are still owed.
+    expect(
+      syncDue({ links: 1, attemptedAtMs: NOW - 2 * MINUTE, outcome: 'postponed', nowMs: NOW }),
+    ).toBe(true);
+  });
+
+  it('Scenario: A completed run still holds the interval', () => {
+    expect(
+      syncDue({ links: 1, attemptedAtMs: NOW - 2 * MINUTE, outcome: 'complete', nowMs: NOW }),
+    ).toBe(false);
+  });
+
+  it('only postponed shortens the interval, and nothing shortens it without a link', () => {
+    for (const outcome of ['cancelled', 'unavailable', 'rate-limited', 'invalid-token', 'хтозна']) {
+      expect(
+        syncDue({ links: 1, attemptedAtMs: NOW - 2 * MINUTE, outcome, nowMs: NOW }),
+      ).toBe(false);
+    }
+    expect(
+      syncDue({ links: 0, attemptedAtMs: NOW - 2 * MINUTE, outcome: 'postponed', nowMs: NOW }),
+    ).toBe(false);
+  });
+
   it('an attempt dated in the future is due, not never due', () => {
     // An NTP correction or a clock set by hand can leave an attempt ahead of now. Waiting it out
     // would disable automatic sync until the phone caught up — for a year-ahead clock, forever —
@@ -72,21 +98,34 @@ describe('what a finished run is remembered as', () => {
     expect(worstOutcome([result('complete'), result('cancelled')])).toBe('cancelled');
   });
 
+  it('Scenario: A postponed рахунок outranks a completed one', () => {
+    expect(
+      worstOutcome([result('complete', 'a'), result('postponed', 'b'), result('postponed', 'c')]),
+    ).toBe('postponed');
+  });
+
+  it('Scenario: A failure outranks a postponed рахунок', () => {
+    expect(
+      worstOutcome([result('unavailable'), result('postponed', 'b'), result('postponed', 'c')]),
+    ).toBe('unavailable');
+  });
+
+  it('Scenario: A cancelled рахунок outranks a postponed one', () => {
+    // Both mean the run stopped and neither needs the owner, so when one run holds both, the
+    // owner's own decision is the more informative word.
+    expect(worstOutcome([result('cancelled'), result('postponed')])).toBe('cancelled');
+  });
+
   it('Scenario: A whole run that worked is remembered as complete', () => {
     expect(worstOutcome([result('complete', 'a'), result('complete', 'b')])).toBe('complete');
   });
 
   it('is total over every outcome an account can end with', () => {
     // The ordering has to cover the coordinator's whole union, or a run would finish with no
-    // outcome to remember. Each one alone is itself.
-    const every: readonly AccountOutcome[] = [
-      'complete',
-      'invalid-token',
-      'rate-limited',
-      'unavailable',
-      'cancelled',
-    ];
-    for (const outcome of every) {
+    // outcome to remember. Read from `ACCOUNT_OUTCOMES` rather than listed here, so a seventh
+    // outcome fails this test instead of quietly falling through the order.
+    expect(ACCOUNT_OUTCOMES).toHaveLength(6);
+    for (const outcome of ACCOUNT_OUTCOMES) {
       expect(worstOutcome([result(outcome)])).toBe(outcome);
     }
   });
@@ -150,6 +189,15 @@ describe('whether monobank needs the owner', () => {
     ).toBeUndefined();
   });
 
+  it('Scenario: A postponed attempt needs nobody', () => {
+    // However old the data is: the run stopped for want of time, not because the bank or the
+    // token failed, and the next run continues it.
+    expect(
+      needsOwner({ attempt: attempt('postponed'), lastCompletedAtMs: NOW - 30 * HOUR, nowMs: NOW }),
+    ).toBeUndefined();
+    expect(needsOwner({ attempt: attempt('postponed'), nowMs: NOW })).toBeUndefined();
+  });
+
   it('Scenario: A run that worked needs nobody', () => {
     expect(needsOwner({ attempt: attempt('complete'), nowMs: NOW })).toBeUndefined();
   });
@@ -180,5 +228,41 @@ describe('whether monobank needs the owner', () => {
     expect(
       needsOwner({ attempt: failing, lastCompletedAtMs: NOW - STALE_AFTER_MS - 1, nowMs: NOW }),
     ).toBe('not-refreshed');
+  });
+});
+
+describe('whether a run that ended has to be finished at once', () => {
+  const attempt = (outcome?: string): SyncAttempt => ({
+    attemptedAtMs: NOW - MINUTE,
+    ...(outcome === undefined ? {} : { outcome }),
+  });
+
+  it('Scenario: A run the background began finishes in front of the owner', () => {
+    expect(followUpDue({ attempt: attempt('postponed'), inForeground: true })).toBe(true);
+  });
+
+  it('Scenario: The follow-up is not a loop', () => {
+    // The follow-up runs without a budget in front of the owner, so it ends complete — and a
+    // completed run is followed by nothing.
+    expect(followUpDue({ attempt: attempt('complete'), inForeground: true })).toBe(false);
+  });
+
+  it('Scenario: A run that never reached the bank is not followed up', () => {
+    // Links and no token: the run withdrew its attempt, so there is nothing to decide from and
+    // nothing starts. Asking `syncDue` here instead would answer true forever.
+    expect(followUpDue({ attempt: undefined, inForeground: true })).toBe(false);
+  });
+
+  it('Scenario: A run that yields in the background is not followed up', () => {
+    expect(followUpDue({ attempt: attempt('postponed'), inForeground: false })).toBe(false);
+  });
+
+  it('nothing but a postponed attempt is followed up', () => {
+    for (const outcome of ['cancelled', 'unavailable', 'rate-limited', 'invalid-token', 'хтозна']) {
+      expect(followUpDue({ attempt: attempt(outcome), inForeground: true })).toBe(false);
+    }
+    // An attempt whose run has not reported yet — one going on now, or one the phone did not
+    // survive — is not a postponed one either.
+    expect(followUpDue({ attempt: attempt(), inForeground: true })).toBe(false);
   });
 });

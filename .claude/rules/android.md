@@ -25,8 +25,15 @@ paths:
 ## Permissions and background work
 - Every Android permission is declared in the Expo config with a one-line comment on why, and the
   OpenSpec change that adds it has a requirement explaining the user-facing reason.
-- Notification access (reading other banks' pushes) is the only background capability in scope.
-  Parsing happens on the device; nothing read from notifications is sent anywhere.
+- Two background capabilities are in scope, and no others. **Notification access** (reading other
+  banks' pushes): parsing happens on the device; nothing read from notifications is sent anywhere.
+  **WorkManager chances** through `expo-background-task`, shared by the Google Drive бекап and the
+  monobank sync: one worker, one interval (`BACKGROUND_TURN_INTERVAL_MINUTES` in
+  `src/platform/background-turn.ts`), two task definitions reached from the bundle's entry
+  (`index.ts`) so a wake-up with no Activity finds them. No foreground service, no exact alarm.
+- A background task decides nothing itself. Everything it does is a pure function under `verify`
+  (`src/ui/monobank-background.ts`, `src/backup/drive/run-backup.ts`); the task file holds the
+  device facts, the budget and the mapping to `BackgroundTaskResult`.
 - No analytics, crash reporting or remote config SDKs without an explicit spec change.
 
 ## Secrets and release

@@ -13,7 +13,15 @@ paths:
 - Migrations: `drizzle/` (SQL files + `drizzle/meta/`), produced by `npm run db:generate` — see
   the one hand-editing clause below.
   The app applies them at startup with Drizzle's expo-sqlite migrator (`useMigrations` in the
-  root layout, over the generated `drizzle/migrations.js`); nothing else applies migrations.
+  root layout, over the generated `drizzle/migrations.js`). The one other caller is
+  `prepareBackgroundStorage()` in `src/platform/background-turn.ts`, which every background task
+  awaits first: a WorkManager chance can land on a process with no Activity, which renders no route
+  and therefore runs no `useMigrations`. It calls the same `migrate` over the same files, so there
+  is still one migration history. The two cannot interleave — drizzle's expo-sqlite `migrate`
+  awaits only while reading the migration files and then calls the sync dialect's `migrate`, which
+  runs every pending statement inside one `BEGIN … COMMIT` without yielding the JS thread, so
+  whichever gets there second reads the journal, finds nothing pending and returns. Nothing else
+  applies migrations.
 
 ## Migrations are append-only
 - Never edit, rename, reorder or delete a migration or `drizzle/meta/*` entry that is already

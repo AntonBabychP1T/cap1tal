@@ -341,6 +341,10 @@ const OUTCOME_LABELS: Readonly<Record<AccountOutcome, string>> = {
   'rate-limited': 'банк просить зачекати',
   unavailable: 'банк недоступний',
   cancelled: 'скасовано',
+  // «перенесено», not «відкладено»: the глосарій gives «відкладено» to the fourth number of the
+  // місячна картина — money put into a банка — and a result line saying «black ··1234:
+  // відкладено» in this app would read as money moved rather than as work left for the next run.
+  postponed: 'перенесено',
 };
 
 export function outcomeLabel(outcome: AccountOutcome): string {
@@ -408,7 +412,8 @@ export function syncSummary(
  * A run that never started because there is no token and one with nothing linked are setup states,
  * not failures: nothing was attempted, nothing silently stopped arriving, and a сповіщення would
  * be the app complaining about work the owner never asked for. A cancelled account is the owner's
- * own decision, for the reason `AccountOutcome` already gives about not blaming the bank for it.
+ * own decision and a postponed one is the run running out of the time or the foreground it was
+ * given, for the reason `AccountOutcome` already gives about not blaming the bank for either.
  * Everything else means транзакції did not arrive and «залишилось» is now too large.
  */
 export function syncFailed(run: SyncRun): boolean {
@@ -419,8 +424,31 @@ export function syncFailed(run: SyncRun): boolean {
     return true;
   }
   return run.accounts.some(
-    (result) => result.outcome !== 'complete' && result.outcome !== 'cancelled',
+    (result) =>
+      result.outcome !== 'complete' &&
+      result.outcome !== 'cancelled' &&
+      result.outcome !== 'postponed',
   );
+}
+
+/**
+ * What the sync section says about the runs the owner never starts.
+ *
+ * «Приблизно раз на чверть години» and «коли телефон це дозволяє» are the whole of the promise,
+ * and deliberately so: WorkManager's floor is fifteen minutes, but Doze, App Standby buckets and
+ * the manufacturer's own battery saver all defer a chance for as long as they like. A line naming
+ * a clock time would be a promise the phone does not make (design D1).
+ */
+export const BACKGROUND_SYNC_NOTE =
+  'Синхронізація також відбувається у фоні — приблизно раз на чверть години, коли телефон це дозволяє.';
+
+/**
+ * Said only when there is something for a background run to do. With nothing linked there is no
+ * рахунок to sync, no chance is asked for, and the sentence would describe work that does not
+ * happen.
+ */
+export function backgroundNote(links: readonly MonobankLink[]): string | null {
+  return links.length === 0 ? null : BACKGROUND_SYNC_NOTE;
 }
 
 const RUN_HEADLINES: Readonly<

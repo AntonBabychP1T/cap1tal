@@ -195,6 +195,13 @@ what makes the whole schedule testable without fake timers, and it is why the sp
 "at least once per 24 hours, best-effort" honestly: the OS decides *when* we are asked, the pure
 function decides *whether* we act. `expo-background-fetch` is deprecated in this SDK; a foreground-
 only schedule was rejected because a phone opened rarely is exactly the phone that gets lost.
+*Amended by `monobank-background-sync` (its design D2, D4):* the interval this task registers with
+is now the app's one shared `BACKGROUND_TURN_INTERVAL_MINUTES`, because every registered task
+rides a single WorkManager request whose delay is whichever registered last, and the task's
+definition is reached from the bundle's entry (`index.ts`) rather than from the root layout, so a
+chance on a process with no Activity finds it defined. Nothing this decision promises changes: a
+chance every quarter of an hour costs `runBackup` one row read and one pure function when nothing
+is due.
 
 **D10. One file per версія бекапу, named by its instant; keep the newest five; prune only after a
 confirmed upload.**

@@ -226,6 +226,35 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   a new phone without it can start a fresh line, and the копії already there are left alone rather
   than deleted.
 
+## The monobank sync
+
+- **Прогін** (run) — one sweep of the linked рахунки: one client-info request for the whole run,
+  then one statement request per рахунок, paced to the bank's one request a minute. Only one прогін
+  exists on the phone at a time; anything that would start a second waits for the one going on and
+  reports what *it* came to. A прогін commits each page as it reads it, so a прогін that stops
+  early loses nothing and leaves a cursor the next one continues from.
+- **Хід** (turn) — one request sent about one рахунок, whatever the answer. What the order of a
+  прогін is rationed by: the рахунок that has waited longest since its хід goes first, so a прогін
+  cut short over and over still reaches every рахунок instead of looping on the first few. A хід
+  the run never spent a request on is not a хід.
+- **Тихий інтервал** (quiet interval) — the quarter of an hour a прогін nobody asked for waits
+  after the last one. It governs only the runs the owner did not ask for: «Синхронізувати» ignores
+  it, and so does a прогін that was перенесено, which by definition has requests still owed.
+- **Фоновий прогін** (background run) — a прогін started on a chance the phone gives while the app
+  is not in front of the owner. The same прогін under the same rules, with a few minutes' budget
+  and nothing else different. The app asks for chances only while a рахунок is linked, claims no
+  cadence, and a фоновий прогін announces nothing unless monobank needs the owner.
+- **Поступитися** (yield) — what a прогін in front of the owner does when the app leaves the
+  foreground: it stops before its next request and lets the background have the phone. Not
+  «передати», which the глосарій gives to handing a file to another app.
+- **Перенесено** (postponed) — how a рахунок ends that a прогін stopped before finishing, for want
+  of time or of foreground. Neither a failure of the bank nor a decision of the owner: whatever the
+  прогін committed stays committed, the last-sync moment does not move, and the next прогін
+  continues from the cursor. Not «відкладено», which in this app is money put into a банка.
+- **Скасовано** (cancelled) — how a рахунок ends that the owner stopped the прогін before. Told
+  apart from перенесено everywhere an outcome is reported, because one is their decision and the
+  other is the app running out of time.
+
 ## The fiscal receipt
 
 - **Фіскальний чек** (fiscal receipt) — what the seller's registrar registered with the tax

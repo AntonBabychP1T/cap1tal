@@ -16,7 +16,8 @@ import {
 } from '../domain/transaction';
 import { inMemoryMonobankTokenStore, type MonobankTokenStore } from '../platform/monobank-token';
 import { startOfLocalDayMs } from '../ui/dates';
-import { STATEMENT_PAGE_SIZE, type AuthFetchLike } from './api';
+import { MAX_STATEMENT_WINDOW_MS, STATEMENT_PAGE_SIZE, type AuthFetchLike } from './api';
+import { planWindows } from './sync';
 import { syncLinkedAccounts, type SyncPorts, type SyncProgress, type SyncRun } from './coordinator';
 
 /**
@@ -750,6 +751,149 @@ describe('syncLinkedAccounts', () => {
     expect(statements()).toHaveLength(0);
     // And no turn was taken, so the next run finds this рахунок exactly where it was in the order.
     expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBeNull();
+  });
+
+  it('Scenario: The owner\u2019s stop still reads as cancelled', async () => {
+    link('mono-card', 'card');
+    repo.upsertAccounts(
+      [{ id: 'mono-white', kind: 'card', name: 'white', currency: 'UAH', bankBalance: money(0, 'UAH') }],
+      new Date(RUN_AT),
+    );
+    link('mono-white', 'jar');
+    const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+
+    // Both would answer: the owner pressed «Зупинити» on a run that is also out of the time it was
+    // given. Their own decision is the more informative word, so it is the one asked first.
+    const run = ran(
+      await syncLinkedAccounts(
+        portsWith(fetchImpl, {
+          cancelled: () => waits.length >= 1,
+          postponed: () => waits.length >= 1,
+        }),
+      ),
+    );
+
+    expect(run.accounts.map((a) => a.outcome)).toEqual(['cancelled', 'cancelled']);
+    expect(run.accounts.some((a) => a.outcome === 'postponed')).toBe(false);
+  });
+
+  it('Scenario: A postponed \u0440\u0430\u0445\u0443\u043d\u043e\u043a moves no moment', async () => {
+    link('mono-card', 'card');
+    const yesterday = RUN_AT - 86_400_000;
+    repo.markSynced('mono-card', new Date(yesterday));
+    const { fetchImpl, statements } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+
+    // Out of time while it sits out the gap before the statement request.
+    const run = ran(
+      await syncLinkedAccounts(portsWith(fetchImpl, { postponed: () => waits.length >= 1 })),
+    );
+
+    expect(run.accounts.map((a) => a.outcome)).toEqual(['postponed']);
+    expect(statements()).toHaveLength(0);
+    // Yesterday's sync is the last one that happened, and a run that did not finish must not date
+    // itself as one that did.
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(yesterday);
+    expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBeNull();
+  });
+
+  it('Scenario: An answer in flight when the budget passes is still stored whole', async () => {
+    link('mono-card', 'card');
+    repo.upsertAccounts(
+      [{ id: 'mono-white', kind: 'card', name: 'white', currency: 'UAH', bankBalance: money(0, 'UAH') }],
+      new Date(RUN_AT),
+    );
+    link('mono-white', 'jar');
+    const { fetchImpl, statements } = scriptedFetch({
+      statement: () => ({
+        status: 200,
+        body: [item({ id: 'a1', timeSeconds: AUGUST_28, description: 'СІЛЬПО', amount: -12550 })],
+      }),
+    });
+
+    // Yes from the moment the first statement request goes out — which is while its answer is
+    // still being read and stored. The budget is asked before a request and never in the middle
+    // of an answer, so that answer is kept whole and only the next request is not sent.
+    const run = ran(
+      await syncLinkedAccounts(portsWith(fetchImpl, { postponed: () => statements().length >= 1 })),
+    );
+
+    expect(run.accounts.map((a) => a.outcome)).toEqual(['complete', 'postponed']);
+    expect(run.imported).toBe(1);
+    expect(txs.listAll()).toHaveLength(1);
+    expect(repo.linkOf('mono-card')?.cursorMs).toBe(RUN_AT);
+    expect(statements()).toHaveLength(1);
+  });
+
+  it('Scenario: A \u0440\u0430\u0445\u0443\u043d\u043e\u043a stopped between its windows keeps its pages and its turn', async () => {
+    // A first sync three windows wide: the boundary is more than two maximum windows back.
+    const cursorMs = RUN_AT - (2 * MAX_STATEMENT_WINDOW_MS + 1_000);
+    link('mono-card', 'card', cursorMs);
+    const windows = planWindows(cursorMs, RUN_AT);
+    expect(windows).toHaveLength(3);
+    const { fetchImpl, statements } = scriptedFetch({
+      statement: (_url, call) => ({
+        status: 200,
+        body: [
+          item({
+            id: `w${call}`,
+            timeSeconds: AUGUST_28 + call,
+            description: 'СІЛЬПО',
+            amount: -1_000,
+          }),
+        ],
+      }),
+    });
+
+    const run = ran(
+      await syncLinkedAccounts(portsWith(fetchImpl, { postponed: () => statements().length >= 2 })),
+    );
+
+    expect(run.accounts.map((a) => a.outcome)).toEqual(['postponed']);
+    // Two windows committed: their транзакції are stored and the cursor sits at the end of the
+    // second, which is exactly where the next run has to continue from.
+    expect(run.imported).toBe(2);
+    expect(txs.listAll()).toHaveLength(2);
+    const stoppedAt = repo.linkOf('mono-card');
+    expect(stoppedAt?.cursorMs).toBe(windows[1]!.toMs);
+    // The turn its requests took stays taken, so the order ranks it behind whatever has not had
+    // one; and its moment does not move, because it did not complete.
+    expect(stoppedAt?.lastAttemptedAtMs).not.toBeNull();
+    expect(stoppedAt?.lastSyncedAtMs).toBeNull();
+
+    // The next run picks up the third window and finishes it.
+    const second = scriptedFetch({
+      statement: (url) => {
+        expect(url).toContain(`/${Math.floor(windows[1]!.toMs / 1000)}/`);
+        return { status: 200, body: [] };
+      },
+    });
+    const next = ran(await syncLinkedAccounts(portsWith(second.fetchImpl)));
+    expect(next.accounts.map((a) => a.outcome)).toEqual(['complete']);
+  });
+
+  it('Scenario: A \u0440\u0430\u0445\u0443\u043d\u043e\u043a never asked about keeps its place in the order', async () => {
+    const { clientInfo } = manyLinks(3);
+    const first = scriptedFetch({ clientInfo, statement: () => ({ status: 200, body: [] }) });
+
+    // A background run out of time after one рахунок: the other two are postponed without a
+    // request being sent about them.
+    const run = ran(
+      await syncLinkedAccounts(
+        portsWith(first.fetchImpl, { postponed: () => first.statements().length >= 1 }),
+      ),
+    );
+    expect(run.accounts.map((a) => a.outcome)).toEqual(['complete', 'postponed', 'postponed']);
+    expect(asked(first.statements())).toEqual(['mono-0']);
+
+    const second = scriptedFetch({ clientInfo, statement: () => ({ status: 200, body: [] }) });
+    await syncLinkedAccounts(
+      portsWith(second.fetchImpl, { postponed: () => second.statements().length >= 2 }),
+    );
+
+    // No turn was taken for either, so both are still at the head of the order and are the first
+    // the later run asks the bank about. That is what makes successive background runs work
+    // through every linked рахунок instead of looping on the first.
+    expect(asked(second.statements())).toEqual(['mono-1', 'mono-2']);
   });
 
   it('Scenario: Giving an account its turn does not reorder the run it is in', async () => {

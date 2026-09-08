@@ -181,6 +181,15 @@ Not in v1: forecasts ("at this pace you will have X left").
   before anything is handed over, and it leaves by their hand or not at all. **[PROPOSED]**
 - Bank notifications are captured and parsed on the device. Raw notification payloads and the local
   capture queue never enter the Google Drive backup and are never sent to a server.
+- The monobank sync also runs while the app is not open, on the chances Android gives it, and only
+  while at least one рахунок is linked (owner's decision, 2026-09-07). It is the same run an
+  opening starts — the same token, read for the run and kept nowhere else, the same one request a
+  minute, the same нічого-не-надсилаємо inside the тихий інтервал — bounded to a few minutes and
+  continued on the next chance. Best-effort and no cadence is claimed: Doze and battery saving
+  defer a chance for as long as the phone likes, so the app says «приблизно раз на чверть години,
+  коли телефон це дозволяє» and never a clock time. A background run announces nothing unless
+  monobank needs the owner — a rejected token, or data that has stopped being refreshed — and it
+  writes no text the owner never saw.
 - Backup has one versioned file format. The owner can export/import that file manually. When Google
   Drive backup is enabled, the same backup is sent automatically about once a day, retried when the
   phone next has network/app execution time, and can be restored explicitly on a new phone. The app
