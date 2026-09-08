@@ -142,7 +142,7 @@
 
 ## 8. Smoke
 
-- [ ] 8.1 Run the `smoke-runner` subagent on the emulator for the plumbing, which needs no token:
+- [x] 8.1 Run the `smoke-runner` subagent on the emulator for the plumbing, which needs no token:
       after `scripts/android.sh up`, link nothing and confirm `logs` shows no task registered;
       seed one link as `monobank-sync-fairness` §8 did and confirm the registration and the new
       sentence in the sync section; send the app to the background (`key home`), force the
@@ -151,6 +151,40 @@
       task executed and finished with the run answering `not-configured`; then kill the process
       (`adb shell am force-stop`) and force the job again to prove the headless start defines the
       task. Fix what it finds.
+
+      **Seen on the emulator, 2026-09-08 (commit a12b764).** All four scenarios pass; no defect
+      found, nothing fixed.
+
+      - *Nothing linked → nothing asked for.* Unlinking the last рахунок on the screen left
+        `shared_prefs/TaskManagerModule.xml` an empty `<map />` and `dumpsys jobscheduler` with no
+        job for the package — the re-assert of task 5.2 fired without leaving the screen. The
+        sync section then says only «Приєднайте хоча б один рахунок, щоб синхронізувати.»: no
+        sentence about the background, as monobank-sync-screen requires.
+      - *One link → registered, and the screen says so.* `TaskManagerModule.xml` held exactly
+        `cap1tal.monobank-sync.v1` with `minimumInterval: 15` (and nothing for the бекап, which is
+        not connected). The sync section carried «Синхронізація також відбувається у фоні —
+        приблизно раз на чверть години, коли телефон це дозволяє.», and the legend named all six
+        states, «скасовано» and «перенесено» included.
+      - *A forced chance runs the task.* `cmd jobscheduler run -f` with the app backgrounded:
+        `BackgroundTaskConsumer: Executing task 'cap1tal.monobank-sync.v1'` →
+        `TaskService: Finished task` → `WM-WorkerWrapper: Worker result SUCCESS` →
+        `Enqueuing worker … '15' minutes delay`. The run answered `not-configured`: no request to
+        `api.monobank.ua`, no attempt row left, `last_attempted_at` still null, no сповіщення.
+      - *A headless start defines the task.* With the process killed (`am kill`, which unlike
+        `force-stop` leaves the job scheduled), the forced chance started a process **for the bound
+        `SystemJobService`** — no Activity, no route — and that process logged
+        `TaskService: Registered task with name 'cap1tal.monobank-sync.v1'`, then executed and
+        finished it, with `Started headless task 1 to keep JS timers alive`. That registration line
+        is the entry file doing its job: the definition was reached without a screen. Metro
+        confirms the entry moved — it now bundles `index.ts`, not `expo-router/entry`.
+
+      One thing worth knowing for later smokes, not a defect: on a **development** build the very
+      first forced chance after a cold start does nothing, because the JS bundle is still being
+      fetched from Metro when the worker fires — the process starts, WorkManager initialises, and
+      `doWork` never runs. The next chance on that same headless process runs the task normally. A
+      release build embeds the bundle and has no such window. `am force-stop` is also the wrong
+      tool for this scenario: Android cancels a force-stopped app's jobs, so there is nothing left
+      to force; `am kill` is what leaves the job and empties the process.
 - [ ] 8.2 The money path is the owner's, on the phone with the token, as `monobank-connect-flow`
       records it: link the рахунки, leave the app, come back after half an hour and read the
       monobank screen — «Синхронізовано N з M рахунків» grown, or «Остання синхронізація» moved;
