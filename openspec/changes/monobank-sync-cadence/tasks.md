@@ -194,10 +194,34 @@ failing path is unreachable. Every new test below SHALL use a non-zero gap.
 
 ## 9. The phone
 
-- [ ] 9.1 Smoke on the emulator with the `smoke-runner` subagent: the monobank screen's sync
+- [x] 9.1 Smoke on the emulator with the `smoke-runner` subagent: the monobank screen's sync
       section, «Синхронізувати» in front of the owner, and a forced chance
       (`cmd jobscheduler run -f`, `.claude/rules/android.md`) with the app backgrounded — the chance
       must end in seconds with a statement request sent, not in a wait. Record what was seen.
+
+      **Run on 2026-09-09, PASS** — Pixel_10_Pro / emulator-5554 (API 37), fresh
+      `assembleDebug`, on `f64f7a2` (Metro serving the working tree, which also carries
+      `journal-diagnostics` uncommitted, so the журнал rows below come from that work as much as
+      from this change). No monobank token on the emulator, so the money path is 9.2's; the 43
+      scenarios that need a request to the personal API were not reachable here.
+      - *The number the change exists for.* `BackgroundTaskConsumer: Executing task
+        'cap1tal.monobank-sync.v1'` → `TaskService: Finished task`, per chance: **66 ms** (warm
+        process), **44 ms** (second chance, same process), **3.434 s** (headless after `am kill`,
+        almost all of it the cold JS process and `prepareBackgroundStorage`'s migrations). The
+        прогін inside each, as the журнал measured it: **23 ms, 8 ms, 7 ms**. Nothing waited. Before
+        this change one chance sat inside a fifty-nine-second wait for 1,199,579 ms.
+      - *No starvation.* Three successive chances, each with its own run id and its own
+        `почалось` → `not-configured` pair beside a `background-chance · background ·
+        not-configured`. **None answered `already-running`** — which is the whole of what the
+        twenty-minute lock did to the two chances after it.
+      - The screens: `/manage/monobank` renders its sync section without a token, «Синхронізувати»
+        without a link answers honestly, Головний renders and its pull does not crash.
+      - Nothing was left behind: `monobank_sync_attempt` empty, `monobank_request_pace` empty,
+        `alerts` empty, both link moments still null, 0 транзакції.
+      - The documented development-build window held: the first forced chance after `am kill` did
+        nothing (bundle still coming from Metro), the next on that process registered and ran the
+        task. Not a defect.
+      - No defects against this change's spec.
 - [ ] 9.2 The owner's own money path, on the phone with the token. This is
       `monobank-background-sync` §9.2 re-run, and it is what says the defect is actually gone. The
       criterion is the журнал and not a finished sync — a рахунок with history needs many chances to
