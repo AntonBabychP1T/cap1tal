@@ -366,7 +366,8 @@ describe('where the прогрес is evaluated, and where it is not', () => {
       [join('(tabs)', 'accounts.tsx'), /accountsRepo\.save\([\s\S]{0,500}?evaluateProgress\(\)/],
       [join('account', '[id].tsx'), /accountsRepo\.save\([\s\S]{0,500}?evaluateProgress\(\)/],
       [join('manage', 'goals.tsx'), /goalsRepo\.save\([\s\S]{0,500}?evaluateProgress\(\)/],
-      [join('manage', 'saldo-import.tsx'), /importsRepo\.commit\([\s\S]{0,500}?evaluateProgress\(\)/],
+      // Through `commitImport`, which is `importsRepo.commit` with the журнал around it.
+      [join('manage', 'saldo-import.tsx'), /commitImport\(importsRepo[\s\S]{0,500}?evaluateProgress\(\)/],
       [join('manage', 'backup.tsx'), /'restored'[\s\S]{0,500}?evaluateProgress\(\)/],
       [join('manage', 'monobank.tsx'), /startSync\(\{[\s\S]{0,900}?evaluateProgress\(\)/],
     ];
@@ -642,5 +643,34 @@ describe('what an інвестиційний рахунок is worth reaches the
     // And nothing on that screen has learned about a вартість: the звірка compares the фактичний
     // залишок with the розрахунковий баланс and with nothing else.
     expect(movements).not.toMatch(/investmentsRepo|currentValue|поточна вартість/i);
+  });
+});
+
+describe('which sync runs ask the bank for balances', () => {
+  /**
+   * The two triggers the app calls «asked for» — «Синхронізувати» and the жест on Головний — pass
+   * `asked` to the coordinator, and the automatic ones do not. It is an optional port, so nothing
+   * in the type system notices when a call site loses it; this test is what does. The division is
+   * the тихий інтервал's own, and there is one of it in the app.
+   */
+  const sources = {
+    'manage/monobank.tsx': read('manage/monobank.tsx'),
+    '(tabs)/index.tsx': read('(tabs)/index.tsx'),
+    '_layout.tsx': read('_layout.tsx'),
+  };
+
+  /** The flag inside the `syncPorts(` call it belongs to, not merely somewhere in the file. */
+  const asksInSyncPorts = /syncPorts\([\s\S]{0,600}?asked: true/;
+
+  it('«Синхронізувати» and the жест on Головний ask for client-info', () => {
+    expect(sources['manage/monobank.tsx']).toMatch(asksInSyncPorts);
+    expect(sources['(tabs)/index.tsx']).toMatch(asksInSyncPorts);
+  });
+
+  it('The runs an opening and a foreground return start do not', () => {
+    // They take the client-info answer this phone already holds while it is inside the межа
+    // свіжості, and spend their one request a minute on the statement — which is the request that
+    // imports, and the whole of what this change exists for.
+    expect(sources['_layout.tsx']).not.toMatch(asksInSyncPorts);
   });
 });

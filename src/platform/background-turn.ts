@@ -1,11 +1,11 @@
 import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
-import { Platform } from 'react-native';
 
 import { db } from '@/db/client';
 import { reporting as reportingRepo } from '@/db/repos';
 import { bindJournal } from '@/ui/journal';
+import { journalRegistration, type TaskRegistration } from '@/ui/monobank-background';
 
 import migrations from '../../drizzle/migrations';
 
@@ -32,25 +32,13 @@ import migrations from '../../drizzle/migrations';
  */
 export const BACKGROUND_TURN_INTERVAL_MINUTES = 15;
 
-/** WorkManager stops a worker that runs longer than ten minutes; a run gets eight of them. */
-const ANDROID_BUDGET_MS = 8 * 60_000;
-
-/**
- * How long a run started by a chance may spend, measured from the chance's start.
- *
- * Eight of WorkManager's ten minutes: the last request a budgeted run sends goes out before the
- * eighth minute and answers within the request timeout, so the worst case ends the chance with
- * about a minute to spare for the headless start itself (design D3).
- *
- * The number is Android's. An iOS build gets a far shorter grant — `BGAppRefreshTask` allows about
- * thirty seconds — and the constant sits behind `Platform.select` so that change has one place to
- * put its own value. Until then every platform gets Android's, which on iOS would simply be a run
- * the system ends mid-wait: the cursors survive that exactly as they survive a budget running out.
+/*
+ * There is no budget here any more, and that is the point. A run on a chance sends what the bank's
+ * minute already allows and ends — it never waits, so there is no length to bound and no timer to
+ * be stopped along with the Activity. It fits inside WorkManager's ten minutes by construction,
+ * and inside iOS's far shorter `BGAppRefreshTask` grant for the same reason, which is why no
+ * `Platform.select` stands here either.
  */
-export const BACKGROUND_TURN_BUDGET_MS: number = Platform.select({
-  android: ANDROID_BUDGET_MS,
-  default: ANDROID_BUDGET_MS,
-});
 
 /** The one preparation in flight or already done, so two tasks on one chance do it once. */
 let prepared: Promise<void> | undefined;
@@ -99,11 +87,18 @@ export function prepareBackgroundStorage(): Promise<void> {
  * instead — which is why that path is not an optimisation.
  */
 export async function reconcileTask(name: string, wanted: boolean): Promise<void> {
+  // Journaled, and only ever journaled: what is worth an entry is `journalRegistration`'s decision
+  // and not this file's, because `verify` never loads this file (design D5).
+  journalRegistration(await reconcile(name, wanted));
+}
+
+/** What the phone answered. Every path is a value, since a phone that refuses is not an error. */
+async function reconcile(name: string, wanted: boolean): Promise<TaskRegistration> {
   let registered: boolean;
   try {
     registered = await TaskManager.isTaskRegisteredAsync(name);
   } catch {
-    return;
+    return 'refused';
   }
 
   try {
@@ -111,10 +106,16 @@ export async function reconcileTask(name: string, wanted: boolean): Promise<void
       await BackgroundTask.registerTaskAsync(name, {
         minimumInterval: BACKGROUND_TURN_INTERVAL_MINUTES,
       });
-    } else if (!wanted && registered) {
-      await BackgroundTask.unregisterTaskAsync(name);
+      return 'registered';
     }
+    if (!wanted && registered) {
+      await BackgroundTask.unregisterTaskAsync(name);
+      return 'unregistered';
+    }
+    return 'unchanged';
   } catch {
-    // Nothing to say and nothing to retry here: the next launch and the next foreground ask again.
+    // Nothing to retry here: the next launch and the next foreground ask again. It is worth
+    // saying, though — a phone that will not grant chances is why a sync only happens on opening.
+    return 'refused';
   }
 }

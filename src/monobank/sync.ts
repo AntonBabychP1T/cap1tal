@@ -1,4 +1,4 @@
-import { money, type CurrencyCode } from '../domain/money';
+import { money, type CurrencyCode, type Money } from '../domain/money';
 import { matchRule, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
@@ -60,6 +60,106 @@ export function syncOrder<T extends OrderableLink>(links: readonly T[]): T[] {
         ? 1
         : 0;
   });
+}
+
+/**
+ * How long a stored client-info answer goes on serving a прогін nobody asked for — the **межа
+ * свіжості**, and therefore the most транзакції may lag the bank by.
+ *
+ * An hour. The phone's chances come about four to it, so an hour spends one of them on балanci and
+ * leaves three for the statement requests that actually import; a shorter bound spends more chances
+ * on balances, a longer one commits figures older than the owner would recognise. It is not a
+ * freshness promise about the балanci — a прогін imports nothing later than the answer it used, so
+ * an old answer makes an old *span*, not a wrong one.
+ */
+export const CLIENT_INFO_FRESH_MS = 60 * 60 * 1000;
+
+/** What `usableAccounts` needs of a link: which monobank account it is, and where it stands. */
+export interface NamedLink {
+  readonly monobankAccountId: string;
+  /** Everything up to and including this instant is imported and committed. */
+  readonly cursorMs: number;
+  /** When a sync last *completed* for this link, or `null` for one none ever has. */
+  readonly lastSyncedAtMs: number | null;
+}
+
+/** What a прогін reads of a stored рахунок; the rest of `StoredMonobankAccount` is nobody's here. */
+export interface RememberedAccount {
+  readonly id: string;
+  readonly currency: CurrencyCode;
+  readonly bankBalance: Money;
+  readonly obtainedAt: Date;
+}
+
+/** The stored client-info answer a прогін may use, and the moment it was obtained. */
+export interface UsableAnswer<T> {
+  readonly accounts: ReadonlyMap<string, T>;
+  readonly obtainedAt: Date;
+}
+
+/**
+ * The newest client-info answer this phone has stored, when it is still fresh enough to spare a
+ * прогін the request — or `undefined`, meaning ask the bank.
+ *
+ * The unit is the **answer**, not the row, and that is the whole of the decision. `upsertAccounts`
+ * inserts and updates and never deletes, so a рахунок the token has stopped showing keeps a row
+ * whose moment no answer will ever refresh. A per-row rule («every link named by a fresh row, or
+ * refetch») would therefore answer «refetch» for ever on such a phone — the refetch could not heal
+ * it, because the fresh answer does not name it either — and every прогін would spend its one
+ * request a minute on client-info and import nothing, which is exactly the defect this exists to
+ * remove.
+ *
+ * Every row one `upsertAccounts` call writes carries the `obtainedAt` it was given, so the newest
+ * moment across the rows *is* an answer's moment, and the rows carrying exactly that moment are the
+ * рахунки that answer named. A link outside them is one the newest answer did not name — which the
+ * caller reads as «the token no longer shows this рахунок», the same verdict a fetched answer gives
+ * it, and never as a reason to ask again.
+ *
+ * `links` is taken for two questions. A phone with no links at all is handed no answer to use; and
+ * an answer older than the cursor of a рахунок no sync has ever completed cannot serve this run at
+ * all. That рахунок's вікна all lie after the answer, so the run would have nothing to ask about
+ * it and nothing to report but «finished without asking» — while the screen goes on saying «Ще не
+ * синхронізовано», because nothing was. Asking the bank instead costs one request and heals it:
+ * the answer that comes back is dated now, which is past the boundary the owner set.
+ *
+ * A newest moment in the future of the device's clock — an NTP correction, a clock set by hand —
+ * is not fresh. `syncDue` and the pace guard the same hazard the same way: one extra request, and
+ * the answer it brings heals the rows.
+ */
+export function usableAccounts<T extends RememberedAccount>(
+  rows: readonly T[],
+  links: readonly NamedLink[],
+  nowMs: number,
+  freshMs: number = CLIENT_INFO_FRESH_MS,
+): UsableAnswer<T> | undefined {
+  if (rows.length === 0 || links.length === 0) {
+    return undefined;
+  }
+  const newestMs = rows.reduce((newest, row) => Math.max(newest, row.obtainedAt.getTime()), -Infinity);
+  if (!Number.isFinite(newestMs) || newestMs > nowMs || nowMs - newestMs >= freshMs) {
+    return undefined;
+  }
+  // A рахунок the owner linked since this answer was obtained, and which no sync has completed:
+  // the answer reaches nothing of its history, so it is not an answer this run may work from. Only
+  // when asking would actually help — a boundary in the future of the clock itself is not healed
+  // by any answer, and forcing a request for it would spend the allowance every run for ever.
+  //
+  // One case this does keep asking about, knowingly: a token whose accounts are all gone answers
+  // client-info with none, `upsertAccounts` stores nothing, the newest moment does not move, and
+  // this stays true. The run then refetches next time. It costs nothing that could have been
+  // spent — every link is `unavailable` under such an answer, so there is no statement request the
+  // allowance would otherwise have gone to — and the quiet interval holds it to one request a
+  // quarter of an hour. It is also how the phone notices the accounts coming back.
+  if (links.some((l) => l.lastSyncedAtMs === null && l.cursorMs >= newestMs && l.cursorMs < nowMs)) {
+    return undefined;
+  }
+  const accounts = new Map<string, T>();
+  for (const row of rows) {
+    if (row.obtainedAt.getTime() === newestMs) {
+      accounts.set(row.id, row);
+    }
+  }
+  return { accounts, obtainedAt: new Date(newestMs) };
 }
 
 /** One statement request's span, epoch milliseconds, both ends inclusive. */

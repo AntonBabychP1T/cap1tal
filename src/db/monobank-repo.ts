@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, lte } from 'drizzle-orm';
 
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
@@ -48,6 +48,25 @@ export interface StoredMonobankAccount {
 /** What client-info gives us about one account; the rest of `MonobankAccount` is not stored. */
 export type FetchedMonobankAccount = Omit<StoredMonobankAccount, 'obtainedAt'>;
 
+/**
+ * Where a window a link is half-way through reading has got to.
+ *
+ * The two ends together or neither, never one of them: the window's end is where the cursor moves
+ * when the window finally answers short, the request's end is where the next request resumes, and
+ * a position holding only one of the two would either lose the commit point or lose the resume
+ * point. The columns behind it are two nullable ones, so this type is what keeps the half-set pair
+ * unrepresentable above storage — `category_limits` shapes its сума and currency the same way.
+ *
+ * The window's own `fromMs` is not stored because it is never anything but the cursor: the cursor
+ * cannot move while a window is being paged, and every narrowed request keeps the window's start.
+ */
+export interface PagingPosition {
+  /** The end of the window being paged — where the cursor moves once that window answers short. */
+  readonly windowToMs: number;
+  /** The end the next request about this link should ask for; `continueWindow`'s own answer. */
+  readonly requestToMs: number;
+}
+
 /** An active link, with everything sync needs to carry on where it left off. */
 export interface StoredMonobankLink extends MonobankLink {
   /** The inclusive calendar date the owner confirmed as the first day sync may import. */
@@ -66,6 +85,15 @@ export interface StoredMonobankLink extends MonobankLink {
    * runs by, and deliberately not `lastSyncedAtMs`: a turn is taken whatever the answer was.
    */
   readonly lastAttemptedAtMs: number | null;
+  /**
+   * Where the window this link is half-way through reading has got to, or `null` for a link with
+   * no window in progress — which is what every link stored before these columns reads back as.
+   *
+   * It is what lets a рахунок too large for one прогін be finished by several: without it the
+   * position lived in the run's own memory and died with the run, so every прогін re-read the
+   * same pages and stopped in the same place.
+   */
+  readonly paging: PagingPosition | null;
 }
 
 /**
@@ -104,6 +132,15 @@ export interface StatementAnswer {
   readonly obtainedAt: Date;
   /** Where the cursor stands once this answer is stored. */
   readonly cursorMs: number;
+  /**
+   * Where paging has got to once this answer is stored, or absent for an answer that leaves no
+   * window half-read — which clears whatever the link remembered.
+   *
+   * In this answer rather than in a write of its own, so the position lands in the same one
+   * database transaction as the транзакції and imported ids that produced it: a remembered
+   * position can then never outlive an answer that did not store.
+   */
+  readonly paging?: PagingPosition;
   /** The moment the транзакції count as stored — the feed's tie-break, passed in as everywhere. */
   readonly storedAt: Date;
 }
@@ -143,6 +180,8 @@ function toStoredLink(row: {
   cursorMs: Date;
   lastSyncedAt: Date | null;
   lastAttemptedAt: Date | null;
+  pagingWindowToMs: Date | null;
+  pagingRequestToMs: Date | null;
 }): StoredMonobankLink {
   return {
     monobankAccountId: row.monobankAccountId,
@@ -151,6 +190,15 @@ function toStoredLink(row: {
     cursorMs: row.cursorMs.getTime(),
     lastSyncedAtMs: row.lastSyncedAt?.getTime() ?? null,
     lastAttemptedAtMs: row.lastAttemptedAt?.getTime() ?? null,
+    // Both ends or neither: a row carrying one of the two describes no window a run could resume,
+    // so it reads back as no position at all and the window is planned afresh from the cursor.
+    paging:
+      row.pagingWindowToMs === null || row.pagingRequestToMs === null
+        ? null
+        : {
+            windowToMs: row.pagingWindowToMs.getTime(),
+            requestToMs: row.pagingRequestToMs.getTime(),
+          },
   };
 }
 
@@ -191,15 +239,27 @@ export function monobankRepo(db: Storage) {
     return toStoredAccount(row);
   }
 
+  /** One read of `monobank_accounts`, ordered for the screen; the прогін ignores the order. */
+  const storedAccounts = (): StoredMonobankAccount[] =>
+    db
+      .select()
+      .from(monobankAccounts)
+      .orderBy(asc(monobankAccounts.name), asc(monobankAccounts.id))
+      .all()
+      .map(toStoredAccount);
+
   return {
     /** Every monobank account the last successful client-info showed, ordered for the screen. */
-    listAccounts(): StoredMonobankAccount[] {
-      return db
-        .select()
-        .from(monobankAccounts)
-        .orderBy(asc(monobankAccounts.name), asc(monobankAccounts.id))
-        .all()
-        .map(toStoredAccount);
+    listAccounts: storedAccounts,
+
+    /**
+     * The same rows under the name a прогін reads them by: the client-info answer this phone last
+     * stored, whoever stored it — a прогін's own `upsertAccounts`, or the monobank screen's. Their
+     * moments are what `usableAccounts` decides from, so a прогін that already holds a fresh answer
+     * spends its one request a minute on the statement instead of buying the balances again.
+     */
+    rememberedAccounts(): readonly StoredMonobankAccount[] {
+      return storedAccounts();
     },
 
     getAccount(monobankAccountId: string): StoredMonobankAccount | undefined {
@@ -395,7 +455,8 @@ export function monobankRepo(db: Storage) {
 
     /**
      * One statement answer, stored whole or not at all: its транзакції, the item ids it made
-     * known, the latest баланс банку and the cursor it leaves behind. Any constraint failure —
+     * known, the latest баланс банку, the cursor it leaves behind and where paging got to. Any
+     * constraint failure —
      * a транзакція referencing a category no row has, an item id already remembered — rolls the
      * whole answer back, and the same answer can simply be fetched again.
      *
@@ -431,16 +492,36 @@ export function monobankRepo(db: Storage) {
             .values({ monobankAccountId: answer.monobankAccountId, itemId })
             .run();
         }
+        // The баланс банку and the moment it was obtained, together or neither — and never
+        // backwards. A прогін commits the client-info answer it read, and a newer one may have
+        // been stored while it worked: by the monobank screen, or by another рахунок's page.
+        // Overwriting would leave this рахунок alone behind the newest answer, and the next
+        // прогін reads a link the newest answer does not name as «the token no longer shows it» —
+        // so one committed page would cost this рахунок a межа свіжості of syncing, silently.
+        // `upsertAccounts` is deliberately not held back this way: a fetched answer is the newest
+        // thing the bank has said, and it is what heals a row dated in the future of the clock.
         tx.update(monobankAccounts)
           .set({
             bankBalanceAmount: answer.bankBalance.amount,
             obtainedAt: answer.obtainedAt,
           })
-          .where(eq(monobankAccounts.id, answer.monobankAccountId))
+          .where(
+            and(
+              eq(monobankAccounts.id, answer.monobankAccountId),
+              lte(monobankAccounts.obtainedAt, answer.obtainedAt),
+            ),
+          )
           .run();
         const advanced = tx
           .update(monobankLinks)
-          .set({ cursorMs: new Date(answer.cursorMs) })
+          .set({
+            cursorMs: new Date(answer.cursorMs),
+            // Written every time, absent as much as present: an answer that ended its window
+            // clears the position in the same breath as it moves the cursor, so no run can find a
+            // place to resume in a window that is finished.
+            pagingWindowToMs: answer.paging ? new Date(answer.paging.windowToMs) : null,
+            pagingRequestToMs: answer.paging ? new Date(answer.paging.requestToMs) : null,
+          })
           .where(eq(monobankLinks.monobankAccountId, answer.monobankAccountId))
           .run();
         if (advanced.changes === 0) {

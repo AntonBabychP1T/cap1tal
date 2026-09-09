@@ -132,6 +132,14 @@ describe('syncLinkedAccounts', () => {
   let ids: number;
 
   const RUN_AT = Date.UTC(2026, 7, 28, 12, 0, 0);
+  /**
+   * When a рахунок row was last written, for the tests whose subject is what the *bank's* answer
+   * says. Older than the межа свіжості, so `usableAccounts` answers nothing and the run fetches
+   * client-info — which is what «the token no longer shows this рахунок» is decided from. A fresh
+   * row would make the run read the phone's own memory instead, and the test would be about
+   * something else.
+   */
+  const NO_FRESH_ANSWER = new Date(RUN_AT - 3 * 60 * 60_000);
   const boundary = startOfLocalDayMs('2026-08-27');
 
   beforeEach(() => {
@@ -211,7 +219,7 @@ describe('syncLinkedAccounts', () => {
           bankBalance: money(15_000, 'UAH'),
         },
       ],
-      new Date(RUN_AT),
+      NO_FRESH_ANSWER,
     );
     link('mono-white', 'jar');
     const { fetchImpl } = scriptedFetch({
@@ -353,6 +361,11 @@ describe('syncLinkedAccounts', () => {
     expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundary);
 
     // The next run re-reads the very same page. Its ids are remembered, so it maps to nothing…
+    //
+    // An hour on, so this run fetches a client-info answer of its own: a run works up to the
+    // moment of the answer it uses, so one reusing the stored answer would cover exactly the span
+    // the interrupted one did and have nothing beyond the resumed вікно to ask about.
+    clockMs = RUN_AT + 2 * 60 * 60_000;
     const second = scriptedFetch({
       statement: (_url, call) =>
         call === 0
@@ -365,6 +378,223 @@ describe('syncLinkedAccounts', () => {
     expect(resumed.imported).toBe(2);
     expect(txs.listAll()).toHaveLength(STATEMENT_PAGE_SIZE + 2);
     expect(resumed.accounts[0]?.outcome).toBe('complete');
+  });
+
+  /**
+   * Where paging got to, remembered between прогони.
+   *
+   * The window's own end and the end the next request should ask for are stored beside the cursor,
+   * so a рахунок whose window needs more pages than one прогін affords is finished by several
+   * прогони instead of by none: before this, every прогін re-read the same pages, stopped in the
+   * same place and left the cursor where it was (design D11).
+   */
+  describe('a window paged over several runs', () => {
+    /** A page of items, newest first and a minute apart, so `continueWindow` can narrow at all. */
+    const page = (from: number, count: number) =>
+      Array.from({ length: count }, (_, index) =>
+        item({
+          id: `p${from + index}`,
+          timeSeconds: AUGUST_28 - (from + index) * 60,
+          description: 'Покупка',
+          amount: -100,
+        }),
+      );
+
+    /** The oldest moment of `page(from, STATEMENT_PAGE_SIZE)`, in epoch milliseconds. */
+    const oldestOf = (from: number) => (AUGUST_28 - (from + STATEMENT_PAGE_SIZE - 1) * 60) * 1000;
+
+    /** The `to` a request URL carries: what `fetchStatement` writes into the path. */
+    const asked = (url: string) => Number(url.slice(url.lastIndexOf('/') + 1));
+
+    /** A run that stops itself once it has sent `after` statement requests. */
+    const stopsAfter = (statements: () => readonly string[], after: number) => () =>
+      statements().length >= after;
+
+    it('Scenario: Paging stopped in the middle of a window continues in the next run', async () => {
+      link('mono-card', 'card');
+      const first = scriptedFetch({
+        statement: (_url, call) => ({
+          status: 200,
+          body: page(call * STATEMENT_PAGE_SIZE, STATEMENT_PAGE_SIZE),
+        }),
+      });
+      // Two full answers, and then the прогін runs out of what it was given before the third.
+      const stopped = ran(
+        await syncLinkedAccounts(
+          portsWith(first.fetchImpl, { postponed: stopsAfter(first.statements, 2) }),
+        ),
+      );
+
+      expect(first.statements()).toHaveLength(2);
+      expect(stopped.accounts[0]?.outcome).toBe('postponed');
+      // Both answers are stored and the cursor has not moved: the window is unfinished.
+      expect(txs.listAll()).toHaveLength(2 * STATEMENT_PAGE_SIZE);
+      expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundary);
+      expect(repo.linkOf('mono-card')?.paging).toEqual({
+        windowToMs: RUN_AT,
+        requestToMs: oldestOf(STATEMENT_PAGE_SIZE),
+      });
+
+      clockMs = RUN_AT + 3_600_000;
+      const second = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+      await syncLinkedAccounts(portsWith(second.fetchImpl));
+
+      // The next run's first request about this рахунок asks the window narrowed to where the
+      // second answer left it — not the window's first page, and not the window's own end.
+      expect(asked(second.statements()[0]!)).toBe(
+        Math.floor(oldestOf(STATEMENT_PAGE_SIZE) / 1000),
+      );
+      expect(asked(second.statements()[0]!)).not.toBe(Math.floor(RUN_AT / 1000));
+    });
+
+    it('Scenario: An account larger than one run finishes over several runs', async () => {
+      link('mono-card', 'card');
+      // Four pages: three full and a short one. No run affords more than two requests for it.
+      const answer = (call: number) =>
+        call < 3
+          ? { status: 200, body: page(call * STATEMENT_PAGE_SIZE, STATEMENT_PAGE_SIZE) }
+          : { status: 200, body: page(3 * STATEMENT_PAGE_SIZE, 2) };
+
+      let sent = 0;
+      const runs: string[] = [];
+      // Run after run until the рахунок is done with it, and never more than a handful: the point
+      // is that the pages run out, which before this change they never did.
+      for (let attempt = 0; attempt < 5 && runs.at(-1) !== 'complete'; attempt += 1) {
+        clockMs = RUN_AT + attempt * 3_600_000;
+        const scripted = scriptedFetch({ statement: () => answer(sent++) });
+        const run = ran(
+          await syncLinkedAccounts(
+            portsWith(scripted.fetchImpl, {
+              postponed: stopsAfter(scripted.statements, 2),
+            }),
+          ),
+        );
+        runs.push(run.accounts[0]!.outcome);
+      }
+
+      // Each run worked the pages the run before it had not, instead of repeating the first two —
+      // the third run only had the sliver of time the second added left to ask about.
+      expect(runs).toEqual(['postponed', 'postponed', 'complete']);
+      expect(sent).toBe(5);
+      expect(txs.listAll()).toHaveLength(3 * STATEMENT_PAGE_SIZE + 2);
+      // …and once the last page answered short the рахунок completed, so its moment moved.
+      expect(repo.linkOf('mono-card')?.lastSyncedAtMs).not.toBeNull();
+      expect(repo.linkOf('mono-card')?.paging).toBeNull();
+    });
+
+    it("Scenario: The cursor moves to the paged window's end, not the run's", async () => {
+      link('mono-card', 'card');
+      const first = scriptedFetch({
+        statement: () => ({ status: 200, body: page(0, STATEMENT_PAGE_SIZE) }),
+      });
+      await syncLinkedAccounts(
+        portsWith(first.fetchImpl, { postponed: stopsAfter(first.statements, 1) }),
+      );
+      expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundary);
+
+      // The second run reaches an hour further than the first ever did.
+      const secondRunAt = RUN_AT + 3_600_000;
+      clockMs = secondRunAt;
+      const cursors: number[] = [];
+      const second = scriptedFetch({
+        statement: () => {
+          cursors.push(repo.linkOf('mono-card')!.cursorMs);
+          return { status: 200, body: page(STATEMENT_PAGE_SIZE, 2) };
+        },
+      });
+
+      const finished = ran(await syncLinkedAccounts(portsWith(second.fetchImpl)));
+
+      expect(finished.accounts[0]?.outcome).toBe('complete');
+      // The window that was being paged ended at the first run's end, and that is where the
+      // cursor went when it answered short — not the second run's own, later end.
+      expect(cursors).toEqual([boundary, RUN_AT]);
+      // …and the span between the two is asked for as a window of its own.
+      expect(second.statements()).toHaveLength(2);
+      expect(second.statements()[1]).toContain(`/${Math.floor(RUN_AT / 1000)}/`);
+      expect(asked(second.statements()[1]!)).toBe(Math.floor(secondRunAt / 1000));
+      expect(repo.linkOf('mono-card')?.cursorMs).toBe(secondRunAt);
+    });
+
+    it('Scenario: A failure over a half-paged window keeps the position', async () => {
+      link('mono-card', 'card');
+      const first = scriptedFetch({
+        statement: (_url, call) =>
+          call < 2
+            ? { status: 200, body: page(call * STATEMENT_PAGE_SIZE, STATEMENT_PAGE_SIZE) }
+            : { status: 503, body: {} },
+      });
+
+      const failed = ran(await syncLinkedAccounts(portsWith(first.fetchImpl)));
+
+      expect(failed.accounts[0]?.outcome).toBe('unavailable');
+      // Cursor, транзакції, imported ids and the remembered position are all as they were.
+      expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundary);
+      expect(txs.listAll()).toHaveLength(2 * STATEMENT_PAGE_SIZE);
+      expect(repo.importedIds('mono-card').size).toBe(2 * STATEMENT_PAGE_SIZE);
+      expect(repo.linkOf('mono-card')?.paging).toEqual({
+        windowToMs: RUN_AT,
+        requestToMs: oldestOf(STATEMENT_PAGE_SIZE),
+      });
+
+      // So the next run resumes that window at its third page rather than at its first.
+      clockMs = RUN_AT + 3_600_000;
+      const second = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+      await syncLinkedAccounts(portsWith(second.fetchImpl));
+
+      expect(asked(second.statements()[0]!)).toBe(
+        Math.floor(oldestOf(STATEMENT_PAGE_SIZE) / 1000),
+      );
+    });
+
+    it('Scenario: A position that no longer describes work left is discarded', async () => {
+      link('mono-card', 'card');
+      // A position whose window ends at or below the cursor — what a boundary the owner moved, or
+      // a бекап restored over this phone's progress, can leave behind.
+      const movedCursorMs = boundary + 6 * 3_600_000;
+      repo.commitStatementAnswer({
+        monobankAccountId: 'mono-card',
+        transactions: [],
+        newlySeenIds: [],
+        bankBalance: money(1_000_000, 'UAH'),
+        obtainedAt: new Date(RUN_AT),
+        cursorMs: movedCursorMs,
+        storedAt: new Date(RUN_AT),
+        paging: { windowToMs: movedCursorMs, requestToMs: boundary + 3_600_000 },
+      });
+
+      const scripted = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+      const run = ran(await syncLinkedAccounts(portsWith(scripted.fetchImpl)));
+
+      // The window is planned from the cursor as if nothing had been remembered.
+      expect(scripted.statements()).toHaveLength(1);
+      expect(scripted.statements()[0]).toContain(`/${Math.floor(movedCursorMs / 1000)}/`);
+      expect(asked(scripted.statements()[0]!)).toBe(Math.floor(RUN_AT / 1000));
+      expect(run.accounts[0]?.outcome).toBe('complete');
+      expect(repo.linkOf('mono-card')?.cursorMs).toBe(RUN_AT);
+    });
+
+    it('Scenario: A finished window leaves no position', async () => {
+      link('mono-card', 'card');
+      const first = scriptedFetch({
+        statement: () => ({
+          status: 200,
+          body: [item({ id: 'a1', timeSeconds: AUGUST_28, description: 'СІЛЬПО', amount: -12550 })],
+        }),
+      });
+
+      await syncLinkedAccounts(portsWith(first.fetchImpl));
+
+      expect(repo.linkOf('mono-card')?.cursorMs).toBe(RUN_AT);
+      expect(repo.linkOf('mono-card')?.paging).toBeNull();
+
+      // And the next run plans from the cursor, as it always has.
+      clockMs = RUN_AT + 3_600_000;
+      const second = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+      await syncLinkedAccounts(portsWith(second.fetchImpl));
+
+      expect(second.statements()[0]).toContain(`/${Math.floor(RUN_AT / 1000)}/`);
+    });
   });
 
   it('A window the API cannot be asked about more precisely is finished, not repeated forever', async () => {
@@ -444,7 +674,7 @@ describe('syncLinkedAccounts', () => {
     expect(repo.importedIds('mono-card')).toEqual(new Set());
   });
 
-  it('A completed account is dated with the moment its run finished', async () => {
+  it("A completed account is dated with the moment of the answer its run covered", async () => {
     link('mono-card', 'card');
     const { fetchImpl } = scriptedFetch({
       statement: () => ({
@@ -459,9 +689,14 @@ describe('syncLinkedAccounts', () => {
     const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
 
     expect(run.accounts[0]?.outcome).toBe('complete');
-    // The run's own clock, passed in like every other date in this app.
-    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(clockMs);
-    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBeGreaterThanOrEqual(RUN_AT);
+    // Dated by the client-info answer the run covered, not by the clock when it happened to
+    // finish: a sync is as recent as the span it reached, and the pages committed beside it carry
+    // that same moment. Here the answer was fetched, so it is the run's own start to within the
+    // round trip — and, unlike the clock, it does not include the minute the run then waited.
+    // Asserted absolutely, not against a value this same run wrote: the answer is fetched before
+    // the run's only wait, so its moment is `RUN_AT` exactly — and the clock at the end is not.
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(RUN_AT);
+    expect(clockMs).toBeGreaterThan(RUN_AT);
   });
 
   it('Scenario: A failed run leaves the moment alone', async () => {
@@ -503,7 +738,7 @@ describe('syncLinkedAccounts', () => {
           bankBalance: money(15_000, 'UAH'),
         },
       ],
-      new Date(RUN_AT),
+      NO_FRESH_ANSWER,
     );
     link('mono-white', 'jar');
     const { fetchImpl } = scriptedFetch({
@@ -577,7 +812,7 @@ describe('syncLinkedAccounts', () => {
           bankBalance: money(15_000, 'UAH'),
         },
       ],
-      new Date(RUN_AT),
+      NO_FRESH_ANSWER,
     );
     link('mono-white', 'jar');
     const { fetchImpl, tokens } = scriptedFetch({ clientInfo: () => ({ status: 401, body: {} }) });
@@ -606,7 +841,7 @@ describe('syncLinkedAccounts', () => {
           bankBalance: money(15_000, 'UAH'),
         },
       ],
-      new Date(RUN_AT),
+      NO_FRESH_ANSWER,
     );
     link('mono-white', 'jar');
     const { fetchImpl, statements } = scriptedFetch({
@@ -649,7 +884,7 @@ describe('syncLinkedAccounts', () => {
       );
       repo.upsertAccounts(
         [{ id, kind: 'card', name: `card ${i}`, currency: 'UAH', bankBalance: money(0, 'UAH') }],
-        new Date(RUN_AT),
+        NO_FRESH_ANSWER,
       );
       link(id, accountId);
       rows.push({
@@ -721,7 +956,7 @@ describe('syncLinkedAccounts', () => {
     link('mono-card', 'card');
     repo.upsertAccounts(
       [{ id: 'mono-gone', kind: 'card', name: 'gone', currency: 'UAH', bankBalance: money(0, 'UAH') }],
-      new Date(RUN_AT),
+      NO_FRESH_ANSWER,
     );
     link('mono-gone', 'jar');
     // Client-info shows only `mono-card`: the token no longer covers the other one.
@@ -757,7 +992,7 @@ describe('syncLinkedAccounts', () => {
     link('mono-card', 'card');
     repo.upsertAccounts(
       [{ id: 'mono-white', kind: 'card', name: 'white', currency: 'UAH', bankBalance: money(0, 'UAH') }],
-      new Date(RUN_AT),
+      NO_FRESH_ANSWER,
     );
     link('mono-white', 'jar');
     const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
@@ -796,11 +1031,11 @@ describe('syncLinkedAccounts', () => {
     expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBeNull();
   });
 
-  it('Scenario: An answer in flight when the budget passes is still stored whole', async () => {
+  it('Scenario: An answer in flight when the прогін stops is still stored whole', async () => {
     link('mono-card', 'card');
     repo.upsertAccounts(
       [{ id: 'mono-white', kind: 'card', name: 'white', currency: 'UAH', bankBalance: money(0, 'UAH') }],
-      new Date(RUN_AT),
+      NO_FRESH_ANSWER,
     );
     link('mono-white', 'jar');
     const { fetchImpl, statements } = scriptedFetch({
@@ -1022,7 +1257,7 @@ describe('syncLinkedAccounts', () => {
           bankBalance: money(15_000, 'UAH'),
         },
       ],
-      new Date(RUN_AT),
+      NO_FRESH_ANSWER,
     );
     link('mono-white', 'jar');
     const { fetchImpl, statements } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
@@ -1066,7 +1301,7 @@ describe('syncLinkedAccounts', () => {
       transactions: [],
       newlySeenIds: ['old-item'],
       bankBalance: money(1_000_000, 'UAH'),
-      obtainedAt: new Date(RUN_AT - 1000),
+      obtainedAt: NO_FRESH_ANSWER,
       cursorMs: boundary,
       storedAt: new Date(RUN_AT - 1000),
     });
@@ -1097,6 +1332,367 @@ describe('syncLinkedAccounts', () => {
     // A configured token with nothing linked: no request either.
     expect(await syncLinkedAccounts(portsWith(fetchImpl))).toEqual({ kind: 'no-links' });
     expect(calls).toEqual([]);
+  });
+
+  describe('the client-info request a run need not send', () => {
+    /** Stores a client-info answer of this phone's own, `agoMs` before the run starts. */
+    const remember = (agoMs: number, ids: readonly string[] = ['mono-card', 'mono-white']) =>
+      repo.upsertAccounts(
+        ids.map((id) => ({
+          id,
+          kind: 'card' as const,
+          name: `card ${id}`,
+          currency: 'UAH' as const,
+          bankBalance: money(1_234_00, 'UAH'),
+        })),
+        new Date(RUN_AT - agoMs),
+      );
+
+    const clientInfoCalls = (calls: readonly string[]) =>
+      calls.filter((u) => u.includes('/client-info')).length;
+
+    it('Scenario: A fresh stored answer sends the allowance to the statement', async () => {
+      remember(10 * 60_000);
+      link('mono-card', 'card');
+      link('mono-white', 'jar');
+      // The gap is long past, so nothing is owed and the run may send at once.
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      const script = scriptedFetch({});
+
+      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl)));
+
+      // The one request a run of this shape can afford went to the statement, which is the request
+      // that imports. This is the whole defect: before, it went to client-info and imported nothing.
+      expect(clientInfoCalls(script.calls)).toBe(0);
+      expect(script.calls[0]).toContain('/statement/');
+      expect(run.accounts.every((a) => a.outcome === 'complete')).toBe(true);
+    });
+
+    it('Scenario: «Синхронізувати» asks the bank however fresh the stored answer is', async () => {
+      link('mono-card', 'card');
+      remember(10 * 60_000);
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      const script = scriptedFetch({});
+
+      // The pull on Головний and «Синхронізувати» are the two the app already calls «asked for»;
+      // both are the owner saying «now», and both may spend a request on saying it.
+      await syncLinkedAccounts(portsWith(script.fetchImpl, { asked: true }));
+
+      expect(clientInfoCalls(script.calls)).toBe(1);
+      expect(script.calls[0]).toContain('/client-info');
+    });
+
+    it('Scenario: A прогін an opening starts uses the stored answer', async () => {
+      link('mono-card', 'card');
+      remember(10 * 60_000);
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      const script = scriptedFetch({});
+
+      // The same ports without `asked`: an opening, a foreground return, the follow-up, a chance.
+      await syncLinkedAccounts(portsWith(script.fetchImpl));
+
+      expect(clientInfoCalls(script.calls)).toBe(0);
+    });
+
+    it('Scenario: An answer older than the межа свіжості is refetched', async () => {
+      link('mono-card', 'card');
+      remember(2 * 60 * 60_000);
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      const script = scriptedFetch({});
+
+      await syncLinkedAccounts(portsWith(script.fetchImpl));
+
+      expect(clientInfoCalls(script.calls)).toBe(1);
+    });
+
+    it('Scenario: A link the token no longer names does not send every прогін back to client-info', async () => {
+      // The newest answer names one рахунок; the other keeps a row no answer will ever refresh,
+      // which is what a revoked card leaves behind — `upsertAccounts` never deletes.
+      remember(3 * 60 * 60_000, ['mono-white']);
+      remember(10 * 60_000, ['mono-card']);
+      link('mono-card', 'card');
+      link('mono-white', 'jar');
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      const script = scriptedFetch({});
+
+      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl)));
+
+      // No client-info request: the stale row is «the token no longer shows this рахунок», the
+      // same verdict a fetched answer gives it — never a reason to ask again, or the run would
+      // spend its allowance on client-info for ever and import nothing.
+      expect(clientInfoCalls(script.calls)).toBe(0);
+      const white = run.accounts.find((a) => a.monobankAccountId === 'mono-white');
+      expect(white?.outcome).toBe('unavailable');
+      // And nothing of that рахунок moved.
+      expect(repo.linkOf('mono-white')?.cursorMs).toBe(boundary);
+      expect(repo.linkOf('mono-white')?.lastAttemptedAtMs).toBeNull();
+    });
+
+    it('Scenario: A прогін that refetches leaves the next one able to send a statement', async () => {
+      link('mono-card', 'card');
+      // Nothing stored inside the bound, and the gap owed at once: the first run may send exactly
+      // its client-info request and stops there.
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      const script = scriptedFetch({});
+
+      // Postponed the moment the first request is spent: this run affords client-info and no more,
+      // which is exactly the shape of a chance on a phone that has been away for a while.
+      await syncLinkedAccounts(
+        portsWith(script.fetchImpl, { postponed: () => script.calls.length > 0 }),
+      );
+      expect(clientInfoCalls(script.calls)).toBe(1);
+      expect(script.statements()).toEqual([]);
+
+      // The convergence hinge: the answer was stored before the run stopped, so the run after it
+      // sends a statement request instead of buying the same balances again.
+      const second = scriptedFetch({});
+      await syncLinkedAccounts(portsWith(second.fetchImpl));
+
+      expect(clientInfoCalls(second.calls)).toBe(0);
+      expect(second.calls[0]).toContain('/statement/');
+    });
+
+    it('Scenario: A прогін that may send one request imports with it', async () => {
+      remember(10 * 60_000);
+      link('mono-card', 'card');
+      link('mono-white', 'jar');
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      const script = scriptedFetch({
+        statement: () => ({
+          status: 200,
+          body: [item({ id: 'a1', timeSeconds: AUGUST_28, description: 'СІЛЬПО', amount: -12_550 })],
+        }),
+      });
+      // A run that may send exactly one request: the second is a wait it will not sit out.
+      let sent = 0;
+      const run = ran(
+        await syncLinkedAccounts(
+          portsWith(script.fetchImpl, {
+            wait: () => {
+              sent += 1;
+              return Promise.resolve();
+            },
+            postponed: () => sent > 0,
+          }),
+        ),
+      );
+
+      expect(run.imported).toBe(1);
+      expect(script.statements()).toHaveLength(1);
+      // The рахунок it asked about took its хід, so the next run starts with the other one.
+      expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).not.toBeNull();
+      expect(repo.linkOf('mono-white')?.lastAttemptedAtMs).toBeNull();
+    });
+
+    it('Scenario: Storage that will not answer does not stop the прогін', async () => {
+      link('mono-card', 'card');
+      remember(10 * 60_000);
+      const refusing = {
+        ...repo,
+        rememberedAccounts: () => {
+          throw new Error('storage');
+        },
+      };
+      const script = scriptedFetch({});
+
+      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl, { storage: refusing })));
+
+      // A read whose only job is to spare a request must never cost the run.
+      expect(clientInfoCalls(script.calls)).toBe(1);
+      expect(run.accounts.map((a) => a.outcome)).toEqual(['complete']);
+    });
+
+    it('Scenario: A прогін using a stored answer imports only up to that answer\'s moment', async () => {
+      remember(40 * 60_000);
+      link('mono-card', 'card');
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      const answerMs = RUN_AT - 40 * 60_000;
+      const script = scriptedFetch({
+        statement: (url) => ({
+          status: 200,
+          // The bank answers whatever the window asked for; the window is what is under test.
+          body: [
+            item({
+              id: 'inside',
+              timeSeconds: Math.floor((answerMs - 60_000) / 1000),
+              description: 'СІЛЬПО',
+              amount: -1_000,
+            }),
+          ].concat(
+            url.includes('/statement/') && Number(url.split('/').pop()) * 1000 > answerMs
+              ? [
+                  item({
+                    id: 'after',
+                    timeSeconds: Math.floor((answerMs + 10 * 60_000) / 1000),
+                    description: 'ПІЗНІШЕ',
+                    amount: -2_000,
+                  }),
+                ]
+              : [],
+          ),
+        }),
+      });
+
+      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl)));
+
+      // The баланс банку committed with these pages is forty minutes old, so the транзакції beside
+      // it must be too: a рахунок carrying an hour of spending the balance has not seen would make
+      // «Звірити» offer a коригування for money already explained.
+      const askedTo = Number(script.statements()[0]!.split('/').pop());
+      expect(askedTo * 1000).toBeLessThanOrEqual(answerMs);
+      expect(repo.linkOf('mono-card')?.cursorMs).toBe(answerMs);
+      expect(run.imported).toBe(1);
+    });
+
+    it('Scenario: The next прогін imports the rest', async () => {
+      remember(40 * 60_000);
+      link('mono-card', 'card');
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      await syncLinkedAccounts(portsWith(scriptedFetch({}).fetchImpl));
+      expect(repo.linkOf('mono-card')?.cursorMs).toBe(RUN_AT - 40 * 60_000);
+
+      // A прогін with an answer of its own carries the cursor to that answer's moment.
+      clockMs = RUN_AT + 60_000;
+      const second = scriptedFetch({});
+      await syncLinkedAccounts(portsWith(second.fetchImpl, { asked: true }));
+
+      // The answer this run fetched, not the clock after it waited out the gap.
+      expect(repo.linkOf('mono-card')?.cursorMs).toBe(RUN_AT + 60_000);
+    });
+
+    it('Scenario: A committed баланс банку carries the age of the answer it came from', async () => {
+      remember(40 * 60_000);
+      link('mono-card', 'card');
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+
+      await syncLinkedAccounts(
+        portsWith(
+          scriptedFetch({
+            statement: () => ({
+              status: 200,
+              body: [item({ id: 'a1', timeSeconds: AUGUST_28, description: 'x', amount: -100 })],
+            }),
+          }).fetchImpl,
+        ),
+      );
+
+      // Dated when the answer was obtained, never when the page happened to be committed.
+      expect(repo.getAccount('mono-card')?.obtainedAt).toEqual(new Date(RUN_AT - 40 * 60_000));
+    });
+
+    it('Scenario: A completed рахунок is remembered by the answer\'s moment', async () => {
+      remember(40 * 60_000);
+      link('mono-card', 'card');
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+
+      await syncLinkedAccounts(portsWith(scriptedFetch({}).fetchImpl));
+
+      // Not «now»: a sync is as recent as the answer it covered, and saying otherwise would date a
+      // синхронізація over a span the bank was never asked about.
+      expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(RUN_AT - 40 * 60_000);
+    });
+
+    it('Scenario: A прогін with nothing to ask moves no moment', async () => {
+      remember(40 * 60_000);
+      link('mono-card', 'card');
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      await syncLinkedAccounts(portsWith(scriptedFetch({}).fetchImpl));
+      const synced = repo.linkOf('mono-card')?.lastSyncedAtMs;
+      const turn = repo.linkOf('mono-card')?.lastAttemptedAtMs;
+
+      // A second прогін inside the межа свіжості: every cursor already stands at the answer's
+      // moment, so there is nothing to ask the bank about.
+      clockMs = RUN_AT + 5 * 60_000;
+      const second = scriptedFetch({});
+      const run = ran(await syncLinkedAccounts(portsWith(second.fetchImpl)));
+
+      expect(second.calls).toEqual([]);
+      expect(run.accounts.map((a) => a.outcome)).toEqual(['complete']);
+      // Nothing was asked, so nothing moved: a sync the bank was never asked about is not a sync.
+      expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(synced);
+      expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBe(turn);
+    });
+
+    it('Scenario: A stored answer older than a рахунок the owner has just linked is refetched', async () => {
+      // Linked with a boundary after the stored answer's moment. Working from that answer would
+      // leave this рахунок with nothing to ask about and nothing to report but «finished without
+      // asking» — while the screen goes on saying «Ще не синхронізовано», because nothing was. And
+      // it could not be called перенесено either: `followUpDue` starts a run at once on that word,
+      // and a run that could only report the same thing again would follow itself for as long as
+      // the app stayed open.
+      remember(40 * 60_000);
+      repo.link({
+        monobankAccountId: 'mono-card',
+        accountId: 'card',
+        syncStartDate: '2026-08-27',
+        cursorMs: RUN_AT - 10 * 60_000,
+      });
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      const script = scriptedFetch({});
+
+      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl)));
+
+      // One request spent on client-info, and it heals the рахунок: the answer is dated now, past
+      // the boundary the owner set, so the very next window is one the bank can be asked about.
+      expect(clientInfoCalls(script.calls)).toBe(1);
+      expect(run.accounts.map((a) => a.outcome)).toEqual(['complete']);
+      expect(repo.linkOf('mono-card')?.lastSyncedAtMs).not.toBeNull();
+    });
+
+    it('A run that ends complete is not followed by another', async () => {
+      // The loop `followUpDue` must never allow: `worstOutcome` ranks postponed above complete and
+      // `followUpDue` starts a run at once on postponed, so a run that sent nothing and could only
+      // send nothing again must not carry that word. Two runs in sequence, and the second is the
+      // ordinary «nothing left to ask» run rather than a repeat of a postponement.
+      remember(40 * 60_000);
+      link('mono-card', 'card');
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+      await syncLinkedAccounts(portsWith(scriptedFetch({}).fetchImpl));
+
+      clockMs = RUN_AT + 60_000;
+      const second = scriptedFetch({});
+      const run = ran(await syncLinkedAccounts(portsWith(second.fetchImpl)));
+
+      expect(second.calls).toEqual([]);
+      expect(run.accounts.map((a) => a.outcome)).toEqual(['complete']);
+    });
+
+    it('Scenario: The pace still measures from the request', async () => {
+      remember(40 * 60_000);
+      link('mono-card', 'card');
+      repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+
+      await syncLinkedAccounts(
+        portsWith(
+          scriptedFetch({
+            statement: () => ({
+              status: 200,
+              body: [item({ id: 'a1', timeSeconds: AUGUST_28, description: 'x', amount: -100 })],
+            }),
+          }).fetchImpl,
+        ),
+      );
+
+      // The moments of *requests* are read from the clock at the instant they are sent. An
+      // answer's moment reaching either would tell the next прогін the last request was forty
+      // minutes ago and defeat the pace this whole change exists to spend well.
+      expect(repo.lastRequestAtMs()).toBe(clockMs);
+      expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBe(clockMs);
+    });
+
+    it('Scenario: A statement request is not sent seconds after a request the screen made', async () => {
+      link('mono-card', 'card');
+      remember(10 * 60_000);
+      // The monobank screen refreshed a moment ago and noted the request it sent.
+      repo.noteRequest(new Date(RUN_AT - 200));
+      const script = scriptedFetch({});
+
+      await syncLinkedAccounts(portsWith(script.fetchImpl));
+
+      // The run owes the rest of the gap and waits it out rather than firing into a refusal.
+      expect(waits).toEqual([800]);
+      expect(script.statements()).toHaveLength(1);
+    });
   });
 });
 
@@ -1280,4 +1876,5 @@ describe('syncLinkedAccounts — what sync deliberately does not decide', () => 
     // The zero item is remembered all the same, so it is not re-examined forever.
     expect(repo.importedIds('mono-card')).toEqual(new Set(['h1', 'z1']));
   });
+
 });

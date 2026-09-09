@@ -9,7 +9,15 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import { MAX_STATEMENT_WINDOW_MS, STATEMENT_PAGE_SIZE, type StatementItem } from './api';
-import { continueWindow, isFullAnswer, mapStatement, planWindows, syncOrder } from './sync';
+import {
+  CLIENT_INFO_FRESH_MS,
+  continueWindow,
+  isFullAnswer,
+  mapStatement,
+  planWindows,
+  syncOrder,
+  usableAccounts,
+} from './sync';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** An arbitrary "now" — the planner has no clock of its own, so every test hands it one. */
@@ -405,3 +413,151 @@ function byId(
 ): number {
   return a.monobankAccountId < b.monobankAccountId ? -1 : a.monobankAccountId > b.monobankAccountId ? 1 : 0;
 }
+
+describe('usableAccounts — the client-info answer a run may use instead of fetching one', () => {
+  const HOUR_MS = 60 * 60 * 1000;
+  const row = (id: string, obtainedAtMs: number) => ({
+    id,
+    kind: 'card' as const,
+    name: `card ${id}`,
+    currency: 'UAH' as const,
+    bankBalance: money(1000, 'UAH'),
+    obtainedAt: new Date(obtainedAtMs),
+  });
+  /** Links that have synced before, so only the answer's own freshness is under test. */
+  const links = (...ids: readonly string[]) =>
+    ids.map((monobankAccountId) => ({
+      monobankAccountId,
+      cursorMs: NOW - 24 * 60 * 60 * 1000,
+      lastSyncedAtMs: NOW - 24 * 60 * 60 * 1000,
+    }));
+
+  it('Scenario: A fresh stored answer sends the allowance to the statement', () => {
+    const answer = usableAccounts(
+      [row('mono-a', NOW - 10 * 60 * 1000), row('mono-b', NOW - 10 * 60 * 1000)],
+      links('mono-a', 'mono-b'),
+      NOW,
+    );
+
+    // Every link named by one answer inside the межа свіжості: the run uses it and sends nothing.
+    expect(answer).toBeDefined();
+    expect([...answer!.accounts.keys()].sort()).toEqual(['mono-a', 'mono-b']);
+    expect(answer!.obtainedAt.getTime()).toBe(NOW - 10 * 60 * 1000);
+    expect(answer!.accounts.get('mono-a')?.bankBalance).toEqual(money(1000, 'UAH'));
+  });
+
+  it('Scenario: An answer older than the межа свіжості is refetched', () => {
+    expect(usableAccounts([row('mono-a', NOW - 2 * HOUR_MS)], links('mono-a'), NOW)).toBeUndefined();
+    // The bound itself is the edge: an answer exactly an hour old no longer serves.
+    expect(usableAccounts([row('mono-a', NOW - HOUR_MS)], links('mono-a'), NOW)).toBeUndefined();
+    expect(
+      usableAccounts([row('mono-a', NOW - HOUR_MS + 1)], links('mono-a'), NOW),
+    ).toBeDefined();
+  });
+
+  it('Scenario: An answer dated in the future is refetched', () => {
+    // The clock-moved-forward hazard `syncDue` and `paced` already guard, answered the same way:
+    // one extra request, and the answer it brings heals the rows.
+    expect(usableAccounts([row('mono-a', NOW + 60 * 1000)], links('mono-a'), NOW)).toBeUndefined();
+  });
+
+  it('Scenario: A phone that has never read client-info asks the bank', () => {
+    expect(usableAccounts([], links('mono-a'), NOW)).toBeUndefined();
+  });
+
+  it('Rows from an older answer are not in the map, so a link only they name reads as unnamed', () => {
+    // The point of deciding freshness per *answer* rather than per row. `upsertAccounts` never
+    // deletes, so a рахунок the token stopped showing keeps a row no answer will ever refresh; a
+    // per-row rule would call it stale, refetch, still not find it named, and spend every прогін's
+    // allowance on client-info for ever.
+    const answer = usableAccounts(
+      [row('mono-gone', NOW - 3 * HOUR_MS), row('mono-a', NOW - 10 * 60 * 1000)],
+      links('mono-a', 'mono-gone'),
+      NOW,
+    );
+
+    expect(answer).toBeDefined();
+    expect([...answer!.accounts.keys()]).toEqual(['mono-a']);
+    // And `mono-gone` is therefore a link the newest answer does not name — the coordinator's
+    // «the token no longer shows this рахунок», not a reason to ask the bank again.
+    expect(answer!.accounts.has('mono-gone')).toBe(false);
+  });
+
+  it('The newest moment is the answer, however the rows are ordered', () => {
+    const rows = [row('mono-b', NOW - 10 * 60 * 1000), row('mono-a', NOW - 3 * HOUR_MS)];
+
+    expect([...usableAccounts(rows, links('mono-b'), NOW)!.accounts.keys()]).toEqual(['mono-b']);
+    expect([...usableAccounts([...rows].reverse(), links('mono-b'), NOW)!.accounts.keys()]).toEqual([
+      'mono-b',
+    ]);
+  });
+
+  it('A link no row names at all leaves the rest usable', () => {
+    // A рахунок linked before this phone ever read client-info about it: the answer still serves
+    // every other link, and that one gets the same verdict a fetched answer would give it.
+    const answer = usableAccounts([row('mono-a', NOW - 60 * 1000)], links('mono-a', 'mono-new'), NOW);
+
+    expect(answer).toBeDefined();
+    expect([...answer!.accounts.keys()]).toEqual(['mono-a']);
+  });
+
+  it('An answer older than a рахунок the owner has just linked cannot serve the run', () => {
+    // The рахунок's вікна all lie after this answer, so a run working from it would have nothing to
+    // ask about that рахунок and nothing to report but «finished without asking» — while the screen
+    // goes on saying «Ще не синхронізовано», because nothing was. Asking the bank costs one request
+    // and heals it: the answer that comes back is dated now, past the boundary the owner set.
+    const answer = usableAccounts(
+      [row('mono-a', NOW - 10 * 60 * 1000)],
+      [
+        { monobankAccountId: 'mono-a', cursorMs: NOW - 24 * HOUR_MS, lastSyncedAtMs: NOW - 24 * HOUR_MS },
+        { monobankAccountId: 'mono-new', cursorMs: NOW - 60 * 1000, lastSyncedAtMs: null },
+      ],
+      NOW,
+    );
+
+    expect(answer).toBeUndefined();
+  });
+
+  it('A boundary in the future of the clock does not force a request every run', () => {
+    // No answer heals that one, so demanding a fresh one for it would spend the allowance on
+    // client-info for ever — the very shape of the defect this function exists to remove.
+    const answer = usableAccounts(
+      [row('mono-a', NOW - 10 * 60 * 1000)],
+      [{ monobankAccountId: 'mono-a', cursorMs: NOW + HOUR_MS, lastSyncedAtMs: null }],
+      NOW,
+    );
+
+    expect(answer).toBeDefined();
+  });
+
+  it('A рахунок that has synced before does not force a request when its cursor has caught up', () => {
+    // The ordinary steady state: the cursor stands exactly where the last run left it, which is
+    // the moment of the answer this run is about to use again.
+    const answer = usableAccounts(
+      [row('mono-a', NOW - 10 * 60 * 1000)],
+      [{ monobankAccountId: 'mono-a', cursorMs: NOW - 10 * 60 * 1000, lastSyncedAtMs: NOW - 10 * 60 * 1000 }],
+      NOW,
+    );
+
+    expect(answer).toBeDefined();
+  });
+
+  it('An answer that names none of the links leaves the run to ask the bank', () => {
+    // A token whose accounts are all gone. Nothing is stored for such an answer, so the newest
+    // moment does not move and a never-synced link goes on refusing it — knowingly: every link is
+    // `unavailable` under it anyway, so the allowance had no statement request to go to.
+    const answer = usableAccounts(
+      [row('mono-gone', NOW - 10 * 60 * 1000)],
+      [{ monobankAccountId: 'mono-new', cursorMs: NOW - 60 * 1000, lastSyncedAtMs: null }],
+      NOW,
+    );
+
+    expect(answer).toBeUndefined();
+  });
+
+  it('The bound is overridable, and defaults to CLIENT_INFO_FRESH_MS', () => {
+    expect(CLIENT_INFO_FRESH_MS).toBe(60 * 60 * 1000);
+    expect(usableAccounts([row('mono-a', NOW - 120)], links('mono-a'), NOW, 60)).toBeUndefined();
+    expect(usableAccounts([row('mono-a', NOW - 30)], links('mono-a'), NOW, 60)).toBeDefined();
+  });
+});

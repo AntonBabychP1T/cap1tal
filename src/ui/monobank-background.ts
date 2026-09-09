@@ -1,24 +1,25 @@
 import { attemptInput, needsOwner, syncDue, worstOutcome } from '../monobank/auto';
 import type { AccountOutcome, SyncPorts } from '../monobank/coordinator';
-import { budgetedRun, deviceTimer, type SetTimer } from '../monobank/yielding';
+import { chanceRun } from '../monobank/yielding';
 import { clear as clearAlert, raise as raiseAlert, type AlertPorts } from './alerting';
+import { journal } from './journal';
 import { syncCoverage } from './monobank-screen';
 import { startSync, type AttemptStorage } from './monobank-sync';
 
 /**
- * One chance the phone gives, spent: whether to sync at all, under what budget, and what — if
- * anything — the owner is told afterwards.
+ * One chance the phone gives, spent: whether to sync at all, how far the bank's minute lets it
+ * get, and what — if anything — the owner is told afterwards.
  *
  * The whole of a background run's thinking is here rather than in the task file, and the module
- * imports nothing from `src/platform/*-device.ts` or `src/platform/background-turn.ts`: the budget
+ * imports nothing from `src/platform/*-device.ts` or `src/platform/background-turn.ts`: the ports
  * and the clock arrive as *inputs*, so `npm run verify` proves every decision against the in-memory
  * token store, a scripted bank and a real database, and `src/platform/monobank-sync-task.ts` is
  * left with a `defineTask` and a return value (design D7).
  *
  * Nothing about the run itself is new. It is the same `startSync` the opening, the pull and the
  * monobank screen call — the same one-run lock, the same quiet interval, the same order of turns,
- * the same attempt written around it — with two ports replaced: a `wait` that will not start a
- * wait the budget cannot hold, and the `postponed` that follows from it.
+ * the same attempt written around it — with two ports replaced: a `wait` that is never taken, and
+ * the `postponed` that follows from it.
  *
  * What *is* this module's own is the announcing. `startSync`'s rule («a failure nobody is watching
  * posts one») is the rule for a run the owner started and walked away from; a run nobody asked for
@@ -44,19 +45,22 @@ export interface BackgroundTurnPorts {
   readonly alerts: AlertPorts;
   /**
    * Whether the app is in front of the owner *when the run ends*. A chance starts only while the
-   * app is in the background, but the owner may open it inside the budget, and a failure whose
+   * app is in the background, but the owner may open it while the chance runs, and a failure whose
    * screen is in front of them raises no сповіщення.
    */
   readonly attended: () => boolean;
+  /** Read for the тихий інтервал and for whether monobank needs the owner; not for pacing. */
   readonly nowMs: () => number;
-  /** How much of this chance the run may spend, measured from `nowMs()` at its start. */
-  readonly budgetMs: number;
-  /** Overridden in tests; the device uses `setTimeout`. */
-  readonly setTimer?: SetTimer;
   /** Overridden in tests; the app always uses `QUIET_INTERVAL_MS`. */
   readonly quietIntervalMs?: number;
   /** Overridden in tests; the app always uses `STALE_AFTER_MS`. */
   readonly staleAfterMs?: number;
+  /**
+   * The mark this chance's entries carry — the same one the ports were built with, so the
+   * `native` entry for the chance, the run's two ends and every request it made read as one
+   * operation (design D4).
+   */
+  readonly run?: string;
 }
 
 /**
@@ -85,6 +89,53 @@ export type BackgroundTurn =
       readonly imported: number;
     };
 
+/** What the журнал calls one chance the system gave the app. */
+export const BACKGROUND_CHANCE = 'background-chance';
+
+/** What the журнал calls the app asking the phone for chances, or stopping. */
+export const BACKGROUND_REGISTRATION = 'background-registration';
+
+/**
+ * What `reconcileTask` did about the registration, in the phone's own terms.
+ *
+ * `unchanged` is the ordinary case — the registration is re-asserted on every launch and every
+ * foreground — and is deliberately not journaled: an entry each time would be `native` noise of
+ * exactly the kind the screen folding exists to remove. `refused` is the phone declining, which is
+ * the answer the spec asks for by name.
+ */
+export type TaskRegistration = 'registered' | 'unregistered' | 'unchanged' | 'refused';
+
+/**
+ * Records the chance the system gave, whether the app was in front of the owner when it ended, and
+ * what the chance came to.
+ *
+ * Both halves of the `detail` are enumerated words — the device's `active`/`background` and the
+ * turn's own kind and outcome — so nothing composed about the run enters the журнал. The counts
+ * are what it stored, which is the number the reader wants when the question is «did the
+ * background run actually do anything».
+ */
+export function journalChance(input: {
+  readonly turn: BackgroundTurn;
+  readonly attended: boolean;
+  readonly run?: string;
+}): void {
+  const where = input.attended ? 'active' : 'background';
+  const came = input.turn.kind === 'ran' ? (input.turn.outcome ?? 'ran') : input.turn.kind;
+  journal.record('native', BACKGROUND_CHANCE, `${where} · ${came}`, {
+    ...(input.run === undefined ? {} : { run: input.run }),
+    ...(input.turn.kind === 'ran' ? { counts: { imported: input.turn.imported } } : {}),
+  });
+}
+
+/** Records what the phone answered about the registration — everything but the ordinary no-op. */
+export function journalRegistration(answer: TaskRegistration): boolean {
+  if (answer === 'unchanged') {
+    return false;
+  }
+  journal.record('native', BACKGROUND_REGISTRATION, answer);
+  return true;
+}
+
 export async function runBackgroundTurn(ports: BackgroundTurnPorts): Promise<BackgroundTurn> {
   const links = ports.storage.listLinks();
   if (
@@ -98,21 +149,24 @@ export async function runBackgroundTurn(ports: BackgroundTurnPorts): Promise<Bac
     return { kind: 'not-due' };
   }
 
-  // Measured from the chance's start, and put *over* whatever wait the handed-in ports carried:
-  // the device's `syncPorts()` answers the foreground pair, whose `postponed` in a headless
-  // process says yes at once, and a run left with it would send nothing at all.
-  const budget = budgetedRun({
-    nowMs: ports.nowMs,
-    setTimer: ports.setTimer ?? deviceTimer,
-    deadlineMs: ports.nowMs() + ports.budgetMs,
-  });
+  // Put *over* whatever wait the handed-in ports carried: the device's `syncPorts()` answers the
+  // foreground pair, whose `postponed` in a headless process says yes at once, and a run left with
+  // it would send nothing at all.
+  //
+  // A chance sends what the bank's minute already allows and stops at the first request it would
+  // have to wait for. There is no budget because there is nothing to bound: with no wait, the
+  // run ends in the second or two its requests take, and the phone's own quarter of an hour
+  // between chances is the pacing. A chance that *did* wait held the single-run lock for twenty
+  // minutes on the owner's phone, because Android stops JS timers along with the Activity.
+  const pace = chanceRun();
 
   // No `alerts`, and `attended: false` — the announcing below is this module's, and it is a
   // different rule from the one a run the owner started and walked away from follows.
   const started = await startSync({
-    sync: { ...ports.sync, ...budget },
+    sync: { ...ports.sync, ...pace },
     attempts: ports.storage,
     attended: false,
+    ...(ports.run === undefined ? {} : { run: ports.run }),
   });
   if (started.kind === 'already-running') {
     return { kind: 'already-running' };
@@ -135,7 +189,7 @@ export async function runBackgroundTurn(ports: BackgroundTurnPorts): Promise<Bac
  * run that merely stopped and nothing for a failure over data that is still fresh. The already-
  * outstanding guard is before `raise` rather than inside it because `raise` journals first: a
  * phone whose token stays rejected would otherwise write a журнал line every quarter of an hour
- * and flush the 500-entry журнал of everything a репорт needs within days.
+ * and flush the журнал of everything a репорт needs within days.
  */
 async function announce(
   ports: BackgroundTurnPorts,

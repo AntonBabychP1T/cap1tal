@@ -1,6 +1,6 @@
 import type { Rule } from '../domain/rules';
 import type { IsoDate } from '../domain/transaction';
-import type { StatementAnswer, StoredMonobankLink } from '../db/monobank-repo';
+import type { PagingPosition, StatementAnswer, StoredMonobankLink } from '../db/monobank-repo';
 import {
   fetchClientInfo,
   fetchStatement,
@@ -16,6 +16,8 @@ import {
   mapStatement,
   planWindows,
   syncOrder,
+  usableAccounts,
+  type RememberedAccount,
   type StatementWindow,
 } from './sync';
 
@@ -69,6 +71,14 @@ function isStopped<T>(answer: T | Stopped): answer is Stopped {
   );
 }
 
+/**
+ * What a run reads of one monobank account: the currency every транзакція of its statement is in,
+ * and the баланс банку committed with every page. Deliberately narrower than `MonobankAccount` —
+ * an answer the run fetched carries more, an answer it already held carries exactly this, and
+ * nothing below wants the difference.
+ */
+type RunAccount = Pick<MonobankAccount, 'currency' | 'bankBalance'>;
+
 /** What storage has to offer a run. `src/db/monobank-repo.ts` is the implementation. */
 export interface SyncStorage {
   listLinks(): readonly StoredMonobankLink[];
@@ -82,6 +92,12 @@ export interface SyncStorage {
    * answer. What `syncOrder` rations the next run by, and deliberately not `markSynced`.
    */
   noteTurn(monobankAccountId: string, at: Date): void;
+  /**
+   * The client-info answer this phone last stored, as rows with the moment each was obtained.
+   * `usableAccounts` decides from them whether this run may skip its client-info request — which is
+   * the difference between a run that can afford one request importing nothing and one importing.
+   */
+  rememberedAccounts(): readonly RememberedAccount[];
   /**
    * The moment this device last sent a request to the personal API, or `undefined` if it never
    * has. Seeds the pacing, so the minute between requests belongs to the phone and not to one run.
@@ -118,8 +134,21 @@ export interface SyncPorts {
    * (design D3, D5).
    */
   readonly postponed?: () => boolean;
+  /**
+   * Whether the owner asked for this run — «Синхронізувати» on the monobank screen, or the pull on
+   * Головний. The same division the тихий інтервал draws, and there is one of it in this app.
+   *
+   * A run they asked for always fetches client-info, however fresh the answer this phone holds:
+   * both triggers are the owner saying «now», and answering «now» with balances up to an hour old
+   * would take away the one control they have for exactly that. It can afford the request — they
+   * are watching it, it may wait out the minute, and one client-info request is a tenth of a
+   * nine-рахунок sweep rather than the whole of a chance.
+   */
+  readonly asked?: boolean;
   /** Overridden in tests, which must never wait a real minute. */
   readonly minRequestGapMs?: number;
+  /** Overridden in tests; the app always uses `CLIENT_INFO_FRESH_MS`. */
+  readonly clientInfoFreshMs?: number;
 }
 
 /**
@@ -128,8 +157,8 @@ export interface SyncPorts {
  * calling either «недоступно» would blame the bank for a decision that was not the bank's.
  *
  * `cancelled` and `postponed` are two words because they are two facts. The owner pressing
- * «Зупинити» is a decision; a background run reaching the end of its budget, or a run in front of
- * the owner losing the foreground, is the app running out of time. Only the second means "nothing
+ * «Зупинити» is a decision; a background run stopping at a request the bank's minute does not yet
+ * allow, or a run in front of the owner losing the foreground, is the app running out of time. Only the second means "nothing
  * is wrong, the next run continues from here", and that is what the screen, the remembered
  * attempt and the сповіщення про збій each have to tell apart.
  *
@@ -245,12 +274,6 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     return { kind: 'no-links' };
   }
 
-  /**
-   * One run end for every account. Taken once, so two accounts synced in the same run cover the
-   * same span and a long first sync cannot leave a later account with a cursor ahead of an
-   * earlier one's.
-   */
-  const runToMs = ports.nowMs();
   const rules = ports.rules();
   /**
    * Seeded from storage, not from `undefined`: the gap belongs to the device, so a run started
@@ -264,7 +287,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
    *
    * Answers `STOPPED` for a run the owner stopped *while it was waiting*. A gap is a whole minute
    * — long enough to leave the screen and press «Зупинити» — and a request sent after that is one
-   * nobody asked for: it spends the device's one-a-minute budget and, being a request, would take
+   * nobody asked for: it spends the device's one-a-minute allowance and, being a request, would take
    * the account's turn with it.
    */
   async function paced<T>(request: () => Promise<T>): Promise<T | Stopped> {
@@ -292,14 +315,26 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
   }
 
   const results: AccountResult[] = [];
-  const finish = (link: StoredMonobankLink, outcome: AccountOutcome, imported: number): void => {
+  const finish = (
+    link: StoredMonobankLink,
+    outcome: AccountOutcome,
+    imported: number,
+    /** The moment of the answer this account was synced up to; absent before one is settled. */
+    syncedToMs?: number,
+  ): void => {
     // Only a completed account moves its moment. An account that ends invalid-token, rate-limited,
     // unavailable, cancelled or postponed keeps whatever moment it had, so the screen never dates a
     // sync that did not happen. Here rather than inside `commitStatementAnswer`: that call is one page of a
     // paginated sync, and an account stopped halfway would otherwise have committed pages and
     // claimed a finished sync (design D9).
-    if (outcome === 'complete') {
-      ports.storage.markSynced(link.monobankAccountId, ports.now());
+    //
+    // The moment recorded is the answer's, not the clock's, for the reason `runToMs` is: a sync is
+    // as recent as the span it covered. With a span that can end in the past, the clock would date
+    // a синхронізація over minutes the bank was never asked about — and an account whose cursor
+    // already stands at the answer's moment asks nothing at all, so `markSynced` would otherwise
+    // move its moment forward every run for as long as the answer stayed fresh.
+    if (outcome === 'complete' && syncedToMs !== undefined) {
+      ports.storage.markSynced(link.monobankAccountId, new Date(syncedToMs));
     }
     const result: AccountResult = {
       monobankAccountId: link.monobankAccountId,
@@ -313,36 +348,84 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
 
   report({ kind: 'started', accounts: links.length });
 
-  // One client-info answer for the whole run: it is what the balances committed with every page
-  // come from, and asking again per account would spend the request budget on nothing new.
-  const info = await paced(() => fetchClientInfo(ports.fetch, token));
-  if (isStopped(info)) {
-    // Stopped before a single request went out: nothing was asked, no turn was taken by anybody,
-    // and nothing is blamed on the bank for a decision that was not the bank's. Every рахунок
-    // keeps its place at the head of the next run's order.
-    for (const link of links) {
-      finish(link, info.outcome, 0);
+  /**
+   * The client-info answer this run works from — the one it already holds, or the one it fetches.
+   *
+   * A run nobody asked for does not buy balances it has. The bank allows one request a minute and
+   * there is one of that allowance on the device, so a client-info request at the head of every run
+   * is a run that owes a whole minute before the statement request that actually imports — a
+   * minute a chance cannot sit out and an opening rarely can. Reusing what the phone already knows
+   * is what turns «one request, nothing imported» into «one request, транзакції».
+   *
+   * A run the owner asked for skips this and asks the bank; `asked` says why.
+   */
+  const held = ports.asked
+    ? undefined
+    : remembered(() =>
+        usableAccounts(
+          ports.storage.rememberedAccounts(),
+          links,
+          ports.nowMs(),
+          ports.clientInfoFreshMs,
+        ),
+      );
+
+  let fetched: ReadonlyMap<string, RunAccount>;
+  let obtainedAt: Date;
+
+  if (held) {
+    fetched = held.accounts;
+    obtainedAt = held.obtainedAt;
+  } else {
+    const info = await paced(() => fetchClientInfo(ports.fetch, token));
+    if (isStopped(info)) {
+      // Stopped before a single request went out: nothing was asked, no turn was taken by anybody,
+      // and nothing is blamed on the bank for a decision that was not the bank's. Every рахунок
+      // keeps its place at the head of the next run's order.
+      for (const link of links) {
+        finish(link, info.outcome, 0);
+      }
+      return { kind: 'ran', imported: 0, accounts: results };
     }
-    return { kind: 'ran', imported: 0, accounts: results };
-  }
-  if (info.kind !== 'ok') {
-    const outcome = outcomeOf(info);
-    for (const link of links) {
-      finish(link, outcome, 0);
+    if (info.kind !== 'ok') {
+      const outcome = outcomeOf(info);
+      for (const link of links) {
+        finish(link, outcome, 0);
+      }
+      return { kind: 'ran', imported: 0, accounts: results };
     }
-    return { kind: 'ran', imported: 0, accounts: results };
+    fetched = new Map(info.value.map((a) => [a.id, a]));
+    // When those balances were obtained, not when a page happens to be committed: a first sync
+    // paced at one request a minute would otherwise stamp a figure from half an hour ago as fresh,
+    // which is exactly what `obtained_at` exists to prevent.
+    obtainedAt = ports.now();
+    // Stored before the first рахунок is worked, and that ordering is the whole cadence: a run
+    // that spends its entire allowance on this request leaves the run after it able to send a
+    // statement request instead of buying the same balances again.
+    try {
+      ports.storage.upsertAccounts(info.value, obtainedAt);
+    } catch {
+      // A cache that would not take the fresh balances changes nothing about what can be imported:
+      // every page commits its own balance, and the next opening refetches. Not a run failure.
+    }
   }
-  const fetched = new Map(info.value.map((a) => [a.id, a]));
-  // When those balances were obtained, not when a page happens to be committed: a first sync
-  // paced at one request a minute would otherwise stamp a figure from half an hour ago as fresh,
-  // which is exactly what `obtained_at` exists to prevent.
-  const obtainedAt = ports.now();
-  try {
-    ports.storage.upsertAccounts(info.value, obtainedAt);
-  } catch {
-    // A cache that would not take the fresh balances changes nothing about what can be imported:
-    // every page commits its own balance, and the next opening refetches. Not a run failure.
-  }
+
+  /**
+   * One run end for every account, and it is the moment of the client-info answer this run is
+   * working from — not the clock.
+   *
+   * Taken once, so two accounts synced in the same run cover the same span and a long first sync
+   * cannot leave a later account with a cursor ahead of an earlier one's. Taken from the *answer*,
+   * so the баланс банку committed with every page and the транзакції committed beside it describe
+   * the same instant. Рахунки offers «Звірити» — a коригування for the difference between a
+   * рахунок's розрахунковий баланс and its баланс банку — and a run that imported an hour of
+   * транзакції against an hour-old balance would make that difference an hour of the owner's real
+   * spending. Ending here costs nothing: the span between this moment and now is imported by the
+   * next run, from the cursor this one commits.
+   *
+   * For a run that fetched, this is what `ports.nowMs()` already was to within one round trip.
+   */
+  const runToMs = obtainedAt.getTime();
 
   let stopped: AccountOutcome | undefined;
 
@@ -394,7 +477,15 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     ) {
       stopped = account.outcome;
     }
-    finish(link, account.outcome, account.imported);
+    // A рахунок whose cursor already stands at the answer's moment has nothing to ask about, and
+    // `complete` is right for it: it is complete, up to that moment. The case that would *not* be
+    // — a рахунок no sync has ever completed, whose boundary lies after the answer — never reaches
+    // here, because `usableAccounts` refuses to hand a run an answer that cannot serve it.
+    //
+    // Solved there and deliberately not by relabelling the outcome here. `postponed` means the run
+    // has requests still owed, and `followUpDue` starts a run at once on it; a run that could only
+    // report the same thing again would follow itself for as long as the app stayed open.
+    finish(link, account.outcome, account.imported, runToMs);
   }
 
   return {
@@ -412,10 +503,15 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
  * backwards through `continueWindow`, every page still commits its own транзакції and item ids —
  * so a run that stops mid-window loses no work — but the cursor stays where it was. A repeated
  * page after a restart is then harmless: its ids are already remembered, so it maps to nothing.
+ *
+ * Where that narrowing has got to is written beside the cursor and read back here (design D11), so
+ * a run that stops mid-window leaves the next one able to continue rather than to repeat: a
+ * рахунок whose window needs more pages than one прогін affords is finished by several instead of
+ * by none.
  */
 async function syncOneAccount(input: {
   readonly link: StoredMonobankLink;
-  readonly bankAccount: MonobankAccount;
+  readonly bankAccount: RunAccount;
   /** When this run's client-info answer was obtained — the age of the balance it commits. */
   readonly obtainedAt: Date;
   readonly token: string;
@@ -430,9 +526,15 @@ async function syncOneAccount(input: {
   let cursorMs = link.cursorMs;
   let seenIds: ReadonlySet<string> = ports.storage.importedIds(link.monobankAccountId);
   let imported = 0;
+  /**
+   * What storage holds for this link's paging position right now. Kept so a page that moves
+   * nothing else — a full answer whose every item was already imported — still writes the
+   * position it moved, and so a page that moves nothing at all writes nothing.
+   */
+  let storedPaging: PagingPosition | null = link.paging;
 
-  for (const planned of planWindows(cursorMs, runToMs)) {
-    let window: StatementWindow | undefined = planned;
+  for (const { planned, first } of windowsOf(link, cursorMs, runToMs)) {
+    let window: StatementWindow | undefined = first;
     while (window) {
       const stop = stopping();
       if (stop) {
@@ -485,8 +587,21 @@ async function syncOneAccount(input: {
       // window; committing that would leave everything between it and the window's end looking
       // unimported, and the next run would fetch it all again.
       const committedCursorMs = full ? cursorMs : planned.toMs;
+      // A full answer means the API had more to say inside this window than it fit in one page.
+      // Decided before the commit, because where narrowing has got to is part of what the commit
+      // stores: the position and the pages it describes land in one database transaction or in
+      // none, so a position can never outlive an answer that did not store.
+      const continued = full ? continueWindow(request, oldestMs(items)) : undefined;
+      const paging: PagingPosition | undefined = continued
+        ? { windowToMs: planned.toMs, requestToMs: continued.toMs }
+        : undefined;
 
-      if (mapped.transactions.length > 0 || newlySeenIds.length > 0 || !full) {
+      if (
+        mapped.transactions.length > 0 ||
+        newlySeenIds.length > 0 ||
+        !full ||
+        moved(storedPaging, paging)
+      ) {
         try {
           ports.storage.commitStatementAnswer({
             monobankAccountId: link.monobankAccountId,
@@ -496,6 +611,7 @@ async function syncOneAccount(input: {
             obtainedAt,
             cursorMs: committedCursorMs,
             storedAt: ports.now(),
+            paging,
           });
         } catch {
           // The answer stored nothing at all — that is what the one database transaction
@@ -504,11 +620,10 @@ async function syncOneAccount(input: {
         }
         imported += mapped.transactions.length;
         seenIds = mapped.seenNow;
+        storedPaging = paging ?? null;
       }
       cursorMs = committedCursorMs;
 
-      // A full answer means the API had more to say inside this window than it fit in one page.
-      const continued = full ? continueWindow(request, oldestMs(items)) : undefined;
       if (full && !continued) {
         // Nothing narrower can be asked for: the window's oldest 500 items share the second the
         // URL is written in, which `sync.ts` documents as truncation preferable to a sync that
@@ -516,7 +631,9 @@ async function syncOneAccount(input: {
         // rather than left un-advanced for a later window's commit to step over — or, on the last
         // window of a run, left forever, re-reading the same page on every sync from now on.
         cursorMs = planned.toMs;
-        commitCursor(ports, link, bankAccount, obtainedAt, cursorMs);
+        if (commitCursor(ports, link, bankAccount, obtainedAt, cursorMs)) {
+          storedPaging = null;
+        }
       }
       window = continued;
     }
@@ -528,15 +645,17 @@ async function syncOneAccount(input: {
 /**
  * Moves the cursor alone, for the one case that has nothing else to store: a window the API
  * cannot be asked about any more precisely. It goes through the same atomic commit as every other
- * write, with no транзакції and no new ids, and a failure simply leaves the cursor where it was.
+ * write, with no транзакції, no new ids and no paging position — the window is over — and a
+ * failure simply leaves the cursor where it was. Answers whether it stored, so the caller knows
+ * whether the position it remembered is really gone.
  */
 function commitCursor(
   ports: SyncPorts,
   link: StoredMonobankLink,
-  bankAccount: MonobankAccount,
+  bankAccount: RunAccount,
   obtainedAt: Date,
   cursorMs: number,
-): void {
+): boolean {
   try {
     ports.storage.commitStatementAnswer({
       monobankAccountId: link.monobankAccountId,
@@ -547,9 +666,80 @@ function commitCursor(
       cursorMs,
       storedAt: ports.now(),
     });
+    return true;
   } catch {
     // The next run plans the same window again; nothing was lost.
+    return false;
   }
+}
+
+/** One planned window and the request a run starts it at — the same thing, unless it is resumed. */
+interface PlannedWindow {
+  /** The window itself: what the cursor moves to when it finally answers short. */
+  readonly planned: StatementWindow;
+  /** The first request to send about it — narrowed, for a window a previous run left half-read. */
+  readonly first: StatementWindow;
+}
+
+/**
+ * The windows this account works this run, oldest first.
+ *
+ * A link half-way through a window works that window first and resumes it at the request the run
+ * before stopped short of, rather than asking its first page again — that is the whole point of
+ * remembering the position (design D11). Everything after it is planned from that window's end,
+ * because that is where the cursor lands the moment it answers short; the span between it and the
+ * run's own, later end is a window of its own and is planned as one.
+ *
+ * A remembered position is trusted only while it still describes work left to do: a window end at
+ * or below the cursor — which a boundary the owner moved, or a бекап restored over this phone's
+ * progress, can leave behind — describes none, and is discarded rather than trusted. The window is
+ * then planned afresh, which is what a link that never had a position does anyway.
+ */
+function windowsOf(
+  link: StoredMonobankLink,
+  cursorMs: number,
+  runToMs: number,
+): readonly PlannedWindow[] {
+  const resumed = resumedWindow(link.paging, cursorMs);
+  const planned = planWindows(resumed ? resumed.planned.toMs : cursorMs, runToMs).map(
+    (window) => ({ planned: window, first: window }),
+  );
+  return resumed ? [resumed, ...planned] : planned;
+}
+
+/**
+ * The half-read window a position describes, or nothing when it describes no work left.
+ *
+ * Only the two ends are stored, because the start is rebuilt from the cursor: the cursor cannot
+ * move while a window is being paged, and every narrowed request keeps the window's start. It is
+ * rebuilt exactly for the first window of a run and one millisecond wider for any later one —
+ * `planWindows` starts those at the previous window's end plus one while the cursor lands on that
+ * end itself — and a millisecond wider costs nothing: both ends of a window are inclusive by
+ * design, the URL floors both to seconds, and an item read twice imports once.
+ *
+ * The request end needs no check of its own. It is `continueWindow`'s answer about this very
+ * window, so it is after the window's start and at or before its end, and it was stored in the
+ * same transaction as the cursor it is compared against.
+ */
+function resumedWindow(
+  position: PagingPosition | null,
+  cursorMs: number,
+): PlannedWindow | undefined {
+  if (!position || position.windowToMs <= cursorMs) {
+    return undefined;
+  }
+  return {
+    planned: { fromMs: cursorMs, toMs: position.windowToMs },
+    first: { fromMs: cursorMs, toMs: position.requestToMs },
+  };
+}
+
+/** Whether an answer leaves the link's paging position somewhere other than where it found it. */
+function moved(stored: PagingPosition | null, next: PagingPosition | undefined): boolean {
+  return (
+    (stored?.windowToMs ?? null) !== (next?.windowToMs ?? null) ||
+    (stored?.requestToMs ?? null) !== (next?.requestToMs ?? null)
+  );
 }
 
 /**
@@ -568,8 +758,11 @@ function remember(write: () => void): void {
   }
 }
 
-/** The same for a read: a device whose storage will not answer simply paces as a fresh one does. */
-function remembered(read: () => number | undefined): number | undefined {
+/**
+ * The same for a read: a device whose storage will not answer simply paces as a fresh one does —
+ * and, for the client-info answer it holds, simply asks the bank as a phone with none would.
+ */
+function remembered<T>(read: () => T | undefined): T | undefined {
   try {
     return read();
   } catch {

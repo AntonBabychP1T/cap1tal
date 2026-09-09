@@ -228,29 +228,52 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 
 ## The monobank sync
 
-- **Прогін** (run) — one sweep of the linked рахунки: one client-info request for the whole run,
-  then one statement request per рахунок, paced to the bank's one request a minute. Only one прогін
+- **Прогін** (run) — one sweep of the linked рахунки: one statement request per рахунок, paced to
+  the bank's one request a minute, and a client-info request only when the прогін needs one. A
+  прогін nobody asked for uses the client-info answer this phone already holds while it is inside
+  the межа свіжості, so its allowance goes to the request that imports; a прогін the owner asked
+  for — «Синхронізувати», or the жест on Головний — always asks the bank, because both are the
+  owner saying «now». Only one прогін
   exists on the phone at a time; anything that would start a second waits for the one going on and
   reports what *it* came to. A прогін commits each page as it reads it, so a прогін that stops
-  early loses nothing and leaves a cursor the next one continues from.
+  early loses nothing and leaves the next one both a cursor and, for a рахунок stopped in the
+  middle of a вікно, the place гортання reached — see позиція гортання.
 - **Хід** (turn) — one request sent about one рахунок, whatever the answer. What the order of a
   прогін is rationed by: the рахунок that has waited longest since its хід goes first, so a прогін
   cut short over and over still reaches every рахунок instead of looping on the first few. A хід
   the run never spent a request on is not a хід.
+- **Межа свіжості** (staleness bound) — the hour a client-info answer this phone stored goes on
+  serving a прогін nobody asked for. Inside it such a прогін sends no client-info request and
+  spends its allowance on the statement; it also imports nothing later than that answer's moment,
+  so the баланс банку a рахунок carries and the транзакції committed beside it describe the same
+  instant and «Звірити» stays meaningful. It is therefore also the most транзакції may lag the
+  bank by.
 - **Тихий інтервал** (quiet interval) — the quarter of an hour a прогін nobody asked for waits
   after the last one. It governs only the runs the owner did not ask for: «Синхронізувати» ignores
   it, and so does a прогін that was перенесено, which by definition has requests still owed.
 - **Фоновий прогін** (background run) — a прогін started on a chance the phone gives while the app
-  is not in front of the owner. The same прогін under the same rules, with a few minutes' budget
-  and nothing else different. The app asks for chances only while a рахунок is linked, claims no
+  is not in front of the owner. The same прогін under the same rules, with one difference: it never
+  waits. It sends what the bank's minute already allows — about one request — and ends; what paces
+  it is the phone's own gap between chances, which is longer than the bank's minute and is the one
+  timer Android does not stop along with the app. The app asks for chances only while a рахунок is linked, claims no
   cadence, and a фоновий прогін announces nothing unless monobank needs the owner.
 - **Поступитися** (yield) — what a прогін in front of the owner does when the app leaves the
   foreground: it stops before its next request and lets the background have the phone. Not
   «передати», which the глосарій gives to handing a file to another app.
-- **Перенесено** (postponed) — how a рахунок ends that a прогін stopped before finishing, for want
-  of time or of foreground. Neither a failure of the bank nor a decision of the owner: whatever the
+- **Позиція гортання** (paging position) — where a рахунок's half-read вікно got to, stored beside
+  its cursor: the end of the вікно being paged and the end the next request should ask for. A
+  вікно that answers with a full page is asked again, narrowed backwards, until an answer comes
+  back short, and the cursor cannot move while that goes on — so without this the place lived in
+  the прогін's own memory and died with it, and a рахунок needing more pages than one прогін can
+  afford could never finish at all. It is this phone's own progress, so it is not in a бекап, and a
+  position whose вікно ends at or before the cursor is discarded rather than trusted.
+- **Перенесено** (postponed) — how a рахунок ends that a прогін stopped before finishing: for want
+  of the minute still owed to the bank, of time, or of foreground. The ordinary outcome of a
+  healthy phone, not an exceptional one — a фоновий прогін stops at the first request it may not
+  yet send, so there is nearly always more it owes. Neither a failure of the bank nor a decision of the owner: whatever the
   прогін committed stays committed, the last-sync moment does not move, and the next прогін
-  continues from the cursor. Not «відкладено», which in this app is money put into a банка.
+  continues from the cursor and from the позиція гортання, so перенесено on a рахунок mid-вікно is
+  progress and not repetition. Not «відкладено», which in this app is money put into a банка.
 - **Скасовано** (cancelled) — how a рахунок ends that the owner stopped the прогін before. Told
   apart from перенесено everywhere an outcome is reported, because one is their decision and the
   other is the app running out of time.
@@ -337,13 +360,19 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Журнал** (journal) — the app's own bounded record of what it has been doing lately, kept on
   the phone for one purpose: so a bug met on the phone can be reproduced at the laptop. It holds
   an entry per moment for every screen opened (by its route), every action that failed with the
-  exact text the owner was shown, every сповіщення про збій raised or cleared, and every crash
-  with its message and stack. It keeps the most recent 500 entries and drops the oldest beyond
-  that. It never holds a сума, a назва, an опис, the text of a bank's сповіщення or the monobank
-  token — an action is named by its kind, a screen by its route, a failure by the app's own words.
-  Where the app's own refusal quotes what the owner typed into the refused field, the quote lives
-  in that one entry and nowhere else. It leaves the phone only inside a репорт про помилку the
-  owner hands over, and it is never in a бекап.
+  exact text the owner was shown, every сповіщення про збій raised or cleared, every crash with
+  its message and stack, every request that left the phone, every operation the app performed, and
+  what the device did to it. An entry may additionally carry the mark tying it to one operation,
+  how long the thing it names took, and the counts that thing measured; every count is a number,
+  so no text of the owner's can enter one. It keeps the most recent 2000 entries and drops the
+  oldest beyond that. It never holds a сума, a назва, an опис, the text of a bank's сповіщення or
+  the monobank token — an action is named by its kind, a screen by its route, a failure by the
+  app's own words, and a request by its method, its host and the shape of its path. It carries one
+  identifier of the owner's beside the app's own refusal text and nothing more: the monobank
+  account a request or an operation was about, which is the only thing that answers «which card is
+  not syncing». Where the app's own refusal quotes what the owner typed into the refused field,
+  the quote lives in that one entry and nowhere else. It leaves the phone only inside a репорт про
+  помилку the owner hands over, and it is never in a бекап.
 - **Репорт про помилку** (bug report) — what the owner wrote down after something went wrong —
   what they did (required), what happened, what they expected — together with what the app
   attaches by itself at that moment: its version and build, the platform, the device, the number

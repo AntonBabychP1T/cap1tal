@@ -11,7 +11,7 @@ import { inMemoryMonobankTokenStore } from '../platform/monobank-token';
 import { startOfLocalDayMs } from '../ui/dates';
 import type { AuthFetchLike } from './api';
 import { syncLinkedAccounts, type SyncPorts, type SyncRun } from './coordinator';
-import { budgetedRun, foregroundRun, withRequestTimeout, type SetTimer } from './yielding';
+import { chanceRun, foregroundRun, withRequestTimeout, type SetTimer } from './yielding';
 
 /**
  * The three policies a run can be given for its wait and for the bank's silence, proven the only
@@ -163,6 +163,25 @@ describe('a run that yields', () => {
   });
 
   /** `n` рахунки, `n` monobank accounts and `n` links, plus the client-info body showing them. */
+  /**
+   * Stores a client-info answer of this phone's own for `n` linked рахунки, `agoMs` before now —
+   * what a previous прогін or the monobank screen leaves behind. Inside the межа свіжості it is
+   * what spares this run its own client-info request, so the one request it may send goes to the
+   * statement.
+   */
+  function rememberAccounts(n: number, atMs: number): void {
+    repo.upsertAccounts(
+      Array.from({ length: n }, (_, index) => ({
+        id: `mono-${index}`,
+        kind: 'card' as const,
+        name: `black ··${index}`,
+        currency: 'UAH' as const,
+        bankBalance: money(0, 'UAH'),
+      })),
+      new Date(atMs),
+    );
+  }
+
   function linkAccounts(n: number): { clientInfo: unknown } {
     const rows = [];
     for (let index = 0; index < n; index += 1) {
@@ -250,20 +269,20 @@ describe('a run that yields', () => {
   const asked = (statements: readonly string[]): string[] =>
     statements.map((url) => url.split('/statement/')[1]!.split('/')[0]!);
 
-  it('Scenario: The budget stops the run before a wait it cannot hold', async () => {
+  it('Scenario: A chance sends what the gap allows and stops', async () => {
     const { clientInfo } = linkAccounts(3);
     const script = scriptedFetch({ clientInfo });
     const timers = fakeTimers(RUN_AT);
-    // Room for the client-info request and one statement request — the minute before it included
-    // — and not for the minute before a second.
-    const budget = budgetedRun({
-      nowMs: timers.nowMs,
-      setTimer: timers.setTimer,
-      deadlineMs: RUN_AT + GAP_MS + 30_000,
-    });
+    // The gap is long past, and the phone holds a client-info answer inside the межа свіжості: so
+    // this chance may send one statement request, and owes the gap before a second.
+    rememberAccounts(3, RUN_AT - 10 * 60_000);
+    repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
 
     const run = ran(
-      await drive(syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...budget }), timers),
+      await drive(
+        syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...chanceRun() }),
+        timers,
+      ),
     );
 
     expect(run.accounts.map((result) => result.outcome)).toEqual([
@@ -271,15 +290,77 @@ describe('a run that yields', () => {
       'postponed',
       'postponed',
     ]);
-    // Two requests, both spent: nothing was sent that the budget could not cover.
-    expect(script.requests()).toBe(2);
+    // One request, and it went to the statement — the request that imports.
+    expect(script.requests()).toBe(1);
     expect(asked(script.statements())).toEqual(['mono-0']);
     // And the two the run never asked about took no turn, so they head the next run's order.
     expect(repo.linkOf('mono-1')?.lastAttemptedAtMs).toBeNull();
     expect(repo.linkOf('mono-2')?.lastAttemptedAtMs).toBeNull();
   });
 
-  it('Scenario: A run without a budget postpones nothing', async () => {
+  it('Scenario: A chance that owes the gap sends nothing', async () => {
+    const { clientInfo } = linkAccounts(3);
+    const script = scriptedFetch({ clientInfo });
+    const timers = fakeTimers(RUN_AT);
+    rememberAccounts(3, RUN_AT - 10 * 60_000);
+    // This phone sent a request a moment ago, so the whole of the gap is still owed.
+    repo.noteRequest(new Date(RUN_AT - 200));
+
+    const run = ran(
+      await drive(
+        syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...chanceRun() }),
+        timers,
+      ),
+    );
+
+    expect(script.requests()).toBe(0);
+    expect(run.accounts.every((result) => result.outcome === 'postponed')).toBe(true);
+  });
+
+  it('Scenario: A chance starts no timer', async () => {
+    const { clientInfo } = linkAccounts(3);
+    const script = scriptedFetch({ clientInfo });
+    const timers = fakeTimers(RUN_AT);
+    rememberAccounts(3, RUN_AT - 10 * 60_000);
+    repo.noteRequest(new Date(RUN_AT - 200));
+
+    await drive(
+      syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...chanceRun() }),
+      timers,
+    );
+
+    // Nothing was scheduled, so nothing can be frozen. Android stops JS timers along with the
+    // Activity, and a chance that waited on one held the single-run lock for twenty minutes while
+    // every chance after it found a run already going and did nothing.
+    expect(timers.pending()).toBe(0);
+    expect(timers.fired()).toBe(0);
+  });
+
+  it('Scenario: Successive chances work through every рахунок', async () => {
+    const { clientInfo } = linkAccounts(3);
+    rememberAccounts(3, RUN_AT - 10 * 60_000);
+    const asked3: string[] = [];
+
+    for (let chance = 0; chance < 3; chance += 1) {
+      const script = scriptedFetch({ clientInfo });
+      const timers = fakeTimers(RUN_AT + chance * 15 * 60_000);
+      // A quarter of an hour apart — longer than the gap, which is what makes each chance able to
+      // send. The phone's own cadence is the pacing; no timer of the app's is involved.
+      repo.noteRequest(new Date(RUN_AT + chance * 15 * 60_000 - 15 * 60_000));
+
+      await drive(
+        syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...chanceRun() }),
+        timers,
+      );
+      asked3.push(...asked(script.statements()));
+    }
+
+    // Each chance asked about a different рахунок, in the order of ходи, so three chances cover
+    // three рахунки — which is what makes a phone with nine of them converge instead of looping.
+    expect(asked3).toEqual(['mono-0', 'mono-1', 'mono-2']);
+  });
+
+  it('Scenario: A run with no pacing to answer to postpones nothing', async () => {
     const { clientInfo } = linkAccounts(9);
     const script = scriptedFetch({ clientInfo });
     const timers = fakeTimers(RUN_AT);
@@ -342,6 +423,69 @@ describe('a run that yields', () => {
     expect(timers.pending()).toBe(0);
     // And the event the wait subscribed to was let go with it.
     expect(foreground.listening()).toBe(0);
+  });
+
+  it('Scenario: A run that has sent nothing does not yield', async () => {
+    // The phone already answers «away» when the run starts — a cold start, or the owner glancing
+    // elsewhere the instant they opened the app.
+    const { clientInfo } = linkAccounts(2);
+    const script = scriptedFetch({
+      clientInfo,
+      statement: () => ({ status: 200, body: [statementItem('a1')] }),
+    });
+    const timers = fakeTimers(RUN_AT);
+    const foreground = fakeForeground();
+    foreground.leave();
+    const ports = foregroundRun({
+      setTimer: timers.setTimer,
+      inForeground: foreground.inForeground,
+      onLeaveForeground: foreground.onLeaveForeground,
+    });
+
+    const run = ran(
+      await drive(syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...ports }), timers),
+    );
+
+    // The first request went out and what it answered is kept — the run cost one request, not all
+    // of it. Only from the second request on does «away» stop it, which is why the first рахунок
+    // is postponed rather than complete: its own statement request is the second the run makes.
+    expect(script.requests()).toBe(1);
+    expect(script.statements()).toHaveLength(0);
+    expect(run.accounts.map((result) => result.outcome)).toEqual(['postponed', 'postponed']);
+    // The client-info answer it did get was kept: the balances it carried are stored.
+    expect(repo.getAccount('mono-0')?.obtainedAt).toEqual(new Date(RUN_AT));
+  });
+
+  it('Scenario: A run that owes the bank a minute sends nothing while the app is away', async () => {
+    // The device sent a request ten seconds ago — the run before this one — so the pace owes the
+    // bank the rest of the minute before anything may go out.
+    const { clientInfo } = linkAccounts(2);
+    repo.noteRequest(new Date(RUN_AT - 10_000));
+    const script = scriptedFetch({
+      clientInfo,
+      statement: () => ({ status: 200, body: [statementItem('a1')] }),
+    });
+    const timers = fakeTimers(RUN_AT);
+    const foreground = fakeForeground();
+    foreground.leave();
+    const ports = foregroundRun({
+      setTimer: timers.setTimer,
+      inForeground: foreground.inForeground,
+      onLeaveForeground: foreground.onLeaveForeground,
+    });
+
+    const run = ran(
+      await drive(syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...ports }), timers),
+    );
+
+    // Nothing was sent, and nothing was lost by it: the wait owed is the pace's, no timer will run
+    // it out with the app away, and a request sent regardless would come back refused. The request
+    // this run did not spend is the one the run before it just spent.
+    expect(script.requests()).toBe(0);
+    expect(run.accounts.map((result) => result.outcome)).toEqual(['postponed', 'postponed']);
+    // And it is postponed, not a failure: the next run continues from the same cursors.
+    expect(repo.linkOf('mono-0')?.cursorMs).toBe(boundary);
+    expect(repo.linkOf('mono-0')?.lastSyncedAtMs).toBeNull();
   });
 
   it('Scenario: An answer in flight is kept', async () => {

@@ -184,8 +184,12 @@ Not in v1: forecasts ("at this pace you will have X left").
 - The monobank sync also runs while the app is not open, on the chances Android gives it, and only
   while at least one рахунок is linked (owner's decision, 2026-09-07). It is the same run an
   opening starts — the same token, read for the run and kept nowhere else, the same one request a
-  minute, the same нічого-не-надсилаємо inside the тихий інтервал — bounded to a few minutes and
-  continued on the next chance. Best-effort and no cadence is claimed: Doze and battery saving
+  minute, the same нічого-не-надсилаємо inside the тихий інтервал — but it never waits: it sends
+  what the bank's minute already allows, which is about one request, and ends in seconds. What
+  paces it is the phone's own gap between chances, not a timer of the app's; a run that waited on
+  one held the single-run lock until the app was next opened, because Android stops JS timers along
+  with the Activity. What it did not reach is перенесено and the next chance continues it, so
+  successive chances work through every рахунок. Best-effort and no cadence is claimed: Doze and battery saving
   defer a chance for as long as the phone likes, so the app says «приблизно раз на чверть години,
   коли телефон це дозволяє» and never a clock time. A background run announces nothing unless
   monobank needs the owner — a rejected token, or data that has stopped being refreshed — and it

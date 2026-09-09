@@ -83,9 +83,18 @@ import { Spacing } from '@/constants/theme';
 /** The device's own network and clock, injected into everything below rather than reached for. */
 const connection = monobankConnection({
   tokenStore: monobankTokenStore,
-  fetch: (url, headers) => fetch(url, { headers }),
+  // «Звірити» and the token validation reach the bank from here rather than through `syncPorts`,
+  // so the seam is wrapped here too: a request nobody journaled is exactly the request a репорт
+  // про помилку about the monobank screen would need (design D3).
+  fetch: journal.watchFetch((url: string, headers: Readonly<Record<string, string>>) =>
+    fetch(url, { headers }),
+  ),
   cacheAccounts: (fetched, obtainedAt) => monobankRepo.upsertAccounts(fetched, obtainedAt),
   now: () => new Date(),
+  // The same moment a прогін writes, because the bank's minute is the device's and not one
+  // caller's. Without it, «Синхронізувати» pressed just after this screen refreshed would send a
+  // statement request the bank refuses — and spend a рахунок's хід on the refusal.
+  noteRequest: (at) => monobankRepo.noteRequest(at),
 });
 
 /** A рахунок being created for a monobank account, before the owner has confirmed it. */
@@ -469,15 +478,24 @@ export default function MonobankScreen() {
       // Through the one entry point every run goes through, which is what keeps this one from
       // colliding with the one Головний starts on opening. It owns the lock, the attempt written
       // around the run and the сповіщення; everything else below is this screen's, unchanged.
+      // The device's own ports, plus the two things only this screen has: somewhere to report
+      // progress — composed with the журнал's inside `syncPorts`, never replaced by it — and a
+      // «Зупинити» to obey. `run` is the mark this run's entries carry, in the ports and in the
+      // run alike, so a репорт can tell which request belonged to which run.
+      const run = newId();
       const started = await startSync({
-        // The device's own ports, shared with the other two triggers, plus the two things only
-        // this screen has: somewhere to report progress, and a «Зупинити» to obey.
-        sync: syncPorts({
-          onProgress: (event: SyncProgress) => setStatus(progressLabel(event, names)),
-          cancelled: () => cancelled.current,
-        }),
+        sync: syncPorts(
+          {
+            onProgress: (event: SyncProgress) => setStatus(progressLabel(event, names)),
+            cancelled: () => cancelled.current,
+            // «Синхронізувати» means «now», so it asks the bank however fresh the stored answer is.
+            asked: true,
+          },
+          run,
+        ),
         attempts: monobankRepo,
         alerts: ALERT_PORTS,
+        run,
         // A sync outlives the owner's patience for watching it — a minute per request — so this is
         // the failure they are least likely to be looking at. `attended()` is read now rather than
         // when the run started, because leaving the app mid-sync is the whole case.

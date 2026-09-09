@@ -91,6 +91,7 @@ describe('monobankRepo — accounts and links', () => {
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
+        paging: null,
       },
     ]);
     // The link is what makes the account take part in sync; the boundary is where it starts.
@@ -146,6 +147,7 @@ describe('monobankRepo — accounts and links', () => {
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
+        paging: null,
       },
     ]);
   });
@@ -176,6 +178,7 @@ describe('monobankRepo — accounts and links', () => {
       cursorMs: boundaryMs,
       lastSyncedAtMs: null,
       lastAttemptedAtMs: null,
+        paging: null,
     });
   });
 
@@ -321,9 +324,101 @@ describe('monobankRepo — across a restart', () => {
           cursorMs,
           lastSyncedAtMs: null,
           lastAttemptedAtMs: null,
+        paging: null,
         },
       ]);
       expect(repo.getAccount('mono-card')).toEqual({ ...monoCard, obtainedAt });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('Scenario: A half-paged window survives a restart', () => {
+    const path = join(dir, 'half-paged.db');
+    const cursorMs = Date.UTC(2026, 7, 1, 21, 0, 0);
+    const windowToMs = cursorMs + 31 * 86_400_000;
+    const requestToMs = cursorMs + 12 * 86_400_000;
+
+    const first = openFileDb(path);
+    seedReferences(first.db, VOCABULARY);
+    accountsRepo(first.db).save(card);
+    const firstRepo = monobankRepo(first.db);
+    firstRepo.upsertAccounts([monoCard], obtainedAt);
+    firstRepo.link({
+      monobankAccountId: 'mono-card',
+      accountId: 'card',
+      syncStartDate: '2026-08-01',
+      cursorMs,
+    });
+    // A full answer: the window is not finished, so the cursor stays and the position is written
+    // in the same transaction as the ids the answer made known.
+    firstRepo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [],
+      newlySeenIds: ['item-1'],
+      bankBalance: money(500_000, 'UAH'),
+      obtainedAt,
+      cursorMs,
+      storedAt,
+      paging: { windowToMs, requestToMs },
+    });
+    first.close();
+
+    const reopened = openFileDb(path);
+    try {
+      const link = monobankRepo(reopened.db).linkOf('mono-card');
+      expect(link?.paging).toEqual({ windowToMs, requestToMs });
+      // Beside the cursor, which has not moved: nothing before it is known to be imported yet.
+      expect(link?.cursorMs).toBe(cursorMs);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('Scenario: A link with no window in progress remembers no position', () => {
+    const path = join(dir, 'short-answer.db');
+    const cursorMs = Date.UTC(2026, 7, 1, 21, 0, 0);
+    const windowToMs = cursorMs + 31 * 86_400_000;
+
+    const first = openFileDb(path);
+    seedReferences(first.db, VOCABULARY);
+    accountsRepo(first.db).save(card);
+    const firstRepo = monobankRepo(first.db);
+    firstRepo.upsertAccounts([monoCard], obtainedAt);
+    firstRepo.link({
+      monobankAccountId: 'mono-card',
+      accountId: 'card',
+      syncStartDate: '2026-08-01',
+      cursorMs,
+    });
+    firstRepo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [],
+      newlySeenIds: ['item-1'],
+      bankBalance: money(500_000, 'UAH'),
+      obtainedAt,
+      cursorMs,
+      storedAt,
+      paging: { windowToMs, requestToMs: cursorMs + 12 * 86_400_000 },
+    });
+    // ...and then the window answers short: the cursor moves to the window's end and the position
+    // goes with the same write that moved it.
+    firstRepo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [],
+      newlySeenIds: ['item-2'],
+      bankBalance: money(500_000, 'UAH'),
+      obtainedAt,
+      cursorMs: windowToMs,
+      storedAt,
+    });
+    first.close();
+
+    const reopened = openFileDb(path);
+    try {
+      const link = monobankRepo(reopened.db).linkOf('mono-card');
+      expect(link?.paging).toBeNull();
+      expect(link?.cursorMs).toBe(windowToMs);
     } finally {
       reopened.close();
     }
@@ -517,6 +612,66 @@ describe('monobankRepo — one statement answer', () => {
     storage.close();
   });
 
+  it('Scenario: A committed page does not move a рахунок\'s moment backwards', () => {
+    // A прогін reads the answer this phone holds, the monobank screen stores a newer one while it
+    // works, and the прогін then commits a page carrying the older moment it read. Overwriting
+    // would leave this рахунок behind the answer the next прогін reads — which reads a link the
+    // newest answer does not name as «the token no longer shows it» and would hand this one
+    // `unavailable` for up to a межа свіжості, silently.
+    const newer = new Date('2026-08-28T10:00:00.000Z');
+    repo.upsertAccounts([{ ...monoCard, bankBalance: money(777_00, 'UAH') }], newer);
+
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [spent('t1', 12550, 'СІЛЬПО')],
+      newlySeenIds: ['t1'],
+      bankBalance: money(111_00, 'UAH'),
+      obtainedAt: new Date('2026-08-28T09:00:00.000Z'),
+      cursorMs: boundaryMs + 1000,
+      storedAt: new Date('2026-08-28T10:05:00.000Z'),
+    });
+
+    // The pair together or neither: the newer figure keeps its newer moment.
+    expect(repo.getAccount('mono-card')?.obtainedAt).toEqual(newer);
+    expect(repo.getAccount('mono-card')?.bankBalance).toEqual(money(777_00, 'UAH'));
+    // And the page itself stored, cursor and all — the balance is the only thing held back.
+    expect(txs.listAll()).toHaveLength(1);
+    expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundaryMs + 1000);
+  });
+
+  it('A committed page still moves the moment forward', () => {
+    const later = new Date('2026-08-28T11:00:00.000Z');
+
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [],
+      newlySeenIds: ['t9'],
+      bankBalance: money(222_00, 'UAH'),
+      obtainedAt: later,
+      cursorMs: boundaryMs + 2000,
+      storedAt: later,
+    });
+
+    expect(repo.getAccount('mono-card')?.obtainedAt).toEqual(later);
+    expect(repo.getAccount('mono-card')?.bankBalance).toEqual(money(222_00, 'UAH'));
+  });
+
+  it('A fetched client-info answer still overwrites a row dated in the future', () => {
+    // `upsertAccounts` is deliberately not held back the same way. A row dated after the device's
+    // clock — an NTP correction, a clock set by hand — is healed only by an answer whose moment is
+    // *earlier*, and a rule that refused that would leave the row future-dated for ever and send
+    // every прогін back to client-info: the very defect the межа свіжості exists to remove.
+    const future = new Date('2027-01-01T00:00:00.000Z');
+    repo.upsertAccounts([monoCard], future);
+    expect(repo.getAccount('mono-card')?.obtainedAt).toEqual(future);
+
+    const healed = new Date('2026-08-28T12:00:00.000Z');
+    repo.upsertAccounts([{ ...monoCard, bankBalance: money(333_00, 'UAH') }], healed);
+
+    expect(repo.getAccount('mono-card')?.obtainedAt).toEqual(healed);
+    expect(repo.getAccount('mono-card')?.bankBalance).toEqual(money(333_00, 'UAH'));
+  });
+
   it('Scenario: A complete answer survives restart whole', () => {
     const three = [spent('t1', 12550, 'СІЛЬПО'), spent('t2', 8900, 'Uklon'), arrived('t3', 30000)];
     const later = new Date('2026-08-28T09:00:00.000Z');
@@ -576,6 +731,70 @@ describe('monobankRepo — one statement answer', () => {
     expect(repo.importedIds('mono-card')).toEqual(new Set());
     expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundaryMs);
     expect(repo.getAccount('mono-card')).toEqual({ ...monoCard, obtainedAt });
+  });
+
+  it('A paging position never outlives the answer that was meant to produce it', () => {
+    // The link is half-way through a window: a position stands, written by an answer that stored.
+    const windowToMs = boundaryMs + 31 * 86_400_000;
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [],
+      newlySeenIds: ['item-1'],
+      bankBalance: money(4_800_00, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs,
+      storedAt,
+      paging: { windowToMs, requestToMs: boundaryMs + 20 * 86_400_000 },
+    });
+
+    const rejected = expenseByDefault({
+      id: 't9',
+      date: '2026-08-27',
+      accountId: 'card',
+      amount: money(8900, 'UAH'),
+      // A категорія no row has: the foreign key refuses it, halfway through the answer.
+      categoryId: 'no-such-category',
+    });
+
+    // The next answer would narrow the window further — and it does not store at all.
+    expect(() =>
+      repo.commitStatementAnswer({
+        monobankAccountId: 'mono-card',
+        transactions: [rejected],
+        newlySeenIds: ['item-2'],
+        bankBalance: money(4_800_00, 'UAH'),
+        obtainedAt,
+        cursorMs: boundaryMs,
+        storedAt,
+        paging: { windowToMs, requestToMs: boundaryMs + 10 * 86_400_000 },
+      }),
+    ).toThrow(/FOREIGN KEY constraint failed/);
+
+    // So the position is the one the stored answer left, not the one the refused answer proposed:
+    // it is written in that answer's own transaction and rolls back with it.
+    expect(repo.linkOf('mono-card')?.paging).toEqual({
+      windowToMs,
+      requestToMs: boundaryMs + 20 * 86_400_000,
+    });
+
+    // And an answer that would have cleared it clears nothing when it does not store either.
+    expect(() =>
+      repo.commitStatementAnswer({
+        monobankAccountId: 'mono-card',
+        transactions: [rejected],
+        newlySeenIds: ['item-3'],
+        bankBalance: money(4_800_00, 'UAH'),
+        obtainedAt,
+        cursorMs: windowToMs,
+        storedAt,
+      }),
+    ).toThrow(/FOREIGN KEY constraint failed/);
+
+    expect(repo.linkOf('mono-card')?.paging).toEqual({
+      windowToMs,
+      requestToMs: boundaryMs + 20 * 86_400_000,
+    });
+    expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundaryMs);
   });
 
   it('Scenario: Deleting a transaction keeps its imported id', () => {
@@ -752,6 +971,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
+        paging: null,
       },
       {
         monobankAccountId: 'mono-jar',
@@ -760,6 +980,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
+        paging: null,
       },
       {
         monobankAccountId: 'mono-white',
@@ -768,6 +989,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         cursorMs: boundaryMs,
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
+        paging: null,
       },
     ]);
     // The рахунок a proposal promised to create exists, with the currency the link demands.

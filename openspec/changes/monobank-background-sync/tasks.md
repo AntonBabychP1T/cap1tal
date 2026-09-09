@@ -113,11 +113,11 @@
       `syncMonobankSyncTask()` after the migrations and on every return to the foreground; subscribe
       to `onSyncState` and, when a run ends, start a full run only if `followUpDue` over the
       attempt just written and `AppState` says so — never by asking `syncDue` again (design D6,
-      D9). Verify: `npm run typecheck` and the smoke of §8.
+      D9). Verify: `npm run typecheck` and the smoke of §9.
 - [x] 5.2 In `src/app/manage/monobank.tsx`: render `backgroundNote(stored.links)` in the sync
       section, name every outcome in the legend line — «скасовано» and «перенесено» join the four
       — and re-assert `syncMonobankSyncTask()` whenever the number of links changes (design D9,
-      D10). Verify: `npm run typecheck`, the legend test of task 3.1, and the smoke of §8.
+      D10). Verify: `npm run typecheck`, the legend test of task 3.1, and the smoke of §9.
 
 ## 6. The documents
 
@@ -135,14 +135,83 @@
       D9 — one sentence that the interval is now the app's shared one and the definition lives at
       the entry (design D2, D4, D10).
 
-## 7. The gate
+## 7. The defect the owner's phone found
 
-- [x] 7.1 Run `npm run verify` and paste the final lines
-- [ ] 7.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+The report of 2026-09-09 (commit `3c296ab`): `platinum ··6628` has never synced, and the other
+рахунки had not moved since 2026-09-07 across five openings, with no monobank failure in the
+журнал — the signature of runs ending `postponed`, the one outcome that says nothing. Two causes,
+and both have to be closed for the рахунок to finish (design D11, and the corrected D5 risk).
 
-## 8. Smoke
+- [x] 7.1 Remember where paging got to. Add a migration giving `monobank_links` two nullable
+      columns — the end of the window being paged and the end the next request should ask for —
+      and carry them through `src/db/schema.ts` and `src/db/monobank-repo.ts`
+      (`StoredMonobankLink`, `commitStatementAnswer`), leaving them out of `src/db/backup-repo.ts`
+      and `src/backup/format.ts` for `last_attempted_at`'s reason (design D11) — `format.ts`'s own
+      prose says `last_attempted_at` «is the one column excluded», which after this is three, so
+      that sentence is corrected where it stands. Verify: the migrations test runs every committed
+      migration on an empty database, and a repository test stores and reads the pair back and
+      proves a бекап carries none of the three. Also covers persistence's «A half-paged window
+      survives a restart», «A link with no window in progress remembers no position», «Existing
+      links survive gaining the paging position» — links, cursors, imported ids and balances
+      written under the previously committed migrations alone, then brought to the current shape —
+      and «A бекап carries no paging position».
+- [x] 7.2 Resume from it. In `src/monobank/coordinator.ts`, write the pair after each full answer
+      and clear it when a window answers short; when a рахунок starts with a pair recorded, work
+      that window first — resumed at the remembered request end — and move the cursor to the
+      remembered *window* end when it finishes, then plan the rest from there. A remembered window
+      end at or below the cursor is discarded. Verify: `src/monobank/coordinator.test.ts` covers
+      monobank-sync's «Paging stopped in the middle of a window continues in the next run», «An
+      account larger than one run finishes over several runs», «The cursor moves to the paged
+      window's end, not the run's», «A failure over a half-paged window keeps the position», «A
+      position that no longer describes work left is discarded» and «A finished window leaves no
+      position» — the resume ones by running a second coordinator over what the first left, and
+      each of them written to fail against today's code before the code moves.
+- [x] 7.3 Do not spend a whole run on the answer. In `src/monobank/yielding.ts`, `foregroundRun`
+      answers `postponed` no while the run has been asked for no wait yet — the wait is the only
+      thing the coordinator tells the port, and the pace calls one before every request but the
+      first, *unless the device already owes the bank the minute between requests*, in which case a
+      wait precedes the first request too and the run stops having sent nothing. That case is not a
+      miss and the spec names it: such a run has nothing it may send. `budgetedRun` is left exactly
+      as it is (design D12). `src/hooks/monobank-ports.ts` and its
+      `AppState` reading are unchanged **by this change**: Android offers no finer answer, and the
+      design says so rather than the code pretending otherwise. (The file is modified in the shared
+      tree by `journal-diagnostics`, which adds journaling and touches neither port.) Verify: `src/monobank/yielding.test.ts` covers
+      monobank-sync's «A run that has sent nothing does not yield» and «A run that owes the bank a
+      minute sends nothing while the app is away», and the existing «Leaving the app stops the run
+      at its next request», «The budget stops the run before a wait it cannot hold» and «A run
+      without a budget postpones nothing» must all still pass unchanged.
+- [x] 7.4 `.claude/rules/database.md` and `docs/app-overview.md` §4.4: a рахунок whose вікно needs
+      more pages than one прогін affords now carries its place between прогони, so «перенесено» on
+      such a рахунок means progress rather than repetition.
 
-- [x] 8.1 Run the `smoke-runner` subagent on the emulator for the plumbing, which needs no token:
+## 8. The gate
+
+- [x] 8.1 Run `npm run verify` and paste the final lines
+
+      ```
+       Test Files  164 passed (164)
+            Tests  3234 passed (3234)
+      ✔ verify passed (a92fbe5cb49bfa3264cfce479cb7cf28fc2d6541)
+      ```
+
+      The fingerprint is of the tree as it stood the instant before this paste was written into
+      this file, which is the closest a record kept inside a watched file can come to its own
+      subject. The run after the paste is the same 164 files and 3234 tests.
+- [x] 8.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+
+      **PASS on the third pass.** The first found the `BACKUP_SCHEMA_VERSION` entanglement with
+      `journal-diagnostics` (closed by recording both answers in `format.ts` and by task 10.2),
+      the untested atomicity of the paging write, an unreachable guard in `resumedWindow` and an
+      inexact comment about the window's start. The second found that «A run SHALL NOT yield before
+      it has sent its first request» was not what the code does — `paced` waits before the *first*
+      request too when the device owes the bank the gap, so a run starting away sends nothing. The
+      code was judged right and the spec narrowed to match: the exception is now named in the
+      requirement, in design D12 and in a scenario of its own. The third pass found no CRITICAL;
+      its three warnings are the spec wording (fixed), and tasks 9.2 and 10.2, which stay open.
+
+## 9. Smoke
+
+- [x] 9.1 Run the `smoke-runner` subagent on the emulator for the plumbing, which needs no token:
       after `scripts/android.sh up`, link nothing and confirm `logs` shows no task registered;
       seed one link as `monobank-sync-fairness` §8 did and confirm the registration and the new
       sentence in the sync section; send the app to the background (`key home`), force the
@@ -185,9 +254,12 @@
       release build embeds the bundle and has no such window. `am force-stop` is also the wrong
       tool for this scenario: Android cancels a force-stopped app's jobs, so there is nothing left
       to force; `am kill` is what leaves the job and empties the process.
-- [ ] 8.2 The money path is the owner's, on the phone with the token, as `monobank-connect-flow`
+- [ ] 9.2 The money path is the owner's, on the phone with the token, as `monobank-connect-flow`
       records it: link the рахунки, leave the app, come back after half an hour and read the
       monobank screen — «Синхронізовано N з M рахунків» grown, or «Остання синхронізація» moved;
+      the рахунок with the most транзакції — the one that has never completed a sync — reaches
+      «Синхронізовано» after a few chances instead of standing at «Ще не синхронізовано» for ever,
+      which is the defect §7 exists for;
       start «Синхронізувати» on the monobank screen, leave the app mid-run and come back — the
       result names the unfinished рахунки «перенесено» and a full run starts by itself; open the
       app while a background run is going on — Головний says «Синхронізація…» and, when it ends
@@ -195,11 +267,37 @@
       bank's app, one «Не вдалося синхронізувати monobank» in the shade and no second one on the
       next chance. Record what was seen here.
 
-## 9. Blocking: the archive order
+      **Run on 2026-09-09, and it failed** — репорт `cap1tal-report-2026-09-09-1747` (commit
+      3c296ab, SM-S921B, android 16). Nine рахунки linked; the whole журнал held thirteen
+      `GET /personal/client-info`, two `GET /bank/currency` and **not one**
+      `GET /personal/statement`, over two days and both in front of the owner and behind them.
+      Every прогін spent the bank's one-request-a-minute allowance on the client-info request that
+      opens it and then owed a full minute before its first statement request; one chance sat inside
+      that wait for 1,199,579 ms because Android stops JS timers along with the Activity, holding
+      the one-run lock, and the two chances that followed answered `already-running`. Because no
+      statement request was ever sent, no хід was ever taken, so `syncOrder` returned the same order
+      every time and the same рахунок headed every прогін.
 
-- [ ] 9.1 **Do not archive this change before `qa-sweep-2026-09` is archived.** Both MODIFY the
+      What it found is `monobank-sync-cadence`, and the two are read together: this change's budget
+      requirement is the one that could not work, and that change REMOVES it. §9.2 is re-run there
+      as its own §9.2, against the журнал rather than against a finished sync.
+
+## 10. Blocking: the archive order
+
+- [ ] 10.1 **Do not archive this change before `qa-sweep-2026-09` is archived.** Both MODIFY the
       monobank-sync-screen requirement «Sync progress and every terminal outcome are
       understandable and retryable»; this change's block is the union of the two, so it must be
       the one that lands last. Verify before archiving: `openspec list` shows `qa-sweep-2026-09`
       archived and `openspec/specs/monobank-sync-screen/spec.md` already carries «Sync without a
       token offers the token, not a retry».
+
+- [ ] 10.2 **Integrate `journal-diagnostics` before this change.** §7's migration was generated on
+      top of that change's `0021` and is therefore `0022`, and `BACKUP_SCHEMA_VERSION` counts
+      migrations rather than changes: on a tree carrying this change alone the constant is 23
+      against 22 migrations and `format.test.ts` — the tripwire that makes every migration a
+      deliberate answer — goes red. `src/db/migrations.test.ts`'s `BEFORE_THE_PAGING = 22` is the
+      same fact from the other side, and `drizzle/meta/_journal.json` and `drizzle/migrations.js`
+      carry both changes' hunks in lines that cannot be split. `src/backup/format.ts` records both
+      answers, so whichever lands second finds the history whole. Verify before integrating:
+      `npm run verify` green on a tree that carries `journal-diagnostics` and then this change,
+      in that order.

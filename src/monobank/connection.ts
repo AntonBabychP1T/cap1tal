@@ -27,6 +27,20 @@ export interface ConnectionPorts {
   readonly cacheAccounts: (accounts: readonly MonobankAccount[], obtainedAt: Date) => void;
   /** The clock, injected as everywhere else — the moment the balances were obtained. */
   readonly now: () => Date;
+  /**
+   * A request was sent to the personal API. The same `noteRequest` a прогін calls, and for the same
+   * reason: the bank's one request a minute belongs to the *device*, so a request this screen makes
+   * has to be counted like any other.
+   *
+   * It matters more than it looks. A прогін that already holds a fresh client-info answer spends
+   * its allowance on the statement — so «Синхронізувати» pressed seconds after this screen refreshed
+   * would fire a statement request the bank refuses, and, unlike the client-info request it
+   * replaced, that one costs the рахунок its хід.
+   *
+   * Optional, and swallowed if it throws: a write whose only job is to pace the *next* request must
+   * never fail the connection.
+   */
+  readonly noteRequest?: (at: Date) => void;
 }
 
 /**
@@ -91,6 +105,15 @@ export function monobankConnection(ports: ConnectionPorts) {
     }
   }
 
+  /** Remembered before the answer, because a request that comes back refused was still sent. */
+  const noteRequest = (): void => {
+    try {
+      ports.noteRequest?.(ports.now());
+    } catch {
+      // Nothing to do and nothing to say: the connection carries on.
+    }
+  };
+
   return {
     /** Whether a token is kept, without reading anything else — what the route opens on. */
     async state(): Promise<ConnectionState> {
@@ -107,6 +130,7 @@ export function monobankConnection(ports: ConnectionPorts) {
      * nothing else, so a rejected replacement leaves the working connection alone.
      */
     async submit(candidate: string): Promise<ConnectionResult> {
+      noteRequest();
       const answer = await fetchClientInfo(ports.fetch, candidate);
       if (answer.kind !== 'ok') {
         return failure(answer);
@@ -133,6 +157,7 @@ export function monobankConnection(ports: ConnectionPorts) {
       if (!stored.token) {
         return { kind: 'not-configured' };
       }
+      noteRequest();
       const answer = await fetchClientInfo(ports.fetch, stored.token);
       if (answer.kind !== 'ok') {
         return failure(answer);

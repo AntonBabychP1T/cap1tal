@@ -3,7 +3,7 @@ import type { SyncPorts } from './coordinator';
 
 /**
  * How a run gives up — its wait, or a request the bank never answers — as three small port
- * builders, so the coordinator knows nothing about budgets, foregrounds or clocks beyond the
+ * builders, so the coordinator knows nothing about chances, foregrounds or clocks beyond the
  * pacing it already does.
  *
  * The coordinator asks two things of the outside world between requests: `wait(ms)` before a
@@ -11,8 +11,8 @@ import type { SyncPorts } from './coordinator';
  * for those two, written over an injected timer so every path runs under `npm run verify` with
  * no real millisecond waited:
  *
- * - `budgetedRun` — a background run at the end of its budget declines to start a wait that would
- *   outlast it, and says so;
+ * - `chanceRun` — a run on a chance the phone gives sends what the pace already allows and never
+ *   waits, so nothing it decides can be frozen with the app;
  * - `foregroundRun` — a run in front of the owner whose app has left the foreground ends its wait
  *   at once and says so;
  * - `withRequestTimeout` — a request the bank has not answered within the timeout is given up, so
@@ -38,33 +38,32 @@ export const deviceTimer: SetTimer = (fn, ms) => {
 };
 
 /**
- * A run given a time budget: the ports of a background run.
+ * A run on a chance the phone gives: it sends what the pace already allows, and never waits.
  *
- * The budget is enforced where the run spends time — the wait before a request — and nowhere
- * else. A wait that would end past the deadline is not started: it resolves at once and is
- * remembered, so the question that follows it answers yes and the run stops before sending. A
- * request already sent is never interrupted here: the budget is asked before a request, and an
- * answer that arrives after the deadline is stored whole, because that is what the coordinator
- * does with every answer it gets.
+ * No clock, no deadline, no timer — the whole policy is that a wait asked for is a wait not taken.
+ * The coordinator asks `wait(ms)` only when it owes part of the API's minimum gap, and asks
+ * `postponed()` immediately after, so «was a wait asked for» *is* «this run owes a gap it has not
+ * sat out», and answering from that alone is enough.
+ *
+ * It replaces a version that gave a chance eight minutes and let it sleep through the gap on a
+ * `setTimeout`. Android stops JS timers along with the Activity, so on the owner's phone one such
+ * wait of fifty-nine seconds lasted twenty minutes: the run held the single-run lock the whole
+ * time, the two chances that followed found a run already going and did nothing, and across two
+ * days not one statement request was sent. What paces the app instead is WorkManager's own quarter
+ * of an hour between chances — longer than the gap the bank asks for, and the one timer Android
+ * does not freeze.
+ *
+ * A request already sent is never interrupted: the pace is asked before a request, and an answer
+ * that arrives is stored whole, because that is what the coordinator does with every answer.
  */
-export function budgetedRun(input: {
-  readonly nowMs: () => number;
-  readonly setTimer: SetTimer;
-  /** Epoch milliseconds past which no wait may end and no request may be sent. */
-  readonly deadlineMs: number;
-}): YieldingPorts {
-  let gaveUp = false;
+export function chanceRun(): YieldingPorts {
+  let owed = false;
   return {
-    wait: (ms) => {
-      if (input.nowMs() + ms > input.deadlineMs) {
-        gaveUp = true;
-        return Promise.resolve();
-      }
-      return new Promise<void>((resolve) => {
-        input.setTimer(resolve, ms);
-      });
+    wait: () => {
+      owed = true;
+      return Promise.resolve();
     },
-    postponed: () => gaveUp || input.nowMs() >= input.deadlineMs,
+    postponed: () => owed,
   };
 }
 
@@ -79,6 +78,20 @@ export function budgetedRun(input: {
  * opened. The foreground event, unlike a timer, reaches a paused JS thread, and it is what wakes
  * the wait. A request already in flight answers through a native callback, which is not paused
  * either, and its page commits before the run asks and stops.
+ *
+ * The phone answers «in front» or «away» and nothing finer — a dialog drawn over the app reads
+ * exactly as the owner leaving — so this policy does not guess at the difference. What it refuses
+ * to do is spend a whole run on the answer: a run that has been asked for no wait yet does not
+ * yield, so a phone already answering «away» when a run starts costs that run one request instead
+ * of all of it (design D12).
+ *
+ * The wait is the only thing the coordinator tells this port, so it is what «the run has begun
+ * spending» is read from. The pace asks for one before every request but the run's first — *unless
+ * the device already owes the bank the minute between requests*, in which case a wait comes before
+ * the first request too and this port yields with nothing sent. That is not a miss: such a run has
+ * nothing it may send. The wait it owes is the pace's, no timer will run it out with the app away,
+ * and a request sent regardless would be refused rather than answered. The spec names that case
+ * rather than letting this rule sound broader than it is.
  */
 export function foregroundRun(input: {
   readonly setTimer: SetTimer;
@@ -87,8 +100,10 @@ export function foregroundRun(input: {
   /** Called once when the app leaves the foreground; answers with how to stop listening. */
   readonly onLeaveForeground: (fn: () => void) => () => void;
 }): YieldingPorts {
+  let began = false;
   return {
     wait: (ms) => {
+      began = true;
       if (!input.inForeground()) {
         return Promise.resolve();
       }
@@ -104,7 +119,7 @@ export function foregroundRun(input: {
         stopListening = input.onLeaveForeground(done);
       });
     },
-    postponed: () => !input.inForeground(),
+    postponed: () => began && !input.inForeground(),
   };
 }
 
@@ -112,7 +127,7 @@ export function foregroundRun(input: {
  * How long a request may go unanswered before it is given up.
  *
  * Thirty seconds: generous for a 500-item page and short against a background run's eight-minute
- * budget. React Native's Android client sets no timeout of its own, so without this a request the
+ * chance. React Native's Android client sets no timeout of its own, so without this a request the
  * bank never answers is a run that never ends — the one-run lock held, every later start waiting
  * on it, and a background worker killed at ten minutes and retried into the same wait.
  */
@@ -129,6 +144,23 @@ export type AbortableFetch = (
 ) => ReturnType<AuthFetchLike>;
 
 /**
+ * The rejection a request that was never answered carries — the message unchanged, and a `name`
+ * beside it.
+ *
+ * The name is what `journal.watchFetch` reads to write «не відповів» rather than «зірвався». It
+ * has to be a name and not the message: the журнал writes the app's own enumerated word for a
+ * rejected request and never the caught error's text, because a platform's rejection may quote the
+ * whole URL it was given and undo the path shaping `describeRequest` applies.
+ */
+export const REQUEST_TIMEOUT_NAME = 'RequestTimeout';
+
+function requestTimeout(timeoutMs: number): Error {
+  const error = new Error(`monobank did not answer within ${timeoutMs} ms`);
+  error.name = REQUEST_TIMEOUT_NAME;
+  return error;
+}
+
+/**
  * A request that does not answer within `timeoutMs` is given up: the promise rejects, and
  * `fetchClientInfo` / `fetchStatement` turn a rejection into `unavailable` exactly as they do a
  * network failure — nothing stored, the cursor untouched, the turn taken, the run going on.
@@ -136,7 +168,7 @@ export type AbortableFetch = (
  * React Native's Android client sets no timeout of its own, and a request the bank never answers
  * would be a run that never ends: the one-run lock held, every later start waiting on it, and a
  * background run's worker killed and retried into the same wait. The timeout is generous for a
- * 500-item page and short against a background run's budget.
+ * 500-item page and short against the ten minutes WorkManager allows a worker.
  *
  * An `AbortController` is used when the platform has one, so the socket goes with the promise; a
  * platform without one still gets the rejection, which is what the run needs.
@@ -156,7 +188,7 @@ export function withRequestTimeout(
         }
         settled = true;
         controller?.abort();
-        reject(new Error(`monobank did not answer within ${input.timeoutMs} ms`));
+        reject(requestTimeout(input.timeoutMs));
       }, input.timeoutMs);
       fetch(url, headers, controller?.signal).then(
         (response) => {

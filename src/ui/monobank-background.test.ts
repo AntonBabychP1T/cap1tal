@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { accountsRepo } from '../db/accounts-repo';
@@ -19,9 +21,11 @@ import { inMemoryMonobankTokenStore, type MonobankTokenStore } from '../platform
 import { ALERT_NOTICES } from '../reminders/notices';
 import type { JournalEntry } from '../reporting/journal';
 import { startOfLocalDayMs } from './dates';
-import { bindJournal, resetJournalForTests } from './journal';
+import { bindTestJournal } from './journal';
 import {
   backgroundTurnsWanted,
+  journalChance,
+  journalRegistration,
   runBackgroundTurn,
   type BackgroundTurnPorts,
 } from './monobank-background';
@@ -38,7 +42,6 @@ const TOKEN = 'uT3st_TOKENnnnnnnnnnnnnnnnnnnnnnnnnnnnnn';
 const CHANCE_AT = Date.UTC(2026, 8, 2, 3, 30, 0);
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
-const BUDGET_MS = 8 * MINUTE;
 const SYNC_START = '2026-09-01' as IsoDate;
 const AUGUST_28 = Math.floor(Date.UTC(2026, 7, 28, 9, 0, 0) / 1000);
 
@@ -59,17 +62,6 @@ const statementItem = (id: string) => ({
 
 /** Everything queued in the microtask and macrotask lanes, let through. */
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-function bindTestJournal(): () => readonly JournalEntry[] {
-  const entries: JournalEntry[] = [];
-  resetJournalForTests();
-  bindJournal({
-    append: (entry) => entries.push(entry),
-    tail: () => entries,
-    byId: (id) => entries.find((entry) => entry.id === id) ?? null,
-  });
-  return () => entries;
-}
 
 describe('one chance the phone gives', () => {
   let storage: TestStorage;
@@ -175,7 +167,11 @@ describe('one chance the phone gives', () => {
    * `runBackgroundTurn` that forgot to replace it would send nothing and fail here rather than in
    * a smoke test nobody can run without a token.
    */
-  function syncPortsLike(fetchImpl: AuthFetchLike, tokenStore?: MonobankTokenStore): SyncPorts {
+  function syncPortsLike(
+    fetchImpl: AuthFetchLike,
+    tokenStore?: MonobankTokenStore,
+    gapMs = 0,
+  ): SyncPorts {
     return {
       tokenStore: tokenStore ?? inMemoryMonobankTokenStore({ token: TOKEN }),
       fetch: fetchImpl,
@@ -187,8 +183,22 @@ describe('one chance the phone gives', () => {
       wait: () => Promise.resolve(),
       postponed: () => true,
       newId: () => `imported-${txs.listAll().length + 1}`,
-      minRequestGapMs: 0,
+      minRequestGapMs: gapMs,
     };
+  }
+
+  /** A client-info answer of this phone's own for `n` linked рахунки, stored `atMs`. */
+  function rememberCards(n: number, atMs: number): void {
+    repo.upsertAccounts(
+      Array.from({ length: n }, (_, index) => ({
+        id: `mono-${index}`,
+        kind: 'card' as const,
+        name: `black ··${index}`,
+        currency: 'UAH' as const,
+        bankBalance: money(990_000, 'UAH'),
+      })),
+      new Date(atMs),
+    );
   }
 
   function turnPorts(
@@ -196,19 +206,20 @@ describe('one chance the phone gives', () => {
     over: {
       tokenStore?: MonobankTokenStore;
       attended?: boolean;
-      budgetMs?: number;
+      /**
+       * The bank's minute, for the tests whose subject is the pace. Zero everywhere else, so a
+       * test about announcing or the тихий інтервал is not also a test about how many requests a
+       * chance affords.
+       */
+      gapMs?: number;
     } = {},
   ): BackgroundTurnPorts {
     return {
-      sync: syncPortsLike(fetchImpl, over.tokenStore),
+      sync: syncPortsLike(fetchImpl, over.tokenStore, over.gapMs),
       storage: repo,
       alerts: { notifications: phone, storage: reminders, now: () => new Date(clockMs) },
       attended: () => over.attended ?? false,
       nowMs: () => clockMs,
-      budgetMs: over.budgetMs ?? BUDGET_MS,
-      // The budget is what a background run gives up on; nothing here ever reaches a timer,
-      // because the request gap is zero.
-      setTimer: () => () => undefined,
     };
   }
 
@@ -358,9 +369,11 @@ describe('one chance the phone gives', () => {
       expect(phone.posted()).toEqual([ALERT_NOTICES['monobank-sync'].id]);
       expect(reminders.outstandingKinds()).toEqual(['monobank-sync']);
       expect(ALERT_NOTICES['monobank-sync'].route).toBe('/manage/monobank');
-      expect(journalOf().map((entry) => [entry.kind, entry.name])).toEqual([
-        ['alert', 'monobank-sync'],
-      ]);
+      expect(
+        journalOf()
+          .filter((entry) => entry.kind === 'alert')
+          .map((entry) => [entry.kind, entry.name]),
+      ).toEqual([['alert', 'monobank-sync']]);
 
       // The next chance, a quiet interval later, ends the same way.
       clockMs += QUIET_INTERVAL_MS + MINUTE;
@@ -369,7 +382,7 @@ describe('one chance the phone gives', () => {
       // One failure is one сповіщення and one record, however many runs end the same way: a phone
       // whose token stays rejected would otherwise flush the журнал within days.
       expect(phone.posted()).toEqual([ALERT_NOTICES['monobank-sync'].id]);
-      expect(journalOf()).toHaveLength(1);
+      expect(journalOf().filter((entry) => entry.kind === 'alert')).toHaveLength(1);
     });
 
     it('Scenario: A phone offline for one run stays silent', async () => {
@@ -383,7 +396,7 @@ describe('one chance the phone gives', () => {
       // section that also holds their чернетки.
       expect(phone.posted()).toEqual([]);
       expect(reminders.outstandingKinds()).toEqual([]);
-      expect(journalOf()).toEqual([]);
+      expect(journalOf().filter((entry) => entry.kind === 'alert')).toEqual([]);
     });
 
     it('Scenario: A day without a sync is announced', async () => {
@@ -417,14 +430,17 @@ describe('one chance the phone gives', () => {
       repo.markSynced('mono-1', new Date(CHANCE_AT - 40 * HOUR));
       const bankPorts = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
 
-      // A budget already spent: the run stops before its first request.
-      const turn = await runBackgroundTurn(turnPorts(bankPorts.fetchImpl, { budgetMs: 0 }));
+      // The whole of the bank's minute still owed: the chance stops before its first request.
+      repo.noteRequest(new Date(CHANCE_AT - 1));
+      const turn = await runBackgroundTurn(turnPorts(bankPorts.fetchImpl, { gapMs: MINUTE }));
 
       expect(turn).toMatchObject({ kind: 'ran', outcome: 'postponed' });
       expect(bankPorts.requests()).toBe(0);
       expect(phone.posted()).toEqual([]);
       expect(reminders.outstandingKinds()).toEqual([]);
-      expect(journalOf()).toEqual([]);
+      // Nothing announced: a run that merely stopped is not a run that failed. The run's own
+      // `step` entries are beside that and are asserted where they belong.
+      expect(journalOf().filter((entry) => entry.kind === 'alert')).toEqual([]);
       // Neither did it date a sync that did not happen.
       expect(repo.linkOf('mono-0')?.lastSyncedAtMs).toBe(CHANCE_AT - 40 * HOUR);
 
@@ -480,9 +496,177 @@ describe('one chance the phone gives', () => {
       // carrying no detail of its own. What the run *did* is visible where every run's work is:
       // in the транзакції it stored and the moments it moved.
       expect(phone.posted()).toEqual([ALERT_NOTICES['monobank-sync'].id]);
-      expect(journalOf().map((entry) => [entry.name, entry.detail])).toEqual([
-        ['monobank-sync', undefined],
-      ]);
+      expect(
+        journalOf()
+          .filter((entry) => entry.kind === 'alert')
+          .map((entry) => [entry.name, entry.detail]),
+      ).toEqual([['monobank-sync', undefined]]);
+      // And what the run itself wrote is the app's own vocabulary and nothing else — the phase
+      // words and the coordinator's own outcome, never a sentence composed about the failure.
+      expect(
+        journalOf()
+          .filter((entry) => entry.kind === 'step')
+          .map((entry) => entry.detail),
+      ).toEqual(['почалось', 'invalid-token']);
     });
   });
+
+  describe('what the журнал records about a chance', () => {
+    const syncTask = readFileSync(
+      new URL('../platform/monobank-sync-task.ts', import.meta.url),
+      'utf8',
+    );
+    const backgroundTurn = readFileSync(
+      new URL('../platform/background-turn.ts', import.meta.url),
+      'utf8',
+    );
+
+    it('Scenario: A background chance is an entry — headless, with what the run came to', () => {
+      journalChance({
+        turn: { kind: 'ran', outcome: 'complete', imported: 4 },
+        attended: false,
+        run: 'r1',
+      });
+
+      expect(journalOf().map((e) => [e.kind, e.name, e.detail])).toEqual([
+        ['native', 'background-chance', 'background · complete'],
+      ]);
+      expect(journalOf()[0]?.counts).toEqual({ imported: 4 });
+      // The same mark the run it started carries, so the two read as one operation.
+      expect(journalOf()[0]?.run).toBe('r1');
+    });
+
+    it('says so when the chance ran while the app was in front of the owner', () => {
+      journalChance({ turn: { kind: 'ran', outcome: 'unavailable', imported: 0 }, attended: true });
+
+      expect(journalOf()[0]?.detail).toBe('active · unavailable');
+    });
+
+    it("names a chance that did nothing by the turn's own word", () => {
+      journalChance({ turn: { kind: 'not-due' }, attended: false });
+      journalChance({ turn: { kind: 'already-running' }, attended: false });
+      journalChance({ turn: { kind: 'not-configured' }, attended: false });
+
+      expect(journalOf().map((e) => e.detail)).toEqual([
+        'background · not-due',
+        'background · already-running',
+        'background · not-configured',
+      ]);
+      // Nothing ran, so nothing measured anything.
+      expect(journalOf().every((e) => e.counts === undefined)).toBe(true);
+    });
+
+    it('Scenario: A refused registration is an entry', () => {
+      expect(journalRegistration('refused')).toBe(true);
+
+      expect(journalOf().map((e) => [e.kind, e.name, e.detail])).toEqual([
+        ['native', 'background-registration', 'refused'],
+      ]);
+    });
+
+    it('records a registration and an unregistration, and not the ordinary no-op', () => {
+      expect(journalRegistration('registered')).toBe(true);
+      expect(journalRegistration('unregistered')).toBe(true);
+      // Re-asserted on every launch and every foreground: an entry each time would be noise.
+      expect(journalRegistration('unchanged')).toBe(false);
+
+      expect(journalOf().map((e) => e.detail)).toEqual(['registered', 'unregistered']);
+    });
+
+    it('is what the two adapters call, and neither holds a decision of its own', () => {
+      expect(syncTask).toContain('journalChance({ turn, attended:');
+      expect(backgroundTurn).toContain('journalRegistration(await reconcile(name, wanted))');
+      for (const adapter of [syncTask, backgroundTurn]) {
+        expect(adapter).not.toContain('journal.record(');
+      }
+    });
+  });
+
+  describe('what a chance affords', () => {
+    const statementsOf = (calls: readonly string[]) =>
+      calls.filter((u) => u.includes('/statement/')).map((u) => u.split('/statement/')[1]!.split('/')[0]!);
+
+    it('Scenario: A chance sends what the gap allows and stops', async () => {
+      const { clientInfo } = linkCards(3);
+      rememberCards(3, CHANCE_AT - 10 * MINUTE);
+      // A quarter of an hour since this phone's last request: longer than the gap, so the chance
+      // may send — and, having sent, owes the whole of it again before a second.
+      repo.noteRequest(new Date(CHANCE_AT - 15 * MINUTE));
+      const bankPorts = bank({
+        clientInfo: () => ({ status: 200, body: clientInfo }),
+        statement: () => ({ status: 200, body: [] }),
+      });
+
+      const turn = await runBackgroundTurn(turnPorts(bankPorts.fetchImpl, { gapMs: MINUTE }));
+
+      // One request, and it went to the statement rather than to balances this phone already had.
+      expect(bankPorts.requests()).toBe(1);
+      expect(statementsOf(bankPorts.calls)).toEqual(['mono-0']);
+      expect(turn).toMatchObject({ kind: 'ran', outcome: 'postponed' });
+      // The two it never asked about took no хід, so they head the next chance's order.
+      expect(repo.linkOf('mono-1')?.lastAttemptedAtMs).toBeNull();
+      expect(repo.linkOf('mono-2')?.lastAttemptedAtMs).toBeNull();
+    });
+
+    it('Scenario: A chance that owes the gap sends nothing', async () => {
+      const { clientInfo } = linkCards(2);
+      rememberCards(2, CHANCE_AT - 10 * MINUTE);
+      repo.noteRequest(new Date(CHANCE_AT - 200));
+      const bankPorts = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
+
+      const turn = await runBackgroundTurn(turnPorts(bankPorts.fetchImpl, { gapMs: MINUTE }));
+
+      expect(bankPorts.requests()).toBe(0);
+      expect(turn).toMatchObject({ kind: 'ran', outcome: 'postponed', imported: 0 });
+    });
+
+    it('Scenario: A chance starts no timer', async () => {
+      const { clientInfo } = linkCards(2);
+      rememberCards(2, CHANCE_AT - 10 * MINUTE);
+      repo.noteRequest(new Date(CHANCE_AT - 200));
+      const bankPorts = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
+      // Nothing a chance decides may reach a timer. On the owner's phone a fifty-nine-second wait
+      // lasted twenty minutes, because Android stops JS timers along with the Activity — and the
+      // run held the single-run lock the whole time, so two further chances did nothing at all.
+      const scheduled: number[] = [];
+      const timeout = globalThis.setTimeout;
+      globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+        scheduled.push(ms ?? 0);
+        return timeout(fn, ms);
+      }) as typeof globalThis.setTimeout;
+      try {
+        await runBackgroundTurn(turnPorts(bankPorts.fetchImpl, { gapMs: MINUTE }));
+      } finally {
+        globalThis.setTimeout = timeout;
+      }
+
+      expect(scheduled).toEqual([]);
+    });
+
+    it('Scenario: Successive chances work through every рахунок', async () => {
+      const { clientInfo } = linkCards(3);
+      rememberCards(3, CHANCE_AT - 10 * MINUTE);
+      const asked: string[] = [];
+
+      for (let chance = 0; chance < 3; chance += 1) {
+        // A quarter of an hour apart, as WorkManager gives them — longer than the bank's minute,
+        // which is what makes each chance able to send one request. No timer of the app's is
+        // involved in that pacing, which is the whole point.
+        clockMs = CHANCE_AT + chance * 15 * MINUTE;
+        repo.noteRequest(new Date(clockMs - 15 * MINUTE));
+        const bankPorts = bank({
+          clientInfo: () => ({ status: 200, body: clientInfo }),
+          statement: () => ({ status: 200, body: [] }),
+        });
+
+        await runBackgroundTurn(turnPorts(bankPorts.fetchImpl, { gapMs: MINUTE }));
+        asked.push(...statementsOf(bankPorts.calls));
+      }
+
+      // Each chance asked about a different рахунок, in the order of ходи. Three chances cover
+      // three рахунки — which is how a phone with nine converges instead of looping on the first.
+      expect(asked).toEqual(['mono-0', 'mono-1', 'mono-2']);
+    });
+  });
+
 });

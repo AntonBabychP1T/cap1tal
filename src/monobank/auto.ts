@@ -151,9 +151,15 @@ export function syncDue(input: {
  * phone with links and no token — the state removing the token leaves — `syncDue` over a withdrawn
  * attempt is true again, so asking it here would be a run that withdraws, announces, starts,
  * withdraws, for as long as the app is open. Deciding from the finished run's own outcome cannot
- * loop: the follow-up runs in front of the owner without a budget, so it ends complete, failed,
- * or — if the app left meanwhile — postponed with the app no longer in front, and none of those is
- * followed by anything (design D6).
+ * loop: the follow-up runs in front of the owner, where the wait before a request is one it sits
+ * out rather than stops at, so it ends complete, failed, or — if the app left meanwhile —
+ * postponed with the app no longer in front, and none of those is followed by anything (design D6).
+ *
+ * That argument rests on `postponed` meaning «there are requests still owed that a later run can
+ * spend». Nothing may report `postponed` for a run that could only report it again — a рахунок
+ * with nothing left to ask the bank about is `complete`, and a рахунок whose boundary lies after
+ * the client-info answer a run holds is why `usableAccounts` refuses that answer rather than
+ * letting the run reach here with nothing to do.
  */
 export function followUpDue(input: {
   /** The attempt the run that just ended wrote, or `undefined` when it withdrew it. */

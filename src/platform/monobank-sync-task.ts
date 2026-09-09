@@ -6,12 +6,9 @@ import { monobank as monobankRepo } from '@/db/repos';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { ALERT_PORTS } from '@/hooks/use-alerting';
-import {
-  BACKGROUND_TURN_BUDGET_MS,
-  prepareBackgroundStorage,
-  reconcileTask,
-} from '@/platform/background-turn';
-import { backgroundTurnsWanted, runBackgroundTurn } from '@/ui/monobank-background';
+import { prepareBackgroundStorage, reconcileTask } from '@/platform/background-turn';
+import { newId } from '@/ui/id';
+import { backgroundTurnsWanted, journalChance, runBackgroundTurn } from '@/ui/monobank-background';
 
 /**
  * The monobank sync on the chances the phone gives — `expo-background-task` over WorkManager
@@ -20,8 +17,8 @@ import { backgroundTurnsWanted, runBackgroundTurn } from '@/ui/monobank-backgrou
  *
  * The division of labour is the same one the бекап's task keeps. **The system decides when we are
  * asked; the pure function decides whether we act, for how long, and what the owner hears.** What
- * is left here is four device facts — the ports, the budget, the clock and whether the app is in
- * front of the owner — and turning one typed outcome into WorkManager's two.
+ * is left here is three device facts — the ports, the clock and whether the app is in front of the
+ * owner — and turning one typed outcome into WorkManager's two.
  *
  * Defined at module scope and reached from the bundle's entry (`index.ts`), not from a screen: a
  * WorkManager wake-up with no Activity renders no route, so a definition that lived in
@@ -36,20 +33,26 @@ TaskManager.defineTask(MONOBANK_SYNC_TASK, async () => {
   try {
     // A chance can land on a dead process, which has run no migrations and bound no журнал.
     await prepareBackgroundStorage();
+    // One mark for the whole chance: the `native` entry below, the run's own two ends and every
+    // request it made read as one operation in the репорт (design D4).
+    const run = newId();
     const turn = await runBackgroundTurn({
-      // The device's own ports, with `wait` and `postponed` replaced inside `runBackgroundTurn`
-      // from the budget below — never here, so there is one place a background run's budget is
-      // applied and no way to forget it.
-      sync: syncPorts(),
+      // The device's own ports, with `wait` and `postponed` replaced inside `runBackgroundTurn` by
+      // the pair a chance answers — never here, so there is one place that decision is made and no
+      // way to forget it.
+      sync: syncPorts({}, run),
       storage: monobankRepo,
       alerts: ALERT_PORTS,
       // The worker starts a chance only while the app is in the background, but the owner may
-      // open it inside the budget, and a failure whose screen is in front of them raises no
+      // open it while the chance runs, and a failure whose screen is in front of them raises no
       // сповіщення. Read when the run ends, which is when the question is asked.
       attended: () => AppState.currentState === 'active',
       nowMs: () => Date.now(),
-      budgetMs: BACKGROUND_TURN_BUDGET_MS,
+      run,
     });
+    // What the system gave and what came of it — decided in `journalChance`, which is where it can
+    // be tested; this file holds no rule about it.
+    journalChance({ turn, attended: AppState.currentState === 'active', run });
     if (turn.kind === 'ran' && turn.imported > 0) {
       // A chance that committed транзакції moved the history; one that committed nothing leaves
       // the зведення as it was and this evaluation writes nothing.

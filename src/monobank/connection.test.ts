@@ -50,6 +50,7 @@ function connectionOver(
   cacheFails = false,
 ) {
   const cached: { accounts: readonly MonobankAccount[]; at: Date }[] = [];
+  const noted: Date[] = [];
   const ports: ConnectionPorts = {
     tokenStore,
     fetch: fetchImpl,
@@ -60,8 +61,11 @@ function connectionOver(
       cached.push({ accounts, at });
     },
     now: () => now,
+    noteRequest: (at) => {
+      noted.push(at);
+    },
   };
-  return { connection: monobankConnection(ports), cached, tokenStore };
+  return { connection: monobankConnection(ports), cached, noted, tokenStore };
 }
 
 describe('monobankConnection — keeping a token', () => {
@@ -213,5 +217,66 @@ describe('monobankConnection — refreshing and removing', () => {
     expect(await connection.state()).toEqual({ kind: 'not-configured' });
     expect(await connection.refresh()).toEqual({ kind: 'not-configured' });
     expect(cached).toEqual([]);
+  });
+});
+
+describe('the minute a request takes belongs to the device', () => {
+  it('Submitting a token notes the request it sent', async () => {
+    const { connection, noted } = connectionOver(answering(200));
+
+    await connection.submit(TOKEN);
+
+    expect(noted).toEqual([now]);
+  });
+
+  it('Refreshing notes the request it sent', async () => {
+    const { connection, noted } = connectionOver(
+      answering(200),
+      inMemoryMonobankTokenStore({ token: TOKEN }),
+    );
+
+    await connection.refresh();
+
+    expect(noted).toEqual([now]);
+  });
+
+  it('A refused answer still counted as a request', async () => {
+    // The bank was asked; that it said no does not give the minute back. A прогін that starts
+    // seconds later must owe the gap, or it will fire a statement request into a refusal — and,
+    // unlike the client-info request it now skips, that one costs the рахунок its хід.
+    const { connection, noted } = connectionOver(
+      answering(429),
+      inMemoryMonobankTokenStore({ token: TOKEN }),
+    );
+
+    await connection.refresh();
+
+    expect(noted).toEqual([now]);
+  });
+
+  it('A refresh with no token kept sends nothing and notes nothing', async () => {
+    const { connection, noted } = connectionOver(answering(200));
+
+    await connection.refresh();
+
+    expect(noted).toEqual([]);
+  });
+
+  it('Storage that will not remember the moment does not fail the connection', async () => {
+    const { connection } = connectionOver(answering(200));
+
+    // A write whose only job is to pace the next request must never cost this one.
+    const result = await monobankConnection({
+      tokenStore: inMemoryMonobankTokenStore({ token: TOKEN }),
+      fetch: answering(200),
+      cacheAccounts: () => undefined,
+      now: () => now,
+      noteRequest: () => {
+        throw new Error('database is busy');
+      },
+    }).refresh();
+
+    expect(result.kind).toBe('configured');
+    expect(connection).toBeDefined();
   });
 });
