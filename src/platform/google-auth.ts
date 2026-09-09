@@ -55,6 +55,24 @@ export type GoogleAccessToken =
   | { readonly kind: 'no-network' }
   | { readonly kind: 'not-configured' };
 
+/**
+ * What the sign-in's ending entry says: the outcome's own word, and nothing else.
+ *
+ * The app reaches Google through `expo-auth-session`'s `exchangeCodeAsync`, not through a request
+ * port this app owns, so there is no `fetch` seam to journal and the reach is recorded as an
+ * operation instead (design D5a). That matters rather than being a technicality: the репорт that
+ * prompted `journal-diagnostics` carried four «збій · backup · not-configured» entries and nothing
+ * about why, and the exchange is the likeliest place that answer lives.
+ *
+ * Pure, and here on the port rather than in the adapter, because `google-auth-device.ts` is never
+ * loaded under `verify` — an assertion about a mapping written inside it would be an assertion
+ * nobody checks (design D5). Only the outcome's own enumerated word: no URL, no authorisation
+ * code, no account label.
+ */
+export function googleConnectEnding(outcome: GoogleAuthorisation): { readonly detail: string } {
+  return { detail: outcome.kind };
+}
+
 export interface GoogleAuthPort {
   /**
    * Takes the owner through their Google account and keeps what comes back. The account label is

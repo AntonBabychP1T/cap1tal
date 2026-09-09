@@ -13,6 +13,7 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
+import { monobankRepo } from './monobank-repo';
 import { reportingRepo } from './reporting-repo';
 import {
   accounts,
@@ -791,6 +792,8 @@ describe('migrations — monobank links, progress and описи', () => {
         cursorMs: new Date('2026-08-27T21:00:00.000Z'),
         lastSyncedAt: new Date('2026-09-01T06:30:00.000Z'),
         lastAttemptedAt: null,
+        pagingWindowToMs: null,
+        pagingRequestToMs: null,
       },
     ]);
     expect(everyColumn(db)).toContain('last_synced_at');
@@ -1942,6 +1945,8 @@ describe('migrations — the moment a link last completed a sync', () => {
           cursorMs: new Date('2026-08-27T21:00:00.000Z'),
           lastSyncedAt: null,
           lastAttemptedAt: null,
+          pagingWindowToMs: null,
+          pagingRequestToMs: null,
         },
       ]);
       // And its imported item ids and its last known баланс банку are untouched.
@@ -2411,6 +2416,8 @@ describe('migrations — the last sync attempt', () => {
           cursorMs: new Date('2026-09-01T05:00:00.000Z'),
           lastSyncedAt: new Date('2026-09-01T06:00:00.000Z'),
           lastAttemptedAt: null,
+          pagingWindowToMs: null,
+          pagingRequestToMs: null,
         },
       ]);
       expect(staged.db.select().from(monobankImportedItems).all()).toHaveLength(1);
@@ -2515,15 +2522,20 @@ describe('migrations — the origin, the capture reason and the two switches', (
       }
 
       // A репорт with two screenshots and a журнал of 300 entries, written by a build that had
-      // never heard of an origin.
-      const before = reportingRepo(staged.db);
-      for (let i = 0; i < 300; i += 1) {
-        before.append({
-          id: `j${i}`,
-          at: new Date(Date.UTC(2026, 8, 3, 9, 0, 0, i)),
-          kind: 'screen',
-          name: `/route/${i}`,
-        });
+      // never heard of an origin. Written as SQL over the shape that build actually had, not
+      // through today's repository: the репорт's own row goes in the same way below, and a writer
+      // that knows columns this schema has not got is not what an old build was.
+      const journalEntries = Array.from({ length: 300 }, (_, i) => ({
+        id: `j${i}`,
+        at: new Date(Date.UTC(2026, 8, 3, 9, 0, 0, i)),
+        kind: 'screen' as const,
+        name: `/route/${i}`,
+      }));
+      for (const written of journalEntries) {
+        staged.db.run(
+          sql`INSERT INTO journal (id, at, kind, name, detail)
+              VALUES (${written.id}, ${written.at.getTime()}, ${written.kind}, ${written.name}, NULL)`,
+        );
       }
       staged.db
         .run(sql`INSERT INTO bug_reports (id, created_at, route, did, happened, expected,
@@ -2541,14 +2553,15 @@ describe('migrations — the origin, the capture reason and the two switches', (
 
       const accountsBefore = staged.db.select().from(accounts).all();
       const transactionsBefore = staged.db.select().from(transactions).all();
-      const journalBefore = before.tail();
 
       staged.migrateToLatest();
 
       const after = reportingRepo(staged.db);
       expect(staged.db.select().from(accounts).all()).toEqual(accountsBefore);
       expect(staged.db.select().from(transactions).all()).toEqual(transactionsBefore);
-      expect(after.tail()).toEqual(journalBefore);
+      // Every entry exactly as the old build wrote it — and with none of the fields the columns
+      // added since then would have made `null`.
+      expect(after.tail()).toEqual(journalEntries);
       expect(after.tail()).toHaveLength(300);
 
       const old = after.get('old');
@@ -2834,6 +2847,8 @@ describe("migrations — the request pace and each link's turn", () => {
           cursorMs: new Date('2026-09-01T05:00:00.000Z'),
           lastSyncedAt: new Date('2026-09-01T06:00:00.000Z'),
           lastAttemptedAt: null,
+          pagingWindowToMs: null,
+          pagingRequestToMs: null,
         },
       ]);
 
@@ -3064,6 +3079,210 @@ describe('migrations — the поточна вартість of an інвест�
           .get(),
       ).toBeUndefined();
       expect(staged.db.select().from(transactions).all()).toHaveLength(1);
+    } finally {
+      staged.close();
+    }
+  });
+});
+
+/**
+ * The three nullable columns the журнал gains so it can record the app's own work.
+ *
+ * Additive and nothing else: an entry written by the build before them is three NULLs, and
+ * `reporting-repo.ts`'s `toEntry` maps a NULL to an absent field, so what the earlier build wrote
+ * reads back identical. That is the whole of the risk this migration carries, and it is what these
+ * two cases pin.
+ */
+describe('migrations — what the журнал records', () => {
+  /**
+   * The migration count immediately **before** this change's own. Named by index rather than by
+   * tag for `BEFORE_THE_COMPOSITION`'s reason: other changes are in flight with migrations of
+   * their own.
+   */
+  const BEFORE_THE_DIAGNOSTICS = 21;
+
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('gives `journal` its three nullable columns and leaves the four it had', () => {
+    const columns = storage.db
+      .all<{ name: string; notnull: number }>(sql`PRAGMA table_info(journal)`)
+      .map((column) => [column.name, column.notnull] as const);
+
+    expect(columns).toEqual([
+      ['id', 1],
+      ['at', 1],
+      ['kind', 1],
+      ['name', 1],
+      ['detail', 0],
+      ['run', 0],
+      ['took_ms', 0],
+      ['counts_json', 0],
+    ]);
+  });
+
+  it('Scenario: An entry written before this build reads back unchanged', () => {
+    const staged = openTestDbMigratedTo(BEFORE_THE_DIAGNOSTICS);
+    try {
+      staged.db.run(
+        sql`INSERT INTO journal (id, at, kind, name, detail)
+            VALUES ('old-1', 1757000000000, 'screen', '/(tabs)/accounts', NULL),
+                   ('old-2', 1757000000001, 'failure', 'local-save', 'Оберіть рахунок')`,
+      );
+
+      staged.migrateToLatest();
+
+      const read = reportingRepo(staged.db).tail();
+      expect(read).toEqual([
+        {
+          id: 'old-1',
+          at: new Date(1757000000000),
+          kind: 'screen',
+          name: '/(tabs)/accounts',
+        },
+        {
+          id: 'old-2',
+          at: new Date(1757000000001),
+          kind: 'failure',
+          name: 'local-save',
+          detail: 'Оберіть рахунок',
+        },
+      ]);
+      // None of the three, rather than three `null`s: what was read back equals what was written.
+      expect(read.every((entry) => !('run' in entry) && !('tookMs' in entry) && !('counts' in entry))).toBe(
+        true,
+      );
+    } finally {
+      staged.close();
+    }
+  });
+});
+
+
+/**
+ * The two nullable columns a link gains so a window it is half-way through reading survives the
+ * прогін that read it.
+ *
+ * Additive and nothing else: a link written by the build before them is two NULLs, which
+ * `monobank-repo.ts`'s `toStoredLink` reads back as no position at all — true of every link that
+ * existed, since until now no run could remember one.
+ */
+describe('migrations — where a half-paged window got to', () => {
+  /**
+   * The migration count immediately **before** this change's own. Named by index rather than by
+   * tag for `BEFORE_THE_COMPOSITION`'s reason: other changes are in flight with migrations of
+   * their own.
+   */
+  const BEFORE_THE_PAGING = 22;
+
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('gives `monobank_links` its two nullable columns and leaves the six it had', () => {
+    const columns = storage.db
+      .all<{ name: string; notnull: number }>(sql`PRAGMA table_info(monobank_links)`)
+      .map((column) => [column.name, column.notnull] as const);
+
+    expect(columns).toEqual([
+      ['monobank_account_id', 1],
+      ['account_id', 1],
+      ['sync_start_date', 1],
+      ['cursor_ms', 1],
+      ['last_synced_at', 0],
+      ['last_attempted_at', 0],
+      ['paging_window_to_ms', 0],
+      ['paging_request_to_ms', 0],
+    ]);
+  });
+
+  it('Scenario: Existing links survive gaining the paging position', () => {
+    const staged = openTestDbMigratedTo(BEFORE_THE_PAGING);
+    try {
+      seedReferences(staged.db, VOCABULARY);
+      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      staged.db
+        .insert(monobankAccounts)
+        .values([
+          {
+            id: 'mono-card',
+            kind: 'card',
+            name: 'black ··1234',
+            currency: 'UAH',
+            bankBalanceAmount: 5000000,
+            obtainedAt: new Date('2026-09-08T08:00:00.000Z'),
+          },
+          {
+            id: 'mono-jar',
+            kind: 'jar',
+            name: 'На відпустку',
+            currency: 'UAH',
+            bankBalanceAmount: 1200000,
+            obtainedAt: new Date('2026-09-08T08:00:00.000Z'),
+          },
+        ])
+        .run();
+      // Written as SQL rather than through Drizzle: the staged schema has neither new column, so
+      // an insert built from the current schema could not run there at all.
+      staged.db.run(
+        sql`INSERT INTO monobank_links
+              (monobank_account_id, account_id, sync_start_date, cursor_ms, last_synced_at,
+               last_attempted_at)
+            VALUES ('mono-card', 'card', '2026-08-01', 1788238800000, 1788242400000, 1788242400000),
+                   ('mono-jar', 'jar', '2026-07-01', 1785560400000, NULL, NULL)`,
+      );
+      staged.db
+        .insert(monobankImportedItems)
+        .values([
+          { monobankAccountId: 'mono-card', itemId: 'item-1' },
+          { monobankAccountId: 'mono-card', itemId: 'item-2' },
+        ])
+        .run();
+
+      staged.migrateToLatest();
+
+      // Every link loads unchanged — boundary, cursor, completed sync and turn — and each carries
+      // no paging position, which is what «this phone has read no half window» looks like.
+      expect(monobankRepo(staged.db).listLinks()).toEqual([
+        {
+          monobankAccountId: 'mono-card',
+          accountId: 'card',
+          syncStartDate: '2026-08-01',
+          cursorMs: 1788238800000,
+          lastSyncedAtMs: 1788242400000,
+          lastAttemptedAtMs: 1788242400000,
+          paging: null,
+        },
+        {
+          monobankAccountId: 'mono-jar',
+          accountId: 'jar',
+          syncStartDate: '2026-07-01',
+          cursorMs: 1785560400000,
+          lastSyncedAtMs: null,
+          lastAttemptedAtMs: null,
+          paging: null,
+        },
+      ]);
+      // And the imported ids and bank balances the links point at are untouched.
+      expect(staged.db.select().from(monobankImportedItems).all()).toEqual([
+        { monobankAccountId: 'mono-card', itemId: 'item-1' },
+        { monobankAccountId: 'mono-card', itemId: 'item-2' },
+      ]);
+      expect(staged.db.select().from(monobankAccounts).all()).toHaveLength(2);
+      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
     } finally {
       staged.close();
     }

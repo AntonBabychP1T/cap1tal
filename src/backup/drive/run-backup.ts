@@ -1,4 +1,5 @@
 import { backupKeyKept } from '../../platform/backup-key';
+import { journal, type StepEnding } from '../../ui/journal';
 import { saveBackup } from '../backup';
 import { ENVELOPE_HEAD_MAX_BYTES, NONCE_BYTES, keyId, sealEnvelope } from './envelope';
 import type { DriveBackupPorts } from './ports';
@@ -59,56 +60,75 @@ export async function runBackup(
   now: Date,
   options: { readonly force?: boolean } = {},
 ): Promise<BackupRunOutcome> {
-  const state = ports.state.read();
-  if (!isConnected(state)) {
-    // The spec's "a disconnected app never uploads" — and no request is made to Google to find out.
-    return { kind: 'skipped', why: 'not-connected' };
+  // Recorded at both ends, with its own word for what it came to. This is the path the four
+  // «збій · backup · not-configured» entries in the репорт that prompted `journal-diagnostics`
+  // came from, and the one whose beginning and outcome the reader at the laptop most needs: a run
+  // the system kills mid-upload leaves only its beginning, and that beginning is the evidence.
+  return journal.step('drive-backup', () => attempted(), { ending: backupEnding });
+
+  async function attempted(): Promise<BackupRunOutcome> {
+    const state = ports.state.read();
+    if (!isConnected(state)) {
+      // The spec's "a disconnected app never uploads" — and no request is made to Google to find out.
+      return { kind: 'skipped', why: 'not-connected' };
+    }
+    if (!options.force && !isBackupDue({ connected: true, lastSuccessAt: state.lastSuccessAt, now })) {
+      return { kind: 'skipped', why: 'not-due' };
+    }
+
+    // Making a бекап is local and cheap; sending one is neither. So it is made first and its
+    // checksum decides whether anything leaves the phone at all.
+    const snapshot = await saveBackup(ports.store, now);
+    if (!shouldUpload({ checksum: snapshot.checksum, lastUploadedChecksum: state.lastUploadedChecksum })) {
+      return { kind: 'skipped', why: 'unchanged' };
+    }
+
+    const read = await ports.keys.read();
+    if (!backupKeyKept(read) || read.kind !== 'ok' || !read.key) {
+      // Connected but holding no key: nothing can be sealed, and uploading a бекап unsealed is the
+      // one thing this whole capability exists to prevent.
+      return fail(ports, now, 'no-key');
+    }
+    const key = read.key;
+
+    const sealed = sealEnvelope({
+      bytes: snapshot.bytes,
+      schemaVersion: snapshot.schemaVersion,
+      createdAt: snapshot.createdAt,
+      key,
+      nonce: ports.random.bytes(NONCE_BYTES),
+    });
+
+    const uploaded = await ports.drive.upload(versionName(snapshot.createdAt), sealed);
+    if (uploaded.kind !== 'ok') {
+      return fail(ports, now, uploaded.kind === 'unavailable' ? 'unavailable' : uploaded.kind);
+    }
+    if (uploaded.value.size !== sealed.length) {
+      // Drive took it and says it holds a different number of bytes. Recording a success would let
+      // rotation delete a good версія in favour of a truncated one.
+      return fail(ports, now, 'unavailable');
+    }
+
+    // Only now: the new версія is in the folder, whole and confirmed.
+    ports.state.recordSuccess(now, snapshot.checksum);
+
+    // And only now is anything allowed to be removed. A failure here is not a failed backup — the
+    // бекап is up — so it is deliberately not recorded as one.
+    await prune(ports, keyId(key));
+
+    return { kind: 'uploaded', at: now, checksum: snapshot.checksum };
   }
-  if (!options.force && !isBackupDue({ connected: true, lastSuccessAt: state.lastSuccessAt, now })) {
-    return { kind: 'skipped', why: 'not-due' };
-  }
+}
 
-  // Making a бекап is local and cheap; sending one is neither. So it is made first and its
-  // checksum decides whether anything leaves the phone at all.
-  const snapshot = await saveBackup(ports.store, now);
-  if (!shouldUpload({ checksum: snapshot.checksum, lastUploadedChecksum: state.lastUploadedChecksum })) {
-    return { kind: 'skipped', why: 'unchanged' };
-  }
-
-  const read = await ports.keys.read();
-  if (!backupKeyKept(read) || read.kind !== 'ok' || !read.key) {
-    // Connected but holding no key: nothing can be sealed, and uploading a бекап unsealed is the
-    // one thing this whole capability exists to prevent.
-    return fail(ports, now, 'no-key');
-  }
-  const key = read.key;
-
-  const sealed = sealEnvelope({
-    bytes: snapshot.bytes,
-    schemaVersion: snapshot.schemaVersion,
-    createdAt: snapshot.createdAt,
-    key,
-    nonce: ports.random.bytes(NONCE_BYTES),
-  });
-
-  const uploaded = await ports.drive.upload(versionName(snapshot.createdAt), sealed);
-  if (uploaded.kind !== 'ok') {
-    return fail(ports, now, uploaded.kind === 'unavailable' ? 'unavailable' : uploaded.kind);
-  }
-  if (uploaded.value.size !== sealed.length) {
-    // Drive took it and says it holds a different number of bytes. Recording a success would let
-    // rotation delete a good версія in favour of a truncated one.
-    return fail(ports, now, 'unavailable');
-  }
-
-  // Only now: the new версія is in the folder, whole and confirmed.
-  ports.state.recordSuccess(now, snapshot.checksum);
-
-  // And only now is anything allowed to be removed. A failure here is not a failed backup — the
-  // бекап is up — so it is deliberately not recorded as one.
-  await prune(ports, keyId(key));
-
-  return { kind: 'uploaded', at: now, checksum: snapshot.checksum };
+/**
+ * What the бекап's ending entry says: the outcome's own word, and the reason beneath it.
+ *
+ * `skipped` and `failed` both carry a `why`, and it is the `why` that answers «what happened» —
+ * «skipped» alone would tell the reader nothing they did not already know from the run existing.
+ * Enumerated on both halves, so nothing composed about a failure enters the журнал.
+ */
+export function backupEnding(outcome: BackupRunOutcome): StepEnding {
+  return { detail: outcome.kind === 'uploaded' ? outcome.kind : `${outcome.kind} · ${outcome.why}` };
 }
 
 /**

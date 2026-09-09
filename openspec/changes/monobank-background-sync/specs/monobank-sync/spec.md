@@ -1,3 +1,95 @@
+## MODIFIED Requirements
+
+### Requirement: Each linked account resumes from a committed sync cursor
+
+The system SHALL import a linked monobank account from its confirmed first-sync boundary and,
+after each completely stored statement answer, resume later work from the committed cursor without
+importing any remembered item twice. The cursor SHALL advance only with the транзакції and imported
+item ids produced by that answer; a failed or unreadable answer SHALL leave the cursor, the
+транзакції, the imported ids and the paging position below unchanged and retryable.
+
+A window whose answer came back full is asked again, narrowed to the oldest item it returned, and
+so on until an answer comes back short. That narrowing walks **backwards** through the window, so
+the cursor — which means «everything before this is imported» — cannot move while it is going on.
+The position that narrowing has reached SHALL therefore be remembered beside the cursor and SHALL
+survive the run: a run that stops in the middle of a window SHALL leave the next run able to
+continue from the page it stopped at, and the next run SHALL continue from there rather than
+asking the window's first page again.
+
+WHEN a window finally answers short, the cursor SHALL move to the end of **the window that was
+being paged** — the end remembered when the paging began — and the position SHALL be forgotten.
+Not to the end of the run that finished it: a later run plans a window that reaches its own later
+end, and moving the cursor there would step over the slice between the two, which no request ever
+read. The remainder is a window of its own and is planned as one.
+
+A remembered position SHALL be trusted only while it still describes work left to do: WHEN the
+window end it names is not after the cursor — which a boundary the owner moved, or a бекап
+restored over this phone's progress, can leave behind — the position SHALL be discarded and the
+window planned afresh from the cursor.
+
+Without this, an account whose window needs more pages than a single run can spend requests on can
+never complete, however many runs are given to it: every run re-reads the pages the run before it
+read, stops in the same place, and leaves the cursor where it was. Its транзакції do arrive — every
+page commits its own — but its last-sync moment never moves and the screen says «Ще не
+синхронізовано» for ever.
+
+#### Scenario: A later sync resumes after committed work
+
+- **WHEN** a linked account completes a statement answer through moment T and a later sync starts
+- **THEN** the later sync resumes from T, and any boundary item seen again is skipped by its
+  monobank item id
+
+#### Scenario: A failed commit advances nothing
+
+- **WHEN** storing one транзакція from a statement answer fails
+- **THEN** none of that answer's транзакції or imported ids are stored, its cursor does not
+  advance, and the same answer can be retried
+
+#### Scenario: An API failure leaves the cursor retryable
+
+- **WHEN** a linked account is rate-limited or unavailable while fetching its next statement
+  answer
+- **THEN** its cursor and imported ids remain unchanged and that account can resume from the same
+  place later
+
+#### Scenario: Paging stopped in the middle of a window continues in the next run
+
+- **WHEN** a рахунок's window answers full twice and the run stops before the third request
+- **THEN** the two answers' транзакції are stored, the cursor has not moved, and the next run's
+  first request about that рахунок asks the window narrowed to where the second answer left it —
+  not the window's first page
+
+#### Scenario: An account larger than one run finishes over several runs
+
+- **WHEN** a рахунок's window needs four pages and no run affords more than two requests for it
+- **THEN** successive runs work through the pages instead of repeating the first two, and once the
+  last page answers short the рахунок completes and its last-sync moment moves
+
+#### Scenario: The cursor moves to the paged window's end, not the run's
+
+- **WHEN** a window paged over two runs answers short in the second, whose own end is later than
+  the first run's
+- **THEN** the cursor moves to the end of the window that was being paged, and the span between
+  that end and the later run's end is asked for as a window of its own
+
+#### Scenario: A failure over a half-paged window keeps the position
+
+- **WHEN** a рахунок is rate-limited or unavailable on the third page of a window
+- **THEN** its cursor, транзакції, imported ids and remembered position are all unchanged, so the
+  next run resumes that window at the third page rather than at the first
+
+#### Scenario: A position that no longer describes work left is discarded
+
+- **WHEN** a рахунок carries a remembered window whose end is not after its cursor
+- **THEN** the position is discarded and the window is planned from the cursor as if none had been
+  remembered
+
+#### Scenario: A finished window leaves no position
+
+- **WHEN** a window answers short on its first request
+- **THEN** the cursor moves to that window's end, nothing is remembered about paging, and the next
+  run plans from the cursor as it always has
+
 ## ADDED Requirements
 
 ### Requirement: A sync also runs on the chances the phone gives while the app is not in front of the owner
@@ -125,6 +217,25 @@ The wait before a request SHALL end at once when the app leaves the foreground, 
 hold the one-run lock until the app is next opened. A request already sent SHALL be answered and
 its answer stored whole.
 
+The phone answers «in front» or «away» and nothing finer, and the app takes that answer at its
+word: it cannot tell the owner leaving from a dialog drawn over the app, and it SHALL NOT guess.
+What it may do is not waste a whole run on the answer. A run SHALL NOT yield before it has sent its
+first request: a phone that reports «away» at the instant a run starts — a cold start whose window
+is not resumed yet, a run begun as the owner glances elsewhere — then costs that run one request
+rather than the whole of it, and what the run learns from that request is kept.
+
+That rule reaches as far as the pace allows and no further. A run that is not in front of the owner
+and that starts already owing the bank the minute between requests — because this device sent one
+inside it — SHALL stop having sent nothing, and its рахунки SHALL end postponed. Such a run has
+nothing it may send: the wait it owes is the pace's, not the foreground's; the app is not in front
+for a timer to run it out; and a request sent regardless would be refused by the bank rather than
+answered. Nothing is lost by it — the request it did not spend is the one whichever run went before
+it just spent — and the next run continues from the same cursors. A run that owes the same minute
+while the app *is* in front simply waits it out and carries on, as it always has.
+
+This rule is the foreground run's alone. A run given a time budget answers the same question from
+its budget and is unaffected by any of these sentences.
+
 A run the owner stopped themselves SHALL still end cancelled, not postponed: postponed is a run
 that stopped for want of time or of foreground, cancelled is the owner's decision, and the two
 SHALL be told apart wherever an outcome is reported. Neither a run that yielded nor a run the owner
@@ -141,6 +252,20 @@ stopped SHALL raise a сповіщення про збій: a run that stopped i
 
 - **WHEN** the app leaves the foreground while a statement answer is being awaited
 - **THEN** that answer is stored when it arrives, and the run stops before the next request
+
+#### Scenario: A run that has sent nothing does not yield
+
+- **WHEN** a run in front of the owner starts while the phone already answers «away», and no
+  request has been sent
+- **THEN** the run sends its first request and keeps what it answers; only from the second request
+  on does «away» stop it
+
+#### Scenario: A run that owes the bank a minute sends nothing while the app is away
+
+- **WHEN** a run starts while the phone answers «away» and this device sent a request less than
+  the minute between requests ago
+- **THEN** no request is sent, every рахунок ends postponed, and nothing is reported as a failure —
+  the run had nothing it could spend without being refused
 
 #### Scenario: The owner's stop still reads as cancelled
 

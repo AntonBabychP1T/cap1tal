@@ -305,6 +305,34 @@ export const monobankLinks = sqliteTable(
      * carries): it is what *this* phone last asked, and a restored phone has asked nothing.
      */
     lastAttemptedAt: integer('last_attempted_at', { mode: 'timestamp_ms' }),
+    /**
+     * The end of the window this link is half-way through reading, or nothing at all for a link
+     * with no window in progress — which is what every row written before these two columns reads
+     * back as, and what is true of all of them.
+     *
+     * A window whose answer comes back full is asked again, narrowed backwards toward the cursor,
+     * until an answer comes back short; the cursor cannot move while that is going on, because
+     * «everything before this is imported» is not yet true of anything but the pages already read.
+     * So the position lives here instead — and here rather than in the run's own memory, which is
+     * what it was until a run learned to stop: a рахунок whose window needs more pages than one
+     * прогін affords could otherwise never finish, because every прогін re-read the same pages.
+     *
+     * This is the end the cursor moves to when the window finally answers short — the window's
+     * own end, not the end of whichever прогін finishes it.
+     */
+    pagingWindowToMs: integer('paging_window_to_ms', { mode: 'timestamp_ms' }),
+    /**
+     * The end the next request about this link should ask for — `continueWindow`'s own answer,
+     * written after each full page and cleared when the window answers short.
+     *
+     * Two columns rather than one because the two are different facts and neither derives the
+     * other: the window's end is the commit point, this is the resume point.
+     *
+     * Both are left out of a бекап for `last_attempted_at`'s reason (`src/backup/format.ts`):
+     * they describe how far *this* phone has read, and a phone restored from a бекап has read
+     * nothing.
+     */
+    pagingRequestToMs: integer('paging_request_to_ms', { mode: 'timestamp_ms' }),
   },
   (t) => [
     check(
@@ -803,8 +831,9 @@ export type NewReceiptItemRow = typeof receiptItems.$inferInsert;
  * a fifth kind would otherwise cost a migration, and committed migrations are immutable. The
  * repository refuses an unknown kind instead.
  *
- * No index on `at`: the whole table is 500 rows, every read of it is the whole tail, and the only
- * write is one append. An index would be a second structure to keep true for no measured gain.
+ * No index on `at`: the whole table is `JOURNAL_LIMIT` rows, every read of it is the whole tail,
+ * and the only write is one append. An index would be a second structure to keep true for no
+ * measured gain — as true at two thousand rows as it was at five hundred.
  *
  * Never in a бекап, and a відновлення leaves it alone — see `backup-repo.ts`, which names it among
  * the untouched.
@@ -816,8 +845,20 @@ export const journal = sqliteTable('journal', {
   kind: text('kind').notNull(),
   /** A route, an action's kind or an `AlertKind` — never anything the owner typed. */
   name: text('name').notNull(),
-  /** The refusal text the owner was shown, or a crash's message and stack. */
+  /** The refusal text the owner was shown, a crash's message and stack, or the device's own word. */
   detail: text('detail'),
+  /** The mark tying every entry of one operation together, or NULL for an entry that is not one. */
+  run: text('run'),
+  /** How long the thing this entry names took, in milliseconds. */
+  tookMs: integer('took_ms'),
+  /**
+   * What the thing this entry names measured, as a JSON object of numbers.
+   *
+   * JSON in one column rather than a side table for `bug_reports`' reason: it is written once,
+   * read once, and never queried or aggregated. Numbers only — which is what keeps «the журнал
+   * carries nothing of the owner's» a property of the type rather than of a habit.
+   */
+  countsJson: text('counts_json'),
 });
 
 /**

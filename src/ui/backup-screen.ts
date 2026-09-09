@@ -11,6 +11,7 @@ import {
 } from '../backup/backup';
 import type { BackupFilePort } from '../platform/backup-file';
 import { todayIso } from './dates';
+import { journal } from './journal';
 import { accountCount, failureMessage, transactionCount } from './labels';
 import { monthLabel } from './months';
 
@@ -97,25 +98,40 @@ export async function saveToFile(
   ports: BackupScreenPorts,
   now: Date,
 ): Promise<BackupScreenState> {
-  const snapshot = await saveBackup(ports.store, now);
-  const outcome = await ports.files.save(backupFileName(now), snapshot.bytes);
-  switch (outcome.kind) {
-    case 'ok':
-      return {
-        kind: 'saved',
-        // Counted from the very state the file was made from, never re-read: the sentence and
-        // the file have to agree about what left the phone.
-        message: `Бекап від ${todayIso(snapshot.createdAt)} збережено: ${countsOf(snapshot.figures)}.`,
-      };
-    case 'cancelled':
-      return { kind: 'idle' };
-    case 'unavailable':
-      return {
-        kind: 'failed',
-        message: 'Бекап не збережено: немає куди зберегти файл на цьому пристрої.',
-      };
-    case 'failed':
-      return { kind: 'failed', message: `Бекап не збережено: ${outcome.reason}.` };
+  // What the бекап turned out to hold, kept where the ending entry can read it: the counts belong
+  // to the snapshot and the state the owner is shown carries only the sentence about them.
+  let figures: BackupFigures | undefined;
+  return journal.step('backup-save', () => made(), {
+    ending: (state) => ({
+      detail: state.kind,
+      ...(figures === undefined
+        ? {}
+        : { counts: { accounts: figures.accounts, transactions: figures.transactions } }),
+    }),
+  });
+
+  async function made(): Promise<BackupScreenState> {
+    const snapshot = await saveBackup(ports.store, now);
+    figures = snapshot.figures;
+    const outcome = await ports.files.save(backupFileName(now), snapshot.bytes);
+    switch (outcome.kind) {
+      case 'ok':
+        return {
+          kind: 'saved',
+          // Counted from the very state the file was made from, never re-read: the sentence and
+          // the file have to agree about what left the phone.
+          message: `Бекап від ${todayIso(snapshot.createdAt)} збережено: ${countsOf(snapshot.figures)}.`,
+        };
+      case 'cancelled':
+        return { kind: 'idle' };
+      case 'unavailable':
+        return {
+          kind: 'failed',
+          message: 'Бекап не збережено: немає куди зберегти файл на цьому пристрої.',
+        };
+      case 'failed':
+        return { kind: 'failed', message: `Бекап не збережено: ${outcome.reason}.` };
+    }
   }
 }
 
@@ -151,22 +167,29 @@ export async function confirmRestore(
   ports: Pick<BackupScreenPorts, 'store'>,
   preview: RestorePreview,
 ): Promise<BackupScreenState> {
-  let outcome: 'ok' | BackupRefusal;
-  try {
-    outcome = await applyRestore(ports.store, preview.header);
-  } catch (error) {
+  const { accounts, transactions } = preview.header.figures;
+  return journal.step('backup-restore', () => applied(), {
+    ending: (state) => ({ detail: state.kind, counts: { accounts, transactions } }),
+  });
+
+  async function applied(): Promise<BackupScreenState> {
+    let outcome: 'ok' | BackupRefusal;
+    try {
+      outcome = await applyRestore(ports.store, preview.header);
+    } catch (error) {
+      return {
+        kind: 'failed',
+        message: `Відновлення не відбулося, на телефоні все як було: ${failureMessage(error)}.`,
+      };
+    }
+    if (outcome !== 'ok') {
+      return { kind: 'failed', message: refusalMessage(outcome) };
+    }
     return {
-      kind: 'failed',
-      message: `Відновлення не відбулося, на телефоні все як було: ${failureMessage(error)}.`,
+      kind: 'restored',
+      message: `Відновлено: ${countsOf(preview.header.figures)}.`,
     };
   }
-  if (outcome !== 'ok') {
-    return { kind: 'failed', message: refusalMessage(outcome) };
-  }
-  return {
-    kind: 'restored',
-    message: `Відновлено: ${countsOf(preview.header.figures)}.`,
-  };
 }
 
 /** Backing out, from wherever: nothing was done, so nothing is said. */

@@ -14,6 +14,8 @@ import {
   type NotificationCapturePort,
   type WatchedSetOutcome,
 } from '../platform/notification-capture';
+import type { JournalEntry } from '../reporting/journal';
+import { bindTestJournal, resetJournalForTests } from './journal';
 import { drainCaptures, onCapturesStored, type DrainStorage } from './notification-drain';
 
 const card = account({ id: 'card', name: 'Приват', kind: 'spending', currency: 'UAH' });
@@ -279,5 +281,49 @@ describe('drainCaptures', () => {
     expect(refusal).toEqual({ kind: 'unavailable' });
     expect(await drain(capture)).toMatchObject({ collected: 0, acknowledged: 0 });
     expect(repo.pendingDrafts()).toEqual([]);
+  });
+
+  describe('what the журнал records about a collection', () => {
+    let journalOf: () => readonly JournalEntry[];
+
+    beforeEach(() => {
+      journalOf = bindTestJournal();
+    });
+    afterEach(() => resetJournalForTests());
+
+    it('Scenario: The counts an operation measures are numbers', async () => {
+      repo.addWatch({ packageName: PRIVAT, accountId: 'card' });
+      // Five captured, of which two are new purchases and three are repeats of the first.
+      const first = posted({ text: 'Оплата 250.00UAH. Сільпо. Баланс: 1234.56UAH' });
+      const second = posted({
+        text: 'Оплата 99.00UAH. Аптека. Баланс: 1135.56UAH',
+        postedAt: first.postedAt + 60_000,
+      });
+
+      const report = await drain(
+        inMemoryNotificationCapture({ queue: [first, second, first, first, first] }),
+      );
+
+      expect(report.collected).toBe(5);
+      expect(report.drafted).toBe(2);
+      const written = journalOf();
+      expect(written.map((e) => [e.kind, e.name, e.detail])).toEqual([
+        ['step', 'collection', 'почалось'],
+        ['step', 'collection', 'вдалось'],
+      ]);
+      expect(written[0]?.run).toBe(written[1]?.run);
+      expect(written[1]?.counts).toEqual({
+        collected: 5,
+        acknowledged: 5,
+        drafted: 2,
+        autoConfirmed: 0,
+      });
+      // Numbers, and only numbers: no part of any notification's text can reach the журнал
+      // through a field whose values are numbers.
+      const whole = JSON.stringify(written);
+      for (const part of ['Сільпо', 'Аптека', '250.00', '1234.56', 'Оплата']) {
+        expect(whole).not.toContain(part);
+      }
+    });
   });
 });

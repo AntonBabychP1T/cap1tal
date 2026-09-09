@@ -883,6 +883,8 @@ describe('the round trip a бекап promises', () => {
       lastSyncedAtMs: SYNCED_AT.getTime(),
       // The turn is not in the file, so the restored link has none — see the scenario below.
       lastAttemptedAtMs: null,
+      // Nor is the paging position, for the turn's own reason: a restored phone has read no pages.
+      paging: null,
     });
     expect(notificationsRepo(target.db).watches()).toEqual([
       { packageName: 'ua.privatbank.ap24', accountId: 'card', currency: 'UAH' },
@@ -907,6 +909,39 @@ describe('the round trip a бекап promises', () => {
     expect(link?.cursorMs).toBe(CURSOR_MS);
     expect(link?.syncStartDate).toBe('2026-08-01');
     expect(link?.lastSyncedAtMs).toBe(SYNCED_AT.getTime());
+  });
+
+  it('Scenario: A бекап carries no paging position', async () => {
+    // The source device is half-way through a window: the run before the бекап read two pages of
+    // it and stopped. Written here rather than in `seedWorld`, so the claim below is about this
+    // one fact and the other scenarios keep the world they describe.
+    const windowToMs = CURSOR_MS + 31 * 86_400_000;
+    monobankRepo(source.db).commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [],
+      newlySeenIds: ['item-3'],
+      bankBalance: money(500_000, 'UAH'),
+      obtainedAt: OBTAINED_AT,
+      cursorMs: CURSOR_MS,
+      storedAt: STORED_AT,
+      paging: { windowToMs, requestToMs: CURSOR_MS + 10 * 86_400_000 },
+    });
+    expect(monobankRepo(source.db).linkOf('mono-card')?.paging).toEqual({
+      windowToMs,
+      requestToMs: CURSOR_MS + 10 * 86_400_000,
+    });
+
+    const { bytes } = await saveBackup(backupRepo(source.db), MADE_AT);
+
+    // Not in the file at all, for the turn's reason: it is how far *this* phone has read.
+    expect(bytes).not.toContain('paging');
+
+    expect(await restoreBackup(backupRepo(target.db), bytes)).toBe('ok');
+    const link = monobankRepo(target.db).linkOf('mono-card');
+    // The restored link plans that window afresh, from the boundary and cursor it did carry.
+    expect(link?.paging).toBeNull();
+    expect(link?.cursorMs).toBe(CURSOR_MS);
+    expect(link?.syncStartDate).toBe('2026-08-01');
   });
 
   it('Scenario: What the бекап does not hold is gone', async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { inMemoryBackupKeyStore } from '../../platform/backup-key';
 import { inMemoryDrive } from '../../platform/drive';
@@ -9,7 +9,9 @@ import { makeBackup, type BackupStore } from '../backup';
 import type { BackupState } from '../format';
 import { KEY_BYTES, keyId, readEnvelopeHead, sealEnvelope } from './envelope';
 import type { DriveBackupPorts } from './ports';
-import { runBackup, versionName } from './run-backup';
+import type { JournalEntry } from '../../reporting/journal';
+import { bindTestJournal, resetJournalForTests } from '../../ui/journal';
+import { backupEnding, runBackup, versionName } from './run-backup';
 import { inMemoryDriveBackupState, type DriveBackupState } from './state';
 
 /**
@@ -320,5 +322,41 @@ describe('what a версія бекапу is called', () => {
   it('is sortable by name because it is sortable by instant', () => {
     expect(versionName(new Date('2026-09-07T08:00:00.000Z'))).toBe('cap1tal-20260907T080000Z.c1b');
     expect(versionName(new Date('2026-09-06T08:00:00.000Z')) < versionName(TODAY)).toBe(true);
+  });
+});
+
+describe('what the журнал records about a Drive бекап', () => {
+  let journalOf: () => readonly JournalEntry[];
+
+  beforeEach(() => {
+    journalOf = bindTestJournal();
+  });
+  afterEach(() => resetJournalForTests());
+
+  it("records both ends of a run refused for want of a connection, with that reason", async () => {
+    // This is the path the four «збій · backup · not-configured» entries in the репорт that
+    // prompted this change came from — and the one they said nothing about.
+    const ports = portsWith({ driveState: {} });
+
+    await runBackup(ports, TODAY);
+
+    expect(journalOf().map((e) => [e.kind, e.name, e.detail])).toEqual([
+      ['step', 'drive-backup', 'почалось'],
+      ['step', 'drive-backup', 'skipped · not-connected'],
+    ]);
+    expect(journalOf()[0]?.run).toBe(journalOf()[1]?.run);
+    expect(journalOf()[1]?.tookMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('records an uploaded run and a failed one by their own words', async () => {
+    expect(backupEnding({ kind: 'uploaded', at: TODAY, checksum: 'abc' })).toEqual({
+      detail: 'uploaded',
+    });
+    expect(backupEnding({ kind: 'failed', why: 'no-network' })).toEqual({
+      detail: 'failed · no-network',
+    });
+    expect(backupEnding({ kind: 'skipped', why: 'unchanged' })).toEqual({
+      detail: 'skipped · unchanged',
+    });
   });
 });

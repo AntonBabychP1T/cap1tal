@@ -3,6 +3,8 @@ import type { IsoDate } from '../domain/transaction';
 import type { CapturedNotification } from '../notifications/capture';
 import { processCapture, type CaptureOutcome, type Watch } from '../notifications/draft';
 import type { NotificationCapturePort } from '../platform/notification-capture';
+import { STEP_FAILED } from '../reporting/journal';
+import { journal } from './journal';
 
 /**
  * The loop that joins the phone's hearing to the owner's storage: collect what is waiting, decide
@@ -82,6 +84,22 @@ export interface DrainReport {
  * queue forever would be the only way this could fill up.
  */
 export async function drainCaptures(input: DrainInput): Promise<DrainReport> {
+  // Recorded at both ends with the numbers it measured, and with none of what it read: the counts
+  // are numbers, so no part of a bank's notification can enter the журнал through them (design D2).
+  return journal.step('collection', () => drained(input), {
+    ending: (report) => ({
+      counts: {
+        collected: report.collected,
+        acknowledged: report.acknowledged,
+        drafted: report.drafted,
+        autoConfirmed: report.autoConfirmed,
+      },
+      ...(report.failure === undefined ? {} : { detail: STEP_FAILED }),
+    }),
+  });
+}
+
+async function drained(input: DrainInput): Promise<DrainReport> {
   const collected = await input.capture.collect();
   if (collected.length === 0) {
     return { collected: 0, acknowledged: 0, drafted: 0, autoConfirmed: 0 };

@@ -54,6 +54,70 @@ describe('the журнал in storage', () => {
     expect(repo.tail()[0]?.at.getTime()).toBe(BASE);
   });
 
+  it('round-trips an entry of every kind there is', () => {
+    const kinds: readonly JournalEntry['kind'][] = [
+      'screen',
+      'failure',
+      'alert',
+      'crash',
+      'network',
+      'step',
+      'native',
+    ];
+    kinds.forEach((kind, i) => {
+      repo.append(entry({ id: `j${i}`, kind, name: `n${i}`, at: new Date(BASE + i) }));
+    });
+
+    // Read back rather than merely written: `checkKind` refuses an unknown kind on the way out,
+    // and a kind missing from the repository's own `KINDS` would throw here and nowhere else.
+    expect(repo.tail().map((e) => e.kind)).toEqual(kinds);
+  });
+
+  it('round-trips the mark, the duration and the counts', () => {
+    repo.append(
+      entry({
+        id: 'j1',
+        kind: 'network',
+        name: 'GET api.monobank.ua/personal/client-info',
+        run: 'run-1',
+        tookMs: 342,
+        counts: { status: 200 },
+      }),
+    );
+
+    expect(repo.tail()[0]).toEqual({
+      id: 'j1',
+      at: new Date(BASE),
+      kind: 'network',
+      name: 'GET api.monobank.ua/personal/client-info',
+      run: 'run-1',
+      tookMs: 342,
+      counts: { status: 200 },
+    });
+  });
+
+  it('Scenario: An entry written before this build reads back unchanged', () => {
+    // The three columns NULL, exactly as an entry from the earlier build has them.
+    storage.db.run(
+      sql`INSERT INTO journal (id, at, kind, name, detail, run, took_ms, counts_json)
+          VALUES ('old', ${BASE}, 'failure', 'local-save', 'Оберіть рахунок', NULL, NULL, NULL)`,
+    );
+
+    const read = repo.tail()[0];
+
+    expect(read).toEqual({
+      id: 'old',
+      at: new Date(BASE),
+      kind: 'failure',
+      name: 'local-save',
+      detail: 'Оберіть рахунок',
+    });
+    // Absent, not `null` — the same rule `detail` has always followed.
+    expect(read !== undefined && 'run' in read).toBe(false);
+    expect(read !== undefined && 'tookMs' in read).toBe(false);
+    expect(read !== undefined && 'counts' in read).toBe(false);
+  });
+
   it('Scenario: A refused save is an entry with the refusal text', () => {
     repo.append(
       entry({ id: 'j1', kind: 'failure', name: 'local-save', detail: 'Оберіть рахунок' }),
@@ -191,7 +255,7 @@ describe('the репорти про помилки in storage', () => {
     repo.create(report({ id: 'r1', journal: repo.tail(), prompting: repo.byId('crash') }));
 
     // The live журнал rolls right past the crash...
-    for (let i = 0; i < 600; i += 1) {
+    for (let i = 0; i < JOURNAL_LIMIT + 100; i += 1) {
       repo.append(entry({ id: `later${i}`, at: new Date(BASE + 1000 + i) }));
     }
     expect(repo.byId('crash')).toBeNull();

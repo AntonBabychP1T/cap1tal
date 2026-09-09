@@ -21,6 +21,7 @@ import { KIND_CHOICES, kindLabel } from '@/ui/labels';
 import {
   canCommit,
   commitFailed,
+  commitImport,
   committed,
   confirmSecondImport,
   dismissHint,
@@ -103,21 +104,24 @@ export default function SaldoImportScreen() {
 
   const commit = useCallback(() => {
     if (!flow.plan) return;
-    try {
-      const written = importsRepo.commit(flow.plan, new Date());
-      // The імпорт committed: the evaluation that follows earns what the brought history proves,
-      // each досягнення dated from that history rather than from today.
-      evaluateProgress();
-      setFlow((current) => committed(current, written));
-      void clearAlert('saldo-import', ALERT_PORTS);
-    } catch (error) {
-      // The one refusal in the app that feeds a screen state rather than a dialog: same journal,
-      // same text, no dialog to hang an offer on — this one is reported from the section.
-      setFlow((current) => commitFailed(current, reportFailure('saldo-import', error)));
-      // A commit runs while the owner walks away from a long import; the screen says why in its
-      // own words either way, and only an owner who is not reading them is told again.
-      void raiseAlert('saldo-import', { attended: attended() }, ALERT_PORTS);
-    }
+    // Through `commitImport`, which is the same one synchronous transaction with the журнал around
+    // it — so an import the app is killed in the middle of still leaves the entry saying it began.
+    void commitImport(importsRepo, flow.plan, new Date())
+      .then((written) => {
+        // The імпорт committed: the evaluation that follows earns what the brought history proves,
+        // each досягнення dated from that history rather than from today.
+        evaluateProgress();
+        setFlow((current) => committed(current, written));
+        void clearAlert('saldo-import', ALERT_PORTS);
+      })
+      .catch((error: unknown) => {
+        // The one refusal in the app that feeds a screen state rather than a dialog: same journal,
+        // same text, no dialog to hang an offer on — this one is reported from the section.
+        setFlow((current) => commitFailed(current, reportFailure('saldo-import', error)));
+        // A commit runs while the owner walks away from a long import; the screen says why in its
+        // own words either way, and only an owner who is not reading them is told again.
+        void raiseAlert('saldo-import', { attended: attended() }, ALERT_PORTS);
+      });
   }, [flow.plan]);
 
   /** Opening «Імпорт Saldo» is the owner looking at the failure it explains (design D6). */

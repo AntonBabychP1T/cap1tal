@@ -2,6 +2,7 @@ import { requireNativeModule } from 'expo';
 import { Platform } from 'react-native';
 
 import type { CapturedNotification } from '../notifications/capture';
+import { journalPermission, NOTIFICATION_LISTENER } from '../ui/device-journal';
 import {
   monobankPackagesIn,
   type NotificationCapturePort,
@@ -44,8 +45,14 @@ export function nativeNotificationCapture(): NativeNotificationCapture | undefin
     return undefined;
   }
   try {
-    return requireNativeModule<NativeNotificationCapture>('NotificationCapture');
+    const native = requireNativeModule<NativeNotificationCapture>('NotificationCapture');
+    // Whether the listener is there to hear anything at all, journaled on a change of answer —
+    // a build in which it is not is a phone whose транзакції silently stopped arriving, and that
+    // is the fact a репорт about «чернетки перестали з'являтися» turns on (design D5).
+    journalPermission(NOTIFICATION_LISTENER, 'connected');
+    return native;
   } catch {
+    journalPermission(NOTIFICATION_LISTENER, 'disconnected');
     return undefined;
   }
 }

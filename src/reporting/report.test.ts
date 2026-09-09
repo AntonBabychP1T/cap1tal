@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { JournalEntry } from './journal';
 import {
+  networkSummary,
   renderReport,
   renderReportFile,
   reportFileName,
   routeTrail,
+  runTimelines,
   ROUTE_TRAIL_LIMIT,
   type BugReport,
   type ReportImage,
@@ -203,7 +205,7 @@ describe('the route trail', () => {
 });
 
 /**
- * The ten sections, and the one renderer that produces both texts.
+ * The thirteen sections, and the one renderer that produces both texts.
  *
  * The headings are English with a Ukrainian gloss after a `·` — the one place in the app where the
  * owner meets English on a screen, ratified deliberately (design D8): the English half is the
@@ -353,5 +355,163 @@ describe('one renderer, two texts', () => {
   it('says a скріншот it holds could not be read, rather than dropping it', () => {
     // Its row is there, its file has gone. The file says so instead of silently shrinking.
     expect(renderReportFile(report, [])).toContain('Файл не вдалося прочитати.');
+  });
+});
+
+/**
+ * The summary, the requests and the timeline — the three things this change adds to the репорт,
+ * each a fold over the журнал the репорт already carries.
+ */
+describe('what the репорт says about the app’s own work', () => {
+  const RUN = 'run-aaaaaaaa';
+  const OTHER = 'run-bbbbbbbb';
+
+  /** A sync run with two requests in it, an unrelated screen between them, and a second run. */
+  const busy: readonly JournalEntry[] = [
+    { id: 'j1', at: at(0), kind: 'step', name: 'monobank-sync', detail: 'почалось', run: RUN },
+    {
+      id: 'j2',
+      at: at(0, 1),
+      kind: 'network',
+      name: 'GET api.monobank.ua/personal/client-info',
+      run: RUN,
+      tookMs: 120,
+      counts: { status: 200 },
+    },
+    { id: 'j3', at: at(0, 2), kind: 'screen', name: '/(tabs)/month' },
+    {
+      id: 'j4',
+      at: at(0, 3),
+      kind: 'network',
+      name: 'GET api.monobank.ua/personal/statement/mono-card/1/2',
+      run: RUN,
+      tookMs: 3200,
+      counts: { status: 429 },
+    },
+    {
+      id: 'j5',
+      at: at(0, 4),
+      kind: 'step',
+      name: 'monobank-sync',
+      detail: 'rate-limited',
+      run: RUN,
+      tookMs: 3400,
+      counts: { imported: 0, accounts: 1 },
+    },
+    { id: 'j6', at: at(1), kind: 'step', name: 'monobank-sync', detail: 'почалось', run: OTHER },
+    {
+      id: 'j7',
+      at: at(1, 1),
+      kind: 'network',
+      name: 'GET api.monobank.ua/personal/client-info',
+      run: OTHER,
+      tookMs: 3200,
+      // A request that never got an answer: the app's own word, and no status at all.
+      detail: 'не відповів',
+    },
+    {
+      id: 'j8',
+      at: at(1, 2),
+      kind: 'step',
+      name: 'monobank-sync',
+      detail: 'unavailable',
+      run: OTHER,
+      tookMs: 3300,
+      counts: { imported: 0, accounts: 1 },
+    },
+  ];
+
+  const busyReport: BugReport = { ...report, journal: busy, prompting: null };
+
+  it('Scenario: The summary counts what the журнал holds', () => {
+    const summary = networkSummary(busy);
+
+    expect(summary.requests).toBe(3);
+    // A 429 and a request that never answered; the 200 is the only one that succeeded.
+    expect(summary.failed).toBe(2);
+    // Two requests took 3200 ms, and the earliest of them is the one named.
+    expect(summary.slowest).toEqual({
+      name: 'GET api.monobank.ua/personal/statement/mono-card/1/2',
+      tookMs: 3200,
+    });
+    expect(summary.syncRuns).toBe(2);
+    expect(summary.lastRun).toBe('unavailable');
+
+    const text = renderReport(busyReport);
+    expect(text).toContain('## Summary · Коротко');
+    expect(text).toContain('- Запитів: 3, невдалих: 2');
+    expect(text).toContain('- Синхронізацій: 2, остання: unavailable');
+  });
+
+  it('Scenario: The requests are a section of their own', () => {
+    const text = renderReport(busyReport);
+    expect(text).toContain('## Network (3) · Мережа');
+    const requests = text.slice(
+      text.indexOf('## Network (3) · Мережа'),
+      text.indexOf('## What the app did'),
+    );
+    // Each with its status, its duration and what it carried, in the order they were made.
+    const lines = requests.split('\n').filter((line) => line.includes('мережа'));
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain('status=200');
+    expect(lines[0]).toContain('120 мс');
+    expect(lines[1]).toContain('status=429');
+    expect(lines[2]).toContain('не відповів');
+  });
+
+  it('Scenario: One operation reads as one timeline', () => {
+    const timelines = runTimelines(busy);
+
+    expect(timelines.map((t) => t.run)).toEqual([RUN, OTHER]);
+    // The screen entry that fell between the run's own entries carries no mark and is not here.
+    expect(timelines[0]?.entries.map((e) => e.id)).toEqual(['j1', 'j2', 'j4', 'j5']);
+    expect(timelines[1]?.entries.map((e) => e.id)).toEqual(['j6', 'j7', 'j8']);
+
+    const text = renderReport(busyReport);
+    expect(text).toContain('## What the app did (2) · Що робив застосунок');
+    expect(text).toContain('### #run-aaaa');
+  });
+
+  it('Scenario: A репорт with nothing to summarise still has the section', () => {
+    const text = renderReport({ ...report, journal, prompting: null });
+
+    for (const anchor of [
+      '## Summary · Коротко',
+      '## Network (0) · Мережа',
+      '## What the app did · Що робив застосунок',
+    ]) {
+      expect(text).toContain(anchor);
+    }
+    // Each saying it has nothing, rather than being missing.
+    expect(text.split('Немає.').length - 1).toBeGreaterThanOrEqual(3);
+  });
+
+  it('Scenario: Repeated screens are one line', () => {
+    const repeated: readonly JournalEntry[] = [
+      { id: 'r1', at: at(0), kind: 'screen', name: '/(tabs)' },
+      { id: 'r2', at: at(0, 1), kind: 'screen', name: '/(tabs)' },
+      { id: 'r3', at: at(0, 2), kind: 'screen', name: '/(tabs)' },
+      { id: 'r4', at: at(0, 3), kind: 'screen', name: '/(tabs)' },
+      { id: 'r5', at: at(0, 4), kind: 'screen', name: '/(tabs)' },
+    ];
+
+    const text = renderReport({ ...report, journal: repeated, prompting: null });
+
+    expect(text).toContain('· ×5 · останній 2026-09-02 17:00:04.000');
+    // The header still counts what the журнал holds, not what the folding shows.
+    expect(text).toContain('## Recent journal (5) · Журнал');
+  });
+
+  it('Scenario: Rendering is deterministic, and the file is the same text plus image data', () => {
+    expect(renderReport(busyReport)).toBe(renderReport(busyReport));
+
+    const onScreen = renderReport(busyReport);
+    const handed = renderReportFile(busyReport, images);
+    expect(handed).toContain('AAECAwQ=');
+    // Every line of the on-screen text is in the file, in order — the file adds image data only.
+    for (const anchor of ['## Summary · Коротко', '## Network (3) · Мережа', '- Запитів: 3']) {
+      expect(onScreen).toContain(anchor);
+      expect(handed).toContain(anchor);
+    }
   });
 });

@@ -2,9 +2,11 @@ import * as AuthSession from 'expo-auth-session';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
+import { journal } from '../ui/journal';
 import {
   DRIVE_APPDATA_SCOPE,
   GOOGLE_AUTH_KEY,
+  googleConnectEnding,
   type GoogleAccessToken,
   type GoogleAuthPort,
   type GoogleAuthorisation,
@@ -97,70 +99,81 @@ function looksOffline(error: unknown): boolean {
   return /network|fetch|timeout|ENOTFOUND|ECONN/i.test(message);
 }
 
-export const googleAuth: GoogleAuthPort = {
-  async authorise(): Promise<GoogleAuthorisation> {
-    const id = clientId();
-    if (!id) {
-      return { kind: 'not-configured' };
-    }
+/** The exchange itself, unchanged — `authorise` below is this with the журнал around it. */
+async function connect(): Promise<GoogleAuthorisation> {
+  const id = clientId();
+  if (!id) {
+    return { kind: 'not-configured' };
+  }
 
-    let result: AuthSession.AuthSessionResult;
-    let request: AuthSession.AuthRequest;
-    try {
-      request = new AuthSession.AuthRequest({
+  let result: AuthSession.AuthSessionResult;
+  let request: AuthSession.AuthRequest;
+  try {
+    request = new AuthSession.AuthRequest({
+      clientId: id,
+      scopes: SCOPES,
+      redirectUri: redirectUri(id),
+      // PKCE, which is what makes a secretless client safe: the code that comes back is
+      // redeemable only by the app that started the flow.
+      usePKCE: true,
+      extraParams: {
+        // Without these two Google issues no refresh token, and a daily backup would need the
+        // owner at the consent screen every hour.
+        access_type: 'offline',
+        prompt: 'consent',
+      },
+    });
+    result = await request.promptAsync(DISCOVERY);
+  } catch (error) {
+    return looksOffline(error) ? { kind: 'no-network' } : { kind: 'refused' };
+  }
+
+  if (result.type === 'cancel' || result.type === 'dismiss') {
+    // The owner backed out. Nothing is kept and nothing is claimed.
+    return { kind: 'cancelled' };
+  }
+  if (result.type !== 'success') {
+    return { kind: 'refused' };
+  }
+
+  const code = result.params.code;
+  if (!code) {
+    return { kind: 'refused' };
+  }
+
+  try {
+    const tokens = await AuthSession.exchangeCodeAsync(
+      {
         clientId: id,
-        scopes: SCOPES,
+        code,
         redirectUri: redirectUri(id),
-        // PKCE, which is what makes a secretless client safe: the code that comes back is
-        // redeemable only by the app that started the flow.
-        usePKCE: true,
-        extraParams: {
-          // Without these two Google issues no refresh token, and a daily backup would need the
-          // owner at the consent screen every hour.
-          access_type: 'offline',
-          prompt: 'consent',
-        },
-      });
-      result = await request.promptAsync(DISCOVERY);
-    } catch (error) {
-      return looksOffline(error) ? { kind: 'no-network' } : { kind: 'refused' };
-    }
-
-    if (result.type === 'cancel' || result.type === 'dismiss') {
-      // The owner backed out. Nothing is kept and nothing is claimed.
-      return { kind: 'cancelled' };
-    }
-    if (result.type !== 'success') {
+        extraParams: request.codeVerifier ? { code_verifier: request.codeVerifier } : {},
+      },
+      DISCOVERY,
+    );
+    if (!tokens.refreshToken) {
+      // Without a refresh token nothing can run in the background, so this is not a connection
+      // worth claiming — better refused now than silently dead in a day.
       return { kind: 'refused' };
     }
+    await SecureStore.setItemAsync(GOOGLE_AUTH_KEY, tokens.refreshToken, OPTIONS);
+    // The label is returned and not kept here: `drive_backup.account_label` is where the section
+    // reads it from, and one copy is one place for it to be wrong.
+    return { kind: 'ok', accountLabel: emailOf(tokens.idToken) ?? 'Google' };
+  } catch (error) {
+    return looksOffline(error) ? { kind: 'no-network' } : { kind: 'refused' };
+  }
+}
 
-    const code = result.params.code;
-    if (!code) {
-      return { kind: 'refused' };
-    }
-
-    try {
-      const tokens = await AuthSession.exchangeCodeAsync(
-        {
-          clientId: id,
-          code,
-          redirectUri: redirectUri(id),
-          extraParams: request.codeVerifier ? { code_verifier: request.codeVerifier } : {},
-        },
-        DISCOVERY,
-      );
-      if (!tokens.refreshToken) {
-        // Without a refresh token nothing can run in the background, so this is not a connection
-        // worth claiming — better refused now than silently dead in a day.
-        return { kind: 'refused' };
-      }
-      await SecureStore.setItemAsync(GOOGLE_AUTH_KEY, tokens.refreshToken, OPTIONS);
-      // The label is returned and not kept here: `drive_backup.account_label` is where the section
-      // reads it from, and one copy is one place for it to be wrong.
-      return { kind: 'ok', accountLabel: emailOf(tokens.idToken) ?? 'Google' };
-    } catch (error) {
-      return looksOffline(error) ? { kind: 'no-network' } : { kind: 'refused' };
-    }
+export const googleAuth: GoogleAuthPort = {
+  /**
+   * Recorded as an operation rather than as a request: the exchange goes through
+   * `expo-auth-session`, not through a `fetch` this app owns, so there is no seam to journal
+   * (design D5a). The word it ends with is `googleConnectEnding`'s, which is proven on the port —
+   * this file is never loaded under `verify`, so a mapping written here would be one nobody checks.
+   */
+  authorise(): Promise<GoogleAuthorisation> {
+    return journal.step('google-sign-in', connect, { ending: googleConnectEnding });
   },
 
   async accessToken(): Promise<GoogleAccessToken> {

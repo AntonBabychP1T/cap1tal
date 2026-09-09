@@ -13,6 +13,8 @@ import { account } from '../domain/account';
 import { money } from '../domain/money';
 import type { Expense } from '../domain/transaction';
 import { inMemoryBackupFiles } from '../platform/backup-file';
+import type { JournalEntry } from '../reporting/journal';
+import { bindTestJournal, resetJournalForTests } from './journal';
 import {
   backOut,
   backupFileName,
@@ -456,5 +458,51 @@ describe('the «Бекап» screen', () => {
     expect(section).toContain("useCloseOnBack(state.kind === 'previewing', closePreview)");
     expect(section).toContain('title="Скасувати" variant="secondary" onPress={closePreview}');
     expect(section).not.toContain('BackHandler');
+  });
+});
+
+describe('what the журнал records about a бекап', () => {
+  let storage: TestStorage;
+  let journalOf: () => readonly JournalEntry[];
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedPhone(storage.db);
+    journalOf = bindTestJournal();
+  });
+  afterEach(() => {
+    storage.close();
+    resetJournalForTests();
+  });
+
+  it('Scenario: An operation that succeeds is recorded, not only one that fails', async () => {
+    await saveToFile({ store: backupRepo(storage.db), files: inMemoryBackupFiles() }, NOW);
+
+    const written = journalOf();
+    expect(written.map((e) => [e.kind, e.name, e.detail])).toEqual([
+      ['step', 'backup-save', 'почалось'],
+      ['step', 'backup-save', 'saved'],
+    ]);
+    expect(written[0]?.run).toBe(written[1]?.run);
+    expect(written[1]?.tookMs).toBeGreaterThanOrEqual(0);
+    expect(written[1]?.counts).toEqual({ accounts: 3, transactions: 40 });
+    // Nothing failed, so nothing says it did.
+    expect(written.some((e) => e.kind === 'failure')).toBe(false);
+  });
+
+  it('records the відновлення at both ends with what came back', async () => {
+    const shown = previewing(
+      await pickForRestore({
+        store: backupRepo(storage.db),
+        files: inMemoryBackupFiles({ picked: foreignBackup() }),
+      }),
+    );
+
+    await confirmRestore({ store: backupRepo(storage.db) }, shown);
+
+    const written = journalOf().filter((e) => e.name === 'backup-restore');
+    expect(written.map((e) => e.detail)).toEqual(['почалось', 'restored']);
+    expect(written[0]?.run).toBe(written[1]?.run);
+    expect(written[1]?.counts).toEqual({ accounts: 12, transactions: 4300 });
   });
 });

@@ -29,7 +29,17 @@ never arrives in the app answers neither of the vision's two questions: it is ne
 - **A run in front of the owner yields when the app leaves the foreground.** The wait before the
   next request ends at once, the run stops before sending it, and the unfinished рахунки end
   postponed for the background to continue. Until now such a run froze mid-wait holding the one-run
-  lock, which would have blocked every background run until the owner came back.
+  lock, which would have blocked every background run until the owner came back. The phone answers
+  «in front» or «away» and nothing finer — a dialog drawn over the app reads the same as the owner
+  leaving, and the app does not pretend otherwise — so the one thing it does is refuse to spend a
+  whole run on that answer: a run that has sent no request yet does not yield.
+- **A рахунок remembers where paging got to, so a run that stops in the middle of a window is not
+  wasted.** A window whose answer comes back full is asked again, narrowed backwards, until an
+  answer comes back short — and the cursor cannot move while that is going on. Until now that
+  position lived only in the run's memory, so a рахунок needing more pages than one run could spend
+  requests on could never finish at all: every run re-read the same pages and stopped in the same
+  place. That is the defect the owner's phone found on 2026-09-09, and yielding is what turned it
+  from slow into never.
 - **A postponed run does not spend the quiet interval.** Opening the app after one starts a full
   run at once; a background run that ends postponed while the owner is already in the app is
   followed at once by one without a budget.
@@ -44,15 +54,19 @@ never arrives in the app answers neither of the vision's two questions: it is ne
   runs exist, would silently stop every one of them.
 - The monobank screen says that sync also runs in the background, and the outcomes it names gain
   «перенесено» beside «скасовано» and the four failures.
-- Nothing new is stored: the remembered attempt already holds an outcome, and «postponed» is one
-  more word it can hold. No migration.
+- One migration, and it is the paging one: two nullable columns on `monobank_links` holding the
+  window a рахунок is half-way through and the page its next request should ask for. Every existing
+  row reads them back as absent, which is true of all of them, and neither goes into a бекап — they
+  are this phone's own progress, like `last_attempted_at`. Nothing else is stored: the remembered
+  attempt already holds an outcome, and «postponed» is one more word it can hold.
 
 ### Scope
 
 The background run, its budget, the yielding of a foreground run, the outcome that names both,
-what a background run announces, the request timeout, and one sentence on the screen. The engine
-— what is fetched, how an item maps, the cursor rule, the dedup, the order of turns and the pace —
-is called, not changed, beyond the one yes/no port and the one outcome word the budget needs.
+what a background run announces, the request timeout, and one sentence on the screen — plus the
+one engine rule a stoppable run cannot do without: where a half-paged window got to, which until
+now lived in the run's own memory and died with it. What is fetched, how an item maps, the dedup,
+the order of turns and the pace are called, not changed.
 
 ### Non-goals
 
@@ -89,16 +103,29 @@ is called, not changed, beyond the one yes/no port and the one outcome word the 
   is untouched.
 - `monobank-sync-screen`: the outcomes a run reports gain postponed and the screen names every one
   of them, and the sync section says that sync also runs in the background.
+- `persistence`: what a link stores gains where a half-paged window has got to — the window and the
+  page its next request should ask for — written in the same transaction as the answer that
+  produced it, read back after a restart, and left out of a бекап.
 
-`main-screen` and `persistence` change nothing at the requirement level: the freshness line already
-reads whatever moments a run moved, whoever started it, and the attempt's outcome already survives
-a restart as one of the words this capability names.
+`main-screen` changes nothing at the requirement level: the freshness line already reads whatever
+moments a run moved, whoever started it, and the attempt's outcome already survives a restart as
+one of the words this capability names.
 
 ## Impact
 
 - `src/monobank/coordinator.ts` — one new optional port asking whether the run should yield, asked
-  exactly where the owner's «Зупинити» is asked, and the `postponed` outcome. No change to
-  windows, mapping, commits or pacing.
+  exactly where the owner's «Зупинити» is asked, and the `postponed` outcome. Plus the paging
+  resume: a рахунок that starts with a half-paged window works that window first and from where it
+  stopped, each full answer writes where narrowing got to, and a window that answers short moves
+  the cursor to the end it was paging toward rather than to the run's own end. Mapping, dedup and
+  pacing are untouched.
+- `src/db/schema.ts` and a new migration under `drizzle/` — the two nullable columns; the
+  migrations test runs them all on an empty database.
+- `src/db/monobank-repo.ts` — the pair on `StoredMonobankLink` and written by
+  `commitStatementAnswer`, in the same one transaction as the транзакції and ids, so a half-paged
+  position can never survive an answer that did not store.
+- `src/db/backup-repo.ts` and `src/backup/format.ts` — the two columns are named among what a
+  бекап leaves behind, beside `last_attempted_at` and for its reason.
 - `src/monobank/yielding.ts` (new, pure) — how a run gives up its wait, at the end of a budget or
   when the app leaves the foreground, and how a request gives up on the bank: three small port
   builders over an injected timer and clock.
@@ -121,18 +148,25 @@ a restart as one of the words this capability names.
   foreground, and every request carries the timeout.
 - `src/app/_layout.tsx`, `src/app/manage/monobank.tsx` — registration follows the links; the
   follow-up run after a postponed one; the sentence and the full legend on the screen.
+- `openspec/specs/persistence/spec.md` — what a link stores gains the paging position, with the
+  scenario every earlier monobank migration has: rows written before it load unchanged.
 - `docs/product-vision.md` §12, `docs/glossary.md`, `docs/app-overview.md` §4.4,
   `docs/tech-task.md`, `.claude/rules/android.md`, `.claude/rules/database.md` — the product now
   syncs in the background and the documents say so; the rule that named notification access as the
   only background capability is already behind `google-drive-backup` and is corrected here, and the
   rule that names the root layout as the only place migrations are applied gains the one other
   caller of the same migrator.
-- Sequencing: every `monobank-sync` delta here is ADDED, so this change archives in any order
+- Sequencing: the `monobank-sync` deltas here are ADDED but for one — «Each linked account resumes
+  from a committed sync cursor», MODIFIED for the paging position — and `persistence` gains one
+  MODIFIED requirement, «Monobank links and progress survive a restart», for the two columns that
+  hold it. Both bases are archived requirements of the same names, and no other unarchived change
+  touches either. So this change archives in any order
   relative to the chain `home-daily-overview` → `monobank-auto-sync` → `monobank-sync-fairness`,
   and reads best after them, since the requirements it adds extend theirs. Once both are archived
   the truth spec holds `monobank-auto-sync`'s five-word ranking beside this change's sixth word;
   the ranking requirement here says «as the order already ranks them» so the two read as one
-  order, and a later tidy-up may fold them into one requirement. The one MODIFIED here — the
+  order, and a later tidy-up may fold them into one requirement. The monobank-sync-screen MODIFIED
+  — the
   screen's outcomes requirement — is also MODIFIED by the unarchived `qa-sweep-2026-09`; this
   change's block is the union of both (the setup-state retry rule and its two scenarios are
   carried verbatim), and this change archives **after** `qa-sweep-2026-09`, so that whichever

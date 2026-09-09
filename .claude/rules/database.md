@@ -40,6 +40,19 @@ paths:
 - Renames and type changes are a new column/table plus a data copy, never a destructive rewrite,
   until the owner explicitly accepts data loss.
 
+## Progress a run leaves behind
+- A рахунок whose вікно needs more pages than one прогін affords carries its place between
+  прогони: `monobank_links.paging_window_to_ms` and `paging_request_to_ms` hold the window being
+  paged and the end the next request should ask for, written in the same transaction as the
+  транзакції and imported ids of the answer that produced them (`commitStatementAnswer`). So
+  «перенесено» on such a рахунок means progress rather than repetition — without them every прогін
+  re-read the same pages and the рахунок could never finish. A position whose window end is not
+  after the cursor is discarded, not trusted: a boundary the owner moved, or a restore, can leave
+  one behind.
+- They are this phone's own progress, so they stay out of a бекап beside
+  `monobank_links.last_attempted_at` — `src/db/backup-repo.ts` names the link columns it carries
+  one by one, and `src/backup/format.ts` says why these three are not among them.
+
 ## Column conventions
 - Money: `integer` minor units + `text` currency (ISO-4217), on the same row, always as a pair.
   No `real` for money anywhere. [PROPOSED, matches domain rule]

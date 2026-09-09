@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { money } from '../domain/money';
 import { accountsRepo } from '../db/accounts-repo';
@@ -11,11 +11,15 @@ import { openTestDb } from '../db/test-db';
 import { transactionsRepo } from '../db/transactions-repo';
 import { accountKey } from '../saldo/survey';
 import { csv, pair, existingAccount, existingState, SALDO_COLUMNS } from '../saldo/test-fixtures';
+import type { ImportPlan } from '../saldo/interpret';
+import type { JournalEntry } from '../reporting/journal';
+import { bindTestJournal, resetJournalForTests } from './journal';
 import { narrow, PICKER_SIZE } from './shortlist';
 import {
   accountRows,
   canCommit,
   commitFailed,
+  commitImport,
   committed,
   confirmSecondImport,
   dismissHint,
@@ -1473,5 +1477,63 @@ describe('saldo-import-screen — The import states its four counts in the form 
     expect(screen).not.toContain('Записано:');
     expect(screen).toContain('planLine(');
     expect(screen).toContain('writtenLine(');
+  });
+});
+
+describe('what the журнал records about an імпорт', () => {
+  let journalOf: () => readonly JournalEntry[];
+
+  beforeEach(() => {
+    journalOf = bindTestJournal();
+  });
+  afterEach(() => resetJournalForTests());
+
+  const summary = { accounts: 3, categories: 7, sources: 2, transactions: 2400 };
+
+  /** A plan with nothing in it: what the commit writes is the stub's answer, not the plan's. */
+  const EMPTY_PLAN: ImportPlan = {
+    accounts: [],
+    accountKeys: {},
+    categories: [],
+    sources: [],
+    transactions: [],
+    unexplained: [],
+    rejectedRedirects: [],
+  };
+
+  it('records both ends with the numbers the commit wrote', async () => {
+    const written = await commitImport(
+      { commit: () => summary },
+      EMPTY_PLAN,
+      new Date('2026-09-02T12:00:00.000Z'),
+    );
+
+    expect(written).toEqual(summary);
+    const entries = journalOf();
+    expect(entries.map((e) => [e.kind, e.name, e.detail])).toEqual([
+      ['step', 'saldo-import', 'почалось'],
+      ['step', 'saldo-import', 'вдалось'],
+    ]);
+    expect(entries[0]?.run).toBe(entries[1]?.run);
+    // The numbers recorded are the numbers committed, and nothing about the export's contents.
+    expect(entries[1]?.counts).toEqual(summary);
+  });
+
+  it('records the failing end and hands the refusal back to the screen', async () => {
+    const refusal = new Error('database is locked');
+
+    await expect(
+      commitImport(
+        {
+          commit: () => {
+            throw refusal;
+          },
+        },
+        EMPTY_PLAN,
+        new Date('2026-09-02T12:00:00.000Z'),
+      ),
+    ).rejects.toBe(refusal);
+
+    expect(journalOf().map((e) => e.detail)).toEqual(['почалось', 'не вдалось']);
   });
 });

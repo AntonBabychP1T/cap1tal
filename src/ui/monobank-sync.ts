@@ -2,10 +2,13 @@ import {
   syncLinkedAccounts,
   type AccountOutcome,
   type SyncPorts,
+  type SyncProgress,
   type SyncRun,
 } from '../monobank/coordinator';
 import { worstOutcome, type SyncAttempt } from '../monobank/auto';
 import { clear as clearAlert, raise as raiseAlert, type AlertPorts } from './alerting';
+import { STEP_BEGAN, SYNC_ACCOUNTS, SYNC_STEP } from '../reporting/journal';
+import { journal, type StepEnding } from './journal';
 
 /**
  * The one place a monobank sync is started, whoever asked for it: the app opening, the app coming
@@ -48,6 +51,101 @@ export interface StartSyncPorts {
    * answer, because a run started there can outlive the owner's patience for watching it.
    */
   readonly attended: boolean;
+  /**
+   * The mark this run's entries carry, minted by whoever built the ports.
+   *
+   * One id for the whole run rather than one per writer: the `network` entries `syncPorts()`
+   * writes, the per-рахунок `step` entries `journalProgress` writes and the run's own two ends are
+   * one operation, and a репорт that could not tell which request belonged to which run would
+   * answer «which card is not syncing» no better than the one that prompted this change. Absent,
+   * `journal.step` mints its own — a run recorded whole, with only its own entries tied together.
+   */
+  readonly run?: string;
+}
+
+/** The name every entry of one monobank sync run carries — the журнал's own vocabulary. */
+export { SYNC_STEP };
+
+/** The name a single рахунок's turn within a run carries, by the bank's own identifier for it. */
+export function accountStepName(monobankAccountId: string): string {
+  return `${SYNC_STEP}/${monobankAccountId}`;
+}
+
+/**
+ * A `SyncProgress` listener that writes the run's timeline into the журнал.
+ *
+ * The coordinator has emitted these four events since it was written and only the monobank screen
+ * ever listened; the automatic run and the background chance passed no listener at all, which is
+ * why the репорт that prompted this change said nothing whatever about a sync. Composed onto
+ * whatever listener the caller has rather than replacing it (design D4), so the screen keeps its
+ * progress and every run keeps its record.
+ *
+ * Nothing here is decided: each event becomes one entry naming what it is about — a рахунок by the
+ * bank's own identifier for it, which is the one identifier of the owner's this журнал admits and
+ * the only thing that answers «which card».
+ */
+export function journalProgress(run: string): (progress: SyncProgress) => void {
+  return (progress) => {
+    switch (progress.kind) {
+      case 'started':
+        journal.record('step', SYNC_STEP, SYNC_ACCOUNTS, { run, counts: { accounts: progress.accounts } });
+        return;
+      case 'account':
+        journal.record('step', accountStepName(progress.monobankAccountId), STEP_BEGAN, {
+          run,
+          counts: { index: progress.index, of: progress.of },
+        });
+        return;
+      case 'waiting':
+        journal.record('step', `${SYNC_STEP}/wait`, undefined, { run, counts: { ms: progress.ms } });
+        return;
+      case 'finished-account':
+        journal.record(
+          'step',
+          accountStepName(progress.result.monobankAccountId),
+          progress.result.outcome,
+          { run, counts: { imported: progress.result.imported } },
+        );
+        return;
+    }
+  };
+}
+
+/**
+ * The journaling progress listener with whatever listener the caller already had beside it.
+ *
+ * Composed, never replaced (design D4): the monobank screen's «2 з 3» is the owner's, and a
+ * журнал that took it away to record the same events would trade a feature for a diagnostic. The
+ * entry is written first, so a listener that throws — a screen's `setState` after unmount — costs
+ * the screen its update and never the record.
+ */
+export function composeProgress(
+  run: string,
+  existing?: (progress: SyncProgress) => void,
+): (progress: SyncProgress) => void {
+  const write = journalProgress(run);
+  return (progress) => {
+    write(progress);
+    existing?.(progress);
+  };
+}
+
+/**
+ * What the run's ending entry says: the one word the run is remembered by, and what it imported.
+ *
+ * The run's own two entries are what records a sync *at all*. `SyncProgress` has no run-finished
+ * event, and its `started` fires only after the token has been read — so `not-configured`,
+ * `storage-unavailable` and `no-links` emit nothing through the listener, and those are precisely
+ * the three the репорт that prompted this change needed a word about (design D4).
+ */
+export function syncEnding(run: SyncRun): StepEnding {
+  if (run.kind !== 'ran') {
+    return { detail: run.kind };
+  }
+  return {
+    detail: worstOutcome(run.accounts) ?? run.kind,
+    counts: { imported: run.imported, accounts: run.accounts.length },
+  };
 }
 
 /** What asking for a sync came to. */
@@ -144,7 +242,10 @@ export async function startSync(ports: StartSyncPorts): Promise<SyncStart> {
 
   const run = (async (): Promise<SyncRun> => {
     ports.attempts.beginAttempt(ports.sync.now());
-    const result = await syncLinkedAccounts(ports.sync);
+    const result = await journal.step(SYNC_STEP, () => syncLinkedAccounts(ports.sync), {
+      ...(ports.run === undefined ? {} : { run: ports.run }),
+      ending: syncEnding,
+    });
     if (!reachedTheBank(result)) {
       ports.attempts.withdrawAttempt();
       return result;

@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 
 import { rates as ratesRepo } from '@/db/repos';
 import { fetchMonobankRates } from '@/monobank/currency';
+import { journal } from '@/ui/journal';
 import { shouldRefreshRates } from '@/ui/approx-uah';
 
 /**
@@ -33,7 +34,7 @@ export function useCurrentRates(reload: () => void): void {
       let left = false;
       // Per currency, not off the newest row: a fresh USD rate must not keep a stale EUR one.
       if (shouldRefreshRates(ratesRepo.all(), new Date())) {
-        void fetchMonobankRates(fetch).then((obtained) => {
+        void fetchMonobankRates(journal.watchFetch((url: string) => fetch(url))).then((obtained) => {
           if (obtained.length === 0) {
             return;
           }

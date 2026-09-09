@@ -31,8 +31,17 @@ export const BACKUP_FORMAT_VERSION = 2;
  * `drizzle/meta/_journal.json`. That tripwire is the point, not the number: adding a migration
  * breaks `verify` until someone opens this file and asks whether a бекап still holds everything it
  * should. A бекап naming a higher one is refused; a lower one is restored (design D5).
+ *
+ * 22 asked it and answered yes: migration 0021's three columns are on `journal`, which is never in
+ * a бекап at all. 23 asked it and answered yes: migration 0022's two columns are the paging
+ * position, which is deliberately not carried — see the exclusions below.
+ *
+ * The two arrived from two changes in flight at once, `journal-diagnostics` and
+ * `monobank-background-sync`, and the constant counts migrations rather than changes: whichever is
+ * integrated second must find both answers recorded here, and the one carrying 0022 cannot be
+ * integrated alone. Its change says so in its own tasks.
  */
-export const BACKUP_SCHEMA_VERSION = 21;
+export const BACKUP_SCHEMA_VERSION = 23;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -76,13 +85,15 @@ export const BACKUP_KIND = 'backup';
  * request a minute. A moment carried in from another device would make a restored phone sit out a
  * request it never sent, or fire one the bank will refuse.
  *
- * `monobank_links.last_attempted_at` is the one *column* excluded from a table that is otherwise
- * carried whole, so it is said here rather than left to the list below — `BACKUP_TABLES` names
- * tables and the tests over it check tables, so nothing else would say it. `src/db/backup-repo.ts`
- * names the link columns it snapshots and restores one by one, and that one is not among them: a
- * link's turn is when *this* phone last asked the bank about it, the same class of fact as the
- * pace above, while the link's cursor, its sync boundary and its last completed sync are the
- * owner's own state and are carried. A restored link has had no turn, which is true.
+ * `monobank_links.last_attempted_at`, `paging_window_to_ms` and `paging_request_to_ms` are the
+ * *columns* excluded from a table that is otherwise carried whole, so they are said here rather
+ * than left to the list below — `BACKUP_TABLES` names tables and the tests over it check tables,
+ * so nothing else would say it. `src/db/backup-repo.ts` names the link columns it snapshots and
+ * restores one by one, and these three are not among them: a link's turn is when *this* phone last
+ * asked the bank about it and the paging pair is how far *this* phone has read into a window it
+ * has not finished — the same class of fact as the pace above — while the link's cursor, its sync
+ * boundary and its last completed sync are the owner's own state and are carried. A restored link
+ * has had no turn and has read no pages, which is true; its next прогін plans that window afresh.
  *
  * `entry_defaults` is deliberately absent, and it is the one exclusion that is not about secrecy:
  * it holds which рахунок the entry form on *this* phone opens on — a habit the device learned from

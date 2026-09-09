@@ -308,6 +308,76 @@ in the background best-effort, with the same no-clock-time honesty the бека�
 `.claude/rules/android.md` names the two background capabilities that exist instead of the one it
 names today; `.claude/rules/database.md` names the task as the one other caller of the migrator.
 
+### D11 — Where a half-paged window is remembered: two columns beside the cursor
+
+The cursor cannot carry it. `cursor_ms` means «everything before this is imported», and the
+narrowing of a full window walks *backwards* from the window's end toward the cursor, so the
+contiguous imported region grows downward from the top and no prefix from the cursor is
+established until the last page. That is why `syncOneAccount` keeps the cursor still while a window
+is being paged, and it is right — the mistake was keeping the *position* only in the run's own
+memory, where a run that stops takes it with it.
+
+So a new migration adds two nullable columns to `monobank_links`: the end of the window being
+paged, and the end the next request should ask for — `continueWindow`'s own answer, written after
+each full page and cleared when the window answers short. A run that finds them resumes that
+window from the remembered request end instead of planning it afresh; a run that finds them absent
+behaves exactly as it does today, which is what every existing row reads back as.
+
+Two columns rather than one, because the two are different facts and the second cannot be derived.
+The window's end is what the cursor moves to when the window finishes, and it is *not* the current
+run's end: a later run reaches further, and committing its end would step over a slice no request
+read. The request end is where paging got to. Storing only one of them would either lose the
+resume point or lose the commit point.
+
+They are operational state about this phone's own progress, so they stay out of a бекап for
+`last_attempted_at`'s reason: a restored phone has read no pages and must not claim it stopped
+halfway through one. A remembered window end at or below the cursor is discarded rather than
+trusted — a boundary the owner moved, or a restore, can leave one behind, and the cheap answer is
+to plan the window afresh.
+
+*Alternative rejected:* narrowing the window forward instead — halving `[cursor, end]` until an
+answer fits — which would advance the cursor with every page and need no stored state at all. It
+also spends requests on windows that turn out still too large, and a request is a minute of the
+bank's allowance. Backwards narrowing never wastes one; the state is the cheaper of the two.
+
+### D12 — «Away» is the only answer the phone gives, so the rule is about cost, not about guessing
+
+React Native's `AppState` on Android reports `active` and `background` and nothing between them —
+`inactive` is documented in RN's own source as iOS-only, and `blur`/`focus` are events about window
+focus, not a state a run can read when it asks. The Activity is paused by a system dialog and by
+the owner leaving alike, and JS timers are paused with it either way, so a run that wanted to carry
+on through a dialog could not: its wait would never resolve. There is nothing to distinguish and
+nothing to be gained by distinguishing it.
+
+What was worth fixing is the *cost* of the answer. Asked before every request, with requests a
+minute apart, an eager yield turned an ordinary thirty-second visit into a run of about one
+request — and, before D11, into a run that threw away a window's paging. D11 makes the yield cost
+one request gap, which is what D5 claimed all along. The one rule added here is the cheap half:
+`foregroundRun` answers no while the run has sent nothing, so a phone that says «away» at the
+instant a run starts costs it one request instead of the whole run. That is a property of the port
+and is proven over the fake foreground under `verify`; the mapping from `AppState` to «away» stays
+one line in `src/hooks/monobank-ports.ts`, where there is nothing left to get wrong.
+
+**What «has sent nothing» is read from, and where it stops being true.** The port sees two things
+only, `wait` and `postponed`, so «a request has gone out» is read from the wait: the coordinator's
+pace asks for one before every request but its first, *unless the device already owes the bank the
+minute between requests* — `paced` seeds itself from `lastRequestAtMs()`, so a run started inside
+that minute waits before its very first request too. The port cannot tell that wait from the others
+and does not try, and the behaviour that falls out is the right one anyway: such a run has nothing
+it may send. The wait it owes is the pace's, no timer will run it out with the app away, and a
+request sent regardless comes back 429 rather than answered. So it stops having sent nothing, which
+costs nothing — the request it did not spend is the one the run before it just spent, and that run
+is why the minute is owed. The spec says this in as many words rather than leaving the port's rule
+sounding broader than it is.
+
+*Alternative rejected:* teaching the port about requests directly, by handing it the fetch to wrap
+or giving the coordinator a port to announce them on. It would buy exactness in the one case where
+exactness changes nothing — the run still may not send — at the price of a second thing for
+`monobank-ports.ts` to wire and get wrong.
+
+*Alternative rejected:* waiting out a short grace before believing «away». The grace would need a
+timer, and the timers are exactly what Android has paused by then.
+
 ## Risks / Trade-offs
 
 - **[The phone gives chances rarely — Doze, a low standby bucket, Samsung]** → The foreground
@@ -329,8 +399,19 @@ names today; `.claude/rules/database.md` names the task as the one other caller 
   between requests, the page in flight commits, and returning is `syncDue` over a `postponed`
   attempt: a full run starts at once. The cost is one request gap; the benefit is that the
   background is never blocked.
+  *Corrected after the owner's phone, 2026-09-09.* The cost was one request gap only for a рахунок
+  between windows. For one in the middle of a *paged* window it was the whole of that window's
+  paging, because the position lived in the run's memory — so the рахунок that needed paging never
+  finished at all, on any run, ever. D11 is what makes this bullet true as written. And the trigger
+  was too eager besides: asked before every request, against «anything but active», with requests a
+  minute apart, it turned every ordinary visit into a run of about one request. The spec now says
+  what leaving the foreground means and that a run with nothing sent does not yield.
 - **[`AppState` on Android reports `background` for a system dialog over the app]** → The run
-  yields; returning starts a full one at once. Acceptable for the same reason.
+  yields; returning starts a full one at once. Acceptable **once D11 holds** — before it, a рахунок
+  half-way through a window lost its place instead of one request gap. Android offers no finer
+  answer to tell «obscured» from «away» (D12), so the app does not pretend to: what it does instead
+  is refuse to spend a whole run on the question (spec: «A run that has sent nothing does not
+  yield»).
 - **[A slow but honest answer is given up at thirty seconds]** → It ends `unavailable`, costs that
   рахунок one cycle of the order, and is retried; a rule that never gives up would cost every
   background run on the device instead.
@@ -341,7 +422,11 @@ names today; `.claude/rules/database.md` names the task as the one other caller 
 
 ## Migration Plan
 
-No migration. The attempt's `outcome` column already takes any string, and `postponed` is one more
+One migration, for D11: two nullable columns on `monobank_links`, which every existing row reads
+back as absent — a link that has never been left half-paged, which is true of all of them. No
+backfill and nothing to undo.
+
+Otherwise no migration. The attempt's `outcome` column already takes any string, and `postponed` is one more
 word the reader knows. The entry file and the registration reach the phone with the next build;
 the first launch of that build registers the task, and the first chance after that continues from
 the cursors and the order the foreground runs left.

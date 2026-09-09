@@ -1,4 +1,14 @@
-import { entryLine, fold, moment, type JournalEntry } from './journal';
+import {
+  entryLine,
+  fold,
+  foldScreens,
+  moment,
+  runMark,
+  STEP_BEGAN,
+  SYNC_ACCOUNTS,
+  SYNC_STEP,
+  type JournalEntry,
+} from './journal';
 
 /**
  * The репорт про помилку as values, and the one rendering of it.
@@ -142,7 +152,95 @@ export function routeTrail(
 }
 
 /**
- * Section 1 of ten. English anchor, Ukrainian gloss — the same shape every other heading takes, so
+ * What the журнал holds, before the reader reads two thousand lines of it.
+ *
+ * Every field is a fold over the журнал and nothing is stored: a репорт rendered twice is the same
+ * text, and this is derived from the entries it already carries (design D7).
+ */
+export interface NetworkSummary {
+  readonly requests: number;
+  /** Requests that came back refused, or never came back at all. */
+  readonly failed: number;
+  /** The request that took longest — the earliest of them where two took the same. */
+  readonly slowest?: { readonly name: string; readonly tookMs: number };
+  readonly syncRuns: number;
+  /** What the last sync run came to, in the coordinator's own word. */
+  readonly lastRun?: string;
+}
+
+/**
+ * The counts the summary states.
+ *
+ * A request «did not succeed» when it carries a status of 400 or more, or carries no status at all
+ * — the second is a request that never got an answer, which `watchFetch` records with the app's own
+ * word in `detail` and no `counts`. The slowest is the earliest of the ties, because ties are
+ * ordinary at millisecond resolution and «the first of them» is the only tie-break that is stable
+ * across two renderings of one репорт.
+ */
+export function networkSummary(journal: readonly JournalEntry[]): NetworkSummary {
+  const requests = journal.filter((entry) => entry.kind === 'network');
+  const failed = requests.filter((entry) => {
+    const status = entry.counts?.status;
+    return status === undefined || status >= 400;
+  });
+
+  let slowest: { name: string; tookMs: number } | undefined;
+  for (const entry of requests) {
+    // Strictly greater, so the earliest of the ties is the one kept.
+    if (entry.tookMs !== undefined && (slowest === undefined || entry.tookMs > slowest.tookMs)) {
+      slowest = { name: entry.name, tookMs: entry.tookMs };
+    }
+  }
+
+  // A run is counted by its beginning, so one the phone was killed in the middle of still counts.
+  const syncEntries = journal.filter(
+    (entry) => entry.kind === 'step' && entry.name === SYNC_STEP,
+  );
+  const endings = syncEntries.filter(
+    (entry) => entry.detail !== STEP_BEGAN && entry.detail !== SYNC_ACCOUNTS,
+  );
+  const last = endings[endings.length - 1];
+
+  return {
+    requests: requests.length,
+    failed: failed.length,
+    ...(slowest === undefined ? {} : { slowest }),
+    syncRuns: syncEntries.filter((entry) => entry.detail === STEP_BEGAN).length,
+    ...(last?.detail === undefined ? {} : { lastRun: last.detail }),
+  };
+}
+
+/** One operation's entries, in the order they were written. */
+export interface RunTimeline {
+  readonly run: string;
+  readonly entries: readonly JournalEntry[];
+}
+
+/**
+ * The журнал grouped by the mark that ties one operation together, runs in the order they began.
+ *
+ * This is what makes a sync readable as a sync when the owner tapped between two tabs in the
+ * middle of it: the requests, the per-рахунок turns and the run's own two ends carry one mark, and
+ * the entries that fell between them carry none and are simply not here.
+ */
+export function runTimelines(journal: readonly JournalEntry[]): RunTimeline[] {
+  const byRun = new Map<string, JournalEntry[]>();
+  for (const entry of journal) {
+    if (entry.run === undefined) {
+      continue;
+    }
+    const held = byRun.get(entry.run);
+    if (held === undefined) {
+      byRun.set(entry.run, [entry]);
+    } else {
+      held.push(entry);
+    }
+  }
+  return [...byRun].map(([run, entries]) => ({ run, entries }));
+}
+
+/**
+ * Section 1 of thirteen. English anchor, Ukrainian gloss — the same shape every other heading takes, so
  * the reader at the laptop can find the top of the report the way they find every other section.
  */
 const TITLE = '# Bug report · Репорт про помилку';
@@ -268,7 +366,58 @@ function screenshotsSection(report: BugReport, images: readonly ReportImage[]): 
 }
 
 /**
- * The репорт as one text — the ten sections, in order, for the two readers it has.
+ * The summary the репорт opens with: what the журнал holds, in five numbers and two names.
+ *
+ * Before «Що не так» rather than after it, because it is what tells the reader whether the bug
+ * they are about to read about left any trace at all. Present even when it has nothing to say —
+ * «no requests» and «this build forgot to record them» must not look alike in a diagnostic file.
+ */
+function summarySection(report: BugReport): string {
+  const summary = networkSummary(report.journal);
+  const lines =
+    summary.requests === 0 && summary.syncRuns === 0
+      ? [NOTHING]
+      : [
+          `- Запитів: ${summary.requests}, невдалих: ${summary.failed}`,
+          `- Найдовший: ${
+            summary.slowest === undefined
+              ? EMPTY
+              : `${summary.slowest.name} — ${summary.slowest.tookMs} мс`
+          }`,
+          `- Синхронізацій: ${summary.syncRuns}, остання: ${summary.lastRun ?? EMPTY}`,
+        ];
+  return section(heading('Summary', 'Коротко'), lines);
+}
+
+/** Every request that left the phone, in the order it was made. */
+function networkSection(report: BugReport): string {
+  const requests = report.journal.filter((entry) => entry.kind === 'network');
+  return section(heading(`Network (${requests.length})`, 'Мережа'), [
+    ...(requests.length === 0 ? [NOTHING] : ['```', ...requests.map(entryLine), '```']),
+  ]);
+}
+
+/** What the app did, one operation at a time, with the requests that belong to each among them. */
+function timelineSection(report: BugReport): string {
+  const timelines = runTimelines(report.journal);
+  if (timelines.length === 0) {
+    return section(heading('What the app did', 'Що робив застосунок'), [NOTHING]);
+  }
+  return section(
+    heading(`What the app did (${timelines.length})`, 'Що робив застосунок'),
+    timelines.flatMap((timeline) => [
+      `### ${runMark(timeline.run)}`,
+      '',
+      '```',
+      ...timeline.entries.map(entryLine),
+      '```',
+      '',
+    ]),
+  );
+}
+
+/**
+ * The репорт as one text — the thirteen sections, in order, for the two readers it has.
  *
  * `images` is what makes one renderer serve both destinations. Called with nothing — the screen
  * and the clipboard — «Screenshots» names the pictures without their data; called with them, the
@@ -311,8 +460,11 @@ export function renderReport(report: BugReport, images: readonly ReportImage[] =
 
   const route = section(heading('Current route', 'Екран'), [report.route]);
 
+  // Through `foldScreens`: a run of the same route becomes one line with a count and the two
+  // moments, which is where the 200-of-208 noise in the репорт that prompted this change goes. It
+  // loses no value the репорт holds, and the журнал is still one entry per row in the database.
   const journal = section(heading(`Recent journal (${report.journal.length})`, 'Журнал'), [
-    ...(report.journal.length === 0 ? [NOTHING] : ['```', ...report.journal.map(entryLine), '```']),
+    ...(report.journal.length === 0 ? [NOTHING] : ['```', ...foldScreens(report.journal), '```']),
   ]);
 
   const trail = routeTrail(report.journal);
@@ -345,6 +497,8 @@ export function renderReport(report: BugReport, images: readonly ReportImage[] =
   return [
     TITLE,
     '',
+    summarySection(report),
+    '',
     observation,
     '',
     expected,
@@ -359,6 +513,10 @@ export function renderReport(report: BugReport, images: readonly ReportImage[] =
     '',
     failuresSection(report),
     '',
+    networkSection(report),
+    '',
+    timelineSection(report),
+    '',
     screenshotsSection(report, images),
     '',
     reproduction,
@@ -367,7 +525,8 @@ export function renderReport(report: BugReport, images: readonly ReportImage[] =
 }
 
 /**
- * The one file that is handed over: the same ten sections, with every скріншот embedded in §9.
+ * The one file that is handed over: the same thirteen sections, with every скріншот embedded in
+ * «Скріншоти».
  *
  * Base64 in fenced blocks rather than a zip — one file is what a репорт is, a zip would be a
  * dependency and an untested runtime, and one command at the laptop turns a block back into a PNG.

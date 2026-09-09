@@ -42,6 +42,7 @@ import { syncMonobankSyncTask } from '@/platform/monobank-sync-task';
 import { ALERT_PORTS } from '@/hooks/use-alerting';
 import { reportCollection } from '@/ui/alerting';
 import { dateOfEpochMs } from '@/ui/dates';
+import { journalAppState } from '@/ui/device-journal';
 import { newId } from '@/ui/id';
 import { bindJournal, journal, reportFailure } from '@/ui/journal';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
@@ -231,6 +232,22 @@ export default function RootLayout() {
     journal.record('screen', pathname);
   }, [pathname]);
 
+  /**
+   * The app leaving the owner and coming back, recorded beside the crash handlers above — one
+   * entry per *move*, never one per `AppState` event.
+   *
+   * The rule is `journalAppState`'s and is proven in `src/ui/device-journal.test.ts`: `AppState`
+   * fires for changes that are not moves — Android passes through `inactive`, and the same state
+   * can arrive twice — and a rule about that cannot be proven inside a `.tsx` (design D5). What is
+   * left here is the subscription.
+   */
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      journalAppState(state);
+    });
+    return () => subscription.remove();
+  }, []);
+
   // The waiting captured notifications, collected when the app opens and again every time it comes
   // back to the foreground — which is also how granting access refreshes: the system «Доступ до
   // сповіщень» screen is another app, so returning from it is a foreground transition.
@@ -322,12 +339,15 @@ export default function RootLayout() {
     ) {
       return;
     }
-    // No `onProgress` and no `cancelled`: this run reports nowhere and nobody stops it.
+    // No `cancelled`: nobody stops this run. Its progress goes nowhere the owner can see it and
+    // into the журнал, which `syncPorts` arranges for every run alike.
+    const run = newId();
     await startSync({
-      sync: syncPorts(),
+      sync: syncPorts({}, run),
       attempts: monobankRepo,
       alerts: ALERT_PORTS,
       attended: true,
+      run,
     });
     // A sync that committed anything moved the history; one that committed nothing leaves the
     // зведення as it was and this evaluation writes nothing.
@@ -391,11 +411,13 @@ export default function RootLayout() {
       ) {
         return;
       }
+      const run = newId();
       startSync({
-        sync: syncPorts(),
+        sync: syncPorts({}, run),
         attempts: monobankRepo,
         alerts: ALERT_PORTS,
         attended: true,
+        run,
       })
         .then(() => {
           evaluateProgress();

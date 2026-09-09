@@ -6,6 +6,8 @@ import { deviceTimer, foregroundRun, withRequestTimeout, REQUEST_TIMEOUT_MS } fr
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { dateOfEpochMs } from '@/ui/dates';
 import { newId } from '@/ui/id';
+import { journal } from '@/ui/journal';
+import { composeProgress } from '@/ui/monobank-sync';
 
 /**
  * Everything a monobank sync run needs of this device, in one place.
@@ -28,8 +30,13 @@ import { newId } from '@/ui/id';
  * task hands its own `wait` and `postponed` the same way, replacing the foreground pair below —
  * that pair says «not in front» at once in a headless process, which is exactly right for a run
  * the owner started and exactly wrong for the run a chance starts.
+ *
+ * `run` is the mark every entry this run writes carries — the requests below, the per-рахунок
+ * turns, and the run's own two ends in `startSync`. The caller mints it and passes it to both, so
+ * a репорт can say which request belonged to which run; a caller that passes none gets a fresh
+ * one, which still ties this run's own entries together.
  */
-export function syncPorts(over: Partial<SyncPorts> = {}): SyncPorts {
+export function syncPorts(over: Partial<SyncPorts> = {}, run: string = newId()): SyncPorts {
   const foreground = foregroundRun({
     setTimer: deviceTimer,
     inForeground: () => AppState.currentState === 'active',
@@ -48,9 +55,16 @@ export function syncPorts(over: Partial<SyncPorts> = {}): SyncPorts {
     // `fetchStatement` turn the rejection into `unavailable`, so the run goes on to its next
     // рахунок instead of holding the one-run lock on a request the bank will never answer
     // (design D8).
-    fetch: withRequestTimeout(
-      (url, headers, signal) => fetch(url, { headers, ...(signal ? { signal } : {}) }),
-      { setTimer: deviceTimer, timeoutMs: REQUEST_TIMEOUT_MS },
+    // Journaled **outside** the timeout, never inside: `withRequestTimeout` is what rejects a
+    // request the bank never answered, so wrapped outside the entry carries the duration the run
+    // actually waited. Wrapped inside, a platform with no `AbortController` would leave the inner
+    // call unsettled and the entry would never be written at all (design D3).
+    fetch: journal.watchFetch(
+      withRequestTimeout(
+        (url, headers, signal) => fetch(url, { headers, ...(signal ? { signal } : {}) }),
+        { setTimer: deviceTimer, timeoutMs: REQUEST_TIMEOUT_MS },
+      ),
+      { run },
     ),
     storage: monobankRepo,
     // Read once per run, so a правило created since the last one decides this one.
@@ -68,6 +82,10 @@ export function syncPorts(over: Partial<SyncPorts> = {}): SyncPorts {
     postponed: foreground.postponed,
     newId,
     ...over,
+    // Last, and composed rather than replaced: the monobank screen's «2 з 3» is the owner's, and
+    // every run — the automatic one and the headless one, which pass no listener at all — writes
+    // its timeline all the same.
+    onProgress: composeProgress(run, over.onProgress),
   };
 }
 

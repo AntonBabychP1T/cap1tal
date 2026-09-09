@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DRIVE_APPDATA_SCOPE,
   GOOGLE_AUTH_KEY,
+  googleConnectEnding,
   inMemoryGoogleAuth,
   type GoogleAuthPort,
 } from './google-auth';
@@ -142,5 +143,29 @@ describe('what `verify` may load', () => {
     for (const forbidden of ['react', 'react-native', 'expo', '@/db/', '../db/']) {
       expect(source).not.toContain(`'${forbidden}`);
     }
+  });
+});
+
+describe('what the журнал records about the sign-in', () => {
+  const adapter = readFileSync(new URL('./google-auth-device.ts', import.meta.url), 'utf8');
+
+  it("records a refused exchange by its own enumerated reason", () => {
+    expect(googleConnectEnding({ kind: 'refused' })).toEqual({ detail: 'refused' });
+    expect(googleConnectEnding({ kind: 'no-network' })).toEqual({ detail: 'no-network' });
+    expect(googleConnectEnding({ kind: 'cancelled' })).toEqual({ detail: 'cancelled' });
+    expect(googleConnectEnding({ kind: 'not-configured' })).toEqual({ detail: 'not-configured' });
+  });
+
+  it('carries no URL, no code and no account label', () => {
+    const ending = googleConnectEnding({ kind: 'ok', accountLabel: 'власник@gmail.com' });
+
+    expect(ending).toEqual({ detail: 'ok' });
+    expect(JSON.stringify(ending)).not.toContain('власник@gmail.com');
+  });
+
+  it('is the adapter\'s only decision about what to record', () => {
+    // The wrapping is one line and the mapping is this file's — an adapter `verify` never loads
+    // must hold no rule of its own (design D5).
+    expect(adapter).toContain("journal.step('google-sign-in', connect, { ending: googleConnectEnding })");
   });
 });

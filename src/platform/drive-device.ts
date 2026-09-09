@@ -1,3 +1,4 @@
+import { journal } from '../ui/journal';
 import {
   APP_DATA_FOLDER,
   outcomeOfStatus,
@@ -20,6 +21,19 @@ import { googleAuth } from './google-auth-device';
  * header and nowhere else: not in a URL (where it would land in any log of one), not in a thrown
  * error, and not in any answer.
  */
+
+/**
+ * The device's `fetch` with one `network` entry written per call.
+ *
+ * Wrapped once, here, so all four endpoints are covered and none can be added without it. The
+ * method comes off the init because Drive is the one seam that has one; the entry keeps the
+ * endpoint's shape and neither the file id nor the query string — a Drive file id is not the one
+ * identifier the журнал admits (design D3). The `Response` is handed back untouched, which is what
+ * lets `.headers`, `.json()` and `.arrayBuffer()` below go on working.
+ */
+const watched = journal.watchFetch((url: string, init?: RequestInit) => fetch(url, init), {
+  method: (init) => init?.method ?? 'GET',
+});
 
 const FILES = 'https://www.googleapis.com/drive/v3/files';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
@@ -84,7 +98,7 @@ export const drive: DrivePort = {
       url.searchParams.set('orderBy', 'name');
       url.searchParams.set('pageSize', '100');
 
-      const response = await fetch(url.toString(), {
+      const response = await watched(url.toString(), {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await bodyOf(response);
@@ -112,7 +126,7 @@ export const drive: DrivePort = {
       body.set(bytes, head.length);
       body.set(tail, head.length + bytes.length);
 
-      const response = await fetch(`${UPLOAD}&fields=id,name,size`, {
+      const response = await watched(`${UPLOAD}&fields=id,name,size`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -140,7 +154,7 @@ export const drive: DrivePort = {
         headers.Range = `bytes=0-${byteLimit - 1}`;
       }
 
-      const response = await fetch(`${FILES}/${encodeURIComponent(id)}?alt=media`, { headers });
+      const response = await watched(`${FILES}/${encodeURIComponent(id)}?alt=media`, { headers });
       if (!response.ok) {
         // Only an error body is JSON here; a success is the бекап's own bytes.
         return outcomeOfStatus(response.status, await bodyOf(response)) ?? { kind: 'unavailable' };
@@ -151,7 +165,7 @@ export const drive: DrivePort = {
 
   async delete(id: string): Promise<DriveOutcome<'deleted'>> {
     return ask(async (token) => {
-      const response = await fetch(`${FILES}/${encodeURIComponent(id)}`, {
+      const response = await watched(`${FILES}/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });

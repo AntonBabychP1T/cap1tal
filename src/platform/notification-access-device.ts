@@ -1,5 +1,6 @@
 import { Linking, Platform } from 'react-native';
 
+import { journalPermission, NOTIFICATION_ACCESS } from '../ui/device-journal';
 import { notificationAccessFrom, type NotificationAccess, type NotificationAccessPort } from './notification-access';
 import { nativeNotificationCapture } from './notification-capture-device';
 
@@ -22,6 +23,19 @@ import { nativeNotificationCapture } from './notification-capture-device';
  * anything in `src/ui/onboarding.ts` — the step already knew what to say for every answer.
  */
 async function state(): Promise<NotificationAccess> {
+  // Journaled on the way out, once per *change*: the app asks this on every foreground and on
+  // every visit to «Сповіщення банків», and «the permission was withdrawn at 14:02» is worth
+  // saying once, where it is readable (design D5). The rule is `journalPermission`'s, which is
+  // where it can be tested — this file is never loaded under `verify`.
+  return journalled(read());
+}
+
+function journalled(answer: NotificationAccess): NotificationAccess {
+  journalPermission(NOTIFICATION_ACCESS, answer);
+  return answer;
+}
+
+function read(): NotificationAccess {
   const native = nativeNotificationCapture();
   if (!native) {
     return notificationAccessFrom(undefined);

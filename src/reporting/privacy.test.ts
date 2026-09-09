@@ -185,9 +185,59 @@ describe('what a репорт про помилку never carries', () => {
 
   it('leaves no field an entry could carry money in', () => {
     // The type-level half of the proof: `JournalEntry` has exactly these keys, so a call site
-    // cannot attach a сума, a назва or an опис to an entry even if it wanted to.
-    const keys = Object.keys(journal[journal.length - 1] ?? {}).sort();
-    expect(keys).toEqual(['at', 'detail', 'id', 'kind', 'name']);
+    // cannot attach a сума, a назва or an опис to an entry even if it wanted to. Derived from a
+    // record over `keyof JournalEntry`, so a ninth field breaks the build here rather than
+    // quietly becoming somewhere a сума could go.
+    const EVERY_FIELD: Readonly<Record<keyof JournalEntry, true>> = {
+      id: true,
+      at: true,
+      kind: true,
+      name: true,
+      detail: true,
+      run: true,
+      tookMs: true,
+      counts: true,
+    };
+
+    expect(Object.keys(EVERY_FIELD).sort()).toEqual([
+      'at',
+      'counts',
+      'detail',
+      'id',
+      'kind',
+      'name',
+      'run',
+      'tookMs',
+    ]);
+    // And the entries an earlier build wrote still carry only the five it knew.
+    expect(Object.keys(journal[journal.length - 1] ?? {}).sort()).toEqual([
+      'at',
+      'detail',
+      'id',
+      'kind',
+      'name',
+    ]);
+  });
+
+  it('lets a count be a number and nothing else', () => {
+    const measured: JournalEntry = {
+      id: 'e-net',
+      at: at(),
+      kind: 'network',
+      name: 'GET api.monobank.ua/personal/client-info',
+      run: 'r1',
+      tookMs: 12,
+      counts: { status: 200, imported: 3 },
+    };
+
+    expect(Object.values(measured.counts ?? {}).every((value) => typeof value === 'number')).toBe(
+      true,
+    );
+    // The whole of why the three new fields cost the guarantee nothing, in one line: a count that
+    // is not a number does not compile, so there is no field a сума's text could be put in.
+    // @ts-expect-error a count is a number; a сума's text is not one.
+    const refused: JournalEntry = { ...measured, counts: { сума: `${SENTINEL}431.18` } };
+    expect(refused.counts).toBeDefined();
   });
 });
 

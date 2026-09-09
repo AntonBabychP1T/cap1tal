@@ -12,6 +12,7 @@ import {
 } from '../saldo/survey';
 import { interpret } from '../saldo/interpret';
 import { verify, type Report } from '../saldo/verify';
+import { journal } from './journal';
 import type { AccountKind } from '../domain/account';
 import {
   accountChoiceLabel,
@@ -221,6 +222,37 @@ export function canCommit(state: FlowState): boolean {
     return false;
   }
   return state.previouslyCommittedAt === undefined || state.secondImportConfirmed;
+}
+
+/** What the імпорт needs of storage to write a plan. The real one is `src/db/import-repo.ts`. */
+export interface ImportCommitter {
+  commit(plan: ImportPlan, now: Date): CommitSummary;
+}
+
+/**
+ * The commit, recorded at both ends with what it wrote.
+ *
+ * Here rather than at the screen for the reason every rule in this file is here: `verify` never
+ * loads a `.tsx`, and «the numbers recorded are the numbers committed» is exactly the kind of
+ * claim that has to be provable. The write itself is one synchronous SQLite transaction and is
+ * untouched — this only puts the журнал around it, so an import the app was killed in the middle
+ * of still leaves the entry that says it had begun.
+ */
+export function commitImport(
+  imports: ImportCommitter,
+  plan: ImportPlan,
+  now: Date,
+): Promise<CommitSummary> {
+  return journal.step('saldo-import', () => Promise.resolve(imports.commit(plan, now)), {
+    ending: (summary) => ({
+      counts: {
+        accounts: summary.accounts,
+        categories: summary.categories,
+        sources: summary.sources,
+        transactions: summary.transactions,
+      },
+    }),
+  });
 }
 
 /** What the screen shows after a successful commit. */

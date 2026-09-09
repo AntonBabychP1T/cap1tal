@@ -10,7 +10,7 @@ import { money } from '../domain/money';
 import { UNCATEGORISED_CATEGORY_ID, UNSOURCED_SOURCE_ID, type IsoDate } from '../domain/transaction';
 import type { AuthFetchLike } from '../monobank/api';
 import { syncDue } from '../monobank/auto';
-import type { SyncPorts } from '../monobank/coordinator';
+import type { SyncPorts, SyncProgress } from '../monobank/coordinator';
 import {
   inMemoryLocalNotifications,
   type LocalNotificationsDouble,
@@ -18,9 +18,18 @@ import {
 import { inMemoryMonobankTokenStore, type MonobankTokenStore } from '../platform/monobank-token';
 import { ALERT_NOTICES } from '../reminders/notices';
 import type { JournalEntry } from '../reporting/journal';
+import { networkSummary } from '../reporting/report';
 import { startOfLocalDayMs } from './dates';
-import { bindJournal, resetJournalForTests } from './journal';
-import { onSyncState, startSync, syncInFlight, type StartSyncPorts } from './monobank-sync';
+import { bindTestJournal } from './journal';
+import {
+  composeProgress,
+  journalProgress,
+  onSyncState,
+  startSync,
+  syncEnding,
+  syncInFlight,
+  type StartSyncPorts,
+} from './monobank-sync';
 
 /**
  * The one entry point every sync goes through: its lock, the attempt it writes around the run,
@@ -87,17 +96,6 @@ const CLIENT_INFO_THREE = {
     },
   ],
 };
-
-function bindTestJournal(): () => readonly JournalEntry[] {
-  const entries: JournalEntry[] = [];
-  resetJournalForTests();
-  bindJournal({
-    append: (entry) => entries.push(entry),
-    tail: () => entries,
-    byId: (id) => entries.find((entry) => entry.id === id) ?? null,
-  });
-  return () => entries;
-}
 
 describe('the one place a sync is started', () => {
   let storage: TestStorage;
@@ -441,10 +439,13 @@ describe('the one place a sync is started', () => {
       // Nothing outstanding either, so no later screen has a stale сповіщення to clear.
       expect(reminders.outstandingKinds()).toEqual([]);
       // The журнал still holds that it failed — one entry naming the kind, and no summary text
-      // the owner was never shown.
-      expect(journalOf().map((entry) => [entry.kind, entry.name])).toEqual([
-        ['alert', 'monobank-sync'],
-      ]);
+      // the owner was never shown. (The run's own two `step` entries are beside it; they name the
+      // run and the word it came to, and carry no text either.)
+      expect(
+        journalOf()
+          .filter((entry) => entry.kind === 'alert')
+          .map((entry) => [entry.kind, entry.name, entry.detail ?? null]),
+      ).toEqual([['alert', 'monobank-sync', null]]);
     });
 
     it('a failure nobody is watching does post one', async () => {
@@ -487,7 +488,9 @@ describe('the one place a sync is started', () => {
       // and not even a журнал line about a сповіщення, because none was decided.
       expect(phone.posted()).toEqual([]);
       expect(reminders.outstandingKinds()).toEqual([]);
-      expect(journalOf()).toEqual([]);
+      // No `alert` entry at all: a run that merely stopped is not a run that failed. The run's
+      // own `step` entries are beside the point here and are asserted where they belong.
+      expect(journalOf().filter((entry) => entry.kind === 'alert')).toEqual([]);
       expect(repo.attempt()?.outcome).toBe('postponed');
     });
 
@@ -499,7 +502,9 @@ describe('the one place a sync is started', () => {
 
       expect(phone.posted()).toEqual([]);
       expect(reminders.outstandingKinds()).toEqual([]);
-      expect(journalOf()).toEqual([]);
+      // No `alert` entry at all: a run that merely stopped is not a run that failed. The run's
+      // own `step` entries are beside the point here and are asserted where they belong.
+      expect(journalOf().filter((entry) => entry.kind === 'alert')).toEqual([]);
       expect(repo.attempt()?.outcome).toBe('cancelled');
     });
 
@@ -572,6 +577,181 @@ describe('the one place a sync is started', () => {
 
       expect(repo.attempt()?.outcome).toBe('complete');
       expect(phone.posted()).toEqual([]);
+    });
+  });
+
+  describe('what the журнал records about a run', () => {
+    it('Scenario: A sync run reads as a run — a beginning, the turns and an ending, all one mark', () => {
+      const write = journalProgress('r1');
+
+      write({ kind: 'started', accounts: 3 });
+      write({ kind: 'account', monobankAccountId: 'mono-card', index: 1, of: 3 });
+      write({
+        kind: 'finished-account',
+        result: {
+          monobankAccountId: 'mono-card',
+          accountId: 'card',
+          outcome: 'complete',
+          imported: 4,
+        },
+      });
+      write({ kind: 'waiting', ms: 60_000 });
+      write({ kind: 'account', monobankAccountId: 'mono-plat', index: 2, of: 3 });
+      write({
+        kind: 'finished-account',
+        result: {
+          monobankAccountId: 'mono-plat',
+          accountId: 'card-plat',
+          outcome: 'unavailable',
+          imported: 0,
+        },
+      });
+
+      const written = journalOf();
+      expect(written.map((e) => [e.kind, e.name, e.detail ?? null])).toEqual([
+        ['step', 'monobank-sync', 'рахунки'],
+        ['step', 'monobank-sync/mono-card', 'почалось'],
+        ['step', 'monobank-sync/mono-card', 'complete'],
+        ['step', 'monobank-sync/wait', null],
+        ['step', 'monobank-sync/mono-plat', 'почалось'],
+        ['step', 'monobank-sync/mono-plat', 'unavailable'],
+      ]);
+      expect(written.every((e) => e.run === 'r1')).toBe(true);
+      expect(written[0]?.counts).toEqual({ accounts: 3 });
+      expect(written[3]?.counts).toEqual({ ms: 60_000 });
+    });
+
+    it('Scenario: A рахунок that fails is named among those that did not', () => {
+      const write = journalProgress('r1');
+
+      for (const [monobankAccountId, accountId, outcome, imported] of [
+        ['mono-card', 'card', 'complete', 2],
+        ['mono-white', 'card-white', 'complete', 1],
+        ['mono-plat', 'card-plat', 'unavailable', 0],
+      ] as const) {
+        write({
+          kind: 'finished-account',
+          result: { monobankAccountId, accountId, outcome, imported },
+        });
+      }
+
+      expect(journalOf().map((e) => [e.name, e.detail])).toEqual([
+        ['monobank-sync/mono-card', 'complete'],
+        ['monobank-sync/mono-white', 'complete'],
+        ['monobank-sync/mono-plat', 'unavailable'],
+      ]);
+      // Which рахунок it was, by the bank's own identifier — the one thing that answers it.
+      expect(journalOf()[2]?.name).toContain('mono-plat');
+    });
+
+    it('composes with the listener the caller already had, so a screen keeps its progress', () => {
+      const heard: SyncProgress[] = [];
+      const write = composeProgress('r1', (progress) => heard.push(progress));
+      const events: SyncProgress[] = [
+        { kind: 'started', accounts: 1 },
+        { kind: 'account', monobankAccountId: 'mono-card', index: 1, of: 1 },
+        { kind: 'waiting', ms: 60_000 },
+        {
+          kind: 'finished-account',
+          result: {
+            monobankAccountId: 'mono-card',
+            accountId: 'card',
+            outcome: 'complete',
+            imported: 0,
+          },
+        },
+      ];
+
+      events.forEach(write);
+
+      // Every event, unchanged — and an entry for every one of them beside it.
+      expect(heard).toEqual(events);
+      expect(journalOf()).toHaveLength(events.length);
+    });
+
+    it('records the event even when the listener beside it throws', () => {
+      const write = composeProgress('r1', () => {
+        throw new Error('setState after unmount');
+      });
+
+      expect(() => write({ kind: 'started', accounts: 1 })).toThrow('setState after unmount');
+      expect(journalOf()).toHaveLength(1);
+    });
+
+    it("names a run that never reached the bank by the coordinator's own word", () => {
+      expect(syncEnding({ kind: 'not-configured' })).toEqual({ detail: 'not-configured' });
+      expect(syncEnding({ kind: 'no-links' })).toEqual({ detail: 'no-links' });
+      expect(
+        syncEnding({
+          kind: 'ran',
+          imported: 5,
+          accounts: [
+            { monobankAccountId: 'mono-card', accountId: 'card', outcome: 'complete', imported: 5 },
+          ],
+        }),
+      ).toEqual({ detail: 'complete', counts: { imported: 5, accounts: 1 } });
+    });
+
+    it('records both ends of a run that never reached the bank', async () => {
+      // No token kept: the coordinator answers before its own `started` event ever fires, so
+      // these two entries are the only record there is of the run having happened at all.
+      const started = await startSync({
+        ...ports(bank(), { tokenStore: inMemoryMonobankTokenStore() }),
+        run: 'r-run',
+      });
+
+      expect(started.kind).toBe('ran');
+      expect(journalOf().map((e) => [e.kind, e.name, e.detail, e.run])).toEqual([
+        ['step', 'monobank-sync', 'почалось', 'r-run'],
+        ['step', 'monobank-sync', 'not-configured', 'r-run'],
+      ]);
+    });
+
+    it('writes the words the репорт reads back — the summary counts the run it wrote', async () => {
+      // The one seam between the writer's vocabulary and the reader's: `networkSummary` finds a
+      // run by the very `detail` `journal.step` writes. Change the word in one place without the
+      // other and the репорт silently says «Синхронізацій: 0» — which no test that builds its
+      // entries by hand would ever notice.
+      await startSync({
+        ...ports(bank(), { tokenStore: inMemoryMonobankTokenStore() }),
+        run: 'r-run',
+      });
+
+      const summary = networkSummary(journalOf());
+      expect(summary.syncRuns).toBe(1);
+      expect(summary.lastRun).toBe('not-configured');
+    });
+
+    it("records a completed run's ending with what it imported", async () => {
+      linkCard();
+
+      await startSync({
+        ...ports(
+          bank({
+            statement: () => ({
+              status: 200,
+              body: [
+                {
+                  id: 'a1',
+                  time: Math.floor(RUN_AT / 1000) - 3600,
+                  description: 'СІЛЬПО',
+                  mcc: 5411,
+                  amount: -12550,
+                  currencyCode: 980,
+                  hold: false,
+                },
+              ],
+            }),
+          }),
+        ),
+        run: 'r-run',
+      });
+
+      const ends = journalOf().filter((e) => e.kind === 'step' && e.name === 'monobank-sync');
+      expect(ends.map((e) => e.detail)).toEqual(['почалось', 'complete']);
+      expect(ends[1]?.counts).toEqual({ imported: 1, accounts: 1 });
+      expect(ends[1]?.tookMs).toBeGreaterThanOrEqual(0);
+      expect(ends.every((e) => e.run === 'r-run')).toBe(true);
     });
   });
 });

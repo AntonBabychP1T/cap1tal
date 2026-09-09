@@ -9,6 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { receipts as receiptsRepo, transactions as transactionsRepo } from '@/db/repos';
 import { receiptIdentity } from '@/domain/fiscal-receipt';
 import { chkAllWebProvider } from '@/fiscal/chk-all-web';
+import { journal } from '@/ui/journal';
 import { newId } from '@/ui/id';
 import { failureAlert } from '@/ui/failure-alert';
 import {
@@ -42,8 +43,15 @@ import { Spacing } from '@/constants/theme';
  * anywhere — `CameraView` decodes on the device and hands back text.
  */
 
-/** The one provider, over the platform's own `fetch`. The only thing here that leaves the phone. */
-const provider = chkAllWebProvider((url) => fetch(url));
+/**
+ * The one provider, over the platform's own `fetch`. The only thing here that leaves the phone.
+ *
+ * Journaled at this call site and not inside `chk-all-web.ts`, which promises its URL is never
+ * logged because that URL carries the реквізити of a purchase. The promise holds from out here:
+ * `describeRequest` drops the query string for every host, so the entry names the endpoint and no
+ * part of the реквізити (design D3).
+ */
+const provider = chkAllWebProvider(journal.watchFetch((url: string) => fetch(url)));
 
 export default function ScanReceiptScreen() {
   const router = useRouter();

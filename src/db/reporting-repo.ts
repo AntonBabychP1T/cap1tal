@@ -49,7 +49,25 @@ import type { Storage } from './storage';
  * `backup-repo.ts`, which names them among the untouched.
  */
 
-const KINDS: readonly JournalKind[] = ['screen', 'failure', 'alert', 'crash'];
+/**
+ * Every kind there is, written out a second time — and the reason this array is not derived.
+ *
+ * `JournalKind`'s union is TypeScript's; a `readonly JournalKind[]` holding a *subset* of it still
+ * typechecks, so widening the union does not break this line and nothing would have told us. Left
+ * short, `checkKind` would throw on the way back out of every entry of a new kind while
+ * `src/ui/journal.ts` swallows the writer's error — the whole of a change like this one, landed
+ * silently dead (design D1). The repository's test round-trips one entry of each kind, which is
+ * what actually keeps the two in step.
+ */
+const KINDS: readonly JournalKind[] = [
+  'screen',
+  'failure',
+  'alert',
+  'crash',
+  'network',
+  'step',
+  'native',
+];
 
 /** The four doors, checked on the way back out for `checkKind`'s reason — the enumeration is
  *  TypeScript's, so a fifth door costs no migration and SQL knows nothing about it. */
@@ -94,8 +112,13 @@ function toEntry(row: JournalRow): JournalEntry {
     kind: checkKind(row.kind),
     name: row.name,
     // Absent, never `null`: an entry that never had a detail and one whose detail was cleared are
-    // the same entry, and what is read back has to equal what was written.
+    // the same entry, and what is read back has to equal what was written. The three below follow
+    // the same rule, which is what makes an entry written by an earlier build — three NULLs —
+    // read back identical to what that build wrote.
     ...(row.detail === null ? {} : { detail: row.detail }),
+    ...(row.run === null ? {} : { run: row.run }),
+    ...(row.tookMs === null ? {} : { tookMs: row.tookMs }),
+    ...(row.countsJson === null ? {} : { counts: parse<Record<string, number>>(row.countsJson) }),
   };
 }
 
@@ -164,11 +187,11 @@ export function reportingRepo(db: Storage) {
 
   return {
     /**
-     * Appends one entry and prunes back to 500 in the same pair of statements.
+     * Appends one entry and prunes back to the bound in the same pair of statements.
      *
      * The prune is here and not at the call site so the singleton in `src/ui/journal.ts` has one
-     * call to make and cannot forget the second half. `rowid NOT IN (the newest 500)` rather than
-     * `OFFSET 500`: the same total order the reading uses, expressed once.
+     * call to make and cannot forget the second half. `rowid NOT IN (the newest `JOURNAL_LIMIT`)` rather than
+     * `OFFSET JOURNAL_LIMIT`: the same total order the reading uses, expressed once.
      */
     append(entry: JournalEntry): void {
       db.insert(journal)
@@ -178,6 +201,11 @@ export function reportingRepo(db: Storage) {
           kind: checkKind(entry.kind),
           name: entry.name,
           detail: entry.detail ?? null,
+          run: entry.run ?? null,
+          tookMs: entry.tookMs ?? null,
+          // JSON in one column rather than a side table: written once, read once, never queried
+          // and never aggregated — the same trade `bug_reports`' JSON columns already make.
+          countsJson: entry.counts === undefined ? null : JSON.stringify(entry.counts),
         })
         .run();
       db.run(
@@ -187,7 +215,7 @@ export function reportingRepo(db: Storage) {
       );
     },
 
-    /** The whole журнал, oldest first — 500 rows at most, so there is nothing to page. */
+    /** The whole журнал, oldest first — `JOURNAL_LIMIT` rows at most, so nothing to page. */
     tail(): JournalEntry[] {
       return db
         .select()
