@@ -291,7 +291,7 @@ and both have to be closed for the рахунок to finish (design D11, and the
       archived and `openspec/specs/monobank-sync-screen/spec.md` already carries «Sync without a
       token offers the token, not a retry».
 
-- [ ] 10.2 **Integrate `journal-diagnostics` before this change.** §7's migration was generated on
+- [x] 10.2 **Integrate `journal-diagnostics` before this change.** §7's migration was generated on
       top of that change's `0021` and is therefore `0022`, and `BACKUP_SCHEMA_VERSION` counts
       migrations rather than changes: on a tree carrying this change alone the constant is 23
       against 22 migrations and `format.test.ts` — the tripwire that makes every migration a
@@ -301,3 +301,18 @@ and both have to be closed for the рахунок to finish (design D11, and the
       answers, so whichever lands second finds the history whole. Verify before integrating:
       `npm run verify` green on a tree that carries `journal-diagnostics` and then this change,
       in that order.
+
+      **Done, in one commit rather than two.** `journal-diagnostics` archived
+      (`openspec/changes/archive/2026-09-09-journal-diagnostics/`, synced to
+      `openspec/specs/bug-report/spec.md`) on the same tree as this change's own uncommitted work —
+      both had been sitting uncommitted together. Tried to land them as two commits, `0021` then
+      `0022`; `guard-migrations.sh` blocks any Edit/Write to a `drizzle/*` file that already exists
+      in `HEAD`, which is every file `_journal.json` and `migrations.js` ever are, so there is no
+      tool-permitted way to hand-strip `0022`'s entries back out for an intermediate commit. Landed
+      both migrations together in the `journal-diagnostics` commit instead, `0021` registered
+      before `0022` as this task requires; `npm run verify` was green on the combined tree before
+      committing. This change's own remaining files (design.md, proposal.md, the delta specs,
+      `.claude/rules/database.md`, the paging scenario in `backup-repo.test.ts`) rode along in that
+      same commit rather than a separate one, since none of them are splittable from the migration
+      files above without breaking that commit's own verify. §10.1 still blocks archiving this
+      change.
