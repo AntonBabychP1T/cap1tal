@@ -111,9 +111,17 @@
 
 ## 5. Smoke
 
-- [ ] 5.1 Run the `smoke-runner` subagent on the emulator: `scripts/android.sh up`, confirm the
+- [x] 5.1 Run the `smoke-runner` subagent on the emulator: `scripts/android.sh up`, confirm the
       monobank screen still renders and «Синхронізувати» without a token still answers
       `not-configured` exactly as before — a plain regression check, since reproducing the
       `currency-mismatch`/`unparseable-body` reasons themselves needs the real bank answering the
       real рахунок's next turn on the owner's own phone, which the emulator cannot fabricate any
       more than `monobank-sync-cadence`'s own §9.2 could. Fix what it finds; record what was seen.
+
+      **PASS, 2026-09-10** — Pixel_10_Pro / emulator-5554. The monobank screen opened with «ТОКЕН
+      ЩЕ НЕ ВВЕДЕНО»/«Поки нічого не отримано»; «Синхронізувати» flipped it to «Спершу введіть
+      токен monobank» with «Ввести токен» — the exact `not-configured` path, unreached by this
+      change's new reason-classification code. `scripts/android.sh logs 300` showed no crash, no
+      unhandled rejection, nothing journal-related. No defects found; one out-of-scope dev-only
+      `GO_BACK` warning noted and not acted on (an artifact of the smoke's own navigation, not of
+      this change).
