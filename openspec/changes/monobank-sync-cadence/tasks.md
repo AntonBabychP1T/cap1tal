@@ -222,7 +222,7 @@ failing path is unreachable. Every new test below SHALL use a non-zero gap.
         nothing (bundle still coming from Metro), the next on that process registered and ran the
         task. Not a defect.
       - No defects against this change's spec.
-- [ ] 9.2 The owner's own money path, on the phone with the token. This is
+- [x] 9.2 The owner's own money path, on the phone with the token. This is
       `monobank-background-sync` §9.2 re-run, and it is what says the defect is actually gone. The
       criterion is the журнал and not a finished sync — a рахунок with history needs many chances to
       leave «Ще не синхронізовано», and expecting that within an hour would be expecting what the
@@ -233,3 +233,27 @@ failing path is unreachable. Every new test below SHALL use a non-zero gap.
       **not** from `index=1`, which `journalProgress` writes before any request is sent and which a
       chance that spends its allowance on client-info logs for a рахунок that took no хід. Record
       what was seen.
+
+      **Run on 2026-09-10, and it passed** — репорт `cap1tal-report-2026-09-10-2245` (commit
+      `bf0b17e`, SM-S921B, android 16). All four criteria hold. `GET /personal/statement` requests
+      are present — five of them, across five different рахунки. Транзакції were imported by a
+      chance nobody asked for: at 22:13:57 a `background-chance` entry reads `imported=1 ·
+      background · postponed`, the app in the background the whole time. `background-chance`
+      entries end in well under a second, not minutes (`22:13:56.733` → `22:13:57.609`). And the
+      ходи rotate: reading the per-рахунок `monobank-sync/<id>` entries that end in an outcome
+      (not `index=1`), five different рахунки each took a turn across the day's прогони —
+      `4e6dyLwTjNd2b9CKXQpHhg`, `65PIU9olGnHZCU054lDlSQ`, `ASXFEyhIKdWLGF1TUhWaPQ`,
+      `IMsrAGgCC_FSNMJ1YvwUDg`, `RaYiBfkzuTAQrQ0fPMhrOg` — none of them the same рахунок twice in a
+      row, which is exactly what a starved order could not produce.
+
+      One new defect surfaced, distinct from the cadence this change is about: at `22:15:59`,
+      `platinum ··6628`'s рахунок (`IMsrAGgCC_FSNMJ1YvwUDg`) took its turn, its
+      `GET /personal/statement` answered `status=200` in 549 ms, and the outcome was `unavailable`
+      — not `complete`. That is `parseStatement` (or `parseClientInfo`, if `bankAccount` came from
+      an unfresh fetch) rejecting the payload after a successful HTTP answer, per
+      `src/monobank/api.ts`'s `ask()`: not-array, an unreadable row, or a currency mismatch between
+      the row and the stored рахунок's currency — the журнал's `unavailable` detail does not say
+      which. This is why the owner sees «platinum ··6628 has never synced» again: its one turn
+      today hit a real parse failure rather than the cadence starvation §7 and this change closed.
+      Tracked as a new defect requiring reason-level diagnostics on `unavailable`, not a reopening
+      of this change's own scope.
