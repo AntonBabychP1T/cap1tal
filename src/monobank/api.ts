@@ -41,6 +41,18 @@ export type AuthFetchLike = (
 }>;
 
 /**
+ * Why an `unavailable` answer came to that after the bank *did* respond — absent when it never
+ * got that far (the fetch itself rejected, or the bank refused the request with a status the run
+ * names on its own), since those already read as themselves on the request's own `network`
+ * журнал entry and naming them again here would be the app quoting itself.
+ *
+ * `currency-mismatch` is statement requests only, and the one cause worth its own word: it means
+ * this phone's idea of the рахунок's currency and what the bank is now reporting for it have
+ * drifted apart, which is a specific, actionable fact rather than bank flakiness.
+ */
+export type UnavailableReason = 'unparseable-body' | 'unreadable-payload' | 'currency-mismatch';
+
+/**
  * What a call to the personal API can answer. The three failures are the three the screen change
  * has to tell apart: re-enter the token, wait, or shrug and try later. None of them carries the
  * token, and none of them is a partially read answer.
@@ -49,11 +61,15 @@ export type Outcome<T> =
   | { readonly kind: 'ok'; readonly value: T }
   | { readonly kind: 'invalid-token' }
   | { readonly kind: 'rate-limited' }
-  | { readonly kind: 'unavailable' };
+  | { readonly kind: 'unavailable'; readonly reason?: UnavailableReason };
 
 const INVALID_TOKEN: Outcome<never> = { kind: 'invalid-token' };
 const RATE_LIMITED: Outcome<never> = { kind: 'rate-limited' };
 const UNAVAILABLE: Outcome<never> = { kind: 'unavailable' };
+
+function unavailable(reason: UnavailableReason): Outcome<never> {
+  return { kind: 'unavailable', reason };
+}
 
 /** One of the owner's monobank accounts: a card, or a банка (jar). */
 export interface MonobankAccount {
@@ -122,15 +138,19 @@ function asNonEmptyString(value: unknown): string | undefined {
 /**
  * The one place a call to the personal API becomes an `Outcome`. The token goes out in the header
  * and stays there: it is never put in a URL (where it would land in any log of one) and never in
- * what comes back. A thrown fetch, any status that is not a parsed 200-family answer, and a body
- * the parser cannot read all become `unavailable` — including a parser that throws, so a caller's
- * own `dateOf` cannot turn a bad payload into a crash.
+ * what comes back. A thrown fetch and any status that is not a parsed 200-family answer both
+ * become `unavailable` with no `reason` — the request's own журнал entry already names them. A
+ * body that will not even parse as JSON is `unavailable` with reason `unparseable-body`; a body
+ * that parses but that `parse` rejects — including a parser that throws, so a caller's own
+ * `dateOf` cannot turn a bad payload into a crash — is `unavailable` with whatever `classify`
+ * answers for it, or `unreadable-payload` when no `classify` was given.
  */
 async function ask<T>(
   fetchImpl: AuthFetchLike,
   url: string,
   token: string,
   parse: (payload: unknown) => T | undefined,
+  classify?: (payload: unknown) => UnavailableReason,
 ): Promise<Outcome<T>> {
   let response: Awaited<ReturnType<AuthFetchLike>>;
   try {
@@ -147,13 +167,21 @@ async function ask<T>(
   if (!response.ok) {
     return UNAVAILABLE;
   }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return unavailable('unparseable-body');
+  }
   let value: T | undefined;
   try {
-    value = parse(await response.json());
+    value = parse(payload);
   } catch {
-    return UNAVAILABLE;
+    return unavailable(classify ? classify(payload) : 'unreadable-payload');
   }
-  return value === undefined ? UNAVAILABLE : { kind: 'ok', value };
+  return value === undefined
+    ? unavailable(classify ? classify(payload) : 'unreadable-payload')
+    : { kind: 'ok', value };
 }
 
 /** `black ··1234`, or the bare type when the payload carries no card number to mask. */
@@ -258,17 +286,36 @@ export interface StatementContext {
   readonly dateOf: (unixSeconds: number) => IsoDate;
 }
 
-function parseItem(row: unknown, ctx: StatementContext): StatementItem | undefined {
-  if (!isRecord(row)) return undefined;
+/** `readItem`'s answer: the row read whole, or why it could not be — never a thrown exception. */
+type ItemResult =
+  | { readonly ok: true; readonly value: StatementItem }
+  | { readonly ok: false; readonly reason: UnavailableReason };
+
+const UNREADABLE_ROW: ItemResult = { ok: false, reason: 'unreadable-payload' };
+const MISMATCHED_CURRENCY: ItemResult = { ok: false, reason: 'currency-mismatch' };
+
+/**
+ * One statement row, read whole — the one place that decision is made, so `parseItem` (which
+ * decides what a рахунок imports) and `statementUnavailableReason` (which only explains a rejected
+ * payload to the owner) can never disagree about which row failed or why.
+ *
+ * Total: this never throws. `ctx.dateOf` is the one converter a row's own fields cannot prove safe
+ * ahead of calling it — unlike `money`, whose `amount` is already a proven safe integer and whose
+ * `ctx.currency` is always one this app offers — so it alone is wrapped. A `dateOf` that throws
+ * reads as an unreadable row, exactly as every other malformed one does; it is not a currency
+ * mismatch, so it takes the generic reason and not the specific one.
+ */
+function readItem(row: unknown, ctx: StatementContext): ItemResult {
+  if (!isRecord(row)) return UNREADABLE_ROW;
   const id = asNonEmptyString(row.id);
   const time = asMinorUnits(row.time);
   const mcc = asMinorUnits(row.mcc);
   const amount = asMinorUnits(row.amount);
   if (id === undefined || time === undefined || mcc === undefined || amount === undefined) {
-    return undefined;
+    return UNREADABLE_ROW;
   }
   if (typeof row.description !== 'string' || typeof row.hold !== 'boolean') {
-    return undefined;
+    return UNREADABLE_ROW;
   }
 
   // `currencyCode` on a statement row is the *account's* currency, not the operation's — the API
@@ -277,18 +324,53 @@ function parseItem(row: unknown, ctx: StatementContext): StatementItem | undefin
   // the рахунок we are importing into. A row saying otherwise is not a row we can read.
   const numeric = row.currencyCode;
   if (typeof numeric !== 'number' || CURRENCY_BY_NUMERIC[numeric] !== ctx.currency) {
-    return undefined;
+    return MISMATCHED_CURRENCY;
+  }
+
+  let date: IsoDate;
+  try {
+    date = ctx.dateOf(time);
+  } catch {
+    return UNREADABLE_ROW;
   }
 
   return {
-    id,
-    timeMs: time * 1000,
-    date: ctx.dateOf(time),
-    description: row.description,
-    mcc,
-    amount: money(amount, ctx.currency),
-    hold: row.hold,
+    ok: true,
+    value: {
+      id,
+      timeMs: time * 1000,
+      date,
+      description: row.description,
+      mcc,
+      amount: money(amount, ctx.currency),
+      hold: row.hold,
+    },
   };
+}
+
+function parseItem(row: unknown, ctx: StatementContext): StatementItem | undefined {
+  const result = readItem(row, ctx);
+  return result.ok ? result.value : undefined;
+}
+
+/**
+ * Why `parseStatement` could not read a payload the bank did answer with — the one thing it
+ * deliberately does not say itself (design D4: total and whole, a рядок's fate is never half told).
+ * Walks the same array with the same `readItem`, so it can only ever name the same row and the same
+ * cause `parseStatement` itself stopped at.
+ */
+export function statementUnavailableReason(
+  payload: unknown,
+  ctx: StatementContext,
+): UnavailableReason {
+  if (!Array.isArray(payload)) return 'unreadable-payload';
+  for (const row of payload) {
+    const result = readItem(row, ctx);
+    if (!result.ok) return result.reason;
+  }
+  // Unreachable in practice: every row read, so `parseStatement` would have returned a value and
+  // `ask` would never have called this at all.
+  return 'unreadable-payload';
 }
 
 /**
@@ -355,5 +437,6 @@ export function fetchStatement(
     monobankStatementUrl(request.accountId, request.fromMs, request.toMs),
     token,
     (payload) => parseStatement(payload, request.context),
+    (payload) => statementUnavailableReason(payload, request.context),
   );
 }

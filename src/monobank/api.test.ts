@@ -10,6 +10,7 @@ import {
   monobankStatementUrl,
   parseClientInfo,
   parseStatement,
+  statementUnavailableReason,
   type AuthFetchLike,
   type StatementContext,
 } from './api';
@@ -292,12 +293,19 @@ describe('fetch outcomes', () => {
   });
 
   it('A 500, an unparseable body and an alien payload are all unavailable', async () => {
+    // A bad status is already legible on the request's own журнал entry — no reason repeats it.
     expect(await fetchClientInfo(answering(500, {}), TOKEN)).toEqual({ kind: 'unavailable' });
     const notJson: AuthFetchLike = () =>
       Promise.resolve({ ok: true, status: 200, json: () => Promise.reject(new Error('<html>')) });
-    expect(await fetchClientInfo(notJson, TOKEN)).toEqual({ kind: 'unavailable' });
+    expect(await fetchClientInfo(notJson, TOKEN)).toEqual({
+      kind: 'unavailable',
+      reason: 'unparseable-body',
+    });
+    // Valid JSON, but not client-info's shape — `fetchClientInfo` gives `ask` no classifier, so an
+    // unreadable payload always answers the generic reason.
     expect(await fetchClientInfo(answering(200, { nothing: true }), TOKEN)).toEqual({
       kind: 'unavailable',
+      reason: 'unreadable-payload',
     });
   });
 
@@ -313,7 +321,73 @@ describe('fetch outcomes', () => {
         },
       },
     });
-    expect(outcome).toEqual({ kind: 'unavailable' });
+    // Still a resolved value, never a rejected promise — and a throwing `dateOf` reads as an
+    // unreadable row, not a currency mismatch.
+    expect(outcome).toEqual({ kind: 'unavailable', reason: 'unreadable-payload' });
+  });
+
+  it("Scenario: A рахунок whose currency does not match the row's is unavailable with a reason", async () => {
+    const usdRow = { ...ITEM, currencyCode: 840 };
+    const outcome = await fetchStatement(answering(200, [usdRow]), TOKEN, {
+      accountId: 'acc',
+      fromMs: 0,
+      toMs: 1000,
+      context: uahStatement,
+    });
+    expect(outcome).toEqual({ kind: 'unavailable', reason: 'currency-mismatch' });
+  });
+
+  it('Scenario: An unreadable statement row is unavailable with the generic reason', async () => {
+    const noId = { ...ITEM, id: undefined };
+    const outcome = await fetchStatement(answering(200, [noId]), TOKEN, {
+      accountId: 'acc',
+      fromMs: 0,
+      toMs: 1000,
+      context: uahStatement,
+    });
+    expect(outcome).toEqual({ kind: 'unavailable', reason: 'unreadable-payload' });
+  });
+
+  it('Scenario: A statement payload that is not a list is unavailable with the generic reason', async () => {
+    const outcome = await fetchStatement(answering(200, { items: [] }), TOKEN, {
+      accountId: 'acc',
+      fromMs: 0,
+      toMs: 1000,
+      context: uahStatement,
+    });
+    expect(outcome).toEqual({ kind: 'unavailable', reason: 'unreadable-payload' });
+  });
+
+  it('statementUnavailableReason never throws and always answers one of the three reasons', () => {
+    const fixtures: readonly unknown[] = [
+      { items: [] },
+      [{ ...ITEM, id: undefined }],
+      [{ ...ITEM, time: 'зараз' }],
+      [{ ...ITEM, mcc: null }],
+      [{ ...ITEM, amount: -125.5 }],
+      [{ ...ITEM, hold: 'false' }],
+      [{ ...ITEM, description: null }],
+      [{ ...ITEM, currencyCode: undefined }],
+      [{ ...ITEM, currencyCode: 840 }],
+      [{ ...ITEM, currencyCode: 985 }],
+    ];
+    for (const payload of fixtures) {
+      expect(parseStatement(payload, uahStatement)).toBeUndefined();
+      expect(() => statementUnavailableReason(payload, uahStatement)).not.toThrow();
+      expect(['unreadable-payload', 'currency-mismatch']).toContain(
+        statementUnavailableReason(payload, uahStatement),
+      );
+    }
+    // The one fixture only `fetchStatement` (not `parseStatement`) can turn into a throw today —
+    // proven not to reach `statementUnavailableReason` as a throw either.
+    const throwingDateOf: StatementContext = {
+      currency: 'UAH',
+      dateOf: () => {
+        throw new Error('no timezone database');
+      },
+    };
+    expect(() => statementUnavailableReason([ITEM], throwingDateOf)).not.toThrow();
+    expect(statementUnavailableReason([ITEM], throwingDateOf)).toBe('unreadable-payload');
   });
 
   it('A parsed answer is the accounts, and the token went in the header', async () => {

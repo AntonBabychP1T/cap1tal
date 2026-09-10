@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { JournalEntry } from './journal';
+import { entryLine, type JournalEntry } from './journal';
 import {
   networkSummary,
   renderReport,
@@ -470,6 +470,35 @@ describe('what the репорт says about the app’s own work', () => {
     const text = renderReport(busyReport);
     expect(text).toContain('## What the app did (2) · Що робив застосунок');
     expect(text).toContain('### #run-aaaa');
+  });
+
+  it("Scenario: A недоступно рахунок's reason renders right after its outcome", () => {
+    // What `journalProgress` actually writes for one рахунок's turn: the outcome entry, then the
+    // reason entry beside it under the same run — no change to `entryLine` or this renderer needed
+    // for it to show up (bug-report spec.md's new scenarios).
+    const withReason: readonly JournalEntry[] = [
+      { id: 'k1', at: at(0), kind: 'step', name: 'monobank-sync', detail: 'почалось', run: RUN },
+      {
+        id: 'k2',
+        at: at(0, 1),
+        kind: 'step',
+        name: 'monobank-sync/mono-plat',
+        detail: 'unavailable',
+        run: RUN,
+        counts: { imported: 0 },
+      },
+      { id: 'k3', at: at(0, 2), kind: 'step', name: 'monobank-sync/mono-plat', detail: 'currency-mismatch', run: RUN },
+    ];
+
+    const text = renderReport({ ...report, journal: withReason, prompting: null });
+
+    const outcomeLine = entryLine(withReason[1]!);
+    const reasonLine = entryLine(withReason[2]!);
+    expect(text).toContain(outcomeLine);
+    expect(text).toContain(reasonLine);
+    // Immediately after — not just present somewhere else in the file.
+    const combined = `${outcomeLine}\n${reasonLine}`;
+    expect(text).toContain(combined);
   });
 
   it('Scenario: A репорт with nothing to summarise still has the section', () => {

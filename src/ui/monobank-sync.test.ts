@@ -644,6 +644,79 @@ describe('the one place a sync is started', () => {
       expect(journalOf()[2]?.name).toContain('mono-plat');
     });
 
+    it('Scenario: A недоступно рахунок names a currency that does not match its own', () => {
+      const write = journalProgress('r1');
+
+      write({
+        kind: 'finished-account',
+        result: {
+          monobankAccountId: 'mono-plat',
+          accountId: 'card-plat',
+          outcome: 'unavailable',
+          imported: 0,
+          reason: 'currency-mismatch',
+        },
+      });
+
+      expect(journalOf().map((e) => [e.name, e.detail])).toEqual([
+        ['monobank-sync/mono-plat', 'unavailable'],
+        ['monobank-sync/mono-plat', 'currency-mismatch'],
+      ]);
+      expect(journalOf().every((e) => e.run === 'r1')).toBe(true);
+    });
+
+    it('Scenario: A недоступно рахунок names a body it could not read at all', () => {
+      const write = journalProgress('r1');
+
+      write({
+        kind: 'finished-account',
+        result: {
+          monobankAccountId: 'mono-plat',
+          accountId: 'card-plat',
+          outcome: 'unavailable',
+          imported: 0,
+          reason: 'unparseable-body',
+        },
+      });
+
+      expect(journalOf().map((e) => e.detail)).toEqual(['unavailable', 'unparseable-body']);
+    });
+
+    it('Scenario: A недоступно рахунок names a body of the wrong shape', () => {
+      const write = journalProgress('r1');
+
+      write({
+        kind: 'finished-account',
+        result: {
+          monobankAccountId: 'mono-plat',
+          accountId: 'card-plat',
+          outcome: 'unavailable',
+          imported: 0,
+          reason: 'unreadable-payload',
+        },
+      });
+
+      expect(journalOf().map((e) => e.detail)).toEqual(['unavailable', 'unreadable-payload']);
+    });
+
+    it('Scenario: A недоступно рахунок with no answer to read names no reason', () => {
+      const write = journalProgress('r1');
+
+      write({
+        kind: 'finished-account',
+        result: {
+          monobankAccountId: 'mono-gone',
+          accountId: 'card-gone',
+          outcome: 'unavailable',
+          imported: 0,
+        },
+      });
+
+      // Exactly the one entry it wrote before this change — no second entry appears.
+      expect(journalOf()).toHaveLength(1);
+      expect(journalOf().map((e) => e.detail)).toEqual(['unavailable']);
+    });
+
     it('composes with the listener the caller already had, so a screen keeps its progress', () => {
       const heard: SyncProgress[] = [];
       const write = composeProgress('r1', (progress) => heard.push(progress));

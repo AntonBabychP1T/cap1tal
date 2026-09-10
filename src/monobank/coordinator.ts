@@ -8,6 +8,7 @@ import {
   type MonobankAccount,
   type Outcome,
   type StatementItem,
+  type UnavailableReason,
 } from './api';
 import type { MonobankTokenStore } from '../platform/monobank-token';
 import {
@@ -198,6 +199,13 @@ export interface AccountResult {
   readonly outcome: AccountOutcome;
   /** New транзакції this run stored for this account; committed work, never a projection. */
   readonly imported: number;
+  /**
+   * Why this account's turn came to `unavailable`, when the bank did answer and `api.ts` could
+   * name the cause — absent for every other outcome, and absent for the two `unavailable`s that
+   * are not an `api.ts` answer at all: a рахунок the token no longer names, and a local storage
+   * write that failed. Diagnostics only; nothing here changes what the outcome itself means.
+   */
+  readonly reason?: UnavailableReason;
 }
 
 /** What a whole run answers with. Every state the screen has to tell apart is one of these. */
@@ -239,6 +247,11 @@ function outcomeOf(
     default:
       return 'unavailable';
   }
+}
+
+/** The reason behind an `unavailable` answer, when `api.ts` named one; absent for every other kind. */
+function reasonOf(answer: Outcome<unknown>): UnavailableReason | undefined {
+  return answer.kind === 'unavailable' ? answer.reason : undefined;
 }
 
 export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
@@ -321,6 +334,8 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     imported: number,
     /** The moment of the answer this account was synced up to; absent before one is settled. */
     syncedToMs?: number,
+    /** Why an `unavailable` outcome came to that, when `api.ts` could name it. */
+    reason?: UnavailableReason,
   ): void => {
     // Only a completed account moves its moment. An account that ends invalid-token, rate-limited,
     // unavailable, cancelled or postponed keeps whatever moment it had, so the screen never dates a
@@ -341,6 +356,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
       accountId: link.accountId,
       outcome,
       imported,
+      ...(reason === undefined ? {} : { reason }),
     };
     results.push(result);
     report({ kind: 'finished-account', result });
@@ -389,8 +405,9 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     }
     if (info.kind !== 'ok') {
       const outcome = outcomeOf(info);
+      const reason = reasonOf(info);
       for (const link of links) {
-        finish(link, outcome, 0);
+        finish(link, outcome, 0, undefined, reason);
       }
       return { kind: 'ran', imported: 0, accounts: results };
     }
@@ -485,7 +502,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     // Solved there and deliberately not by relabelling the outcome here. `postponed` means the run
     // has requests still owed, and `followUpDue` starts a run at once on it; a run that could only
     // report the same thing again would follow itself for as long as the app stayed open.
-    finish(link, account.outcome, account.imported, runToMs);
+    finish(link, account.outcome, account.imported, runToMs, account.reason);
   }
 
   return {
@@ -520,7 +537,7 @@ async function syncOneAccount(input: {
   readonly ports: SyncPorts;
   readonly paced: <T>(request: () => Promise<T>) => Promise<T | Stopped>;
   readonly stopping: () => StoppedOutcome | undefined;
-}): Promise<{ outcome: AccountOutcome; imported: number }> {
+}): Promise<{ outcome: AccountOutcome; imported: number; reason?: UnavailableReason }> {
   const { link, bankAccount, obtainedAt, token, runToMs, rules, ports, paced, stopping } = input;
 
   let cursorMs = link.cursorMs;
@@ -565,7 +582,7 @@ async function syncOneAccount(input: {
       if (answer.kind !== 'ok') {
         // Nothing advances: the cursor, the imported ids and the транзакції are as they were, and
         // this exact window is what the next run asks for again.
-        return { outcome: outcomeOf(answer), imported };
+        return { outcome: outcomeOf(answer), imported, reason: reasonOf(answer) };
       }
 
       const items = answer.value;

@@ -106,6 +106,14 @@ export function journalProgress(run: string): (progress: SyncProgress) => void {
           progress.result.outcome,
           { run, counts: { imported: progress.result.imported } },
         );
+        // Why `unavailable` came to that, when the bank did answer and `api.ts` could name the
+        // cause — one more entry rather than a second word on the one above, since `detail` is
+        // one enumerated word and this one already has its own (bug-report spec.md).
+        if (progress.result.reason !== undefined) {
+          journal.record('step', accountStepName(progress.result.monobankAccountId), progress.result.reason, {
+            run,
+          });
+        }
         return;
     }
   };

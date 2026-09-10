@@ -528,6 +528,8 @@ describe('syncLinkedAccounts', () => {
       const failed = ran(await syncLinkedAccounts(portsWith(first.fetchImpl)));
 
       expect(failed.accounts[0]?.outcome).toBe('unavailable');
+      // A bad status already reads as itself on the request's own журнал entry; no reason repeats it.
+      expect(failed.accounts[0]?.reason).toBeUndefined();
       // Cursor, транзакції, imported ids and the remembered position are all as they were.
       expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundary);
       expect(txs.listAll()).toHaveLength(2 * STATEMENT_PAGE_SIZE);
@@ -771,6 +773,69 @@ describe('syncLinkedAccounts', () => {
     expect(run.imported).toBe(2);
   });
 
+  it("Scenario: A statement row whose currency does not match the рахунок's is unavailable with a reason", async () => {
+    link('mono-card', 'card');
+    const { fetchImpl } = scriptedFetch({
+      statement: () => ({
+        status: 200,
+        body: [
+          {
+            ...item({ id: 'a1', timeSeconds: AUGUST_28, description: 'СІЛЬПО', amount: -12550 }),
+            currencyCode: 840,
+          },
+        ],
+      }),
+    });
+
+    const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
+
+    expect(run.accounts[0]?.outcome).toBe('unavailable');
+    expect(run.accounts[0]?.reason).toBe('currency-mismatch');
+    expect(txs.listAll()).toEqual([]);
+  });
+
+  it('Scenario: An unreadable statement row is unavailable with the generic reason', async () => {
+    link('mono-card', 'card');
+    const { fetchImpl } = scriptedFetch({
+      statement: () => ({
+        status: 200,
+        body: [
+          { ...item({ id: 'a1', timeSeconds: AUGUST_28, description: 'СІЛЬПО', amount: -12550 }), id: undefined },
+        ],
+      }),
+    });
+
+    const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
+
+    expect(run.accounts[0]?.outcome).toBe('unavailable');
+    expect(run.accounts[0]?.reason).toBe('unreadable-payload');
+  });
+
+  it('A client-info payload the app cannot read repeats its reason across every linked рахунок', async () => {
+    link('mono-card', 'card');
+    repo.upsertAccounts(
+      [
+        {
+          id: 'mono-white',
+          kind: 'card',
+          name: 'white ··9999',
+          currency: 'UAH',
+          bankBalance: money(15_000, 'UAH'),
+        },
+      ],
+      NO_FRESH_ANSWER,
+    );
+    link('mono-white', 'jar');
+    const { fetchImpl } = scriptedFetch({ clientInfo: () => ({ status: 200, body: { accounts: 'nope' } }) });
+
+    const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
+
+    expect(run.accounts.map((a) => a.outcome)).toEqual(['unavailable', 'unavailable']);
+    // Repeats, does not crash or diverge — accepted per design.md's Non-Goals.
+    expect(run.accounts.map((a) => a.reason)).toEqual(['unreadable-payload', 'unreadable-payload']);
+    expect(JSON.stringify(run)).not.toContain(TOKEN);
+  });
+
   it('Scenario: A failed commit advances nothing', async () => {
     link('mono-card', 'card');
     const { fetchImpl } = scriptedFetch({
@@ -965,6 +1030,8 @@ describe('syncLinkedAccounts', () => {
     const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
 
     expect(run.accounts.find((a) => a.monobankAccountId === 'mono-gone')?.outcome).toBe('unavailable');
+    // Not an `api.ts` answer at all, so it carries no reason (design.md's Non-Goals).
+    expect(run.accounts.find((a) => a.monobankAccountId === 'mono-gone')?.reason).toBeUndefined();
     expect(asked(statements())).toEqual(['mono-card']);
     // No request was spent on it, so no turn was taken: it costs nothing to leave at the head of
     // the order, and the next run will pass over it just as cheaply.
@@ -1312,6 +1379,7 @@ describe('syncLinkedAccounts', () => {
     const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
 
     expect(run.accounts[0]?.outcome).toBe('unavailable');
+    expect(run.accounts[0]?.reason).toBeUndefined();
     expect(statements()).toEqual([]);
     // The link, the cursor and the imported ids are all still there.
     expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundary);
