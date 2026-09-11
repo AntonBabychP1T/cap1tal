@@ -185,6 +185,13 @@ after the screen is left.
 - **THEN** the reason and the system-settings offer are shown, and «Обрати фото» is offered beside
   them, working without asking for the camera permission
 
+#### Scenario: A photo decoded while the camera is blocked reaches the same preview
+
+- **WHEN** the camera permission is blocked and the owner chooses «Обрати фото» and picks a photo
+  carrying a чек QR whose total matches the транзакція's сума
+- **THEN** the screen shows the чек being looked up and then the preview with «Прикріпити», exactly
+  as a successful camera scan would — the blocked camera permission stops the camera, not this
+
 #### Scenario: Cancelling leaves nothing behind
 
 - **WHEN** the owner leaves the scanner or chooses «Скасувати» at the preview

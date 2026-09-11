@@ -282,9 +282,10 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 
 - **Фіскальний чек** (fiscal receipt) — what the seller's registrar registered with the tax
   service for one purchase: the позиції bought, their prices, the total, the seller and the moment.
-  The app fetches it by the реквізити printed as a QR code on the paper чек, and keeps it as
-  detail **beneath** a транзакція. It moves no money: no розрахунковий баланс, no number of the
-  місячна картина, no ліміт, ціль or звіт changes because a чек was attached.
+  The app fetches it by the реквізити a QR code carries — printed on a paper чек, or in a photo or
+  file already on the phone for an electronic one — and keeps it as detail **beneath** a
+  транзакція. It moves no money: no розрахунковий баланс, no number of the місячна картина, no
+  ліміт, ціль or звіт changes because a чек was attached.
 - **Позиція чека** (receipt line) — one line of a чек: the product name exactly as printed, the
   quantity with its unit, the unit price and the line total where the чек names them, a line
   discount, and the barcode and УКТЗЕД code where it carries them. A позиція is never a

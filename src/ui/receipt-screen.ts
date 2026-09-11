@@ -9,6 +9,7 @@ import type { Transaction } from '../domain/transaction';
 import type { LookupOutcome } from '../fiscal/lookup';
 import { attachable, parseFiscalDocument, type ParsedReceipt } from '../fiscal/parse';
 import { readReceiptQr, type MissingRequisite, type ReceiptLookup } from '../fiscal/qr';
+import type { QrImagePickOutcome } from '../platform/qr-image';
 import type { CameraPermission } from '../platform/qr-scan';
 import { formatMinorUnitsGrouped, formatMoney } from './amount-input';
 import { plural } from './labels';
@@ -69,6 +70,9 @@ export type ReceiptOffer =
   | { readonly kind: 'none' };
 
 export const SCAN_LABEL = 'Сканувати QR чека';
+
+/** «Обрати фото» — choosing an existing photo or file instead of the camera (design D14). */
+export const PICK_PHOTO_LABEL = 'Обрати фото';
 
 /**
  * What the транзакція's form shows where the чек goes.
@@ -187,6 +191,10 @@ export type Refusal =
   | { readonly kind: 'no-camera' }
   | { readonly kind: 'not-a-receipt' }
   | { readonly kind: 'incomplete'; readonly missing: readonly MissingRequisite[] }
+  /** A chosen photo or file carried no QR code at all — the phone worked, nothing was found. */
+  | { readonly kind: 'image-no-qr' }
+  /** The phone could not open or read the chosen file. */
+  | { readonly kind: 'image-pick-failed' }
   | { readonly kind: 'not-found' }
   | { readonly kind: 'unavailable' }
   | { readonly kind: 'service-changed' }
@@ -280,6 +288,48 @@ export function cancelled(state: FlowState): FlowState {
 }
 
 /**
+ * The three refusals a photo or file needs no camera at all to answer — design D14: decoding a
+ * picked image never touches the camera, so a state that stops the camera must not stop this.
+ */
+function stopsOnlyTheCamera(refusal: Refusal): boolean {
+  return (
+    refusal.kind === 'camera-deniable' ||
+    refusal.kind === 'camera-blocked' ||
+    refusal.kind === 'no-camera'
+  );
+}
+
+/** Whether choosing a photo or file may be offered from this state (design D14). */
+function photoEligible(state: FlowState): boolean {
+  return state.kind === 'scanning' || (state.kind === 'refused' && stopsOnlyTheCamera(state.refusal));
+}
+
+/**
+ * A QR's text, decoded from a photo or file instead of the camera (design D14).
+ *
+ * Reachable from `scanning` and from the three camera refusals a photo needs none of — states
+ * `decoded()` itself refuses, because it exists for the camera's live feed. A successful decode is
+ * therefore run through `decoded({ kind: 'scanning' }, text)`, the canonical scanning state, rather
+ * than the caller's own: a photo picked while the camera is blocked reaches `looking-up` and the
+ * preview exactly as a camera scan would, not a silent no-op. Cancelling the picker leaves whatever
+ * state the owner was already in untouched — the scanner if they were scanning, the refusal if the
+ * camera could not be used.
+ */
+export function decodedFromImage(state: FlowState, outcome: QrImagePickOutcome): FlowState {
+  if (!photoEligible(state)) return state;
+  switch (outcome.kind) {
+    case 'cancelled':
+      return state;
+    case 'no-qr':
+      return { kind: 'refused', refusal: { kind: 'image-no-qr' } };
+    case 'failed':
+      return { kind: 'refused', refusal: { kind: 'image-pick-failed' } };
+    default:
+      return decoded({ kind: 'scanning' }, outcome.text);
+  }
+}
+
+/**
  * What the tax service answered, and what the document turned out to be.
  *
  * The whole of «found» is handled here: the document is parsed, checked against the реквізити and
@@ -362,6 +412,13 @@ export type NextStep = 'scan-again' | 'retry' | 'open-settings' | 'ask-permissio
 export interface RefusalView {
   readonly text: string;
   readonly next: NextStep;
+  /**
+   * Whether «Обрати фото» belongs beside `next` — true only for the three refusals that stop the
+   * camera and nothing else (design D14): a photo needs no camera, so it is offered exactly where
+   * the camera itself cannot be used. Every other refusal already has a way back to `scanning`
+   * (`next: 'scan-again'`), where the photo option is offered on the screen itself.
+   */
+  readonly offerPhoto: boolean;
 }
 
 const MISSING_NAMES: Record<MissingRequisite, string> = {
@@ -382,52 +439,85 @@ const MISSING_NAMES: Record<MissingRequisite, string> = {
  * the tax service, because from the owner's side that is the actionable half.
  */
 export function refusalView(refusal: Refusal): RefusalView {
+  // «Обрати фото» needs no camera, so it stands beside `next` exactly where the camera itself
+  // cannot be used (design D14) — every other refusal already has a way back to `scanning`
+  // (`next: 'scan-again'`), where the photo option is on the screen itself.
+  const offerPhoto = stopsOnlyTheCamera(refusal);
   switch (refusal.kind) {
     case 'camera-deniable':
-      return { text: 'Щоб сканувати чек, потрібен доступ до камери.', next: 'ask-permission' };
+      return {
+        text: 'Щоб сканувати чек, потрібен доступ до камери.',
+        next: 'ask-permission',
+        offerPhoto,
+      };
     case 'camera-blocked':
       return {
         text: 'Доступ до камери заборонено. Увімкніть його в налаштуваннях застосунку.',
         next: 'open-settings',
+        offerPhoto,
       };
     case 'no-camera':
-      return { text: 'На цьому пристрої немає камери, доступної застосунку.', next: 'none' };
+      return {
+        text: 'На цьому пристрої немає камери, доступної застосунку.',
+        next: 'none',
+        offerPhoto,
+      };
     case 'not-a-receipt':
-      return { text: 'Це не QR фіскального чека.', next: 'scan-again' };
+      return { text: 'Це не QR фіскального чека.', next: 'scan-again', offerPhoto };
     case 'incomplete':
       return {
         text: `QR чека не містить усього потрібного: ${refusal.missing
           .map((what) => MISSING_NAMES[what])
           .join(', ')}.`,
         next: 'scan-again',
+        offerPhoto,
       };
+    case 'image-no-qr':
+      return { text: 'На цьому фото немає QR-коду.', next: 'scan-again', offerPhoto };
+    case 'image-pick-failed':
+      return { text: 'Не вдалося прочитати обраний файл.', next: 'scan-again', offerPhoto };
     case 'not-found':
       return {
         text: 'Податкова не знайшла цей чек. Він може зʼявитися через кілька днів — або сума в QR не збігається з зареєстрованою.',
         next: 'retry',
+        offerPhoto,
       };
     case 'unavailable':
-      return { text: 'Немає звʼязку з податковою.', next: 'retry' };
+      return { text: 'Немає звʼязку з податковою.', next: 'retry', offerPhoto };
     case 'service-changed':
       return {
         text: 'Податкова відповіла так, як ця версія застосунку не вміє прочитати. Потрібне оновлення.',
         next: 'retry',
+        offerPhoto,
       };
     case 'not-a-fiscal-document':
-      return { text: 'Податкова віддала не фіскальний документ.', next: 'scan-again' };
+      return {
+        text: 'Податкова віддала не фіскальний документ.',
+        next: 'scan-again',
+        offerPhoto,
+      };
     case 'not-a-sale-or-return':
       return {
         text: 'Це службовий документ, а не чек продажу чи повернення.',
         next: 'scan-again',
+        offerPhoto,
       };
     case 'not-this-receipt':
-      return { text: 'Документ від податкової — не той чек, що в цьому QR.', next: 'scan-again' };
+      return {
+        text: 'Документ від податкової — не той чек, що в цьому QR.',
+        next: 'scan-again',
+        offerPhoto,
+      };
     case 'attached-elsewhere':
-      return { text: `Цей чек уже прикріплено до транзакції «${refusal.where}».`, next: 'none' };
+      return {
+        text: `Цей чек уже прикріплено до транзакції «${refusal.where}».`,
+        next: 'none',
+        offerPhoto,
+      };
     case 'already-has-receipt':
-      return { text: 'Ця транзакція вже має фіскальний чек.', next: 'none' };
+      return { text: 'Ця транзакція вже має фіскальний чек.', next: 'none', offerPhoto };
     default:
-      return { text: 'Транзакції більше немає.', next: 'none' };
+      return { text: 'Транзакції більше немає.', next: 'none', offerPhoto };
   }
 }
 

@@ -283,9 +283,19 @@ live behind a device-testable port: `src/platform/qr-image.ts` (`QrImagePort.pic
 pairs `expo-document-picker`'s `getDocumentAsync({ type: 'image/*', copyToCacheDirectory: true })`
 — already a dependency, already the exact call `bug-report-files-device.ts` and
 `backup-file-device.ts` make for the same "pick an image" job — with `scanFromURLAsync(uri, ['qr'])`,
-folding the outcome into `decoded` | `cancelled` | `no-qr` | `failed`. A `decoded` outcome re-enters
-`src/ui/receipt-screen.ts`'s existing `decoded(state, text)`, so the QR text is read, compared and
-attached identically whichever source it came from; only the two new refusals a camera scan cannot
+folding the outcome into `decoded` | `cancelled` | `no-qr` | `failed`. The device adapter deletes
+its own cached copy of the picked image once `scanFromURLAsync` has settled, on every branch: the
+picker's `copyToCacheDirectory: true` necessarily leaves a file behind to hand a `uri` to, and
+qr-scan's "nothing about the chosen file is stored" is a promise about the app's own storage past
+the scan, not an excuse to skip cleaning up that transient copy.
+
+A `decoded` outcome re-enters `src/ui/receipt-screen.ts`'s `decoded()` — but through the canonical
+`{ kind: 'scanning' }` state, not the caller's own, because `decodedFromImage` (design, this
+decision) is reachable from states `decoded()` itself refuses: a picked photo may succeed while the
+flow sits in `refused` with `camera-blocked` (the exact case this feature exists for). Routing a
+successful decode through `decoded({ kind: 'scanning' }, text)` regardless of the state
+`decodedFromImage` was called from means the QR text is read, compared and attached identically
+whichever source or starting state it came from; only the two new refusals a camera scan cannot
 produce (`image-no-qr`, `image-pick-failed`) are new to `Refusal`. No new native module, no new npm
 dependency, no new Android permission — `android.md`'s naming duty has nothing to name.
 

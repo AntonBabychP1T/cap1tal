@@ -167,7 +167,8 @@ Two dialects, both windows-1251, sometimes pretty-printed with whitespace, somet
 - **New capability `fiscal-receipts-screen`** — «Сканувати QR чека» on a витрата or повернення,
   prominent for «Продукти»; the scan → lookup → preview → attach flow with every failure named in
   Ukrainian and retryable without rescanning; choosing an existing photo or file as an alternative
-  to the camera at every step of that flow; the позиції list, raw names, offline; the detach.
+  to the camera everywhere the camera itself can be used or asked for; the позиції list, raw names,
+  offline; the detach.
 - **Modified `persistence`** — чеки and позиції survive a restart, commit as units, cascade with
   the транзакція, arrive by append-only migrations, and join the snapshot.
 - **Modified `backup-file`** — the бекап holds чеки with позиції and snapshot; older бекапи restore

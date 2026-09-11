@@ -14,6 +14,7 @@ import {
   cancelled,
   cancelPreview,
   decoded,
+  decodedFromImage,
   detachConfirmation,
   formatHryvnia,
   formatQuantity,
@@ -315,6 +316,7 @@ describe('starting a scan', () => {
     expect(refusalView({ kind: 'camera-deniable' })).toEqual({
       text: 'Щоб сканувати чек, потрібен доступ до камери.',
       next: 'ask-permission',
+      offerPhoto: true,
     });
   });
 
@@ -386,6 +388,84 @@ describe('what the camera decoded', () => {
   });
 });
 
+describe('choosing a photo or file instead of the camera (design D14)', () => {
+  it('A photo already on the phone is looked up the same as a camera scan', () => {
+    const fromCamera = decoded(startScan('granted'), GROCERY_QR);
+    const fromPhoto = decodedFromImage(startScan('granted'), {
+      kind: 'decoded',
+      text: GROCERY_QR,
+    });
+
+    expect(fromPhoto).toEqual(fromCamera);
+    expect(fromPhoto.kind).toBe('looking-up');
+  });
+
+  it('A photo with no QR code offers trying again', () => {
+    const state = decodedFromImage(startScan('granted'), { kind: 'no-qr' });
+
+    expect(state).toEqual({ kind: 'refused', refusal: { kind: 'image-no-qr' } });
+    const view = refusalView({ kind: 'image-no-qr' });
+    expect(view.text).toBe('На цьому фото немає QR-коду.');
+    expect(view.next).toBe('scan-again');
+  });
+
+  it('A file that cannot be read is a typed failure', () => {
+    const state = decodedFromImage(startScan('granted'), {
+      kind: 'failed',
+      reason: 'Файл не знайдено',
+    });
+
+    expect(state).toEqual({ kind: 'refused', refusal: { kind: 'image-pick-failed' } });
+    expect(refusalView({ kind: 'image-pick-failed' }).text).toBe(
+      'Не вдалося прочитати обраний файл.',
+    );
+  });
+
+  it('Leaving the photo picker changes nothing', () => {
+    const scanning = startScan('granted');
+    expect(decodedFromImage(scanning, { kind: 'cancelled' })).toEqual(scanning);
+
+    const blocked: FlowState = { kind: 'refused', refusal: { kind: 'camera-blocked' } };
+    expect(decodedFromImage(blocked, { kind: 'cancelled' })).toEqual(blocked);
+  });
+
+  it('A device with no camera can still import a photo', () => {
+    expect(refusalView({ kind: 'no-camera' }).offerPhoto).toBe(true);
+
+    const noCamera: FlowState = { kind: 'refused', refusal: { kind: 'no-camera' } };
+    const state = decodedFromImage(noCamera, { kind: 'decoded', text: GROCERY_QR });
+    expect(state.kind).toBe('looking-up');
+  });
+
+  it('A blocked camera still allows choosing a photo', () => {
+    expect(refusalView({ kind: 'camera-blocked' }).offerPhoto).toBe(true);
+    expect(refusalView({ kind: 'camera-deniable' }).offerPhoto).toBe(true);
+    // Every other refusal already returns to `scanning` through «Сканувати ще раз», where the
+    // photo option is offered on the scanning screen itself — no separate offer is needed there.
+    expect(refusalView({ kind: 'not-found' }).offerPhoto).toBe(false);
+    expect(refusalView({ kind: 'already-has-receipt' }).offerPhoto).toBe(false);
+  });
+
+  it('A photo decoded while the camera is blocked reaches the same preview as a camera scan', () => {
+    const blocked: FlowState = { kind: 'refused', refusal: { kind: 'camera-blocked' } };
+    const state = decodedFromImage(blocked, { kind: 'decoded', text: GROCERY_QR });
+
+    expect(state).toEqual(lookingUp());
+  });
+
+  it('does not touch a state a photo pick cannot come from', () => {
+    // Once a lookup is under way, or a preview is up, picking a photo again makes no sense — the
+    // flow ignores the outcome instead of overwriting an in-progress step.
+    const busy = lookingUp();
+    expect(decodedFromImage(busy, { kind: 'decoded', text: GROCERY_QR })).toBe(busy);
+
+    // A refusal the photo path has nothing to do with — the tax service, not the camera — is
+    // likewise untouched: «Обрати фото» is not offered there (previous test).
+    const notFound: FlowState = { kind: 'refused', refusal: { kind: 'not-found' } };
+    expect(decodedFromImage(notFound, { kind: 'decoded', text: GROCERY_QR })).toBe(notFound);
+  });
+});
+
 describe('what the lookup answered', () => {
   it('A successful scan ends in a preview to confirm', () => {
     const state = lookedUp(lookingUp(), FOUND, expense());
@@ -432,6 +512,7 @@ describe('what the lookup answered', () => {
     expect(refusalView({ kind: 'unavailable' })).toEqual({
       text: 'Немає звʼязку з податковою.',
       next: 'retry',
+      offerPhoto: false,
     });
     expect(retry(state).kind).toBe('looking-up');
   });
@@ -545,6 +626,7 @@ describe('what storing came to', () => {
     expect(refusalView({ kind: 'attached-elsewhere', where: 'АТБ 29.04' })).toEqual({
       text: 'Цей чек уже прикріплено до транзакції «АТБ 29.04».',
       next: 'none',
+      offerPhoto: false,
     });
   });
 
@@ -564,6 +646,7 @@ describe('what storing came to', () => {
     expect(refusalView({ kind: 'transaction-gone' })).toEqual({
       text: 'Транзакції більше немає.',
       next: 'none',
+      offerPhoto: false,
     });
   });
 
@@ -770,6 +853,18 @@ describe('the screens are wired to this module', () => {
       expect(text, name).not.toContain('Це не QR фіскального чека');
       expect(text, name).not.toContain('Немає звʼязку з податковою');
     }
+  });
+
+  it('«Обрати фото» is wired on the scanning view and needs no camera to work (design D14)', () => {
+    expect(scan).toContain("from '@/platform/qr-image-device'");
+    expect(scan).toContain('qrImage.pickAndDecode()');
+    expect(scan).toContain('decodedFromImage(current, outcome)');
+    // Offered beside the live camera view, not only after a refusal.
+    expect(scan).toContain("<Action variant=\"secondary\" title={PICK_PHOTO_LABEL} onPress={() => void pickPhoto()} />");
+    // And on the `Refused` screen, gated on the module's own `offerPhoto` — never a screen's own
+    // guess at which refusals stop the camera.
+    expect(scan).toContain('view.offerPhoto');
+    expect(scan).not.toContain("refusal.kind === 'camera-blocked'");
   });
 });
 

@@ -17,8 +17,10 @@ import {
   cancelled,
   cancelPreview,
   decoded,
+  decodedFromImage,
   IDLE,
   lookedUp,
+  PICK_PHOTO_LABEL,
   previewView,
   refusalView,
   retry,
@@ -28,6 +30,7 @@ import {
   stored,
   type FlowState,
 } from '@/ui/receipt-screen';
+import { qrImage } from '@/platform/qr-image-device';
 import { qrScan } from '@/platform/qr-scan-device';
 
 import { Spacing } from '@/constants/theme';
@@ -131,6 +134,21 @@ export default function ScanReceiptScreen() {
   );
 
   /**
+   * «Обрати фото» — an existing photo or file instead of the camera (design D14). Reachable while
+   * scanning and from the three refusals that stop the camera and nothing else; `decodedFromImage`
+   * itself decides whether the state the picker returned into is eligible, so this callback does
+   * nothing but hand the outcome through.
+   */
+  const pickPhoto = useCallback(async () => {
+    const outcome = await qrImage.pickAndDecode();
+    setState((current) => {
+      const next = decodedFromImage(current, outcome);
+      if (next.kind === 'looking-up') void look(next);
+      return next;
+    });
+  }, [look]);
+
+  /**
    * Attaching. The транзакція is re-read first, so one deleted while the scanner was open ends the
    * flow with the typed reason rather than a foreign-key error the owner cannot act on.
    */
@@ -217,15 +235,18 @@ export default function ScanReceiptScreen() {
     <Screen>
       <ScreenHeader title="Чек" back={leave} />
       {state.kind === 'scanning' ? (
-        <View style={styles.camera}>
-          <CameraView
-            style={styles.viewfinder}
-            facing="back"
-            // QR only: the spec says other barcode kinds are ignored, and a чек carries a QR.
-            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-            onBarcodeScanned={onScanned}
-          />
-        </View>
+        <>
+          <View style={styles.camera}>
+            <CameraView
+              style={styles.viewfinder}
+              facing="back"
+              // QR only: the spec says other barcode kinds are ignored, and a чек carries a QR.
+              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+              onBarcodeScanned={onScanned}
+            />
+          </View>
+          <Action variant="secondary" title={PICK_PHOTO_LABEL} onPress={() => void pickPhoto()} />
+        </>
       ) : null}
 
       {state.kind === 'looking-up' ? (
@@ -248,6 +269,7 @@ export default function ScanReceiptScreen() {
           onRetry={again}
           onSettings={() => void qrScan.openSettings()}
           onAsk={() => void begin()}
+          onPickPhoto={() => void pickPhoto()}
         />
       ) : null}
     </Screen>
@@ -313,12 +335,14 @@ function Refused({
   onRetry,
   onSettings,
   onAsk,
+  onPickPhoto,
 }: {
   state: Extract<FlowState, { kind: 'refused' }>;
   onScanAgain: () => void;
   onRetry: () => void;
   onSettings: () => void;
   onAsk: () => void;
+  onPickPhoto: () => void;
 }) {
   const view = refusalView(state.refusal);
   return (
@@ -335,6 +359,11 @@ function Refused({
       ) : null}
       {view.next === 'ask-permission' ? (
         <Action title="Дозволити камеру" onPress={onAsk} />
+      ) : null}
+      {/* Needs no camera at all (design D14) — offered only where the camera itself is what
+          stopped the flow, never where the tax-service side did. */}
+      {view.offerPhoto ? (
+        <Action variant="secondary" title={PICK_PHOTO_LABEL} onPress={onPickPhoto} />
       ) : null}
     </>
   );
