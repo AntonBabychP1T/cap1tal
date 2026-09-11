@@ -1,15 +1,24 @@
 import { asc, eq } from 'drizzle-orm';
 
-import type { Rule } from '../domain/rules';
-import { CORRECTION_CATEGORY_ID } from '../domain/transaction';
+import { countUncategorisedExpenses, sweepUncategorised, type Rule } from '../domain/rules';
+import { CORRECTION_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import { rules, type NewRuleRow, type RuleRow } from './schema';
 import type { Storage } from './storage';
+import { transactionsRepo } from './transactions-repo';
+
+/** What a розбір did: the «Без категорії» витрати it looked at, and the ones it moved. */
+export interface SweepCounts {
+  readonly examined: number;
+  readonly moved: number;
+}
 
 /**
  * Правила автокатегоризації in storage. Speaks domain `Rule`s only — rows never leave this module.
  *
- * Nothing here applies a rule: matching is `matchRule` in src/domain/rules.ts, and the importers
- * of steps 6–8 are what run it. This module holds what the owner edits in «Правила».
+ * Matching itself is `matchRule` in src/domain/rules.ts, and the three import sources and the
+ * entry form are what run it. What this module does with it is the розбір: storing a правило
+ * decides, here, which stored «Без категорії» витрати it now recognises — `sweepUncategorised`
+ * decides, this module writes.
  */
 export function rulesRepo(db: Storage) {
   return {
@@ -27,21 +36,41 @@ export function rulesRepo(db: Storage) {
      * A target category with no row is left to the foreign key: the picker only ever offers rows
      * that exist, so the rejection is a backstop, and `onDelete: 'restrict'` is what the
      * persistence spec asks for at storage level.
+     *
+     * **Storing a правило runs the розбір**, in this same transaction: every stored витрата in
+     * «Без категорії» that the правила — as they stand *after* this write — now recognise moves
+     * onto the категорія they give it. The invariant lives here, at the only write path, because
+     * four screens store a правило and a fifth will; one of them would eventually forget to sweep.
+     * One transaction because a правило stored while its розбір failed would leave the owner with
+     * a правило that quietly did nothing.
+     *
+     * Restore does not come through here — `backup-repo.ts` writes the `rules` table directly — so
+     * a відновлення replaces правила and транзакції together without re-deciding either.
      */
-    save(rule: Rule): void {
+    save(rule: Rule): SweepCounts {
       const row = toRuleRow(rule);
-      db.insert(rules)
-        .values(row)
-        .onConflictDoUpdate({
-          target: rules.id,
-          set: {
-            merchant: row.merchant,
-            mcc: row.mcc,
-            categoryId: row.categoryId,
-            createdAt: row.createdAt,
-          },
-        })
-        .run();
+      return db.transaction((tx) => {
+        tx.insert(rules)
+          .values(row)
+          .onConflictDoUpdate({
+            target: rules.id,
+            set: {
+              merchant: row.merchant,
+              mcc: row.mcc,
+              categoryId: row.categoryId,
+              createdAt: row.createdAt,
+            },
+          })
+          .run();
+        const stored = transactionsRepo(tx).listAll();
+        const all = tx.select().from(rules).all().map(toRule);
+        const moves = sweepUncategorised(all, stored);
+        const write = transactionsRepo(tx);
+        for (const move of moves) {
+          write.setCategory(move.id, move.categoryId);
+        }
+        return { examined: countUncategorisedExpenses(stored), moved: moves.length };
+      });
     },
 
     get(id: string): Rule | undefined {
@@ -79,6 +108,12 @@ function toRuleRow(rule: Rule): NewRuleRow {
     // «Коригування» is carried only by коригування the app itself creates; a rule targeting it
     // would categorise an imported витрата as one, which is a different transaction type.
     throw new Error('«Коригування» не може бути метою правила');
+  }
+  if (rule.categoryId === UNCATEGORISED_CATEGORY_ID) {
+    // «Без категорії» is the absence of a категорія, not one. A rule aiming at it would pin a
+    // merchant to the very gap the rules exist to fill: it would outrank shorter rules naming a
+    // real категорія, and survive every розбір, since a витрата it "moved" never left the gap.
+    throw new Error('«Без категорії» не може бути метою правила — це відсутність категорії');
   }
   if (merchant === '' && mcc === null) {
     // The table has a CHECK for this too, but this is the one mistake the owner can actually make

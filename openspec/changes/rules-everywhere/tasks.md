@@ -1,12 +1,12 @@
 ## 1. The domain: what an опис proposes and what a sweep moves
 
-- [ ] 1.1 Add `proposeMerchantPattern(description)` to `src/domain/rules.ts` — the leading run of
+- [x] 1.1 Add `proposeMerchantPattern(description)` to `src/domain/rules.ts` — the leading run of
   letters and the spaces between them, folded and trimmed, falling back to the whole folded опис
   (design D3). Tests in `src/domain/rules.test.ts` prove "Categorising an imported витрата offers
   the правило" («СІЛЬПО 123 Київ, вул. Хрещатик» → «сільпо»), «Нова Пошта відділення 5» → «нова
   пошта», and "An опис that starts with no letter proposes the whole of itself" («7-Eleven Kyiv» →
   «7-eleven kyiv»); an empty or blank опис proposes nothing.
-- [ ] 1.2 Add `sweepUncategorised(rules, transactions)` to `src/domain/rules.ts` returning the
+- [x] 1.2 Add `sweepUncategorised(rules, transactions)` to `src/domain/rules.ts` returning the
   `{ id, categoryId }` moves, matching on опис with no MCC (design D1). Tests in
   `src/domain/rules.test.ts` prove "A new правило clears the matching витрати out of «Без
   категорії»", "A категорія the owner chose is never taken away", "An MCC-only правило moves
@@ -17,20 +17,20 @@
 
 ## 2. Storage: storing a правило sweeps
 
-- [ ] 2.1 Add a category-only update to `src/db/transactions-repo.ts` — the sweep changes one column
+- [x] 2.1 Add a category-only update to `src/db/transactions-repo.ts` — the sweep changes one column
   on rows it never parsed as a whole (design context). A test in
   `src/db/transactions-repo.test.ts` proves the транзакція round-trips with its сума, дата,
   рахунок, опис and `stored_at` untouched.
-- [ ] 2.2 Reject «Без категорії» as a правило's target in `src/db/rules-repo.ts`, beside the
+- [x] 2.2 Reject «Без категорії» as a правило's target in `src/db/rules-repo.ts`, beside the
   «Коригування» rejection, with its own sentence. A test in `src/db/rules-repo.test.ts` proves
   "«Без категорії» is rejected as a rule's target".
-- [ ] 2.3 Make `rulesRepo.save` upsert the правило, run `sweepUncategorised` over the правила as
+- [x] 2.3 Make `rulesRepo.save` upsert the правило, run `sweepUncategorised` over the правила as
   they stand after the upsert, and apply the moves — all in one `db.transaction` (design D2). It
   returns `{ examined, moved }`, where `examined` counts the «Без категорії» витрати considered.
   Tests in `src/db/rules-repo.test.ts` prove "A stored правило recategorises the «Без категорії»
   витрати it matches", "A витрата already moved is not swept again" and "Deleting a правило moves
   nothing".
-- [ ] 2.4 Prove restore does not sweep: a test in `src/db/backup-repo.test.ts` restores a state
+- [x] 2.4 Prove restore does not sweep: a test in `src/db/backup-repo.test.ts` restores a state
   holding правила and a «Без категорії» витрата they match, and asserts the витрата is exactly as
   the backup held it (design D2).
 

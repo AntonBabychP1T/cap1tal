@@ -33,7 +33,9 @@ See proposal.md — Why. What shapes the approach is what already exists:
 
 - No new table, no migration. Nothing here needs a column that does not exist.
 - No change to `matchRule`'s ranking, folding or tie-breaks.
-- No sweep on restore, on seeding, or on app open — only on a правило the owner stored.
+- No sweep on restore, and none on app open **in this change** — only on a правило the owner
+  stored. (The follow-up `rule-template` adds an open-time розбір of its own, once per шаблон
+  version; this is a boundary of this change's scope, not a rule about the app.)
 - No background work: the sweep is synchronous inside the same SQLite transaction as the store.
 
 ## Decisions
@@ -92,9 +94,14 @@ same `fold()` the matcher uses.
 
 Bank описи are `NAME [branch] [city] [street]` — «СІЛЬПО 123 Київ, вул. Хрещатик», «АТБ 421»,
 «Нова Пошта відділення 5». The name is the leading letters; everything that identifies the branch
-starts at the first digit or punctuation. So: take the leading run of letters and the spaces
-between them, fold, trim; if that is empty (the опис starts with a digit or a symbol — «7-Eleven»),
-propose the whole folded, trimmed опис.
+starts at the first digit or punctuation. So: take the leading run of letters, fold, trim, and keep
+at most its first two words; if there is no leading letter at all (the опис starts with a digit or
+a symbol — «7-Eleven»), propose the whole folded, trimmed опис.
+
+*Why two words and not the whole letter run:* «Нова Пошта відділення 5» would otherwise propose
+«нова пошта відділення» — narrower than the merchant, and narrow is the failure that is invisible:
+the правило simply stops firing. Merchant names arrive as one word or two; the third is the
+qualifier the branch carries.
 
 *Why not the first word:* «Нова Пошта» and «Meest Express» lose half their name, and the owner is
 then offered a pattern that matches things it should not. *Why not the whole опис:* «СІЛЬПО 123

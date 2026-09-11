@@ -17,6 +17,7 @@ import {
   CORRECTION_CATEGORY_ID,
   UNCATEGORISED_CATEGORY_ID,
   UNSOURCED_SOURCE_ID,
+  expenseByDefault,
   type Transaction,
 } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
@@ -1213,6 +1214,32 @@ describe('the round trip a бекап promises', () => {
 
     expect(await applyRestore(backupRepo(target.db), read)).toBe('ok');
     expect(backupRepo(target.db).snapshot().transactions).toHaveLength(10);
+  });
+
+  it('A restore runs no розбір — the бекап is a state, not a decision', async () => {
+    // Storing a правило sweeps the stored «Без категорії» витрати it matches. A відновлення must
+    // not: it writes the `rules` table directly, so правила and транзакції arrive together exactly
+    // as the file holds them. Re-deciding them here would make restoring the same file twice
+    // produce two different devices.
+    transactionsRepo(source.db).save(
+      expenseByDefault({
+        id: 'gap',
+        date: '2026-05-02',
+        accountId: 'card',
+        amount: money(12_550, 'UAH'),
+        description: 'СІЛЬПО 123 Київ',
+      }),
+      MADE_AT,
+    );
+
+    await roundTrip();
+
+    // «сільпо → food» is in the file and matches that опис; the витрата still arrives in the gap.
+    expect(rulesRepo(target.db).get('r1')?.merchant).toBe('сільпо');
+    expect(transactionsRepo(target.db).get('gap')).toMatchObject({
+      categoryId: UNCATEGORISED_CATEGORY_ID,
+      description: 'СІЛЬПО 123 Київ',
+    });
   });
 });
 

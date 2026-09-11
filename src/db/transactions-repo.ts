@@ -34,6 +34,24 @@ export function transactionsRepo(db: Storage) {
         .run();
     },
 
+    /**
+     * The one column a розбір changes, on a row it never parsed as a whole.
+     *
+     * `save` would work — it already keeps `createdAt` out of its update set — but it rebuilds
+     * every per-type column from a domain value, and the розбір decides over a `CategoryMove` and
+     * nothing else. Writing one column is what makes "every field of a moved витрата other than
+     * its категорія SHALL be unchanged" true by construction rather than by a round trip.
+     *
+     * Silent about a row that is not there and about one that is not a витрата: the moves come
+     * from `sweepUncategorised`, which only ever names витрати it has just read.
+     */
+    setCategory(id: string, categoryId: string): void {
+      db.update(transactions)
+        .set({ categoryId })
+        .where(and(eq(transactions.id, id), eq(transactions.type, 'expense')))
+        .run();
+    },
+
     get(id: string): Transaction | undefined {
       const row = db.select().from(transactions).where(eq(transactions.id, id)).get();
       return row ? toTransaction(row) : undefined;

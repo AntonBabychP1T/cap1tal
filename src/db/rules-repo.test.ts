@@ -8,15 +8,29 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { account } from '../domain/account';
 import { money } from '../domain/money';
 import { matchRule, type Rule } from '../domain/rules';
-import { CORRECTION_CATEGORY_ID, expenseByDefault } from '../domain/transaction';
+import {
+  CORRECTION_CATEGORY_ID,
+  UNCATEGORISED_CATEGORY_ID,
+  expenseByDefault,
+  refund,
+} from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
 import { rulesRepo, type RulesRepo } from './rules-repo';
 import { categories, sources } from './schema';
-import { openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
+import {
+  openFileDb,
+  openTestDb,
+  seedReferences,
+  seedReservedCategories,
+  type TestStorage,
+} from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
 
 /** The categories these rules target. Their names are their ids — see seedReferences. */
 const VOCABULARY = { categories: ['groceries', 'eating-out'] } as const;
+
+/** The moment a stored транзакція was first written; the розбір must not disturb it. */
+const stored = new Date('2026-03-02T08:00:00.000Z');
 
 /** A fixed instant: a rule's creation moment is data these tests control, never the wall clock. */
 const created = new Date('2026-03-01T10:00:00.000Z');
@@ -287,5 +301,152 @@ describe('rulesRepo — the storage half of what the spec promises', () => {
     expect(() => repo.save({ ...silpo, id: 'r-frac', mcc: 54.11 })).toThrow('MCC');
 
     expect(repo.get('r-frac')).toBeUndefined();
+  });
+
+  it("Scenario: «Без категорії» is rejected as a rule's target", () => {
+    // «Без категорії» is the absence of a категорія. A rule aiming at it would pin a merchant to
+    // the gap the rules exist to fill, outranking shorter rules that name a real категорія.
+    expect(() =>
+      repo.save({ ...silpo, id: 'r-gap', categoryId: UNCATEGORISED_CATEGORY_ID }),
+    ).toThrow('«Без категорії»');
+
+    expect(repo.get('r-gap')).toBeUndefined();
+  });
+});
+
+describe('rulesRepo — the розбір a stored правило runs', () => {
+  let storage: TestStorage;
+  let repo: RulesRepo;
+  let transactions: TransactionsRepo;
+
+  /** A stored витрата of the given категорія and опис, on a real рахунок. */
+  function store(input: { id: string; categoryId?: string; description?: string }): void {
+    transactions.save(
+      expenseByDefault({
+        id: input.id,
+        date: '2026-03-01',
+        accountId: 'acc',
+        amount: money(12550, 'UAH'),
+        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+        ...(input.description ? { description: input.description } : {}),
+      }),
+      stored,
+    );
+  }
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    seedReservedCategories(storage.db);
+    accountsRepo(storage.db).save(
+      account({ id: 'acc', name: 'Картка', kind: 'spending', currency: 'UAH' }),
+    );
+    repo = rulesRepo(storage.db);
+    transactions = transactionsRepo(storage.db);
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: A new правило clears the matching витрати out of «Без категорії»', () => {
+    store({ id: 't1', description: 'АТБ 421' });
+    store({ id: 't2', description: 'АТБ 12' });
+    store({ id: 't3', description: 'НОВИЙ ЗАКЛАД' });
+
+    const counts = repo.save({ ...silpo, id: 'r-atb', merchant: 'атб' });
+
+    expect(transactions.get('t1')).toMatchObject({ categoryId: 'groceries' });
+    expect(transactions.get('t2')).toMatchObject({ categoryId: 'groceries' });
+    expect(transactions.get('t3')).toMatchObject({ categoryId: UNCATEGORISED_CATEGORY_ID });
+    expect(counts).toEqual({ examined: 3, moved: 2 });
+  });
+
+  it('A moved витрата keeps every other field, its опис and its place among the same date', () => {
+    store({ id: 't1', description: 'АТБ 421' });
+    const before = transactions.get('t1');
+
+    repo.save({ ...silpo, id: 'r-atb', merchant: 'атб' });
+
+    expect(transactions.get('t1')).toEqual({ ...before, categoryId: 'groceries' });
+    // `stored_at` is the tie-break between transactions of one date; a розбір must not reorder the
+    // feed. The row's own listing position is what proves it, since the column never leaves storage.
+    expect(transactions.listLatest(10).map((t) => t.id)).toEqual(['t1']);
+  });
+
+  it('Scenario: A категорія the owner chose is never taken away', () => {
+    store({ id: 't1', categoryId: 'eating-out', description: 'АТБ 421' });
+
+    const counts = repo.save({ ...silpo, id: 'r-atb', merchant: 'атб' });
+
+    expect(transactions.get('t1')).toMatchObject({ categoryId: 'eating-out' });
+    expect(counts).toEqual({ examined: 0, moved: 0 });
+  });
+
+  it('Scenario: A витрата already moved is not swept again', () => {
+    store({ id: 't1', description: 'АТБ 421' });
+    repo.save({ ...silpo, id: 'r-atb', merchant: 'атб' });
+
+    const counts = repo.save({
+      ...silpo,
+      id: 'r-atb-421',
+      merchant: 'атб 421',
+      categoryId: 'eating-out',
+    });
+
+    expect(transactions.get('t1')).toMatchObject({ categoryId: 'groceries' });
+    expect(counts).toEqual({ examined: 0, moved: 0 });
+  });
+
+  it('Scenario: A more specific правило keeps the last word during the sweep', () => {
+    // The категорія is what the whole set gives the опис, not the target of the правило just
+    // written: the longer pattern wins the розбір as it would an import.
+    store({ id: 't1', description: 'АТБ 421' });
+    repo.save({ ...silpo, id: 'r-atb-421', merchant: 'атб 421', categoryId: 'eating-out' });
+
+    // That first store already swept it; start again with both rules present from the outset.
+    store({ id: 't2', description: 'АТБ 421' });
+    repo.save({ ...silpo, id: 'r-atb', merchant: 'атб' });
+
+    expect(transactions.get('t2')).toMatchObject({ categoryId: 'eating-out' });
+  });
+
+  it('Scenario: A повернення is not swept', () => {
+    transactions.save(
+      refund({
+        id: 't1',
+        date: '2026-03-01',
+        accountId: 'acc',
+        amount: money(12550, 'UAH'),
+        categoryId: UNCATEGORISED_CATEGORY_ID,
+        description: 'АТБ 421',
+      }),
+      stored,
+    );
+
+    repo.save({ ...silpo, id: 'r-atb', merchant: 'атб' });
+
+    expect(transactions.get('t1')).toMatchObject({ categoryId: UNCATEGORISED_CATEGORY_ID });
+  });
+
+  it('Scenario: Deleting a правило moves nothing', () => {
+    store({ id: 't1', description: 'АТБ 421' });
+    repo.save({ ...silpo, id: 'r-atb', merchant: 'атб' });
+
+    repo.remove('r-atb');
+
+    expect(repo.get('r-atb')).toBeUndefined();
+    expect(transactions.get('t1')).toMatchObject({ categoryId: 'groceries' });
+  });
+
+  it('A refused правило sweeps nothing — the rejection happens before anything is written', () => {
+    store({ id: 't1', description: 'АТБ 421' });
+
+    expect(() =>
+      repo.save({ ...silpo, id: 'r-bad', merchant: 'атб', categoryId: CORRECTION_CATEGORY_ID }),
+    ).toThrow();
+
+    expect(repo.list()).toEqual([]);
+    expect(transactions.get('t1')).toMatchObject({ categoryId: UNCATEGORISED_CATEGORY_ID });
   });
 });

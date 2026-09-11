@@ -53,10 +53,11 @@ that pattern before it is stored, and SHALL store nothing unless the owner accep
 SHALL leave no правило. The offer SHALL be made only when a категорія is actually set, so merely
 opening a транзакція again — or editing any other field of it — SHALL offer nothing.
 
-The proposed pattern SHALL be the опис's leading run of letters and the spaces between them,
-folded to lower case and trimmed — the merchant's name before the branch number, the city and the
+The proposed pattern SHALL be the опис's leading run of letters, folded to lower case and trimmed,
+cut to at most its first two words — the merchant's name before the branch number, the city and the
 street the bank appends, so «СІЛЬПО 123 Київ, вул. Хрещатик» proposes «сільпо» and «Нова Пошта
-відділення 5» proposes «нова пошта». An опис whose first character is not a letter SHALL propose
+відділення 5» proposes «нова пошта». Two words because merchant names arrive as one or two, and a
+third word is almost always what the branch is named by. An опис whose first character is not a letter SHALL propose
 the whole folded, trimmed опис instead, since there is no name to cut out of it. A транзакція
 carrying no опис SHALL be offered nothing: there is no pattern to propose, and a правило with no
 merchant and no MCC is rejected.

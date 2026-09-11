@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 import { activeCategories, type Category } from './category';
-import { matchRule, type Rule } from './rules';
+import { money } from './money';
+import {
+  countUncategorisedExpenses,
+  matchRule,
+  proposeMerchantPattern,
+  sweepUncategorised,
+  type Rule,
+} from './rules';
+import {
+  UNCATEGORISED_CATEGORY_ID,
+  expenseByDefault,
+  refund,
+  transfer,
+  type Correction,
+  type Expense,
+  type Income,
+} from './transaction';
 
 /** Rules the owner created in this order; the ids stand in for what a repo would generate. */
 function rule(input: {
@@ -162,5 +178,149 @@ describe('matchRule — what the tiers rest on', () => {
       rule({ id: 'b', merchant: 'аптека', categoryId: 'health', createdAt: '2026-01-01T09:00:00.000Z' }),
     ];
     expect(matchRule(rules, { description: 'Аптека 24', mcc: 5411 })).toBe('health');
+  });
+});
+
+describe('proposeMerchantPattern', () => {
+  it('Scenario: Categorising an imported витрата offers the правило', () => {
+    // The bank's опис is NAME [branch] [city] [street]; only the name survives.
+    expect(proposeMerchantPattern('СІЛЬПО 123 Київ, вул. Хрещатик')).toBe('сільпо');
+  });
+
+  it('A two-word merchant keeps both words', () => {
+    // The first word alone would be «нова», which matches half the descriptions a bank sends.
+    expect(proposeMerchantPattern('Нова Пошта відділення 5')).toBe('нова пошта');
+  });
+
+  it('Scenario: An опис that starts with no letter proposes the whole of itself', () => {
+    expect(proposeMerchantPattern('7-Eleven Kyiv')).toBe('7-eleven kyiv');
+  });
+
+  it('An опис that is blank or absent proposes nothing', () => {
+    // A правило with neither a merchant nor an MCC is refused; there is no pattern to refuse with.
+    expect(proposeMerchantPattern(undefined)).toBeUndefined();
+    expect(proposeMerchantPattern('   ')).toBeUndefined();
+  });
+
+  it('The proposed pattern is folded, so it matches the опис it came from', () => {
+    const pattern = proposeMerchantPattern('УКЛОН');
+    expect(pattern).toBe('уклон');
+    const proposed = [rule({ id: 'r1', merchant: pattern, categoryId: 'transport' })];
+    expect(matchRule(proposed, { description: 'УКЛОН' })).toBe('transport');
+  });
+});
+
+/** A stored витрата, as the розбір finds it. */
+function storedExpense(input: { id: string; categoryId?: string; description?: string }): Expense {
+  return expenseByDefault({
+    id: input.id,
+    date: '2026-09-01',
+    accountId: 'a1',
+    amount: money(12550, 'UAH'),
+    ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+    ...(input.description ? { description: input.description } : {}),
+  });
+}
+
+describe('sweepUncategorised', () => {
+  const atb = rule({ id: 'r1', merchant: 'атб', categoryId: 'groceries' });
+
+  it('Scenario: A new правило clears the matching витрати out of «Без категорії»', () => {
+    const stored = [
+      storedExpense({ id: 't1', description: 'АТБ 421' }),
+      storedExpense({ id: 't2', description: 'АТБ 12' }),
+      storedExpense({ id: 't3', description: 'НОВИЙ ЗАКЛАД' }),
+    ];
+    expect(sweepUncategorised([atb], stored)).toEqual([
+      { id: 't1', categoryId: 'groceries' },
+      { id: 't2', categoryId: 'groceries' },
+    ]);
+  });
+
+  it('Scenario: A категорія the owner chose is never taken away', () => {
+    const stored = [storedExpense({ id: 't1', categoryId: 'eating-out', description: 'АТБ 421' })];
+    expect(sweepUncategorised([atb], stored)).toEqual([]);
+  });
+
+  it('Scenario: A more specific правило keeps the last word during the sweep', () => {
+    // The категорія a swept витрата lands on is what the whole set gives its опис, not the target
+    // of whatever правило was written last.
+    const longer = rule({ id: 'r2', merchant: 'атб 421', categoryId: 'eating-out' });
+    const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
+    expect(sweepUncategorised([atb, longer], stored)).toEqual([
+      { id: 't1', categoryId: 'eating-out' },
+    ]);
+  });
+
+  it('Scenario: An MCC-only правило moves nothing', () => {
+    // A stored транзакція keeps no MCC, so there is nothing for such a правило to match on.
+    const byMcc = rule({ id: 'r2', mcc: 5411, categoryId: 'groceries' });
+    const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
+    expect(sweepUncategorised([byMcc], stored)).toEqual([]);
+  });
+
+  it('Scenario: A витрата with no опис is not swept', () => {
+    const stored = [storedExpense({ id: 't1' })];
+    expect(sweepUncategorised([atb], stored)).toEqual([]);
+  });
+
+  it('Scenario: A правило targeting «Без категорії» moves nothing', () => {
+    // Creating one is refused, but a restore writes the rules table directly.
+    const intoTheGap = rule({ id: 'r2', merchant: 'атб', categoryId: UNCATEGORISED_CATEGORY_ID });
+    const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
+    expect(sweepUncategorised([intoTheGap], stored)).toEqual([]);
+  });
+
+  it('Scenario: A повернення is not swept', () => {
+    // A повернення returns to the категорія of what was bought, never to what its text resembles.
+    const returned = refund({
+      id: 't1',
+      date: '2026-09-01',
+      accountId: 'a1',
+      amount: money(12550, 'UAH'),
+      categoryId: UNCATEGORISED_CATEGORY_ID,
+      description: 'АТБ 421',
+    });
+    expect(sweepUncategorised([atb], [returned])).toEqual([]);
+  });
+
+  it('A дохід, a переказ and a коригування are never moved', () => {
+    const income: Income = {
+      type: 'income',
+      id: 't1',
+      date: '2026-09-01',
+      accountId: 'a1',
+      amount: money(12550, 'UAH'),
+      sourceId: 'salary',
+      description: 'АТБ 421',
+    };
+    const moved = transfer({
+      id: 't2',
+      date: '2026-09-01',
+      fromAccountId: 'a1',
+      toAccountId: 'a2',
+      left: money(12550, 'UAH'),
+      arrived: money(12550, 'UAH'),
+      description: 'АТБ 421',
+    });
+    const correction: Correction = {
+      type: 'correction',
+      id: 't3',
+      date: '2026-09-01',
+      accountId: 'a1',
+      amount: money(-12550, 'UAH'),
+      description: 'АТБ 421',
+    };
+    expect(sweepUncategorised([atb], [income, moved, correction])).toEqual([]);
+  });
+
+  it('countUncategorisedExpenses counts the pile, not everything stored', () => {
+    // `examined` is what the owner is told about: the «Без категорії» витрати the pass looked at.
+    const stored = [
+      storedExpense({ id: 't1', description: 'АТБ 421' }),
+      storedExpense({ id: 't2', categoryId: 'groceries', description: 'АТБ 12' }),
+      storedExpense({ id: 't3' }),
+    ];
+    expect(countUncategorisedExpenses(stored)).toBe(2);
   });
 });

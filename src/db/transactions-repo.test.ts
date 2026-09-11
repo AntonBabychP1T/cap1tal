@@ -98,6 +98,51 @@ describe('transactionsRepo', () => {
     storage.close();
   });
 
+  it('setCategory changes the категорія and nothing else', () => {
+    // What a розбір does to a витрата: one column, on a row it never parsed as a whole. Every
+    // other field — and the place `stored_at` gives it among transactions of one date — stands.
+    const spent = expenseByDefault({
+      id: 'e-sweep',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(12550, 'UAH'),
+      description: 'АТБ 421',
+    });
+    const alongside = expenseByDefault({
+      id: 'e-later',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(500, 'UAH'),
+    });
+    repo.save(spent, storedAt);
+    repo.save(alongside, at('2026-03-01T10:00:00.000Z'));
+
+    repo.setCategory('e-sweep', 'food');
+
+    expect(repo.get('e-sweep')).toEqual({ ...spent, categoryId: 'food' });
+    // `stored_at` never leaves storage, so the listing order is what proves it was not rewritten.
+    expect(repo.listLatest(10).map((t) => t.id)).toEqual(['e-later', 'e-sweep']);
+  });
+
+  it('setCategory leaves a транзакція that is not a витрата alone', () => {
+    // The moves come from `sweepUncategorised`, which only ever names витрати; this is the
+    // backstop that keeps a mistaken id from putting an expense категорія on a дохід.
+    const earned: Income = {
+      type: 'income',
+      id: 'i-sweep',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(100000, 'UAH'),
+      sourceId: 'salary',
+      description: 'АТБ 421',
+    };
+    repo.save(earned, storedAt);
+
+    repo.setCategory('i-sweep', 'food');
+
+    expect(repo.get('i-sweep')).toEqual(earned);
+  });
+
   it('Scenario: Expense with an original-currency amount round-trips', () => {
     const foreignPurchase = expenseByDefault({
       id: 'e1',
