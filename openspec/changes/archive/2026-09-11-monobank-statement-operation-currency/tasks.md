@@ -138,4 +138,4 @@
 ## 4. The gate
 
 - [x] 4.1 Run `npm run verify` and paste the final lines
-- [ ] 4.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+- [x] 4.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS

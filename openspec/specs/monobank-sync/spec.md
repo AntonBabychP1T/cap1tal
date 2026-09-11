@@ -8,7 +8,9 @@ app's рахунки, statement fetching planned within the API's limits, and th
 mapping of statement items to транзакції — categorised by the owner's правила, deduplicated by
 the bank's own item ids. Everything here is decided by inputs alone: the same payloads, правила
 and decisions always produce the same транзакції.
+
 ## Requirements
+
 ### Requirement: Client-info parsing yields the owner's monobank accounts
 
 The system SHALL parse a client-info payload into the owner's monobank accounts — cards and
@@ -83,44 +85,6 @@ unparseable body). No fetch SHALL throw, and no outcome SHALL contain the token.
 
 - **WHEN** any fetch completes with any outcome
 - **THEN** the token string appears nowhere in the outcome's data
-
-### Requirement: Statement parsing yields items whole or fails whole
-
-The system SHALL parse a statement payload into items, each holding the bank's item id, the
-moment of the operation, the calendar date of that moment in the device's timezone, the
-description, the MCC, the signed amount as integer minor units of the account's currency, and the
-hold flag. A payload holding any row the parser cannot read SHALL yield the unavailable outcome
-and no items — a window is imported whole or not at all, so no transaction is ever silently
-dropped. Every row states the currency of the account it belongs to; a row stating any currency
-but the рахунок's SHALL be unreadable, because reading on would relabel every сума in it.
-
-An item SHALL carry no original-currency amount. A statement names the amount of a foreign
-purchase in the operation's own currency but names that currency nowhere, and an amount without a
-currency is not money this app holds; what the bank charged the рахунок is exact, and that is the
-сума that counts.
-
-#### Scenario: A statement item parses whole
-
-- **WHEN** a statement payload holds an item with id "a1", time in the device's August 26th,
-  description "СІЛЬПО", MCC 5411, amount −12550 and hold false
-- **THEN** parsing yields one item with id "a1", date 2026-08-26, description "СІЛЬПО",
-  MCC 5411, amount −12550 minor units and hold false
-
-#### Scenario: A foreign purchase is the сума the bank charged, and nothing more
-
-- **WHEN** a UAH account's statement item holds amount −420000 with an operation amount of −10000
-  in a currency the payload does not name
-- **THEN** the parsed item holds amount −420000 minor units UAH and no original-currency amount
-
-#### Scenario: A row of another currency is not this рахунок's statement
-
-- **WHEN** a row of a statement being parsed for a UAH рахунок states the currency USD
-- **THEN** the outcome is unavailable and no items are yielded
-
-#### Scenario: One unreadable row fails the whole answer
-
-- **WHEN** a statement payload holds two well-formed items and one item without an id
-- **THEN** the outcome is unavailable and no items are yielded
 
 ### Requirement: Statement windows cover the span within the API's limits
 
@@ -210,7 +174,7 @@ dated the item's date, carrying the item's description as its опис:
 
 - **WHEN** a UAH card's item of amount −420000 for a purchase made abroad is mapped
 - **THEN** the result is a витрата of 420000 minor units UAH, carrying no original-currency
-  amount — the statement named no currency for the operation's own сума
+  amount — the sync does not read the one the statement names
 
 #### Scenario: A hold maps like anything else
 
@@ -309,3 +273,63 @@ linked account in integer minor units of that account's currency, without changi
 - **THEN** 12345 minor units USD becomes its latest баланс банку and no транзакція or
   розрахунковий баланс changes until the owner chooses «Звірити»
 
+### Requirement: A statement payload is read whole or not at all
+
+The system SHALL parse a statement payload into items, each holding the bank's item id, the
+moment the bank carried the item out, the calendar date of that moment in the device's timezone, the
+description, the MCC, the signed amount as integer minor units of the account's currency, and the
+hold flag. A payload holding any row the parser cannot read SHALL yield the unavailable outcome
+and no items — a window is imported whole or not at all, so no транзакція is ever silently
+dropped.
+
+The currency a row names SHALL NOT be read as a claim about the рахунок, and SHALL NOT make the
+row unreadable — neither when it is a currency a рахунок may be opened in, nor when it is one the
+app does not offer, nor when the row names none at all. What identifies the рахунок a statement
+belongs to is the account the request named, never a field inside the answer. The amount SHALL be
+read as minor units of the рахунок's currency whatever the row names, that being the currency the
+bank states the amount in and the сума it charged.
+
+An item SHALL carry no original-currency amount. The statement does name that сума and the
+currency it is in, so this is a deferral and not a refusal: what the bank charged the рахунок is
+the one сума kept until reading the other one is built.
+
+#### Scenario: A statement item parses whole
+
+- **WHEN** a statement payload holds an item with id "a1", time in the device's August 26th,
+  description "СІЛЬПО", MCC 5411, amount −12550 and hold false
+- **THEN** parsing yields one item with id "a1", date 2026-08-26, description "СІЛЬПО",
+  MCC 5411, amount −12550 minor units and hold false
+
+#### Scenario: A foreign purchase is the сума the bank charged, and nothing more
+
+- **WHEN** a UAH account's statement item holds amount −420000 with an operation amount of −10000
+  and names USD as the currency that second сума is in
+- **THEN** the parsed item holds amount −420000 minor units UAH and no original-currency amount
+
+#### Scenario: A row naming another currency does not fail the window
+
+- **WHEN** a statement being parsed for a UAH рахунок holds two rows naming UAH and one row naming
+  USD, every row otherwise well-formed
+- **THEN** parsing yields all three items, each with its amount in minor units UAH
+
+#### Scenario: A row naming a currency the app does not offer still parses
+
+- **WHEN** a row of a statement being parsed for a UAH рахунок names a currency no рахунок can be
+  opened in
+- **THEN** parsing yields that item too, with its amount in minor units UAH
+
+#### Scenario: A row naming no currency at all still parses
+
+- **WHEN** a row of a statement being parsed for a UAH рахунок carries no currency field, or one
+  that is not a number, every other field well-formed
+- **THEN** parsing yields that item too, with its amount in minor units UAH
+
+#### Scenario: A hryvnia row on a foreign-currency рахунок parses
+
+- **WHEN** a statement being parsed for a USD рахунок holds a row naming UAH, otherwise well-formed
+- **THEN** parsing yields that item with its amount in minor units USD
+
+#### Scenario: One unreadable row fails the whole answer
+
+- **WHEN** a statement payload holds two well-formed items and one item without an id
+- **THEN** the outcome is unavailable and no items are yielded
