@@ -1,1 +1,0 @@
-ALTER TABLE `monobank_links` ADD `last_synced_at` integer;

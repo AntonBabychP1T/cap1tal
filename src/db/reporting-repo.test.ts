@@ -306,8 +306,7 @@ describe('what the репорт says about the phone', () => {
 
     expect(counts.accounts).toBe(1);
     expect(counts.transactions).toBe(0);
-    // The three reserved rows migration 0003 inserts, plus the two seeded here.
-    expect(counts.categories).toBeGreaterThanOrEqual(2);
+    expect(counts.categories).toBe(2);
     expect(counts.rules).toBe(0);
     expect(counts.drafts).toBe(0);
     // Numbers only: there is no field here a сума or a назва could sit in.
@@ -322,8 +321,8 @@ describe('what the репорт says about the phone', () => {
   });
 
   it('says how many migrations this database has had applied', () => {
-    // Every committed one, since `openTestDb` runs the real migrator over the real folder.
-    expect(repo.migrationsApplied()).toBeGreaterThanOrEqual(13);
+    // The one committed migration, since `openTestDb` runs the real migrator over the real folder.
+    expect(repo.migrationsApplied()).toBe(1);
   });
 });
 

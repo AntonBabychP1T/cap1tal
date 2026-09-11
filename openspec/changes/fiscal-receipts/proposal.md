@@ -160,10 +160,14 @@ Two dialects, both windows-1251, sometimes pretty-printed with whitespace, somet
   silent attach; attaching as one unit; lifecycle with the транзакція (cascade on delete, kept on
   edit and retype, explicit detach); the immutable source snapshot; and the privacy line.
 - **New capability `qr-scan`** — the device port: camera permission answered truthfully and asked
-  for only on the owner's action, one decoded QR text or one typed reason, nothing stored.
+  for only on the owner's action, one decoded QR text or one typed reason, nothing stored. A QR can
+  also be read from a photo or file already on the phone — an електронний чек has nothing to point
+  a camera at — through the same on-device decoder the camera uses, needing no camera permission at
+  all, so it is offered on the scanner and wherever the camera itself cannot be used.
 - **New capability `fiscal-receipts-screen`** — «Сканувати QR чека» on a витрата or повернення,
   prominent for «Продукти»; the scan → lookup → preview → attach flow with every failure named in
-  Ukrainian and retryable without rescanning; the позиції list, raw names, offline; the detach.
+  Ukrainian and retryable without rescanning; choosing an existing photo or file as an alternative
+  to the camera at every step of that flow; the позиції list, raw names, offline; the detach.
 - **Modified `persistence`** — чеки and позиції survive a restart, commit as units, cascade with
   the транзакція, arrive by append-only migrations, and join the snapshot.
 - **Modified `backup-file`** — the бекап holds чеки with позиції and snapshot; older бекапи restore
@@ -194,7 +198,13 @@ Non-goals (deliberate):
   later change if it matters.
 - No splitting a транзакція into several (vision §14.5 stays), no category per позиція, no
   changing any balance or monthly number.
-- No storing or sending a photo; the camera only decodes.
+- No storing or sending a photo, whether it came from the camera or was picked from the phone —
+  only the decoded text continues past the scan, whichever source it came from.
+- No OCR, no reading a чек's printed text from a photo — only its QR code, exactly as the camera
+  path does; a picked photo with no QR is refused the same way a Wi-Fi QR would be, not read
+  further.
+- No PDF or other document support for the picked file — it must decode as an image; anything else
+  the picker returns is a typed failure, not rendered or converted.
 - No iOS scanner work beyond keeping the build possible (`unsupported` where no camera).
 
 ## Capabilities
@@ -206,9 +216,11 @@ Non-goals (deliberate):
   total-versus-сума comparison, atomic attach, lifecycle with the транзакція, the source snapshot,
   and what leaves the phone.
 - `qr-scan`: the camera permission states and request, and one decoded QR text or typed reason
-  per scan, with nothing stored or sent.
+  per scan, with nothing stored or sent; the same one decoded text or typed reason from a photo or
+  file picked instead of the camera, needing no camera permission.
 - `fiscal-receipts-screen`: the scan offer on a транзакція, the scan → lookup → preview → attach
-  flow with named, retryable failures, the позиції list offline, and detaching.
+  flow with named, retryable failures, choosing a photo or file instead of the camera at every
+  step of it, the позиції list offline, and detaching.
 
 ### Modified Capabilities
 
@@ -238,11 +250,17 @@ its own, proposed when a screen actually wants those fields.
 - **New code**: `src/fiscal/` (QR reading, lookup port + `chkAllWeb` adapter over `FetchLike`,
   windows-1251 decoding, both dialect parsers, the comparison), `src/domain/fiscal-receipt.ts`
   (types and the comparison rule), `src/db/receipts-repo.ts`, one migration (two tables),
-  `src/platform/qr-scan.ts` (+ `-device.ts`),
+  `src/platform/qr-scan.ts` (+ `-device.ts`), `src/platform/qr-image.ts` (+ `-device.ts`, design
+  D14),
   `src/ui/receipt-screen.ts`, `src/app/transaction/scan.tsx`, `src/app/transaction/receipt.tsx`,
   additions to `src/app/transaction/[id].tsx`, `src/backup/format.ts` (schema version 12, new
   arrays), `docs/glossary.md`, `docs/app-overview.md`. `docs/product-vision.md` is the owner's own
   edit and is not touched by this change.
+- **No new native module or permission for the photo/file path** (design D14): it reuses
+  `expo-camera`'s own `scanFromURLAsync` (the same module this change already declares above) and
+  `expo-document-picker` (already a dependency, already used the same way by
+  `bug-report-files-device.ts` and `backup-file-device.ts`), neither of which touches the camera or
+  needs `android.permission.CAMERA`.
 - **Storage growth**: one чек ≈ 1.5–3 KB of snapshot plus ~10 позиції rows; two receipts a day is
   under 3 MB a year — the бекап stays «about a megabyte» scale (design D7).
 - **`npm run verify`** stays Node-only and under a minute: every parser, decoder, comparison,

@@ -44,7 +44,7 @@ import {
   transactions as transactionsTable,
 } from './schema';
 import { sourcesRepo } from './sources-repo';
-import { openTestDb, type TestDb, type TestStorage } from './test-db';
+import { openTestDb, seedReservedCategories, type TestDb, type TestStorage } from './test-db';
 import { transactionsRepo } from './transactions-repo';
 
 /**
@@ -80,7 +80,9 @@ function seedWorld(db: TestDb): void {
   const accounts = accountsRepo(db);
   for (const a of [card, jar, invest, debt, dollars]) accounts.save(a);
 
-  // «Без категорії», «Комісія» and «Коригування» are already there: migration 0003 put them in.
+  // «Без категорії», «Комісія» and «Коригування» — the app's own reserved rows. «Відсотки» and
+  // «Без джерела» are created below through the repository, like every other джерело here.
+  seedReservedCategories(db);
   const categories = categoriesRepo(db);
   categories.create({ id: 'food', name: 'Продукти' });
   categories.create({ id: 'old', name: 'Старе' });

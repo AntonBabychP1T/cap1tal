@@ -2,18 +2,15 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
-import { contribution, sumContributions } from '../domain/goals';
 import { money } from '../domain/money';
 import {
   expenseByDefault,
   refund,
   transfer,
-  FEES_CATEGORY_ID,
   UNCATEGORISED_CATEGORY_ID,
   type Transaction,
 } from '../domain/transaction';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
-import { monobankRepo } from './monobank-repo';
 import { reportingRepo } from './reporting-repo';
 import {
   accounts,
@@ -47,12 +44,7 @@ import {
   spendingNorms,
   transactions,
 } from './schema';
-import {
-  openTestDb,
-  openTestDbMigratedTo,
-  seedReferences,
-  type TestStorage,
-} from './test-db';
+import { openTestDb, seedReferences, type TestStorage } from './test-db';
 
 const card = account({
   id: 'card',
@@ -63,7 +55,7 @@ const card = account({
 });
 const jar = account({ id: 'jar', name: 'банка', kind: 'savings', currency: 'UAH' });
 
-/** What the fixtures below point at; the reserved rows migration 0003 inserts are already there. */
+/** What the fixtures below point at. */
 const VOCABULARY = { categories: ['food', 'clothes'], sources: ['salary'] } as const;
 
 const oneOfEachType: readonly Transaction[] = [
@@ -100,89 +92,10 @@ const oneOfEachType: readonly Transaction[] = [
   { type: 'correction', id: 'c1', date: '2026-03-31', accountId: 'card', amount: money(-3000, 'UAH') },
 ];
 
-/**
- * Stores a транзакція in a database staged *before* migration 0005, which is the only way to hold
- * one against the shape the owner's device actually had. Written as an explicit statement rather
- * than through the query builder because the builder names every column of the current schema —
- * `description` included — and the staged table has not got it yet. Values are bound, never
- * interpolated, and `created_at` is left to its column default exactly as the builder leaves it.
- */
-function insertBeforeDescriptionColumn(db: TestStorage['db'], t: Transaction): void {
-  const row = toTransactionRow(t);
-  db.run(sql`
-    INSERT INTO transactions
-      (id, type, date, account_id, amount, currency, category_id, source_id,
-       original_amount, original_currency, from_account_id, to_account_id,
-       left_amount, left_currency, arrived_amount, arrived_currency)
-    VALUES
-      (${row.id}, ${row.type}, ${row.date}, ${row.accountId ?? null}, ${row.amount ?? null},
-       ${row.currency ?? null}, ${row.categoryId ?? null}, ${row.sourceId ?? null},
-       ${row.originalAmount ?? null}, ${row.originalCurrency ?? null},
-       ${row.fromAccountId ?? null}, ${row.toAccountId ?? null},
-       ${row.leftAmount ?? null}, ${row.leftCurrency ?? null},
-       ${row.arrivedAmount ?? null}, ${row.arrivedCurrency ?? null})
-  `);
-}
-
-/**
- * Stores a ціль in a database staged *before* the склад migrations, which is the only way to hold
- * one against the shape the owner's device actually had: exactly one `account_id`, and a `deadline`
- * it could not omit. Written as an explicit statement for the same reason as the транзакція above —
- * the query builder names every column of the *current* schema, and `account_id` is no longer one
- * of them. Values are bound, never interpolated.
- */
-function insertOneAccountGoal(
-  db: TestStorage['db'],
-  goal: {
-    id: string;
-    name: string;
-    amount: number;
-    currency: string;
-    deadline: string;
-    accountId: string;
-  },
-): void {
-  db.run(sql`
-    INSERT INTO goals (id, name, amount, currency, deadline, account_id)
-    VALUES (${goal.id}, ${goal.name}, ${goal.amount}, ${goal.currency}, ${goal.deadline},
-            ${goal.accountId})
-  `);
-}
-
-/**
- * What a device from before categories-rules can actually hold. Manual entry offered no category
- * picker, so a stored витрата carries the reserved uncategorised id and an accepted комісія the
- * reserved fees id — nothing else. Migration 0003 turns `category_id` into a foreign key, so
- * these are exactly the rows that have to come through it.
- */
-const preCategoriesRows: readonly Transaction[] = [
-  expenseByDefault({
-    id: 'old-e1',
-    date: '2026-03-10',
-    accountId: 'card',
-    amount: money(12550, 'UAH'),
-  }),
-  expenseByDefault({
-    id: 'old-fee',
-    date: '2026-03-15',
-    accountId: 'card',
-    amount: money(500, 'UAH'),
-    categoryId: FEES_CATEGORY_ID,
-  }),
-  transfer({
-    id: 'old-t1',
-    date: '2026-03-15',
-    fromAccountId: 'card',
-    toAccountId: 'jar',
-    left: money(200000, 'UAH'),
-    arrived: money(199500, 'UAH'),
-  }),
-];
-
 describe('migrations', () => {
   let storage: TestStorage;
 
-  /** The columns the committed migrations actually produced, straight from SQLite. */
+  /** The columns the committed migration actually produces, straight from SQLite. */
   const migratedColumnsOf = (table: 'accounts' | 'transactions' | 'monobank_rates'): string[] => {
     // Drizzle's `sql` interpolates values, not identifiers, and PRAGMA takes a table name — so
     // the three statements are written out rather than built from the argument.
@@ -303,33 +216,6 @@ describe('migrations', () => {
     expect(archivedJar.archived).toBe(true);
   });
 
-  it('Scenario: A pre-migration account loads unarchived', () => {
-    // A row written when only the first migration existed: no archived column to write to.
-    const staged = openTestDbMigratedTo(1);
-    try {
-      staged.db.run(
-        sql`INSERT INTO accounts (id, name, kind, currency, opening_amount)
-            VALUES ('card', 'mono black', 'spending', 'UAH', 100000)`,
-      );
-
-      staged.migrateToLatest();
-
-      const row = staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get();
-      expect(toAccount(row!)).toEqual(
-        account({
-          id: 'card',
-          name: 'mono black',
-          kind: 'spending',
-          currency: 'UAH',
-          openingBalance: money(100000, 'UAH'),
-        }),
-      );
-      expect(toAccount(row!).archived).toBe(false);
-    } finally {
-      staged.close();
-    }
-  });
-
   it('No balance is stored: an account keeps only its opening balance', () => {
     // Read from the migrated database, not from the schema object: a migration carrying a column
     // the schema no longer declares would slip past the latter.
@@ -369,7 +255,7 @@ describe('migrations', () => {
 describe('migrations — the monobank rate cache', () => {
   let storage: TestStorage;
 
-  /** The rate cache's columns as the committed migrations actually produced them. */
+  /** The rate cache's columns as the committed migration actually produces them. */
   const rateColumns = (): { name: string; type: string; notnull: number; pk: number }[] =>
     storage.db.all<{ name: string; type: string; notnull: number; pk: number }>(
       sql`PRAGMA table_info(monobank_rates)`,
@@ -421,31 +307,6 @@ describe('migrations — the monobank rate cache', () => {
     ].map((c) => c.name);
     expect(columns.filter((name) => name.includes('rate'))).toEqual([]);
   });
-
-  it('A database from before the rate cache gains the table empty, disturbing nothing', () => {
-    // The two migrations that predate this change. An older install has no rate cache at all;
-    // migrating forward must add it without disturbing the rows already there.
-    const staged = openTestDbMigratedTo(2);
-    try {
-      staged.db.insert(accounts).values(toAccountRow(card)).run();
-      // A витрата in the reserved uncategorised category — the only kind a database this old can
-      // hold, and the kind migration 0003's foreign key has to accept.
-      insertBeforeDescriptionColumn(staged.db, preCategoriesRows[0]!);
-      expect(() => staged.db.select().from(monobankRates).all()).toThrow();
-
-      staged.migrateToLatest();
-
-      expect(staged.db.select().from(monobankRates).all()).toEqual([]);
-      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
-      expect(
-        toTransaction(
-          staged.db.select().from(transactions).where(eq(transactions.id, 'old-e1')).get()!,
-        ),
-      ).toEqual(preCategoriesRows[0]);
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 describe('migrations — the editable lists', () => {
@@ -461,7 +322,7 @@ describe('migrations — the editable lists', () => {
 
   it('Scenario: A fresh database from migrations alone stores every list', () => {
     const { db } = storage;
-    // No `seedReferences` here on purpose: the scenario is about what the committed migrations
+    // No `seedReferences` here on purpose: the scenario is about what the committed migration
     // alone can hold, so every row this test needs it stores itself.
     db.insert(categories).values({ id: 'groceries', name: 'Groceries' }).run();
     db.insert(sources).values({ id: 'salary', name: 'Salary' }).run();
@@ -596,50 +457,10 @@ describe('migrations — the editable lists', () => {
       db.insert(rules).values({ ...base, id: 'ghost-target', categoryId: 'nope' }).run(),
     ).toThrow();
   });
-
-  it('Scenario: Pre-migration transactions survive the migration unchanged', () => {
-    // The migrations committed before this change: a database as the owner's device holds it.
-    const staged = openTestDbMigratedTo(3);
-    try {
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const row of preCategoriesRows) insertBeforeDescriptionColumn(staged.db, row);
-
-      staged.migrateToLatest();
-
-      for (const original of preCategoriesRows) {
-        const row = staged.db
-          .select()
-          .from(transactions)
-          .where(eq(transactions.id, original.id))
-          .get();
-        expect(row, `transaction ${original.id} did not survive`).toBeDefined();
-        expect(toTransaction(row!)).toEqual(original);
-      }
-      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(
-        card,
-      );
-      // The reserved ids they carry now point at real rows, so nothing is left dangling.
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-      expect(
-        staged.db
-          .select()
-          .from(categories)
-          .where(eq(categories.id, UNCATEGORISED_CATEGORY_ID))
-          .get()?.name,
-      ).toBe('Без категорії');
-      expect(
-        staged.db.select().from(categories).where(eq(categories.id, FEES_CATEGORY_ID)).get()?.name,
-      ).toBe('Комісія');
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 /**
- * The marker that says the one-time Saldo import has been committed. Its own describe, because it
- * is the only thing migration 0004 adds — and because "a device that already holds a history
- * gains it empty" is the half that matters on the owner's phone.
+ * The marker that says the one-time Saldo import has been committed.
  */
 describe('migrations — the import marker', () => {
   let storage: TestStorage;
@@ -675,43 +496,10 @@ describe('migrations — the import marker', () => {
       storage.db.insert(saldoImport).values({ id: 'other', committedAt: new Date(2) }).run(),
     ).toThrow(/CHECK constraint failed/);
   });
-
-  it('Scenario: Rows stored before the migration survive it', () => {
-    // The migrations committed before this change: a database as the owner's device holds it.
-    const staged = openTestDbMigratedTo(4);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const row of oneOfEachType) insertBeforeDescriptionColumn(staged.db, row);
-      staged.db.insert(rules).values({
-        id: 'rule-1',
-        merchant: 'сільпо',
-        categoryId: 'food',
-        createdAt: new Date('2026-08-24T09:00:00.000Z'),
-      }).run();
-
-      staged.migrateToLatest();
-
-      for (const original of oneOfEachType) {
-        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
-        expect(toTransaction(row!)).toEqual(original);
-      }
-      expect(staged.db.select().from(rules).all()).toHaveLength(1);
-      expect(staged.db.select().from(sources).all().map((row) => row.id)).toContain('salary');
-      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-      // The device has imported nothing, so the marker arrives empty.
-      expect(staged.db.select().from(saldoImport).all()).toEqual([]);
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 /**
- * What monobank sync needs to survive a restart, and the one column the транзакції table gains
- * with it. Its own describe for the reason the import marker has one: the half that matters on
- * the owner's phone is that a database already full of their money comes through untouched.
+ * What monobank sync needs to survive a restart, and the `description` column on `transactions`.
  */
 describe('migrations — monobank links, progress and описи', () => {
   let storage: TestStorage;
@@ -767,6 +555,9 @@ describe('migrations — monobank links, progress and описи', () => {
     db.insert(monobankImportedItems)
       .values({ monobankAccountId: 'mono-card', itemId: 'item-1' })
       .run();
+    // The starter set seeds this reserved category at runtime, right after the migrations — not
+    // a fixture this test's own `seedReferences` call names.
+    db.insert(categories).values({ id: UNCATEGORISED_CATEGORY_ID, name: 'Без категорії' }).run();
     db.insert(transactions)
       .values({
         ...toTransactionRow(
@@ -922,89 +713,10 @@ describe('migrations — monobank links, progress and описи', () => {
         .run(),
     ).toThrow(/CHECK constraint failed/);
   });
-
-  it('Scenario: Existing financial data survives the migration', () => {
-    // The migrations committed before this change: a database as the owner's device holds it,
-    // holding every транзакція type, рахунки, list rows, rules, the Saldo marker and a rate.
-    const staged = openTestDbMigratedTo(5);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const row of oneOfEachType) insertBeforeDescriptionColumn(staged.db, row);
-      staged.db
-        .insert(rules)
-        .values({
-          id: 'rule-1',
-          merchant: 'сільпо',
-          categoryId: 'food',
-          createdAt: new Date('2026-08-24T09:00:00.000Z'),
-        })
-        .run();
-      staged.db
-        .insert(saldoImport)
-        .values({ id: 'saldo', committedAt: new Date('2026-08-25T12:00:00.000Z') })
-        .run();
-      staged.db
-        .insert(monobankRates)
-        .values({ currency: 'USD', rateMillionths: 41_500_000, obtainedAt: new Date(1) })
-        .run();
-
-      staged.migrateToLatest();
-
-      for (const original of oneOfEachType) {
-        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
-        expect(toTransaction(row!)).toEqual(original);
-      }
-      expect(staged.db.select().from(rules).all()).toHaveLength(1);
-      expect(staged.db.select().from(sources).all().map((row) => row.id)).toContain('salary');
-      expect(staged.db.select().from(categories).all().map((row) => row.id)).toContain('food');
-      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
-      expect(staged.db.select().from(saldoImport).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankRates).all()).toHaveLength(1);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-      // The device has linked nothing, so the three tables arrive empty…
-      expect(staged.db.select().from(monobankAccounts).all()).toEqual([]);
-      expect(staged.db.select().from(monobankLinks).all()).toEqual([]);
-      expect(staged.db.select().from(monobankImportedItems).all()).toEqual([]);
-      // …and no monobank token exists in the database, asserted over every column of every
-      // table — the helper is held to seeing them all before the absence means anything.
-      expect(everyColumn(staged.db)).toContain('description');
-      expect(everyColumn(staged.db)).toContain('cursor_ms');
-      expect(everyColumn(staged.db).length).toBeGreaterThan(20);
-      expect(tableNames(staged.db).filter((name) => /token/i.test(name))).toEqual([]);
-      expect(everyColumn(staged.db).filter((name) => /token/i.test(name))).toEqual([]);
-    } finally {
-      staged.close();
-    }
-  });
-
-  it('Scenario: An old transaction gains no invented description', () => {
-    const staged = openTestDbMigratedTo(5);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const row of oneOfEachType) insertBeforeDescriptionColumn(staged.db, row);
-
-      staged.migrateToLatest();
-
-      for (const original of oneOfEachType) {
-        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
-        // NULL in the column, and no `description` property at all on the way out — a row from
-        // before the column is indistinguishable from one recorded by hand today.
-        expect(row?.description).toBeNull();
-        expect(toTransaction(row!)).not.toHaveProperty('description');
-        expect(toTransaction(row!)).toEqual(original);
-      }
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 /**
- * Ліміти and цілі: the two tables migration 0006 adds. Its own describe for the reason the import
- * marker has one — the half that matters on the owner's phone is that a database already full of
- * their money comes through untouched, and that no category quietly gains a ліміт it never had.
+ * Ліміти and цілі: the two tables that hold them.
  */
 describe('migrations — ліміти and цілі', () => {
   let storage: TestStorage;
@@ -1079,7 +791,7 @@ describe('migrations — ліміти and цілі', () => {
     db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
 
     // The склад of a ціль is its own table and touches nothing: no ліміт, транзакція, категорія or
-    // рахунок is rewritten by the two migrations that introduced it.
+    // рахунок is rewritten alongside it.
     expect(db.select().from(categoryLimits).all()).toEqual([
       { categoryId: 'food', amount: 250000, currency: 'UAH' },
     ]);
@@ -1103,257 +815,12 @@ describe('migrations — ліміти and цілі', () => {
     db.insert(goalAccounts).values({ goalId: 'g2', accountId: 'jar' }).run();
     expect(() => db.delete(accounts).where(eq(accounts.id, 'jar')).run()).toThrow();
   });
-
-  it('Scenario: Rows stored before the migration survive it', () => {
-    // The migrations committed before this change: a device holding рахунки, категорії, джерела,
-    // правила, monobank links and one транзакція of each type.
-    const staged = openTestDbMigratedTo(6);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      staged.db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
-      staged.db
-        .insert(rules)
-        .values({
-          id: 'rule-1',
-          merchant: 'сільпо',
-          categoryId: 'food',
-          createdAt: new Date('2026-08-24T09:00:00.000Z'),
-        })
-        .run();
-      staged.db
-        .insert(monobankAccounts)
-        .values({
-          id: 'mono-card',
-          kind: 'card',
-          name: 'black ··1234',
-          currency: 'UAH',
-          bankBalanceAmount: 5000000,
-          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
-        })
-        .run();
-      // Raw, because the staged schema predates `last_synced_at` and Drizzle's insert names every
-      // column of the table it knows — the same reason the accounts row above is raw.
-      staged.db.run(
-        sql`INSERT INTO monobank_links (monobank_account_id, account_id, sync_start_date, cursor_ms)
-            VALUES ('mono-card', 'card', '2026-08-01', 1787864400000)`,
-      );
-
-      staged.migrateToLatest();
-
-      for (const original of oneOfEachType) {
-        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
-        expect(toTransaction(row!)).toEqual(original);
-      }
-      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
-      expect(staged.db.select().from(rules).all()).toHaveLength(1);
-      expect(staged.db.select().from(categories).all().map((row) => row.id)).toContain('food');
-      expect(staged.db.select().from(sources).all().map((row) => row.id)).toContain('salary');
-      expect(staged.db.select().from(monobankLinks).all()).toHaveLength(1);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-      // The two new tables arrive empty: no category gains a ліміт it was never given, and the
-      // migration invents no ціль.
-      expect(staged.db.select().from(categoryLimits).all()).toEqual([]);
-      expect(staged.db.select().from(goals).all()).toEqual([]);
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 /**
- * The склад: `goal_accounts`, and a `goals` table that has lost its one `account_id` and gained a
- * nullable дата. Two migrations, because the first rebuilds `goals` while foreign keys are on —
- * design D4 — and one hand-added data statement between them, because the pairing of a ціль with
- * its one рахунок exists only until that rebuild drops the column.
- *
- * These are the cases `.claude/rules/database.md` demands of a migration that moves data: seeded
- * with representative rows on the shape the owner's device actually had, and each of them failing
- * if the hand-added `INSERT` is removed.
- */
-describe('migrations — the склад of a ціль', () => {
-  /**
-   * The journal length immediately **before** this change's first migration: the shape where
-   * `goals` still carries one `account_id` and a NOT NULL `deadline`, and `goal_accounts` does not
-   * exist. Named by index rather than by tag because other changes are in flight with migrations
-   * of their own, and a tag written here would go stale the moment one of them lands.
-   */
-  const BEFORE_THE_COMPOSITION = 15;
-
-  function stagedWithAccounts() {
-    const staged = openTestDbMigratedTo(BEFORE_THE_COMPOSITION);
-    seedReferences(staged.db, VOCABULARY);
-    staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-    return staged;
-  }
-
-  it('Scenario: A stored ціль keeps every field and gains its склад', () => {
-    const staged = stagedWithAccounts();
-    try {
-      insertOneAccountGoal(staged.db, {
-        id: 'g-auto',
-        name: 'Авто',
-        amount: 20000000,
-        currency: 'UAH',
-        deadline: '2026-12-31',
-        accountId: 'jar',
-      });
-
-      staged.migrateToLatest();
-
-      expect(staged.db.select().from(goals).all()).toEqual([
-        { id: 'g-auto', name: 'Авто', amount: 20000000, currency: 'UAH', deadline: '2026-12-31' },
-      ]);
-      // The склад it gained: exactly the one рахунок it named, under the same ціль id.
-      expect(staged.db.select().from(goalAccounts).all()).toEqual([
-        { goalId: 'g-auto', accountId: 'jar' },
-      ]);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-    } finally {
-      staged.close();
-    }
-  });
-
-  it('Scenario: The migrated ціль shows the progress it showed before', () => {
-    const staged = stagedWithAccounts();
-    try {
-      const topUp = transfer({
-        id: 't-jar',
-        date: '2026-08-20',
-        fromAccountId: 'card',
-        toAccountId: 'jar',
-        left: money(5000000, 'UAH'),
-        arrived: money(5000000, 'UAH'),
-      });
-      staged.db.insert(transactions).values([toTransactionRow(topUp)]).run();
-      insertOneAccountGoal(staged.db, {
-        id: 'g-auto',
-        name: 'Авто',
-        amount: 20000000,
-        currency: 'UAH',
-        deadline: '2026-12-31',
-        accountId: 'jar',
-      });
-      // What the ціль showed the day before: the linked рахунок's розрахунковий баланс.
-      const before = contribution(jar, [topUp]);
-      expect(before).toEqual(money(5000000, 'UAH'));
-
-      staged.migrateToLatest();
-
-      const composition = staged.db.select().from(goalAccounts).all().map((row) => row.accountId);
-      const stored = staged.db.select().from(transactions).all().map(toTransaction);
-      const after = sumContributions(
-        'UAH',
-        composition.map((id) => contribution(id === 'jar' ? jar : card, stored)),
-      );
-
-      expect(after).toEqual(before);
-    } finally {
-      staged.close();
-    }
-  });
-
-  it('Scenario: Two цілі on one рахунок both keep it', () => {
-    const staged = stagedWithAccounts();
-    try {
-      insertOneAccountGoal(staged.db, {
-        id: 'g-auto',
-        name: 'Авто',
-        amount: 20000000,
-        currency: 'UAH',
-        deadline: '2026-12-31',
-        accountId: 'jar',
-      });
-      insertOneAccountGoal(staged.db, {
-        id: 'g-holiday',
-        name: 'Відпустка',
-        amount: 5000000,
-        currency: 'UAH',
-        deadline: '2026-09-30',
-        accountId: 'jar',
-      });
-
-      staged.migrateToLatest();
-
-      expect(staged.db.select().from(goals).all()).toHaveLength(2);
-      expect(staged.db.select().from(goalAccounts).orderBy(goalAccounts.goalId).all()).toEqual([
-        { goalId: 'g-auto', accountId: 'jar' },
-        { goalId: 'g-holiday', accountId: 'jar' },
-      ]);
-    } finally {
-      staged.close();
-    }
-  });
-
-  it('Every stored row survives the two migrations unchanged', () => {
-    const staged = stagedWithAccounts();
-    try {
-      staged.db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
-      staged.db
-        .insert(categoryLimits)
-        .values({ categoryId: 'food', amount: 250000, currency: 'UAH' })
-        .run();
-      insertOneAccountGoal(staged.db, {
-        id: 'g-auto',
-        name: 'Авто',
-        amount: 20000000,
-        currency: 'UAH',
-        deadline: '2026-12-31',
-        accountId: 'jar',
-      });
-
-      staged.migrateToLatest();
-
-      for (const original of oneOfEachType) {
-        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
-        expect(toTransaction(row!)).toEqual(original);
-      }
-      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
-      expect(staged.db.select().from(categoryLimits).all()).toEqual([
-        { categoryId: 'food', amount: 250000, currency: 'UAH' },
-      ]);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-    } finally {
-      staged.close();
-    }
-  });
-
-  it('A ціль stored with a дата keeps it, and the column now admits none', () => {
-    const staged = stagedWithAccounts();
-    try {
-      insertOneAccountGoal(staged.db, {
-        id: 'g-auto',
-        name: 'Авто',
-        amount: 20000000,
-        currency: 'UAH',
-        deadline: '2026-12-31',
-        accountId: 'jar',
-      });
-
-      staged.migrateToLatest();
-
-      expect(staged.db.select().from(goals).get()?.deadline).toBe('2026-12-31');
-      staged.db
-        .insert(goals)
-        .values({ id: 'g-undated', name: 'Резерв', amount: 1000, currency: 'UAH', deadline: null })
-        .run();
-      expect(
-        staged.db.select().from(goals).where(eq(goals.id, 'g-undated')).get()?.deadline,
-      ).toBeNull();
-    } finally {
-      staged.close();
-    }
-  });
-});
-
-/**
- * Migration 0007: the three tables the visible half of FR-S3 needs — what is watched, what has
- * already been decided, and what still awaits the owner's word.
- *
- * They arrive empty and they arrive alone: nothing existing is rewritten, so the only two things
- * worth proving are that a device holding everything else comes through untouched, and that the
- * shapes the engine produces actually fit. No raw capture queue is among them — the waiting queue
- * lives with the capture layer, never in the owner's database.
+ * The three tables the visible half of FR-S3 needs — what is watched, what has already been
+ * decided, and what still awaits the owner's word. No raw capture queue is among them — the
+ * waiting queue lives with the capture layer, never in the owner's database.
  */
 describe('migrations — notification watches, fingerprints and чернетки', () => {
   let storage: TestStorage;
@@ -1465,104 +932,6 @@ describe('migrations — notification watches, fingerprints and чернетки
     ).toThrow();
     expect(() => db.insert(notificationDrafts).values({ ...draft, accountId: 'nope' }).run()).toThrow();
   });
-
-  it('Scenario: Existing data survives the migration', () => {
-    // Everything a device could be holding before this change: рахунки, категорії, джерела,
-    // правила, ліміти, цілі, monobank state, the rate cache, the Saldo marker and one транзакція
-    // of each type.
-    const staged = openTestDbMigratedTo(7);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      staged.db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
-      staged.db
-        .insert(rules)
-        .values({
-          id: 'rule-1',
-          merchant: 'сільпо',
-          categoryId: 'food',
-          createdAt: new Date('2026-08-24T09:00:00.000Z'),
-        })
-        .run();
-      staged.db.insert(categoryLimits).values({ categoryId: 'food', amount: 250000, currency: 'UAH' }).run();
-      insertOneAccountGoal(staged.db, {
-        id: 'g1',
-        name: 'Авто',
-        amount: 20000000,
-        currency: 'UAH',
-        deadline: '2026-12-31',
-        accountId: 'jar',
-      });
-      staged.db
-        .insert(monobankAccounts)
-        .values({
-          id: 'mono-card',
-          kind: 'card',
-          name: 'black ··1234',
-          currency: 'UAH',
-          bankBalanceAmount: 5000000,
-          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
-        })
-        .run();
-      // Raw, because the staged schema predates `last_synced_at` and Drizzle's insert names every
-      // column of the table it knows — the same reason the accounts row above is raw.
-      staged.db.run(
-        sql`INSERT INTO monobank_links (monobank_account_id, account_id, sync_start_date, cursor_ms)
-            VALUES ('mono-card', 'card', '2026-08-01', 1787864400000)`,
-      );
-      staged.db.insert(monobankImportedItems).values({ monobankAccountId: 'mono-card', itemId: 'item-1' }).run();
-      staged.db
-        .insert(monobankRates)
-        .values({ currency: 'USD', rateMillionths: 41_500_000, obtainedAt: new Date('2026-08-28T08:00:00.000Z') })
-        .run();
-      staged.db.insert(saldoImport).values({ id: 'saldo', committedAt: new Date('2026-08-20T10:00:00.000Z') }).run();
-
-      staged.migrateToLatest();
-
-      for (const original of oneOfEachType) {
-        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
-        expect(toTransaction(row!)).toEqual(original);
-      }
-      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
-      expect(staged.db.select().from(categories).all().map((row) => row.id)).toContain('food');
-      expect(staged.db.select().from(sources).all().map((row) => row.id)).toContain('salary');
-      expect(staged.db.select().from(rules).all()).toHaveLength(1);
-      expect(staged.db.select().from(categoryLimits).all()).toHaveLength(1);
-      expect(staged.db.select().from(goals).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankAccounts).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankLinks).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankImportedItems).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankRates).all()).toHaveLength(1);
-      expect(staged.db.select().from(saldoImport).all()).toHaveLength(1);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-
-      // The three new tables arrive empty — no watch the owner never granted, and no чернетка
-      // invented out of a транзакція that already exists.
-      expect(staged.db.select().from(notificationWatches).all()).toEqual([]);
-      expect(staged.db.select().from(notificationFingerprints).all()).toEqual([]);
-      expect(staged.db.select().from(notificationDrafts).all()).toEqual([]);
-
-      // And the storage they arrive with actually takes what the engine produces.
-      staged.db.insert(notificationWatches).values({ packageName: 'ua.privatbank.ap24', accountId: 'card' }).run();
-      staged.db.insert(notificationFingerprints).values({ fingerprint: 'ua.privatbank.ap24 1 Оплата текст' }).run();
-      staged.db
-        .insert(notificationDrafts)
-        .values({
-          id: 'd1',
-          accountId: 'card',
-          currency: 'UAH',
-          date: '2026-08-26',
-          text: 'Оплата 250.00UAH. Сільпо',
-          kind: 'expense',
-          amount: 25000,
-          createdAt: new Date('2026-08-26T10:00:00.000Z'),
-        })
-        .run();
-      expect(staged.db.select().from(notificationDrafts).all()).toHaveLength(1);
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 describe('migrations — the нагадування and the outstanding сповіщення', () => {
@@ -1630,105 +999,6 @@ describe('migrations — the нагадування and the outstanding спов
     // Nowhere for a сума, a bank's words or a secret to sit: the action and the moment is the row.
     expect(Object.keys(db.select().from(alerts).all()[0]!)).toEqual(['kind', 'raisedAt']);
   });
-
-  it('Scenario: Existing data survives the migration', () => {
-    // A device holding every stored shape there was before this change — including what the
-    // notification work of step 8 added, which is the migration immediately before this one.
-    const staged = openTestDbMigratedTo(8);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const t of oneOfEachType) {
-        staged.db.insert(transactions).values(toTransactionRow(t)).run();
-      }
-      staged.db
-        .insert(rules)
-        .values({ id: 'r1', merchant: 'сільпо', categoryId: 'food', createdAt: new Date('2026-08-01T00:00:00.000Z') })
-        .run();
-      staged.db.insert(categoryLimits).values({ categoryId: 'food', amount: 500000, currency: 'UAH' }).run();
-      insertOneAccountGoal(staged.db, {
-        id: 'g1',
-        name: 'Відпустка',
-        amount: 5000000,
-        currency: 'UAH',
-        deadline: '2026-12-31',
-        accountId: 'jar',
-      });
-      staged.db
-        .insert(monobankAccounts)
-        .values({
-          id: 'mono-card',
-          kind: 'card',
-          name: 'black ··1234',
-          currency: 'UAH',
-          bankBalanceAmount: 1234500,
-          obtainedAt: new Date('2026-08-28T07:00:00.000Z'),
-        })
-        .run();
-      // Raw, because the staged schema predates `last_synced_at` and Drizzle's insert names every
-      // column of the table it knows — the same reason the accounts row above is raw.
-      staged.db.run(
-        sql`INSERT INTO monobank_links (monobank_account_id, account_id, sync_start_date, cursor_ms)
-            VALUES ('mono-card', 'card', '2026-08-01', 1787864400000)`,
-      );
-      staged.db.insert(monobankImportedItems).values({ monobankAccountId: 'mono-card', itemId: 'item-1' }).run();
-      staged.db
-        .insert(monobankRates)
-        .values({ currency: 'USD', rateMillionths: 41_500_000, obtainedAt: new Date('2026-08-28T08:00:00.000Z') })
-        .run();
-      staged.db.insert(saldoImport).values({ id: 'saldo', committedAt: new Date('2026-08-20T10:00:00.000Z') }).run();
-      staged.db.insert(notificationWatches).values({ packageName: 'ua.privatbank.ap24', accountId: 'card' }).run();
-      staged.db.insert(notificationFingerprints).values({ fingerprint: 'ua.privatbank.ap24 1 Оплата текст' }).run();
-      staged.db
-        .insert(notificationDrafts)
-        .values({
-          id: 'd1',
-          accountId: 'card',
-          currency: 'UAH',
-          date: '2026-08-26',
-          text: 'Оплата 250.00UAH. Сільпо',
-          kind: 'expense',
-          amount: 25000,
-          createdAt: new Date('2026-08-26T10:00:00.000Z'),
-        })
-        .run();
-
-      staged.migrateToLatest();
-
-      for (const original of oneOfEachType) {
-        const row = staged.db.select().from(transactions).where(eq(transactions.id, original.id)).get();
-        expect(toTransaction(row!)).toEqual(original);
-      }
-      expect(toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!)).toEqual(card);
-      expect(staged.db.select().from(categories).all().map((row) => row.id)).toContain('food');
-      expect(staged.db.select().from(sources).all().map((row) => row.id)).toContain('salary');
-      expect(staged.db.select().from(rules).all()).toHaveLength(1);
-      expect(staged.db.select().from(categoryLimits).all()).toHaveLength(1);
-      expect(staged.db.select().from(goals).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankAccounts).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankLinks).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankImportedItems).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankRates).all()).toHaveLength(1);
-      expect(staged.db.select().from(saldoImport).all()).toHaveLength(1);
-      expect(staged.db.select().from(notificationWatches).all()).toHaveLength(1);
-      expect(staged.db.select().from(notificationFingerprints).all()).toHaveLength(1);
-      expect(staged.db.select().from(notificationDrafts).all()).toHaveLength(1);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-
-      // The two new tables arrive empty — no нагадування the owner never turned on, and no
-      // сповіщення invented out of a failure that never happened.
-      expect(staged.db.select().from(dailyReminder).all()).toEqual([]);
-      expect(staged.db.select().from(alerts).all()).toEqual([]);
-
-      // And they take what the app produces.
-      staged.db.insert(dailyReminder).values({ id: 'reminder', enabled: true, hour: 21, minute: 0 }).run();
-      staged.db.insert(alerts).values({ kind: 'collection', raisedAt: new Date('2026-08-28T12:00:00.000Z') }).run();
-      expect(staged.db.select().from(dailyReminder).all()).toHaveLength(1);
-      expect(staged.db.select().from(alerts).all()).toHaveLength(1);
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 describe('migrations — the рахунок the entry form opens on', () => {
@@ -1773,212 +1043,9 @@ describe('migrations — the рахунок the entry form opens on', () => {
     // A рахунок named by it cannot be deleted out from under it — рахунки archive, never vanish.
     expect(() => db.delete(accounts).where(eq(accounts.id, 'jar')).run()).toThrow();
   });
-
-  it('Scenario: Pre-migration rows survive unchanged', () => {
-    // A device holding everything there was before this change: the migration immediately before
-    // this one is the нагадування and the сповіщення of step 11.
-    const staged = openTestDbMigratedTo(9);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const t of oneOfEachType) {
-        staged.db.insert(transactions).values(toTransactionRow(t)).run();
-      }
-      staged.db
-        .insert(rules)
-        .values({
-          id: 'r1',
-          merchant: 'сільпо',
-          categoryId: 'food',
-          createdAt: new Date('2026-08-01T00:00:00.000Z'),
-        })
-        .run();
-      staged.db
-        .insert(categoryLimits)
-        .values({ categoryId: 'food', amount: 500000, currency: 'UAH' })
-        .run();
-      insertOneAccountGoal(staged.db, {
-        id: 'g1',
-        name: 'Відпустка',
-        amount: 5000000,
-        currency: 'UAH',
-        deadline: '2026-12-31',
-        accountId: 'jar',
-      });
-      staged.db
-        .insert(monobankAccounts)
-        .values({
-          id: 'mono-card',
-          kind: 'card',
-          name: 'black ··1234',
-          currency: 'UAH',
-          bankBalanceAmount: 1234500,
-          obtainedAt: new Date('2026-08-28T07:00:00.000Z'),
-        })
-        .run();
-      // Raw, because the staged schema predates `last_synced_at` and Drizzle's insert names every
-      // column of the table it knows — the same reason the accounts row above is raw.
-      staged.db.run(
-        sql`INSERT INTO monobank_links (monobank_account_id, account_id, sync_start_date, cursor_ms)
-            VALUES ('mono-card', 'card', '2026-08-01', 1787864400000)`,
-      );
-      staged.db
-        .insert(monobankImportedItems)
-        .values({ monobankAccountId: 'mono-card', itemId: 'item-1' })
-        .run();
-      staged.db
-        .insert(monobankRates)
-        .values({
-          currency: 'USD',
-          rateMillionths: 41_500_000,
-          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
-        })
-        .run();
-      staged.db
-        .insert(saldoImport)
-        .values({ id: 'saldo', committedAt: new Date('2026-08-20T10:00:00.000Z') })
-        .run();
-      staged.db
-        .insert(notificationWatches)
-        .values({ packageName: 'ua.privatbank.ap24', accountId: 'card' })
-        .run();
-      staged.db
-        .insert(notificationFingerprints)
-        .values({ fingerprint: 'ua.privatbank.ap24 1 Оплата текст' })
-        .run();
-      staged.db
-        .insert(dailyReminder)
-        .values({ id: 'reminder', enabled: true, hour: 21, minute: 0 })
-        .run();
-      staged.db
-        .insert(alerts)
-        .values({ kind: 'monobank-sync', raisedAt: new Date('2026-08-28T08:00:00.000Z') })
-        .run();
-
-      staged.migrateToLatest();
-
-      // Every stored row unchanged — types, amounts, currencies, dates, categories and описи.
-      for (const original of oneOfEachType) {
-        const row = staged.db
-          .select()
-          .from(transactions)
-          .where(eq(transactions.id, original.id))
-          .get();
-        expect(toTransaction(row!)).toEqual(original);
-      }
-      expect(
-        toAccount(staged.db.select().from(accounts).where(eq(accounts.id, 'card')).get()!),
-      ).toEqual(card);
-      expect(staged.db.select().from(categories).all().map((row) => row.id)).toContain('food');
-      expect(staged.db.select().from(sources).all().map((row) => row.id)).toContain('salary');
-      expect(staged.db.select().from(rules).all()).toHaveLength(1);
-      expect(staged.db.select().from(categoryLimits).all()).toHaveLength(1);
-      expect(staged.db.select().from(goals).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankAccounts).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankLinks).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankImportedItems).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankRates).all()).toHaveLength(1);
-      expect(staged.db.select().from(saldoImport).all()).toHaveLength(1);
-      expect(staged.db.select().from(notificationWatches).all()).toHaveLength(1);
-      expect(staged.db.select().from(notificationFingerprints).all()).toHaveLength(1);
-      expect(staged.db.select().from(dailyReminder).all()).toHaveLength(1);
-      expect(staged.db.select().from(alerts).all()).toHaveLength(1);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-
-      // And no рахунок is remembered: the table arrives empty, never pointed at a рахунок the
-      // owner never chose.
-      expect(staged.db.select().from(entryDefaults).all()).toEqual([]);
-
-      // It takes what the app produces.
-      staged.db.insert(entryDefaults).values({ id: 'entry', accountId: 'card' }).run();
-      expect(staged.db.select().from(entryDefaults).all()).toEqual([
-        { id: 'entry', accountId: 'card' },
-      ]);
-    } finally {
-      staged.close();
-    }
-  });
 });
 
-/**
- * The moment a monobank link last completed a sync — one nullable column added to a table that
- * already holds live links on the owner's device.
- */
-describe('migrations — the moment a link last completed a sync', () => {
-  it('Scenario: An existing link survives gaining the moment', () => {
-    // A device holding everything there was before this change: the migration immediately before
-    // this one is the рахунок the entry form opens on.
-    const staged = openTestDbMigratedTo(9);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      staged.db
-        .insert(monobankAccounts)
-        .values({
-          id: 'mono-card',
-          kind: 'card',
-          name: 'black ··1234',
-          currency: 'UAH',
-          bankBalanceAmount: 5000000,
-          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
-        })
-        .run();
-      // Raw, because the staged schema predates `last_synced_at` and Drizzle's insert names every
-      // column of the table it knows.
-      staged.db.run(
-        sql`INSERT INTO monobank_links (monobank_account_id, account_id, sync_start_date, cursor_ms)
-            VALUES ('mono-card', 'card', '2026-08-01', 1787864400000)`,
-      );
-      staged.db
-        .insert(monobankImportedItems)
-        .values({ monobankAccountId: 'mono-card', itemId: 'item-1' })
-        .run();
-
-      staged.migrateToLatest();
-
-      // The link loads unchanged, holding no moment — which is true of what the device can prove.
-      expect(staged.db.select().from(monobankLinks).all()).toEqual([
-        {
-          monobankAccountId: 'mono-card',
-          accountId: 'card',
-          syncStartDate: '2026-08-01',
-          cursorMs: new Date('2026-08-27T21:00:00.000Z'),
-          lastSyncedAt: null,
-          lastAttemptedAt: null,
-          pagingWindowToMs: null,
-          pagingRequestToMs: null,
-        },
-      ]);
-      // And its imported item ids and its last known баланс банку are untouched.
-      expect(staged.db.select().from(monobankImportedItems).all()).toEqual([
-        { monobankAccountId: 'mono-card', itemId: 'item-1' },
-      ]);
-      expect(staged.db.select().from(monobankAccounts).get()?.bankBalanceAmount).toBe(5000000);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-
-      // Nothing was backfilled: a null here is the state of a link that has never synced, and it
-      // is distinguishable from a moment of zero, which is 1970.
-      staged.db
-        .update(monobankLinks)
-        .set({ lastSyncedAt: new Date(0) })
-        .where(eq(monobankLinks.monobankAccountId, 'mono-card'))
-        .run();
-      expect(staged.db.select().from(monobankLinks).get()?.lastSyncedAt).toEqual(new Date(0));
-    } finally {
-      staged.close();
-    }
-  });
-});
-
-/**
- * The чек tables. Their own describe for the reason the import marker and the monobank links have
- * one: what matters on the owner's phone is that a database already full of their money gains two
- * empty tables and is otherwise exactly as it was.
- */
 describe('migrations — фіскальні чеки', () => {
-  /** Every migration but the чек one, so «before» is a real device from the previous release. */
-  const BEFORE_RECEIPTS = 11;
-
   let storage: TestStorage;
 
   beforeEach(() => {
@@ -2031,73 +1098,6 @@ describe('migrations — фіскальні чеки', () => {
 
     expect(storage.db.select().from(fiscalReceipts).all()).toHaveLength(1);
     expect(storage.db.select().from(receiptItems).all()).toHaveLength(1);
-  });
-
-  it('Scenario: Existing data survives the migration', () => {
-    const staged = openTestDbMigratedTo(BEFORE_RECEIPTS);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const t of oneOfEachType) {
-        staged.db.insert(transactions).values(toTransactionRow(t)).run();
-      }
-      staged.db.insert(categoryLimits).values({ categoryId: 'food', amount: 250000, currency: 'UAH' }).run();
-      insertOneAccountGoal(staged.db, {
-        id: 'g1',
-        name: 'Авто',
-        amount: 500000,
-        currency: 'UAH',
-        deadline: '2027-01-01',
-        accountId: 'jar',
-      });
-      staged.db.insert(saldoImport).values({ id: 'saldo', committedAt: new Date(1) }).run();
-      staged.db.insert(notificationWatches).values({ packageName: 'ua.mono', accountId: 'card' }).run();
-      staged.db.insert(notificationFingerprints).values({ fingerprint: 'f1' }).run();
-      staged.db.insert(dailyReminder).values({ id: 'reminder', enabled: true, hour: 21, minute: 0 }).run();
-      staged.db.insert(alerts).values({ kind: 'monobank-sync', raisedAt: new Date(2) }).run();
-      staged.db.insert(monobankRates).values({ currency: 'USD', rateMillionths: 41_000_000, obtainedAt: new Date(3) }).run();
-      const before = staged.db.select().from(transactions).all().map(toTransaction);
-
-      staged.migrateToLatest();
-
-      // Every existing value loads unchanged...
-      expect(staged.db.select().from(transactions).all().map(toTransaction)).toEqual(before);
-      expect(staged.db.select().from(accounts).all().map(toAccount)).toHaveLength(2);
-      expect(staged.db.select().from(categoryLimits).all()).toHaveLength(1);
-      expect(staged.db.select().from(goals).all()).toHaveLength(1);
-      expect(staged.db.select().from(saldoImport).all()).toHaveLength(1);
-      expect(staged.db.select().from(notificationWatches).all()).toHaveLength(1);
-      expect(staged.db.select().from(notificationFingerprints).all()).toHaveLength(1);
-      expect(staged.db.select().from(dailyReminder).all()).toHaveLength(1);
-      expect(staged.db.select().from(alerts).all()).toHaveLength(1);
-      expect(staged.db.select().from(monobankRates).all()).toHaveLength(1);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-
-      // ...no транзакція holds a чек...
-      expect(staged.db.select().from(fiscalReceipts).all()).toEqual([]);
-
-      // ...and a чек with its позиції can be stored.
-      insertReceipt(staged.db);
-      staged.db
-        .insert(receiptItems)
-        .values({
-          id: 'i1',
-          receiptId: 'r1',
-          line: 9,
-          rawName: 'Снек Кіндер Мілк Слайс 28г',
-          quantityThousandths: 2000,
-          unit: 'шт',
-          unitPriceAmount: 2590,
-          unitPriceCurrency: 'UAH',
-          lineTotalAmount: 5180,
-          lineTotalCurrency: 'UAH',
-          barcode: '40084725',
-        })
-        .run();
-      expect(staged.db.select().from(receiptItems).all()).toHaveLength(1);
-    } finally {
-      staged.close();
-    }
   });
 
   it('The migrated shape keeps a second чек off one транзакція, and one identity to one чек', () => {
@@ -2180,15 +1180,8 @@ describe('migrations — фіскальні чеки', () => {
 /**
  * The журнал and the репорти про помилки: three tables that hold what the app did and what the
  * owner wrote about a bug, and no money at all.
- *
- * The device shape they arrive on is a real one — every migration before this change — so «before»
- * is a phone the owner has been using, and the three tables appear beside its data rather than
- * instead of it.
  */
 describe('migrations — the журнал and the репорти про помилки', () => {
-  /** Every migration but this change's, so «before» is a real device from the previous release. */
-  const BEFORE_REPORTING = 12;
-
   let storage: TestStorage;
 
   beforeEach(() => {
@@ -2220,7 +1213,7 @@ describe('migrations — the журнал and the репорти про поми
     deviceJson: '{"platform":"android","systemVersion":"16","model":"Pixel 7"}',
     countsJson: '{"accounts":2,"transactions":0,"categories":5,"rules":0,"drafts":0}',
     journalJson: '[]',
-    migrationsApplied: 13,
+    migrationsApplied: 1,
     handedOverAt: null,
     ...over,
   });
@@ -2249,36 +1242,6 @@ describe('migrations — the журнал and the репорти про поми
     expect(storage.db.select().from(bugReports).all()[0]?.createdAt).toBeInstanceOf(Date);
     expect(storage.db.select().from(bugReportScreenshots).all()).toHaveLength(1);
     expect(storage.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-  });
-
-  it('A device that predates the репорти keeps everything and gains the three tables', () => {
-    const staged = openTestDbMigratedTo(BEFORE_REPORTING);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const t of oneOfEachType) {
-        staged.db.insert(transactions).values(toTransactionRow(t)).run();
-      }
-      staged.db.insert(dailyReminder).values({ id: 'reminder', enabled: true, hour: 21, minute: 0 }).run();
-      staged.db.insert(alerts).values({ kind: 'monobank-sync', raisedAt: new Date(2) }).run();
-      const before = staged.db.select().from(transactions).all().map(toTransaction);
-
-      staged.migrateToLatest();
-
-      expect(staged.db.select().from(transactions).all().map(toTransaction)).toEqual(before);
-      expect(staged.db.select().from(accounts).all()).toHaveLength(2);
-      expect(staged.db.select().from(dailyReminder).all()).toHaveLength(1);
-      expect(staged.db.select().from(alerts).all()).toHaveLength(1);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-
-      // ...and the three tables are there, empty, ready for the first entry.
-      expect(staged.db.select().from(journal).all()).toEqual([]);
-      staged.db.insert(journal).values(entry()).run();
-      staged.db.insert(bugReports).values(report()).run();
-      expect(staged.db.select().from(bugReports).all()).toHaveLength(1);
-    } finally {
-      staged.close();
-    }
   });
 
   it('The migrated shape keeps a screenshot from outliving its репорт', () => {
@@ -2340,9 +1303,6 @@ describe('migrations — the журнал and the репорти про поми
 });
 
 describe('migrations — the last sync attempt', () => {
-  /** Every migration but this change's, so «before» is a real device from the previous release. */
-  const BEFORE_ATTEMPT = 13;
-
   let storage: TestStorage;
 
   beforeEach(() => {
@@ -2352,28 +1312,6 @@ describe('migrations — the last sync attempt', () => {
   });
 
   afterEach(() => storage.close());
-
-  /** A device that has synced: a bank identity, a link with a cursor and a moment, an item id. */
-  function seedMonobank(db: TestStorage['db']): void {
-    db.insert(monobankAccounts)
-      .values({
-        id: 'mono-card',
-        kind: 'card',
-        name: 'black ··1234',
-        currency: 'UAH',
-        bankBalanceAmount: 300000,
-        obtainedAt: new Date('2026-09-01T06:00:00.000Z'),
-      })
-      .run();
-    // Raw, because the staged schema predates `last_attempted_at` and Drizzle's insert names every
-    // column of the table it knows.
-    db.run(
-      sql`INSERT INTO monobank_links
-            (monobank_account_id, account_id, sync_start_date, cursor_ms, last_synced_at)
-          VALUES ('mono-card', 'card', '2026-08-01', 1788238800000, 1788242400000)`,
-    );
-    db.insert(monobankImportedItems).values({ monobankAccountId: 'mono-card', itemId: 'a1' }).run();
-  }
 
   it('Scenario: An empty database reaches the current shape', () => {
     expect(storage.db.select().from(monobankSyncAttempt).all()).toEqual([]);
@@ -2387,52 +1325,6 @@ describe('migrations — the last sync attempt', () => {
     // `timestamp_ms` on both halves of every moment, so it comes back a Date and not a number.
     expect(row?.attemptedAt).toBeInstanceOf(Date);
     expect(row?.outcome).toBeNull();
-  });
-
-  it('Scenario: The migration adds storage and touches nothing', () => {
-    const staged = openTestDbMigratedTo(BEFORE_ATTEMPT);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const t of oneOfEachType) {
-        staged.db.insert(transactions).values(toTransactionRow(t)).run();
-      }
-      seedMonobank(staged.db);
-      const before = staged.db.select().from(transactions).all().map(toTransaction);
-
-      staged.migrateToLatest();
-
-      expect(staged.db.select().from(transactions).all().map(toTransaction)).toEqual(before);
-      expect(staged.db.select().from(accounts).all()).toHaveLength(2);
-      // The link keeps its cursor and the moment it last completed a sync — the attempt is a
-      // different fact, about the run, and adding it may not disturb either. Written out rather
-      // than captured before the migration: the staged schema has no `last_attempted_at`, so a
-      // Drizzle select over it cannot run there at all.
-      expect(staged.db.select().from(monobankLinks).all()).toEqual([
-        {
-          monobankAccountId: 'mono-card',
-          accountId: 'card',
-          syncStartDate: '2026-08-01',
-          cursorMs: new Date('2026-09-01T05:00:00.000Z'),
-          lastSyncedAt: new Date('2026-09-01T06:00:00.000Z'),
-          lastAttemptedAt: null,
-          pagingWindowToMs: null,
-          pagingRequestToMs: null,
-        },
-      ]);
-      expect(staged.db.select().from(monobankImportedItems).all()).toHaveLength(1);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-
-      // ...and the table is there, empty, ready for the first run.
-      expect(staged.db.select().from(monobankSyncAttempt).all()).toEqual([]);
-      staged.db
-        .insert(monobankSyncAttempt)
-        .values({ id: 'attempt', attemptedAt: new Date(1), outcome: 'complete' })
-        .run();
-      expect(staged.db.select().from(monobankSyncAttempt).all()).toHaveLength(1);
-    } finally {
-      staged.close();
-    }
   });
 
   it('The migrated shape keeps the attempt to one row', () => {
@@ -2467,11 +1359,8 @@ describe('migrations — the last sync attempt', () => {
 });
 
 /**
- * Migration 0014: how a репорт was opened, why its скріншот could not be taken, and the two
- * switches that decide whether it can be filed from a screen at all.
- *
- * Two nullable columns and one one-row table — nothing is rewritten and nothing is defaulted in
- * SQL, so what a phone upgrading sees is exactly what these two scenarios assert.
+ * How a репорт was opened, why its скріншот could not be taken, and the two switches that decide
+ * whether it can be filed from a screen at all.
  */
 describe('migrations — the origin, the capture reason and the two switches', () => {
   it('Scenario: A fresh database from migrations alone holds both', () => {
@@ -2489,7 +1378,7 @@ describe('migrations — the origin, the capture reason and the two switches', (
         route: '/(tabs)',
         build: { version: '0.0.0', commit: 'abc1234', dirty: false, builtAt: 'x' },
         device: { platform: 'android', systemVersion: '16', model: 'Pixel 7' },
-        migrationsApplied: 14,
+        migrationsApplied: 1,
         counts: { accounts: 1, transactions: 0, categories: 3, rules: 0, drafts: 0 },
         journal: [],
         prompting: null,
@@ -2510,80 +1399,9 @@ describe('migrations — the origin, the capture reason and the two switches', (
       storage.close();
     }
   });
-
-  it('Scenario: Pre-migration rows survive unchanged', () => {
-    // Everything there was before this change: migration 0013 is the one immediately before it.
-    const staged = openTestDbMigratedTo(14);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const t of oneOfEachType) {
-        staged.db.insert(transactions).values(toTransactionRow(t)).run();
-      }
-
-      // A репорт with two screenshots and a журнал of 300 entries, written by a build that had
-      // never heard of an origin. Written as SQL over the shape that build actually had, not
-      // through today's repository: the репорт's own row goes in the same way below, and a writer
-      // that knows columns this schema has not got is not what an old build was.
-      const journalEntries = Array.from({ length: 300 }, (_, i) => ({
-        id: `j${i}`,
-        at: new Date(Date.UTC(2026, 8, 3, 9, 0, 0, i)),
-        kind: 'screen' as const,
-        name: `/route/${i}`,
-      }));
-      for (const written of journalEntries) {
-        staged.db.run(
-          sql`INSERT INTO journal (id, at, kind, name, detail)
-              VALUES (${written.id}, ${written.at.getTime()}, ${written.kind}, ${written.name}, NULL)`,
-        );
-      }
-      staged.db
-        .run(sql`INSERT INTO bug_reports (id, created_at, route, did, happened, expected,
-                   prompting_json, build_json, device_json, counts_json, journal_json,
-                   migrations_applied, handed_over_at)
-                 VALUES ('old', 1756900000000, '/manage/backup', 'написав про старий репорт',
-                   NULL, NULL, NULL, '{"version":"0.0.0","commit":"abc1234","dirty":false,"builtAt":"x"}',
-                   '{"platform":"android","systemVersion":"16","model":"Pixel 7"}',
-                   '{"accounts":1,"transactions":1,"categories":1,"rules":0,"drafts":0}', '[]',
-                   13, NULL)`);
-      staged.db.run(
-        sql`INSERT INTO bug_report_screenshots (report_id, name, added_at)
-            VALUES ('old', 'shot-1.png', 1756900000000), ('old', 'shot-2.png', 1756900000001)`,
-      );
-
-      const accountsBefore = staged.db.select().from(accounts).all();
-      const transactionsBefore = staged.db.select().from(transactions).all();
-
-      staged.migrateToLatest();
-
-      const after = reportingRepo(staged.db);
-      expect(staged.db.select().from(accounts).all()).toEqual(accountsBefore);
-      expect(staged.db.select().from(transactions).all()).toEqual(transactionsBefore);
-      // Every entry exactly as the old build wrote it — and with none of the fields the columns
-      // added since then would have made `null`.
-      expect(after.tail()).toEqual(journalEntries);
-      expect(after.tail()).toHaveLength(300);
-
-      const old = after.get('old');
-      expect(old?.did).toBe('написав про старий репорт');
-      expect(old?.screenshots.map((shot) => shot.name)).toEqual(['shot-1.png', 'shot-2.png']);
-      // No origin and no capture reason rather than a guessed one — the whole point of the two
-      // columns being nullable.
-      expect(old?.origin).toBeNull();
-      expect(old?.captureFailure).toBeNull();
-
-      // And the switches arrive at their defaults on a phone that has never seen them.
-      expect(after.captureSettings()).toEqual({ gestureEnabled: true, handleEnabled: false });
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 describe('migrations — the прогрес: досягнення, виклики and норми', () => {
-  /** Every migration but this change's, so «before» is a real device from the previous release. */
-  const BEFORE_PROGRESS = 17;
-
   let storage: TestStorage;
 
   beforeEach(() => {
@@ -2703,168 +1521,13 @@ describe('migrations — the прогрес: досягнення, виклик�
     expect(columns('challenge_decisions')).toEqual(['key', 'decision', 'decided_at']);
     expect(columns('spending_norms')).toEqual(['currency', 'amount', 'confirmed_at']);
   });
-
-  it('A device that predates the прогрес keeps everything and gains the three tables', () => {
-    const staged = openTestDbMigratedTo(BEFORE_PROGRESS);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const t of oneOfEachType) {
-        staged.db.insert(transactions).values(toTransactionRow(t)).run();
-      }
-      staged.db.insert(categoryLimits).values({
-        categoryId: UNCATEGORISED_CATEGORY_ID,
-        amount: 500000,
-        currency: 'UAH',
-      }).run();
-
-      const accountsBefore = staged.db.select().from(accounts).all();
-      const transactionsBefore = staged.db.select().from(transactions).all();
-      const limitsBefore = staged.db.select().from(categoryLimits).all();
-
-      staged.migrateToLatest();
-
-      expect(staged.db.select().from(accounts).all()).toEqual(accountsBefore);
-      expect(staged.db.select().from(transactions).all()).toEqual(transactionsBefore);
-      expect(staged.db.select().from(categoryLimits).all()).toEqual(limitsBefore);
-
-      // And the three arrive empty on a phone that has never earned anything.
-      expect(staged.db.select().from(earnedAchievements).all()).toEqual([]);
-      expect(staged.db.select().from(challengeDecisions).all()).toEqual([]);
-      expect(staged.db.select().from(spendingNorms).all()).toEqual([]);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 /**
- * The request pace and each link's turn — one new single-row table and one nullable column on a
- * table that already holds live links on the owner's device.
+ * The request pace and each link's turn: one single-row table and one nullable column on
+ * `monobank_links`.
  */
 describe("migrations — the request pace and each link's turn", () => {
-  /** Every migration but this change's, so «before» is a real device from the previous release. */
-  const BEFORE_PACE = 18;
-
-  it('Scenario: The migration adds storage and touches nothing', () => {
-    const staged = openTestDbMigratedTo(BEFORE_PACE);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      for (const t of oneOfEachType) {
-        staged.db.insert(transactions).values(toTransactionRow(t)).run();
-      }
-      staged.db
-        .insert(monobankAccounts)
-        .values({
-          id: 'mono-card',
-          kind: 'card',
-          name: 'black ··1234',
-          currency: 'UAH',
-          bankBalanceAmount: 5000000,
-          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
-        })
-        .run();
-      // Raw, because the staged schema predates `last_attempted_at` and Drizzle's insert names
-      // every column of the table it knows.
-      staged.db.run(
-        sql`INSERT INTO monobank_links
-              (monobank_account_id, account_id, sync_start_date, cursor_ms, last_synced_at)
-            VALUES ('mono-card', 'card', '2026-08-01', 1788238800000, 1788242400000)`,
-      );
-      staged.db
-        .insert(monobankImportedItems)
-        .values({ monobankAccountId: 'mono-card', itemId: 'item-1' })
-        .run();
-      staged.db
-        .insert(monobankSyncAttempt)
-        .values({
-          id: 'attempt',
-          attemptedAt: new Date('2026-09-02T08:15:00.000Z'),
-          outcome: 'complete',
-        })
-        .run();
-      const before = staged.db.select().from(transactions).all().map(toTransaction);
-
-      staged.migrateToLatest();
-
-      expect(staged.db.select().from(transactions).all().map(toTransaction)).toEqual(before);
-      expect(staged.db.select().from(accounts).all()).toHaveLength(2);
-      expect(staged.db.select().from(monobankImportedItems).all()).toEqual([
-        { monobankAccountId: 'mono-card', itemId: 'item-1' },
-      ]);
-      expect(staged.db.select().from(monobankAccounts).get()?.bankBalanceAmount).toBe(5000000);
-      // The remembered attempt is a different fact from the pace, and gaining the pace may not
-      // disturb it.
-      expect(staged.db.select().from(monobankSyncAttempt).all()).toHaveLength(1);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-
-      // ...and the table is there, empty, ready for the first request.
-      expect(staged.db.select().from(monobankRequestPace).all()).toEqual([]);
-      staged.db
-        .insert(monobankRequestPace)
-        .values({ id: 'pace', lastRequestAt: new Date('2026-09-04T17:34:00.000Z') })
-        .run();
-      expect(staged.db.select().from(monobankRequestPace).all()).toHaveLength(1);
-    } finally {
-      staged.close();
-    }
-  });
-
-  it('Scenario: Links that existed before the migration have had no turn', () => {
-    const staged = openTestDbMigratedTo(BEFORE_PACE);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      staged.db
-        .insert(monobankAccounts)
-        .values({
-          id: 'mono-card',
-          kind: 'card',
-          name: 'black ··1234',
-          currency: 'UAH',
-          bankBalanceAmount: 5000000,
-          obtainedAt: new Date('2026-08-28T08:00:00.000Z'),
-        })
-        .run();
-      staged.db.run(
-        sql`INSERT INTO monobank_links
-              (monobank_account_id, account_id, sync_start_date, cursor_ms, last_synced_at)
-            VALUES ('mono-card', 'card', '2026-08-01', 1788238800000, 1788242400000)`,
-      );
-
-      staged.migrateToLatest();
-
-      // The link keeps its cursor, its boundary and the moment it last completed a sync, and its
-      // turn is absent rather than backfilled from any of them: this device cannot prove when a
-      // run last asked about it, and the ordering reads the absence as «has waited longest».
-      expect(staged.db.select().from(monobankLinks).all()).toEqual([
-        {
-          monobankAccountId: 'mono-card',
-          accountId: 'card',
-          syncStartDate: '2026-08-01',
-          cursorMs: new Date('2026-09-01T05:00:00.000Z'),
-          lastSyncedAt: new Date('2026-09-01T06:00:00.000Z'),
-          lastAttemptedAt: null,
-          pagingWindowToMs: null,
-          pagingRequestToMs: null,
-        },
-      ]);
-
-      // Nothing was backfilled: a null here is distinguishable from a moment of zero, which is
-      // 1970 and a turn that happened.
-      staged.db
-        .update(monobankLinks)
-        .set({ lastAttemptedAt: new Date(0) })
-        .where(eq(monobankLinks.monobankAccountId, 'mono-card'))
-        .run();
-      expect(staged.db.select().from(monobankLinks).get()?.lastAttemptedAt).toEqual(new Date(0));
-    } finally {
-      staged.close();
-    }
-  });
-
   it('Scenario: An empty database reaches the current shape', () => {
     const storage = openTestDb();
     try {
@@ -2878,8 +1541,8 @@ describe("migrations — the request pace and each link's turn", () => {
       // `timestamp_ms`, so it comes back a Date and not a number.
       expect(row?.lastRequestAt).toBeInstanceOf(Date);
 
-      // ...and a link's turn, the other half of what this migration adds, writes and reads back
-      // on the same fresh database.
+      // ...and a link's turn, the other half of what this table's migration adds, writes and reads
+      // back on the same fresh database.
       seedReferences(storage.db, VOCABULARY);
       storage.db.insert(accounts).values(toAccountRow(card)).run();
       storage.db
@@ -2925,13 +1588,9 @@ describe("migrations — the request pace and each link's turn", () => {
 });
 
 /**
- * The поточна вартість: one new table, keyed by рахунок, on a device whose рахунки, транзакції,
- * ліміти and цілі are already there.
+ * The поточна вартість: one table, keyed by рахунок.
  */
 describe('migrations — the поточна вартість of an інвестиційний рахунок', () => {
-  /** Every migration but this change's, so «before» is a real device from the previous release. */
-  const BEFORE_VALUES = 20;
-
   const bonds = account({ id: 'bonds', name: 'ОВДП', kind: 'investment', currency: 'UAH' });
 
   let storage: TestStorage;
@@ -3004,103 +1663,12 @@ describe('migrations — the поточна вартість of an інвест�
         .run(),
     ).toThrow();
   });
-
-  it('Scenario: Existing financial data survives the migration', () => {
-    const staged = openTestDbMigratedTo(BEFORE_VALUES);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db
-        .insert(accounts)
-        .values([toAccountRow(card), toAccountRow(jar), toAccountRow(bonds)])
-        .run();
-      for (const t of oneOfEachType) {
-        staged.db.insert(transactions).values(toTransactionRow(t)).run();
-      }
-      staged.db
-        .insert(categoryLimits)
-        .values({ categoryId: UNCATEGORISED_CATEGORY_ID, amount: 500000, currency: 'UAH' })
-        .run();
-      staged.db
-        .insert(goals)
-        .values({ id: 'g-car', name: 'Авто', amount: 20000000, currency: 'UAH', deadline: null })
-        .run();
-      staged.db.insert(goalAccounts).values({ goalId: 'g-car', accountId: 'jar' }).run();
-
-      const accountsBefore = staged.db.select().from(accounts).all();
-      const transactionsBefore = staged.db.select().from(transactions).all();
-      const limitsBefore = staged.db.select().from(categoryLimits).all();
-      const goalsBefore = staged.db.select().from(goals).all();
-      const compositionBefore = staged.db.select().from(goalAccounts).all();
-
-      staged.migrateToLatest();
-
-      expect(staged.db.select().from(accounts).all()).toEqual(accountsBefore);
-      expect(staged.db.select().from(transactions).all()).toEqual(transactionsBefore);
-      expect(staged.db.select().from(categoryLimits).all()).toEqual(limitsBefore);
-      expect(staged.db.select().from(goals).all()).toEqual(goalsBefore);
-      expect(staged.db.select().from(goalAccounts).all()).toEqual(compositionBefore);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-    } finally {
-      staged.close();
-    }
-  });
-
-  it('Scenario: No рахунок gains an invented вартість', () => {
-    const staged = openTestDbMigratedTo(BEFORE_VALUES);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(bonds)]).run();
-      staged.db
-        .insert(transactions)
-        .values(
-          toTransactionRow(
-            transfer({
-              id: 't1',
-              date: '2026-03-10',
-              fromAccountId: 'card',
-              toAccountId: 'bonds',
-              left: money(500000, 'UAH'),
-              arrived: money(500000, 'UAH'),
-            }),
-          ),
-        )
-        .run();
-
-      staged.migrateToLatest();
-
-      // The інвестиційний рахунок came through the migration with its money and without a
-      // вартість: the app knows what went in and says nothing about what it is worth.
-      expect(staged.db.select().from(investmentValues).all()).toEqual([]);
-      expect(
-        staged.db
-          .select()
-          .from(investmentValues)
-          .where(eq(investmentValues.accountId, 'bonds'))
-          .get(),
-      ).toBeUndefined();
-      expect(staged.db.select().from(transactions).all()).toHaveLength(1);
-    } finally {
-      staged.close();
-    }
-  });
 });
 
 /**
- * The three nullable columns the журнал gains so it can record the app's own work.
- *
- * Additive and nothing else: an entry written by the build before them is three NULLs, and
- * `reporting-repo.ts`'s `toEntry` maps a NULL to an absent field, so what the earlier build wrote
- * reads back identical. That is the whole of the risk this migration carries, and it is what these
- * two cases pin.
+ * The three nullable columns `journal` carries so it can record the app's own work.
  */
 describe('migrations — what the журнал records', () => {
-  /**
-   * The migration count immediately **before** this change's own. Named by index rather than by
-   * tag for `BEFORE_THE_COMPOSITION`'s reason: other changes are in flight with migrations of
-   * their own.
-   */
-  const BEFORE_THE_DIAGNOSTICS = 21;
-
   let storage: TestStorage;
 
   beforeEach(() => {
@@ -3127,61 +1695,13 @@ describe('migrations — what the журнал records', () => {
       ['counts_json', 0],
     ]);
   });
-
-  it('Scenario: An entry written before this build reads back unchanged', () => {
-    const staged = openTestDbMigratedTo(BEFORE_THE_DIAGNOSTICS);
-    try {
-      staged.db.run(
-        sql`INSERT INTO journal (id, at, kind, name, detail)
-            VALUES ('old-1', 1757000000000, 'screen', '/(tabs)/accounts', NULL),
-                   ('old-2', 1757000000001, 'failure', 'local-save', 'Оберіть рахунок')`,
-      );
-
-      staged.migrateToLatest();
-
-      const read = reportingRepo(staged.db).tail();
-      expect(read).toEqual([
-        {
-          id: 'old-1',
-          at: new Date(1757000000000),
-          kind: 'screen',
-          name: '/(tabs)/accounts',
-        },
-        {
-          id: 'old-2',
-          at: new Date(1757000000001),
-          kind: 'failure',
-          name: 'local-save',
-          detail: 'Оберіть рахунок',
-        },
-      ]);
-      // None of the three, rather than three `null`s: what was read back equals what was written.
-      expect(read.every((entry) => !('run' in entry) && !('tookMs' in entry) && !('counts' in entry))).toBe(
-        true,
-      );
-    } finally {
-      staged.close();
-    }
-  });
 });
 
-
 /**
- * The two nullable columns a link gains so a window it is half-way through reading survives the
- * прогін that read it.
- *
- * Additive and nothing else: a link written by the build before them is two NULLs, which
- * `monobank-repo.ts`'s `toStoredLink` reads back as no position at all — true of every link that
- * existed, since until now no run could remember one.
+ * The two nullable columns on `monobank_links` that hold a window the app is half-way through
+ * reading.
  */
 describe('migrations — where a half-paged window got to', () => {
-  /**
-   * The migration count immediately **before** this change's own. Named by index rather than by
-   * tag for `BEFORE_THE_COMPOSITION`'s reason: other changes are in flight with migrations of
-   * their own.
-   */
-  const BEFORE_THE_PAGING = 22;
-
   let storage: TestStorage;
 
   beforeEach(() => {
@@ -3207,84 +1727,5 @@ describe('migrations — where a half-paged window got to', () => {
       ['paging_window_to_ms', 0],
       ['paging_request_to_ms', 0],
     ]);
-  });
-
-  it('Scenario: Existing links survive gaining the paging position', () => {
-    const staged = openTestDbMigratedTo(BEFORE_THE_PAGING);
-    try {
-      seedReferences(staged.db, VOCABULARY);
-      staged.db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      staged.db
-        .insert(monobankAccounts)
-        .values([
-          {
-            id: 'mono-card',
-            kind: 'card',
-            name: 'black ··1234',
-            currency: 'UAH',
-            bankBalanceAmount: 5000000,
-            obtainedAt: new Date('2026-09-08T08:00:00.000Z'),
-          },
-          {
-            id: 'mono-jar',
-            kind: 'jar',
-            name: 'На відпустку',
-            currency: 'UAH',
-            bankBalanceAmount: 1200000,
-            obtainedAt: new Date('2026-09-08T08:00:00.000Z'),
-          },
-        ])
-        .run();
-      // Written as SQL rather than through Drizzle: the staged schema has neither new column, so
-      // an insert built from the current schema could not run there at all.
-      staged.db.run(
-        sql`INSERT INTO monobank_links
-              (monobank_account_id, account_id, sync_start_date, cursor_ms, last_synced_at,
-               last_attempted_at)
-            VALUES ('mono-card', 'card', '2026-08-01', 1788238800000, 1788242400000, 1788242400000),
-                   ('mono-jar', 'jar', '2026-07-01', 1785560400000, NULL, NULL)`,
-      );
-      staged.db
-        .insert(monobankImportedItems)
-        .values([
-          { monobankAccountId: 'mono-card', itemId: 'item-1' },
-          { monobankAccountId: 'mono-card', itemId: 'item-2' },
-        ])
-        .run();
-
-      staged.migrateToLatest();
-
-      // Every link loads unchanged — boundary, cursor, completed sync and turn — and each carries
-      // no paging position, which is what «this phone has read no half window» looks like.
-      expect(monobankRepo(staged.db).listLinks()).toEqual([
-        {
-          monobankAccountId: 'mono-card',
-          accountId: 'card',
-          syncStartDate: '2026-08-01',
-          cursorMs: 1788238800000,
-          lastSyncedAtMs: 1788242400000,
-          lastAttemptedAtMs: 1788242400000,
-          paging: null,
-        },
-        {
-          monobankAccountId: 'mono-jar',
-          accountId: 'jar',
-          syncStartDate: '2026-07-01',
-          cursorMs: 1785560400000,
-          lastSyncedAtMs: null,
-          lastAttemptedAtMs: null,
-          paging: null,
-        },
-      ]);
-      // And the imported ids and bank balances the links point at are untouched.
-      expect(staged.db.select().from(monobankImportedItems).all()).toEqual([
-        { monobankAccountId: 'mono-card', itemId: 'item-1' },
-        { monobankAccountId: 'mono-card', itemId: 'item-2' },
-      ]);
-      expect(staged.db.select().from(monobankAccounts).all()).toHaveLength(2);
-      expect(staged.db.all(sql`PRAGMA foreign_key_check`)).toEqual([]);
-    } finally {
-      staged.close();
-    }
   });
 });

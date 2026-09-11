@@ -32,16 +32,12 @@ export const BACKUP_FORMAT_VERSION = 2;
  * breaks `verify` until someone opens this file and asks whether a бекап still holds everything it
  * should. A бекап naming a higher one is refused; a lower one is restored (design D5).
  *
- * 22 asked it and answered yes: migration 0021's three columns are on `journal`, which is never in
- * a бекап at all. 23 asked it and answered yes: migration 0022's two columns are the paging
- * position, which is deliberately not carried — see the exclusions below.
- *
- * The two arrived from two changes in flight at once, `journal-diagnostics` and
- * `monobank-background-sync`, and the constant counts migrations rather than changes: whichever is
- * integrated second must find both answers recorded here, and the one carrying 0022 cannot be
- * integrated alone. Its change says so in its own tasks.
+ * Reset to 1 with the v1 baseline: every migration before it was squashed into one (owner's
+ * decision, 2026-09-11) — the app has no released install to read an old бекап back into, so
+ * nothing is lost in starting the count over. From here the usual rule applies again: every new
+ * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 23;
+export const BACKUP_SCHEMA_VERSION = 1;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';

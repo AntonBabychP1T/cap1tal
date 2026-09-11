@@ -24,6 +24,11 @@ paths:
   applies migrations.
 
 ## Migrations are append-only
+- **The v1 baseline reset (2026-09-11).** Every migration up to that point was squashed into one
+  — `drizzle/0000_aberrant_albert_cleary.sql`, plain DDL straight off `schema.ts`, no committed
+  install to preserve history for. `BACKUP_SCHEMA_VERSION` in `src/backup/format.ts` restarted at
+  1 with it. A one-time reset, not a change of policy: from this migration on, the rule below is
+  exactly what it was before the reset — append-only, immutable once committed. (Owner's decision.)
 - Never edit, rename, reorder or delete a migration or `drizzle/meta/*` entry that is already
   committed. A hook blocks it. Fix the schema and generate a new migration instead.
 - Never run `drizzle-kit push`, `drop` or `migrate` here; they bypass the migration history.

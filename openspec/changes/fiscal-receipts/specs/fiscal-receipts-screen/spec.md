@@ -83,15 +83,23 @@ classify a позиція. The list SHALL be readable with no network at all.
 
 ### Requirement: The scan flow says what happened at every step and lets the owner retry
 
-Starting «Сканувати QR чека» SHALL ask for the camera permission if needed and open the scanner;
-after a QR is decoded the screen SHALL show that the чек is being looked up, then either the
-comparison and the позиції about to be attached, or one named reason. Each reason SHALL be shown
-in Ukrainian in the owner's terms, and SHALL offer what can be done next:
+Starting «Сканувати QR чека» SHALL ask for the camera permission if needed and open the scanner,
+which SHALL also offer choosing an existing photo or file as an alternative to the camera; after a
+QR is decoded — by the camera or by a chosen photo or file — the screen SHALL show that the чек is
+being looked up, then either the comparison and the позиції about to be attached, or one named
+reason. Each reason SHALL be shown in Ukrainian in the owner's terms, and SHALL offer what can be
+done next:
 
-- camera permission refused: the reason, and the system settings when the permission is blocked;
-- no camera on this device: the reason, nothing else;
-- the QR is not a чек: the reason, and scanning again;
+- camera permission refused: the reason, the system settings when the permission is blocked, and
+  choosing a photo or file, which needs no camera permission;
+- no camera on this device: the reason, and choosing a photo or file;
+- the QR is not a чек: the reason, and scanning again (by camera or by choosing another photo or
+  file);
 - the чек QR lacks реквізити: the reason naming what is missing, and scanning again;
+- the chosen photo carries no QR code: the reason, and choosing another photo or file, or scanning
+  by camera;
+- the chosen file could not be opened or read: the reason, and choosing another photo or file, or
+  scanning by camera;
 - the чек was not found: the reason, a note that a чек may appear at the tax service with a
   delay, and «Повторити» without scanning again;
 - no network, or the tax service unavailable: the reason and «Повторити» without scanning again;
@@ -149,6 +157,33 @@ after the screen is left.
   реєстратор than the QR
 - **THEN** the screen says the document served is not the чек of this QR, offers scanning again,
   and nothing is stored
+
+#### Scenario: A photo already on the phone is looked up the same as a camera scan
+
+- **WHEN** the owner chooses «Обрати фото» and picks a photo carrying a чек QR
+- **THEN** the screen shows the чек is being looked up, exactly as a camera decode would
+
+#### Scenario: A photo with no QR code offers trying again
+
+- **WHEN** the owner chooses a photo that carries no QR code
+- **THEN** the screen says no QR code was found in that photo, and offers choosing another photo or
+  scanning by camera
+
+#### Scenario: Leaving the photo picker changes nothing
+
+- **WHEN** the owner opens the photo picker and leaves it without choosing anything
+- **THEN** the scanner stays open exactly as it was, and nothing else happens
+
+#### Scenario: A device with no camera can still import a photo
+
+- **WHEN** the app runs where no camera can be used
+- **THEN** the reason names that, and «Обрати фото» is offered in its place
+
+#### Scenario: A blocked camera still allows choosing a photo
+
+- **WHEN** the camera permission is blocked
+- **THEN** the reason and the system-settings offer are shown, and «Обрати фото» is offered beside
+  them, working without asking for the camera permission
 
 #### Scenario: Cancelling leaves nothing behind
 

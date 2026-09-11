@@ -11,14 +11,9 @@ import {
 } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
 import { categoriesRepo, type CategoriesRepo } from './categories-repo';
-import { openTestDb, type TestStorage } from './test-db';
+import { openTestDb, seedReservedCategories, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
 
-/**
- * A fresh database is not an empty list: migration 0003 already carries «Без категорії»,
- * «Комісія» and «Коригування» (design decision 4), which is what makes the reserved-row tests
- * below able to reach a real row without seeding anything.
- */
 const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
 
 /** A fixed instant: storage recency is data these tests control, never the wall clock. */
@@ -33,6 +28,9 @@ describe('categoriesRepo', () => {
     storage = openTestDb();
     repo = categoriesRepo(storage.db);
     txs = transactionsRepo(storage.db);
+    // The reserved-row tests below reach a real «Без категорії»/«Комісія» row without seeding
+    // anything themselves — the app seeds these on every open, right after the migrations.
+    seedReservedCategories(storage.db);
     // The витрати below need an account to come out of; the category is what they are about.
     accountsRepo(storage.db).save(card);
   });

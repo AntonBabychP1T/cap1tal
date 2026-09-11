@@ -16,6 +16,7 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 
 import * as schema from './schema';
 import { categories, sources } from './schema';
+import { RESERVED_CATEGORIES, RESERVED_SOURCES } from './starter-set';
 
 /**
  * Test-only storage: real SQLite through `better-sqlite3` with the committed migrations applied
@@ -67,6 +68,30 @@ export function seedReferences(
   for (const id of ids.sources ?? []) {
     db.insert(sources).values({ id, name: id }).onConflictDoNothing().run();
   }
+}
+
+/**
+ * «Без категорії», «Комісія» and «Коригування» — the reserved категорії the real app seeds on
+ * every open, right after the migrations (`seedStarterSet`), with their real names.
+ *
+ * Before the v1 baseline (2026-09-11) the migration that turned `category_id` into a foreign key
+ * had to put these three in itself, so every test built on `openTestDb` found them already there.
+ * The v1 migration is plain DDL, so a test that reaches a real row under one of these ids — not a
+ * fixture from `seedReferences` — calls this first, exactly as a fresh device does.
+ */
+export function seedReservedCategories(db: TestDb): void {
+  db.insert(categories)
+    .values(RESERVED_CATEGORIES.map((row) => ({ id: row.id, name: row.name })))
+    .onConflictDoNothing()
+    .run();
+}
+
+/** «Відсотки» and «Без джерела» — the same as {@link seedReservedCategories}, for джерела. */
+export function seedReservedSources(db: TestDb): void {
+  db.insert(sources)
+    .values(RESERVED_SOURCES.map((row) => ({ id: row.id, name: row.name })))
+    .onConflictDoNothing()
+    .run();
 }
 
 interface Journal {

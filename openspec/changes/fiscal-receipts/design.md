@@ -273,6 +273,33 @@ returns `{ amounts: 'match' | 'mismatch', dateDiffersBy?: days, sellerHint?: str
 kindDiffers?: true }` — a value the screen renders; it decides nothing and stores nothing. No function in `src/domain/` beyond
 this file knows a чек exists.
 
+**D14. A photo or file can be decoded too, through the same native module and no new permission.**
+`expo-camera` already exports `scanFromURLAsync(uri, barcodeTypes)` — a plain async function, not a
+component, that runs the platform's own barcode detector (ML Kit on Android, confirmed in
+`CameraViewModule.kt`: it loads a bitmap and hands it to `MLKitBarCodeScanner`, nothing else — no
+`CAMERA` permission check, no camera hardware touched; QR only on iOS) over an image already on
+disk. Because decoding here is a function and not a `<CameraView>`, unlike D11's live scan it *can*
+live behind a device-testable port: `src/platform/qr-image.ts` (`QrImagePort.pickAndDecode()`)
+pairs `expo-document-picker`'s `getDocumentAsync({ type: 'image/*', copyToCacheDirectory: true })`
+— already a dependency, already the exact call `bug-report-files-device.ts` and
+`backup-file-device.ts` make for the same "pick an image" job — with `scanFromURLAsync(uri, ['qr'])`,
+folding the outcome into `decoded` | `cancelled` | `no-qr` | `failed`. A `decoded` outcome re-enters
+`src/ui/receipt-screen.ts`'s existing `decoded(state, text)`, so the QR text is read, compared and
+attached identically whichever source it came from; only the two new refusals a camera scan cannot
+produce (`image-no-qr`, `image-pick-failed`) are new to `Refusal`. No new native module, no new npm
+dependency, no new Android permission — `android.md`'s naming duty has nothing to name.
+
+Because decoding needs no camera, the offer to pick a photo or file is not gated on the camera
+permission at all: it sits beside the live viewfinder in `scanning`, and also on the three refusals
+that stop the camera outright (`camera-deniable`, `camera-blocked`, `no-camera`) — a device or
+permission state that stops the camera must not stop a path that never touched it. The other
+refusals already return to `scanning` through «Сканувати ще раз» (`not-a-receipt`, `incomplete`,
+`not-a-fiscal-document`, `not-a-sale-or-return`, `not-this-receipt`), where the photo option is
+already offered, so nothing further is added there. Alternative: `expo-image-picker` — a second
+native module and a second permission surface for the "pick an image" job `expo-document-picker`
+already does in this codebase; rejected as a needless native footprint for an already-solved
+problem.
+
 ## Risks / Trade-offs
 
 - **`chkAllWeb` starts enforcing its captcha, changes parameters or disappears** → isolated in
@@ -301,8 +328,9 @@ this file knows a чек exists.
 One append-only migration; no data moves. Rollout: `verify`, `diff-reviewer`, commit, then the
 emulator smoke of tasks §11 — camera permission (ask, deny, block, grant), a real QR scan, one
 successful attach with the позиції shown, a not-found retry, a non-чек QR, airplane-mode retry,
-detach. Rollback is reverting the code; stored чеки stay in their tables unread and die with the
-app's data, and no транзакція depends on them.
+detach, and (task 11.5) picking a photo with a чек QR, a photo with none, and the photo option
+still working with the camera permission blocked. Rollback is reverting the code; stored чеки stay
+in their tables unread and die with the app's data, and no транзакція depends on them.
 
 ## Open Questions
 

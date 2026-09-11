@@ -15,7 +15,7 @@ import { existingAccount, existingState, pair, planFrom } from '../saldo/test-fi
 import { accountsRepo } from './accounts-repo';
 import { importRepo } from './import-repo';
 import { categories, sources } from './schema';
-import { openFileDb, openTestDb, type TestStorage } from './test-db';
+import { openFileDb, openTestDb, seedReservedCategories, type TestStorage } from './test-db';
 import { transactionsRepo } from './transactions-repo';
 
 /** Fixed instants: when an import happened is data these tests hand in, never the wall clock. */
@@ -186,6 +186,8 @@ describe('importRepo — committing a plan', () => {
   });
 
   it('Scenario: A plan that fails partway stores nothing', () => {
+    // The app seeds its three reserved категорії on every open, right after the migrations.
+    seedReservedCategories(storage.db);
     const plan = planFrom([
       ...pair({ id: '1', account: 'mono black', journalType: 'CREDIT', amount: '100.00', other: 'булка', otherType: 'EXPENSES' }),
     ]);
@@ -210,8 +212,8 @@ describe('importRepo — committing a plan', () => {
 
     expect(() => importRepo(storage.db).commit(broken, committedAt)).toThrow();
 
-    // The three reserved rows migration 0003 puts there are the whole of the vocabulary; nothing
-    // the plan proposed, and no рахунок or транзакція of it, survived the failure.
+    // The three reserved rows seeded above are the whole of the vocabulary; nothing the plan
+    // proposed, and no рахунок or транзакція of it, survived the failure.
     expect(accountsRepo(storage.db).list()).toEqual([]);
     expect(storage.db.select().from(categories).all().map((row) => row.id).sort()).toEqual(
       ['correction', 'fees', 'uncategorised'],

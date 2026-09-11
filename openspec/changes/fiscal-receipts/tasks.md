@@ -7,7 +7,9 @@
 > edit lands but must not be archived before it. Everything else — QR reading, the lookup adapter, both XML dialects, the
 > decoder, the comparison, the repositories, the migration, the бекап and the screen states — is
 > proven under `verify` against the fixtures in `research/fixtures/` and doubles, and the network
-> is never touched.
+> is never touched. §13 (picking a photo or file instead of the camera, design D14) adds **no**
+> further native module or permission: it reuses `expo-camera` and the already-present
+> `expo-document-picker`, so only its screen wiring is untested by `verify`, same as §8.2.
 
 ## 1. Domain and the QR
 
@@ -233,6 +235,13 @@
       транзакція (refused naming the first); «Відкріпити чек» → cancel → confirm; delete the
       транзакція and show no чек remains; an attached чек readable with airplane mode on
       ("Offline reading").
+- [ ] 11.5 Photo/file import (§13, design D14): tap «Обрати фото», pick an image of a real чек QR
+      from the gallery, see the same «Шукаємо чек…» → preview → «Прикріпити» flow as a camera scan
+      ("A photo already on the phone is looked up the same as a camera scan"); back out of the
+      picker once ("Leaving the photo picker changes nothing"); pick a photo with no QR code in it
+      ("A photo with no QR code offers trying again"); deny the camera permission (or turn it off
+      in settings) and confirm «Обрати фото» is still offered and still works with no camera
+      permission dialog ("A blocked camera still allows choosing a photo").
 
 ## 12. Verification
 
@@ -245,3 +254,38 @@
       their title). All three fixed; re-review PASS, 0 critical. Four of its six warnings closed
       too; the two left standing are the vision gate below and «A QR in view ends the scan with
       its text», which belongs to §11.2.*
+
+## 13. A photo or file instead of the camera (design D14)
+
+Added after a real-world bug report: an electronic чек has nothing to point a camera at. No new
+native module or permission — `expo-camera` (`scanFromURLAsync`) and `expo-document-picker` (both
+already in this change) are all it needs; see `specs/qr-scan/` and `specs/fiscal-receipts-screen/`
+for the requirements this implements, and design D14 for why decoding a picked image can live
+behind a port while the live camera cannot.
+
+- [ ] 13.1 Create `src/platform/qr-image.ts`: `QrImagePort` (`pickAndDecode()`), the outcome type
+      `decoded(text)` | `cancelled` | `no-qr` | `failed(reason)`, and `inMemoryQrImage(outcome)`;
+      verify with `src/platform/qr-image.test.ts` and the source-hygiene test (no react, expo or
+      react-native import) modelled on `qr-scan.test.ts`.
+- [ ] 13.2 Create `src/platform/qr-image-device.ts`: `DocumentPicker.getDocumentAsync({ type:
+      'image/*', copyToCacheDirectory: true })` then `scanFromURLAsync(uri, ['qr'])` from
+      `expo-camera`, mapped to the port's outcome (an empty result is `no-qr`, a thrown error is
+      `failed`); verify: `npm run verify` green (no test loads the adapter), `scripts/android.sh
+      up` still builds and launches (no new permission or dependency to recompile for).
+- [ ] 13.3 Extend `src/ui/receipt-screen.ts`: add `image-no-qr` and `image-pick-failed` to
+      `Refusal`, their sentences in `refusalView` (with `next: 'scan-again'`), an `offerPhoto`
+      field on `RefusalView` (true only for `camera-deniable`, `camera-blocked`, `no-camera`), and
+      `decodedFromImage(state, outcome)` — cancelled leaves `scanning` untouched, `no-qr`/`failed`
+      become the new refusals, `decoded(text)` re-enters the existing `decoded()`; verify with
+      `src/ui/receipt-screen.test.ts` covering "A photo already on the phone is looked up the same
+      as a camera scan", "A photo with no QR code offers trying again", "Leaving the photo picker
+      changes nothing", "A device with no camera can still import a photo", "A blocked camera still
+      allows choosing a photo", and a file-read failure.
+- [ ] 13.4 Wire `src/app/transaction/scan.tsx`: a `pickPhoto` callback calling `qrImage.pickAndDecode()`
+      and feeding the outcome through `decodedFromImage`, an «Обрати фото» `Action` shown beside the
+      `CameraView` while `state.kind === 'scanning'`, and the same action in `Refused` when
+      `view.offerPhoto` is true; verify: the existing `src/ui/` test that reads `scan.tsx` by path
+      asserts «Обрати фото» is wired on the scanning view and on the three camera refusals, and
+      `npm run verify` green; behaviour is §11.5.
+- [ ] 13.5 Run `npm run verify` and paste the final lines.
+- [ ] 13.6 Run the diff-reviewer subagent; fix CRITICAL findings until PASS.
