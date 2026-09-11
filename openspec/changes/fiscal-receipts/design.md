@@ -273,7 +273,8 @@ returns `{ amounts: 'match' | 'mismatch', dateDiffersBy?: days, sellerHint?: str
 kindDiffers?: true }` — a value the screen renders; it decides nothing and stores nothing. No function in `src/domain/` beyond
 this file knows a чек exists.
 
-**D14. A photo or file can be decoded too, through the same native module and no new permission.**
+**D14. A photo or file can be decoded too — through `expo-camera`'s own decoder, no new permission,
+but (found only on the emulator, not by `verify`) one new native module.**
 `expo-camera` already exports `scanFromURLAsync(uri, barcodeTypes)` — a plain async function, not a
 component, that runs the platform's own barcode detector (ML Kit on Android, confirmed in
 `CameraViewModule.kt`: it loads a bitmap and hands it to `MLKitBarCodeScanner`, nothing else — no
@@ -296,8 +297,29 @@ flow sits in `refused` with `camera-blocked` (the exact case this feature exists
 successful decode through `decoded({ kind: 'scanning' }, text)` regardless of the state
 `decodedFromImage` was called from means the QR text is read, compared and attached identically
 whichever source or starting state it came from; only the two new refusals a camera scan cannot
-produce (`image-no-qr`, `image-pick-failed`) are new to `Refusal`. No new native module, no new npm
-dependency, no new Android permission — `android.md`'s naming duty has nothing to name.
+produce (`image-no-qr`, `image-pick-failed`) are new to `Refusal`.
+
+**Corrected after the emulator smoke, task 13.6**: this decision originally claimed no new native
+module. `npm run verify` cannot catch this because it never loads a `-device.ts` adapter — the
+first draft's claim went unchallenged by the type checker, by every test, and by `diff-reviewer`'s
+first PASS, and only broke on the device. On the emulator, `scanFromURLAsync` hung forever on every
+picked photo — no exception, no rejected promise, the flow silently stuck in `scanning` — because
+Android's implementation calls `appContext.service<ImageLoaderInterface>()?.loadImageForManipulationFromURL(...)`
+(`CameraViewModule.kt`): the `?.` means a missing service is not an error, it is *nothing at all*,
+and no package in this project's tree (confirmed by grep across `node_modules`) implements
+`ImageLoaderInterface` — it used to ship as its own module, `expo-image-loader`, which this project
+had never needed until now. Isolated from a real bug in this feature's own code by reproducing the
+identical `DocumentPicker.getDocumentAsync` call through the already-shipped, already-smoke-tested
+`Відновити з файлу` (backup restore) screen on the same emulator, in the same session: that pick
+returned correctly (a typed "not a бекап" refusal), proving the picker's own activity-result
+plumbing was never the problem. Adding `expo-image-loader ^57.0.1` (matching this project's other
+`57.0.x` pins) as a direct dependency and rebuilding fixed it outright: a photo with a чек QR reached
+`looking-up` (and, for a QR missing реквізити, the "incomplete" refusal — proving the decode itself
+succeeded), a photo with none produced "На цьому фото немає QR-коду.", and choosing a photo with the
+camera permission permanently blocked opened the picker with no camera dialog at all — all three
+confirmed on-device after the fix, none before it. **New native module** (android.md's naming duty):
+`expo-image-loader ^57.0.1`, registered by autolinking; no config, no permission, no manifest entry
+of its own — it exists purely to answer `appContext.service<ImageLoaderInterface>()`.
 
 Because decoding needs no camera, the offer to pick a photo or file is not gated on the camera
 permission at all: it sits beside the live viewfinder in `scanning`, and also on the three refusals

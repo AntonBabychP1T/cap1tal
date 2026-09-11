@@ -8,8 +8,11 @@
 > decoder, the comparison, the repositories, the migration, the бекап and the screen states — is
 > proven under `verify` against the fixtures in `research/fixtures/` and doubles, and the network
 > is never touched. §13 (picking a photo or file instead of the camera, design D14) adds **no**
-> further native module or permission: it reuses `expo-camera` and the already-present
-> `expo-document-picker`, so only its screen wiring is untested by `verify`, same as §8.2.
+> further Android permission — it reuses `expo-camera` and the already-present
+> `expo-document-picker` — but the emulator smoke of task 13.6 found it needs one further native
+> module after all, `expo-image-loader` (design D14's correction): `scanFromURLAsync` silently hangs
+> without it, and neither `verify` nor a first `diff-reviewer` pass could have caught that, since
+> the adapter that calls it is untested by design, same as §8.2.
 
 ## 1. Domain and the QR
 
@@ -242,6 +245,14 @@
       ("A photo with no QR code offers trying again"); deny the camera permission (or turn it off
       in settings) and confirm «Обрати фото» is still offered and still works with no camera
       permission dialog ("A blocked camera still allows choosing a photo").
+      *Partly done 2026-09-11 — full account and the bug this run found in task 13.6. The one gap: the
+      only real чек photo on hand decoded to a QR this version calls "incomplete" (missing
+      фіскальний номер чека and час), so "reaches Шукаємо чек…, then a preview" was confirmed only
+      up to the lookup step for that image, not through to «Прикріпити» — the decode-and-parse
+      step (`readReceiptQr`) is what §1.2 already proves with fixtures, so this is not a fresh gap,
+      but a full "photo → preview → attach" run with a *complete* QR is still owed whenever such a
+      photo is on hand. Everything else in the scenario is confirmed as written, including the
+      photo path working with the camera permission permanently denied.*
 
 ## 12. Verification
 
@@ -258,9 +269,13 @@
 ## 13. A photo or file instead of the camera (design D14)
 
 Added after a real-world bug report: an electronic чек has nothing to point a camera at. No new
-native module or permission — `expo-camera` (`scanFromURLAsync`) and `expo-document-picker` (both
-already in this change) are all it needs; see `specs/qr-scan/` and `specs/fiscal-receipts-screen/`
-for the requirements this implements, and design D14 for why decoding a picked image can live
+permission — `expo-camera` (`scanFromURLAsync`) and `expo-document-picker` (both already in this
+change) are the only two modules this addition's own code touches. **Corrected by task 13.6**: a
+third, `expo-image-loader`, turned out to be needed too — not by this addition's own code, but by
+`expo-camera`'s existing `scanFromURLAsync` to run at all — see design D14's correction and the
+"New native modules" bullet in proposal.md's Impact section. See `specs/qr-scan/` and
+`specs/fiscal-receipts-screen/` for the requirements this implements, and design D14 for why
+decoding a picked image can live
 behind a port while the live camera cannot.
 
 - [x] 13.1 Create `src/platform/qr-image.ts`: `QrImagePort` (`pickAndDecode()`), the outcome type
@@ -274,8 +289,9 @@ behind a port while the live camera cannot.
       `scanFromURLAsync` has settled, on every path — decoded, no-qr or failed — so the
       "nothing about the chosen file is stored" promise (`specs/qr-scan/`) holds past the picker's
       own temporary copy, not only past the app's own storage; verify: `npm run verify` green (no
-      test loads the adapter), `scripts/android.sh up` still builds and launches (no new permission
-      or dependency to recompile for).
+      test loads the adapter), `scripts/android.sh up` still builds and launches. *Corrected by
+      13.6: it builds and launches, but `scanFromURLAsync` itself does not work without a dependency
+      neither this task nor its author knew was missing — see 13.6.*
 - [x] 13.3 Extend `src/ui/receipt-screen.ts`: add `image-no-qr` and `image-pick-failed` to
       `Refusal`, their sentences in `refusalView` (with `next: 'scan-again'`), an `offerPhoto`
       field on `RefusalView` (true only for `camera-deniable`, `camera-blocked`, `no-camera`), and
@@ -301,7 +317,31 @@ behind a port while the live camera cannot.
 - [x] 13.5 Update `docs/glossary.md`'s «Фіскальний чек» entry to say the QR can also be in a photo
       or file already on the phone, not only printed on paper (spec-reviewer WARNING); verify:
       `npm run verify` green.
-- [x] 13.6 Run `npm run verify` and paste the final lines.
+- [x] 13.6 Emulator smoke (§11.5) found `scanFromURLAsync` hangs forever on every picked photo — no
+      exception, `verify` still green, `diff-reviewer`'s first pass still PASS, because nothing
+      under either loads the device adapter. Root cause (design D14's correction): Android's
+      `scanFromURLAsync` needs `appContext.service<ImageLoaderInterface>()`, which nothing in this
+      project's dependency tree implements. Isolated from a bug in this feature's own code by
+      reproducing the identical `DocumentPicker.getDocumentAsync` call through the already-shipped
+      `Відновити з файлу` screen on the same emulator, which returned correctly — proving the
+      picker itself was never the problem. Fix: `npm install expo-image-loader@57.0.1`
+      (`package.json` → `^57.0.1`, matching this project's other `57.0.x` pins), `scripts/android.sh
+      up` to rebuild with the new autolinked module, no `app.json` change and no permission added.
+      Re-verified on-device after the fix: a photo of a real чек reached the "incomplete реквізити"
+      refusal (proving the QR itself was decoded, not merely that the picker returned), a photo
+      with no QR produced "На цьому фото немає QR-коду.", and with the camera permission
+      permanently denied («Don't allow» on the system dialog, which lands directly on `blocked`)
+      «Обрати фото» opened the system picker with no camera dialog at all. Screenshots:
+      `.cache/android/verify-result1.png` (incomplete реквізити), `verify-noqr.png` (no QR),
+      `verify-blocked.png` (offered while blocked), `verify-blocked-pick.png` (picker opens with
+      the camera blocked). `npx expo-doctor` still fails only the pre-existing patch-version check
+      (task 7.2's note) and does not list `expo-image-loader` among the mismatches.
+- [x] 13.7 Run `npm run verify` and paste the final lines.
       *2026-09-11: `Test Files 165 passed (165) / Tests 3282 passed (3282)` →
-      `✔ verify passed (a01526b67edadb72be1bfca084da3a7786b0a91b)`*
-- [ ] 13.7 Run the diff-reviewer subagent; fix CRITICAL findings until PASS.
+      `✔ verify passed (a01526b67edadb72be1bfca084da3a7786b0a91b)` — before the emulator smoke found
+      task 13.6. Re-run after adding `expo-image-loader`:
+      `Test Files 165 passed (165) / Tests 3308 passed (3308)` →
+      `✔ verify passed (8c3b4f66c835931f9f72c205fab58c0c3dc6e01c)` — confirms the dependency changes
+      nothing under `verify` (the test-count difference is concurrent work elsewhere in this shared
+      tree, not this task).*
+- [ ] 13.8 Run the diff-reviewer subagent; fix CRITICAL findings until PASS.

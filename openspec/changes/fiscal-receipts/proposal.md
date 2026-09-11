@@ -240,11 +240,15 @@ its own, proposed when a screen actually wants those fields.
 
 ## Impact
 
-- **New native module** (android.md requires naming it): `expo-camera` `~57.0.4` (the SDK 57
+- **New native modules** (android.md requires naming them): `expo-camera` `~57.0.4` (the SDK 57
   bundled version) with its config plugin in `app.json`; it adds `android.permission.CAMERA`,
   declared explicitly in `app.json` with the user-facing reason in `fiscal-receipts-screen`. No
   local Kotlin module, no hand edit under `android/`. Native verification: the CI `android` job
-  compiles; the emulator smoke (tasks §11) proves permission and scanning.
+  compiles; the emulator smoke (tasks §11) proves permission and scanning. Also `expo-image-loader
+  ^57.0.1` (design D14, found only by the emulator smoke of task 13.6, not by `verify`): it adds no
+  permission and no manifest entry of its own — it exists to answer
+  `appContext.service<ImageLoaderInterface>()`, which `expo-camera`'s `scanFromURLAsync` needs to
+  decode a picked photo and which nothing else in this project's dependency tree implements.
 - **New npm dependency**: `fast-xml-parser` (pure JavaScript, no native code) for the two XML
   dialects (design D6). No other dependency: base64 via the runtime's `atob`, windows-1251 via a
   128-entry upper-half table in pure TypeScript.
@@ -257,11 +261,11 @@ its own, proposed when a screen actually wants those fields.
   additions to `src/app/transaction/[id].tsx`, `src/backup/format.ts` (schema version 12, new
   arrays), `docs/glossary.md`, `docs/app-overview.md`. `docs/product-vision.md` is the owner's own
   edit and is not touched by this change.
-- **No new native module or permission for the photo/file path** (design D14): it reuses
-  `expo-camera`'s own `scanFromURLAsync` (the same module this change already declares above) and
-  `expo-document-picker` (already a dependency, already used the same way by
-  `bug-report-files-device.ts` and `backup-file-device.ts`), neither of which touches the camera or
-  needs `android.permission.CAMERA`.
+- **No new permission for the photo/file path** (design D14): it reuses `expo-camera`'s own
+  `scanFromURLAsync` (the same module this change already declares above), `expo-image-loader`
+  (named above — the service `scanFromURLAsync` needs to actually run), and `expo-document-picker`
+  (already a dependency, already used the same way by `bug-report-files-device.ts` and
+  `backup-file-device.ts`), none of which touches the camera or needs `android.permission.CAMERA`.
 - **Storage growth**: one чек ≈ 1.5–3 KB of snapshot plus ~10 позиції rows; two receipts a day is
   under 3 MB a year — the бекап stays «about a megabyte» scale (design D7).
 - **`npm run verify`** stays Node-only and under a minute: every parser, decoder, comparison,
