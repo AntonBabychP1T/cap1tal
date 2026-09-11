@@ -46,11 +46,12 @@ export type AuthFetchLike = (
  * names on its own), since those already read as themselves on the request's own `network`
  * журнал entry and naming them again here would be the app quoting itself.
  *
- * `currency-mismatch` is statement requests only, and the one cause worth its own word: it means
- * this phone's idea of the рахунок's currency and what the bank is now reporting for it have
- * drifted apart, which is a specific, actionable fact rather than bank flakiness.
+ * There were three of these once. `currency-mismatch` named a statement row whose currency was not
+ * the рахунок's — retired, because that field names the currency of the транзакція the bank carried
+ * out and never was a fact about the рахунок, so nothing can produce the word any more and the
+ * журнал must not carry one it can never write.
  */
-export type UnavailableReason = 'unparseable-body' | 'unreadable-payload' | 'currency-mismatch';
+export type UnavailableReason = 'unparseable-body' | 'unreadable-payload';
 
 /**
  * What a call to the personal API can answer. The three failures are the three the screen change
@@ -116,7 +117,7 @@ export interface StatementItem {
  *
  * An account in any other currency is left out — the app cannot hold it.
  */
-const CURRENCY_BY_NUMERIC: Readonly<Record<number, CurrencyCode>> = {
+export const CURRENCY_BY_NUMERIC: Readonly<Record<number, CurrencyCode>> = {
   840: 'USD',
   978: 'EUR',
   980: 'UAH',
@@ -292,7 +293,6 @@ type ItemResult =
   | { readonly ok: false; readonly reason: UnavailableReason };
 
 const UNREADABLE_ROW: ItemResult = { ok: false, reason: 'unreadable-payload' };
-const MISMATCHED_CURRENCY: ItemResult = { ok: false, reason: 'currency-mismatch' };
 
 /**
  * One statement row, read whole — the one place that decision is made, so `parseItem` (which
@@ -302,8 +302,7 @@ const MISMATCHED_CURRENCY: ItemResult = { ok: false, reason: 'currency-mismatch'
  * Total: this never throws. `ctx.dateOf` is the one converter a row's own fields cannot prove safe
  * ahead of calling it — unlike `money`, whose `amount` is already a proven safe integer and whose
  * `ctx.currency` is always one this app offers — so it alone is wrapped. A `dateOf` that throws
- * reads as an unreadable row, exactly as every other malformed one does; it is not a currency
- * mismatch, so it takes the generic reason and not the specific one.
+ * reads as an unreadable row, exactly as every other malformed one does.
  */
 function readItem(row: unknown, ctx: StatementContext): ItemResult {
   if (!isRecord(row)) return UNREADABLE_ROW;
@@ -318,14 +317,13 @@ function readItem(row: unknown, ctx: StatementContext): ItemResult {
     return UNREADABLE_ROW;
   }
 
-  // `currencyCode` on a statement row is the *account's* currency, not the operation's — the API
-  // documents it so, and a monobank statement names no currency for `operationAmount` at all
-  // (design D12). It is therefore read as what it is: a check that this really is the statement of
-  // the рахунок we are importing into. A row saying otherwise is not a row we can read.
-  const numeric = row.currencyCode;
-  if (typeof numeric !== 'number' || CURRENCY_BY_NUMERIC[numeric] !== ctx.currency) {
-    return MISMATCHED_CURRENCY;
-  }
+  // `currencyCode` on a statement row is *not* read. The API documents it as the account's
+  // currency, but it is the currency of the транзакція the bank carried out: `platinum ··6628`
+  // (UAH) answered with 64 rows naming 980 and two naming 840, whose `amount ÷ operationAmount`
+  // was the hryvnia-to-dollar rate and whose running balance lay inside the hryvnia rows' range.
+  // So it never held the fact the old check asked it for, and checking it only wedged a рахунок
+  // that had spent abroad. What identifies the рахунок is the account this request named;
+  // `amount` is in that рахунок's currency, which is what the API documents `amount` to be.
 
   let date: IsoDate;
   try {
@@ -375,13 +373,15 @@ export function statementUnavailableReason(
 
 /**
  * A statement payload → its items, or `undefined` for a payload that is not a list of readable
- * rows of this рахунок's currency. One unreadable row fails the whole answer on purpose
- * (design D4): the window is simply fetched again some later sync, nothing is marked as seen, and
- * no транзакція is ever lost in silence.
+ * rows. One unreadable row fails the whole answer on purpose (design D4): the window is simply
+ * fetched again some later sync, nothing is marked as seen, and no транзакція is ever lost in
+ * silence.
  *
- * A foreign purchase carries no original-currency сума. `operationAmount` is in the payload, but
- * nothing in it says *which* currency that сума is in, and money without a currency is not money
- * this app will hold. What it charges the рахунок is exact, and that is what is kept (design D12).
+ * A foreign purchase carries no original-currency сума, and that is now a deferral rather than an
+ * impossibility: `operationAmount` is in the payload and `currencyCode` does name the currency it
+ * is in. What is missing is that `mapStatement` does not read the pair and that no screen shows
+ * one on an imported витрата. What the bank charged the рахунок is exact, and until then that is
+ * the one сума kept.
  */
 export function parseStatement(payload: unknown, ctx: StatementContext): StatementItem[] | undefined {
   if (!Array.isArray(payload)) {

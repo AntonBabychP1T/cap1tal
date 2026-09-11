@@ -161,9 +161,9 @@ describe('transaction', () => {
   });
 
   it('Scenario: A purchase whose original currency the source does not name', () => {
-    // A monobank statement names the merchant's сума but never the currency it is in, and an
-    // amount without a currency is not money this app holds. The UAH the bank charged is
-    // unaffected — it is what every total uses either way.
+    // Some sources name the merchant's сума but never the currency it is in, and an amount
+    // without a currency is not money this app holds. The UAH the bank charged is unaffected —
+    // it is what every total uses either way.
     const t: Expense = expenseByDefault({
       id: 't7b',
       date: '2026-03-10',

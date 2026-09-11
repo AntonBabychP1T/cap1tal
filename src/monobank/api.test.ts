@@ -4,6 +4,7 @@ import { money } from '../domain/money';
 import type { IsoDate } from '../domain/transaction';
 import { OFFERED_CURRENCIES } from '../ui/labels';
 import { MONOBANK_RATE_CURRENCIES } from './currency';
+import { mapStatement } from './sync';
 import {
   fetchClientInfo,
   fetchStatement,
@@ -226,26 +227,68 @@ describe('parseStatement', () => {
   });
 
   it('Scenario: A foreign purchase is the сума the bank charged, and nothing more', () => {
-    // `operationAmount` is in the payload; the currency it is denominated in is not, anywhere.
-    // Money without a currency is not money this app holds, so the dollars are simply not
-    // recorded, and the UAH the bank charged — the сума that counts — is exact (design D12).
-    const abroad = { ...ITEM, amount: -420000, operationAmount: -10000 };
+    // `operationAmount` is in the payload and `currencyCode` names the currency it is in, so
+    // keeping that second сума is possible — it is simply not read yet, and nothing here carries
+    // it. The hryvnia the bank charged is exact, and that is the сума that counts.
+    const abroad = { ...ITEM, amount: -420000, operationAmount: -10000, currencyCode: 840 };
     const parsed = parseStatement([abroad], uahStatement)?.[0];
     expect(parsed?.amount).toEqual(money(-420000, 'UAH'));
     expect(Object.keys(parsed ?? {})).not.toContain('originalAmount');
   });
 
-  it("Scenario: A row of another currency is not this рахунок's statement", () => {
-    // The row's `currencyCode` is the *account's* currency, so one that is not this рахунок's says
-    // the caller paired a statement with the wrong рахунок — read on and every сума would be
-    // relabelled. Fails the answer instead.
-    const usdRow = { ...ITEM, currencyCode: 840 };
-    expect(parseStatement([usdRow], uahStatement)).toBeUndefined();
-    expect(parseStatement([usdRow], { currency: 'USD', dateOf })).toEqual([
+  it('Scenario: A row naming another currency does not fail the window', () => {
+    // The shape `platinum ··6628` actually sent: most rows name the рахунок's own currency and a
+    // couple name the currency the bank carried that транзакція out in. Every row is this
+    // рахунок's, and every `amount` is in the рахунок's currency — what the bank charged.
+    const rows = [ITEM, { ...ITEM, id: 'a2', currencyCode: 840 }, { ...ITEM, id: 'a3' }];
+    expect(parseStatement(rows, uahStatement)).toEqual([
+      expect.objectContaining({ id: 'a1', amount: money(-12550, 'UAH') }),
+      expect.objectContaining({ id: 'a2', amount: money(-12550, 'UAH') }),
+      expect.objectContaining({ id: 'a3', amount: money(-12550, 'UAH') }),
+    ]);
+  });
+
+  it('Scenario: A row naming a currency the app does not offer still parses', () => {
+    // 985 is PLN — no рахунок can be opened in it, which says nothing about where the owner may
+    // spend. The сума the bank charged is still hryvnia.
+    expect(parseStatement([{ ...ITEM, currencyCode: 985 }], uahStatement)).toEqual([
+      expect.objectContaining({ amount: money(-12550, 'UAH') }),
+    ]);
+  });
+
+  it('Scenario: A row naming no currency at all still parses', () => {
+    // No сума is ever built from this field, so its absence takes nothing away.
+    for (const row of [{ ...ITEM, currencyCode: undefined }, { ...ITEM, currencyCode: 'UAH' }]) {
+      expect(parseStatement([row], uahStatement)).toEqual([
+        expect.objectContaining({ amount: money(-12550, 'UAH') }),
+      ]);
+    }
+  });
+
+  it('Scenario: A hryvnia row on a foreign-currency рахунок parses', () => {
+    // The same rule the other way round — the latent wedge under every валютна картка.
+    expect(parseStatement([{ ...ITEM, currencyCode: 980 }], { currency: 'USD', dateOf })).toEqual([
       expect.objectContaining({ amount: money(-12550, 'USD') }),
     ]);
-    // And a currency the app does not offer at all is unreadable just the same.
-    expect(parseStatement([{ ...ITEM, currencyCode: 985 }], uahStatement)).toBeUndefined();
+  });
+
+  it('Scenario: A purchase imported from a monobank statement keeps none yet', () => {
+    // The `transactions` half of the same fact, proved end to end because only a statement *row*
+    // names a currency — `mapStatement` is handed `StatementItem`s, which carry none — so the row
+    // has to be parsed here and mapped in the same test for the витрата to be evidence at all.
+    const abroad = { ...ITEM, amount: -420000, operationAmount: -10000, currencyCode: 840 };
+    const items = parseStatement([abroad], uahStatement);
+    expect(items?.[0]?.amount).toEqual(money(-420000, 'UAH'));
+
+    const { transactions } = mapStatement(items ?? [], {
+      accountId: 'card',
+      currency: 'UAH',
+      rules: [],
+      seenIds: new Set(),
+      newId: () => 't1',
+    });
+    expect(transactions[0]).toMatchObject({ type: 'expense', amount: money(420000, 'UAH') });
+    expect(Object.keys(transactions[0] ?? {})).not.toContain('originalAmount');
   });
 
   it('Scenario: One unreadable row fails the whole answer', () => {
@@ -258,7 +301,6 @@ describe('parseStatement', () => {
       { ...ITEM, amount: -125.5 },
       { ...ITEM, hold: 'false' },
       { ...ITEM, description: null },
-      { ...ITEM, currencyCode: undefined },
     ]) {
       expect(parseStatement([broken], uahStatement)).toBeUndefined();
     }
@@ -321,20 +363,9 @@ describe('fetch outcomes', () => {
         },
       },
     });
-    // Still a resolved value, never a rejected promise — and a throwing `dateOf` reads as an
-    // unreadable row, not a currency mismatch.
+    // Still a resolved value, never a rejected promise — a throwing `dateOf` reads as an
+    // unreadable row.
     expect(outcome).toEqual({ kind: 'unavailable', reason: 'unreadable-payload' });
-  });
-
-  it("Scenario: A рахунок whose currency does not match the row's is unavailable with a reason", async () => {
-    const usdRow = { ...ITEM, currencyCode: 840 };
-    const outcome = await fetchStatement(answering(200, [usdRow]), TOKEN, {
-      accountId: 'acc',
-      fromMs: 0,
-      toMs: 1000,
-      context: uahStatement,
-    });
-    expect(outcome).toEqual({ kind: 'unavailable', reason: 'currency-mismatch' });
   });
 
   it('Scenario: An unreadable statement row is unavailable with the generic reason', async () => {
@@ -358,7 +389,7 @@ describe('fetch outcomes', () => {
     expect(outcome).toEqual({ kind: 'unavailable', reason: 'unreadable-payload' });
   });
 
-  it('statementUnavailableReason never throws and always answers one of the three reasons', () => {
+  it('statementUnavailableReason never throws and always answers one of the two reasons', () => {
     const fixtures: readonly unknown[] = [
       { items: [] },
       [{ ...ITEM, id: undefined }],
@@ -367,14 +398,11 @@ describe('fetch outcomes', () => {
       [{ ...ITEM, amount: -125.5 }],
       [{ ...ITEM, hold: 'false' }],
       [{ ...ITEM, description: null }],
-      [{ ...ITEM, currencyCode: undefined }],
-      [{ ...ITEM, currencyCode: 840 }],
-      [{ ...ITEM, currencyCode: 985 }],
     ];
     for (const payload of fixtures) {
       expect(parseStatement(payload, uahStatement)).toBeUndefined();
       expect(() => statementUnavailableReason(payload, uahStatement)).not.toThrow();
-      expect(['unreadable-payload', 'currency-mismatch']).toContain(
+      expect(['unreadable-payload']).toContain(
         statementUnavailableReason(payload, uahStatement),
       );
     }

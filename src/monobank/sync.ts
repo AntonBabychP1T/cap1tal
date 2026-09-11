@@ -299,8 +299,9 @@ export function mapStatement(
           amount: money(-item.amount.amount, ctx.currency),
           // No match means no categoryId at all: the «Без категорії» default is the domain's.
           ...(categoryId ? { categoryId } : {}),
-          // No original-currency сума: a monobank statement never names the currency of a foreign
-          // purchase's own amount, so there is none to carry (design D12).
+          // No original-currency сума — a deferral, not an impossibility: a statement does name
+          // the bank's own сума and the currency it is in, but nothing here reads the pair and no
+          // screen shows one. What the bank charged the рахунок is exact, and that is what counts.
           description: item.description,
         }),
       );

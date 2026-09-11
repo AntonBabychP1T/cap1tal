@@ -487,7 +487,7 @@ describe('what the репорт says about the app’s own work', () => {
         run: RUN,
         counts: { imported: 0 },
       },
-      { id: 'k3', at: at(0, 2), kind: 'step', name: 'monobank-sync/mono-plat', detail: 'currency-mismatch', run: RUN },
+      { id: 'k3', at: at(0, 2), kind: 'step', name: 'monobank-sync/mono-plat', detail: 'unreadable-payload', run: RUN },
     ];
 
     const text = renderReport({ ...report, journal: withReason, prompting: null });

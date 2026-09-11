@@ -236,8 +236,8 @@ describe('mapStatement', () => {
       context(),
     );
     expect(transactions[0]).toMatchObject({ type: 'expense', amount: money(420000, 'UAH') });
-    // Nothing carries an original-currency сума: a monobank statement never names the currency of
-    // the operation's own amount, so there is none to record (design D12).
+    // Nothing carries an original-currency сума: the statement does name one, but the sync does
+    // not read it yet, so the hryvnia the bank charged is the only сума recorded.
     expect(Object.keys(transactions[0]!)).not.toContain('originalAmount');
   });
 

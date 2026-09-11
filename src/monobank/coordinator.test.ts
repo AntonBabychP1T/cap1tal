@@ -773,15 +773,20 @@ describe('syncLinkedAccounts', () => {
     expect(run.imported).toBe(2);
   });
 
-  it("Scenario: A statement row whose currency does not match the рахунок's is unavailable with a reason", async () => {
+  it('Scenario: A row naming another currency does not fail the window — at run level', async () => {
+    // The shape `platinum ··6628` answered with, and the whole cost of the defect: before this
+    // change the run ended `unavailable`, imported nothing and left the cursor where it was, for
+    // ever, because the cause was deterministic. Now the window reads and the рахунок moves on.
     link('mono-card', 'card');
     const { fetchImpl } = scriptedFetch({
       statement: () => ({
         status: 200,
         body: [
+          item({ id: 'a1', timeSeconds: AUGUST_28, description: 'СІЛЬПО', amount: -12550 }),
           {
-            ...item({ id: 'a1', timeSeconds: AUGUST_28, description: 'СІЛЬПО', amount: -12550 }),
+            ...item({ id: 'a2', timeSeconds: AUGUST_28, description: 'AMZN Mktp', amount: -420000 }),
             currencyCode: 840,
+            operationAmount: -10000,
           },
         ],
       }),
@@ -789,9 +794,16 @@ describe('syncLinkedAccounts', () => {
 
     const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
 
-    expect(run.accounts[0]?.outcome).toBe('unavailable');
-    expect(run.accounts[0]?.reason).toBe('currency-mismatch');
-    expect(txs.listAll()).toEqual([]);
+    expect(run.accounts[0]?.outcome).toBe('complete');
+    expect(run.accounts[0]?.reason).toBeUndefined();
+    // Both транзакції land, both in the рахунок's own currency — the сума the bank charged.
+    expect(txs.listByAccount('card')).toHaveLength(2);
+    expect(txs.listByAccount('card')).toMatchObject([
+      { type: 'expense', amount: money(12550, 'UAH') },
+      { type: 'expense', amount: money(420000, 'UAH') },
+    ]);
+    // And the cursor advances, which is what had been frozen since the рахунок was linked.
+    expect(repo.linkOf('mono-card')?.cursorMs).toBe(RUN_AT);
   });
 
   it('Scenario: An unreadable statement row is unavailable with the generic reason', async () => {

@@ -644,27 +644,6 @@ describe('the one place a sync is started', () => {
       expect(journalOf()[2]?.name).toContain('mono-plat');
     });
 
-    it('Scenario: A недоступно рахунок names a currency that does not match its own', () => {
-      const write = journalProgress('r1');
-
-      write({
-        kind: 'finished-account',
-        result: {
-          monobankAccountId: 'mono-plat',
-          accountId: 'card-plat',
-          outcome: 'unavailable',
-          imported: 0,
-          reason: 'currency-mismatch',
-        },
-      });
-
-      expect(journalOf().map((e) => [e.name, e.detail])).toEqual([
-        ['monobank-sync/mono-plat', 'unavailable'],
-        ['monobank-sync/mono-plat', 'currency-mismatch'],
-      ]);
-      expect(journalOf().every((e) => e.run === 'r1')).toBe(true);
-    });
-
     it('Scenario: A недоступно рахунок names a body it could not read at all', () => {
       const write = journalProgress('r1');
 

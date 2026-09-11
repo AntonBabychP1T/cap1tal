@@ -73,7 +73,8 @@ function isStopped<T>(answer: T | Stopped): answer is Stopped {
 }
 
 /**
- * What a run reads of one monobank account: the currency every транзакція of its statement is in,
+ * What a run reads of one monobank account: the currency its сума are in, whatever a statement row
+ * may name as the currency the bank carried that транзакція out in,
  * and the баланс банку committed with every page. Deliberately narrower than `MonobankAccount` —
  * an answer the run fetched carries more, an answer it already held carries exactly this, and
  * nothing below wants the difference.
