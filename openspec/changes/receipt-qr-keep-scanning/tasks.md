@@ -85,7 +85,7 @@
 
 ## 6. Post-commit smoke before archive
 
-- [ ] 6.1 After 5.1–5.2 are green, commit the verified change, then run the `smoke-runner` subagent
+- [x] 6.1 After 5.1–5.2 are green, commit the verified change, then run the `smoke-runner` subagent
       (CLAUDE.md workflow step 6): push the owner's photo into the emulator's Downloads, open a
       транзакція → «Сканувати QR чека» → «Обрати фото» → pick it → the screen shows «Шукаємо чек…» and
       then a preview or a tax-service reason — never «QR чека не містить усього потрібного». Confirm
@@ -94,10 +94,20 @@
       is to be confirmed by the owner on SM-S921B with this чек. If smoke reveals a defect, fix it,
       repeat 5.1–5.2, commit the fix, and rerun this smoke until green. Verified by the smoke-runner
       verdict.
+      Recorded after commit `0d33c84`: `SMOKE receipt-qr-keep-scanning | PASS`, Pixel_10_Pro /
+      emulator-5554, reused build, no reset, no defects. The owner's photo reached «Шукаємо чек…»
+      and then a valid mismatch preview (4,370.91 UAH чек versus the existing 437.40 UAH
+      транзакція), never the incomplete-registrar refusal; the camera mounted with no hint. Live
+      camera decode/hint sequences are not reachable on the emulator and require owner confirmation
+      on SM-S921B. Evidence: `.cache/android/smoke/receipt-qr-keep-scanning/07-photo-result.png`,
+      `08-photo-final.png`, `20-camera-mounted.png`, `23-mismatch-actions.png`.
 
 ## 7. Final exact-tree gate
 
-- [ ] 7.1 With the smoke-green commit checked out and no further code edits, run `npm run verify` and
+- [x] 7.1 With the smoke-green commit checked out and no further code edits, run `npm run verify` and
       the `diff-reviewer` subagent once more; fix any CRITICAL finding through the full
       verify → review → commit → smoke loop above, then repeat this final gate until PASS. This is
       the last task before archive.
+      Recorded: `Test Files 166 passed (166)`; `Tests 3342 passed (3342)`;
+      `✔ verify passed (59374d4cec5d9d088d8148287f39702d81ec9384)`; final diff-reviewer
+      `PASS — 0 critical, 0 warning`.
