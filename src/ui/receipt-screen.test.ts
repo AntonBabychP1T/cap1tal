@@ -25,6 +25,8 @@ import {
   receiptHeader,
   receiptItemRows,
   receiptOffer,
+  readingDetail,
+  readingJournalDetail,
   refusalView,
   retry,
   scanAgain,
@@ -346,28 +348,53 @@ describe('starting a scan', () => {
 });
 
 describe('what the camera decoded', () => {
-  it('A non-чек QR asks for another', () => {
-    const state = decoded(startScan('granted'), 'WIFI:S:home;P:secret;;');
-
-    expect(state).toEqual({ kind: 'refused', refusal: { kind: 'not-a-receipt' } });
-    const view = refusalView({ kind: 'not-a-receipt' });
-    expect(view.text).toBe('Це не QR фіскального чека.');
-    expect(view.next).toBe('scan-again');
+  it('An accepted QR in view ends the scan with its text', () => {
+    expect(decoded(startScan('granted'), GROCERY_QR)).toEqual(lookingUp());
   });
 
-  it('names what a чек QR is missing', () => {
+  it('A non-чек QR in the camera keeps the camera open', () => {
+    const state = decoded(startScan('granted'), 'WIFI:S:home;P:secret;;');
+
+    expect(state).toEqual({ kind: 'scanning', hint: { kind: 'not-a-receipt' } });
+    const view = refusalView({ kind: 'not-a-receipt' });
+    expect(view.text).toBe('Це не QR фіскального чека.');
+  });
+
+  it('An incomplete чек QR in the camera keeps the camera open', () => {
     const state = decoded(
       startScan('granted'),
       'https://cabinet.tax.gov.ua/cashregs/check?id=133104756&fn=4000096193&date=20211212',
     );
 
     expect(state).toEqual({
-      kind: 'refused',
-      refusal: { kind: 'incomplete', missing: ['time', 'total'] },
+      kind: 'scanning',
+      hint: { kind: 'incomplete', missing: ['time', 'total'] },
     });
     expect(refusalView({ kind: 'incomplete', missing: ['time', 'total'] }).text).toBe(
       'QR чека не містить усього потрібного: час, суму.',
     );
+  });
+
+  it('Aiming on until the чек QR reads starts the lookup', () => {
+    const hinted = decoded(startScan('granted'), 'WIFI:S:home;P:secret;;');
+
+    expect(decoded(hinted, GROCERY_QR)).toEqual(lookingUp());
+  });
+
+  it('A QR the flow does not accept keeps the camera open', () => {
+    const first = decoded(startScan('granted'), 'WIFI:S:home;P:secret;;');
+    const same = decoded(first, 'WIFI:S:another;P:secret;;');
+    const different = decoded(
+      first,
+      'https://cabinet.tax.gov.ua/cashregs/check?id=133104756&fn=4000096193&date=20211212',
+    );
+
+    expect(same).toBe(first);
+    expect(different).not.toBe(first);
+    expect(different).toEqual({
+      kind: 'scanning',
+      hint: { kind: 'incomplete', missing: ['time', 'total'] },
+    });
   });
 
   it('Two codes in quick succession yield one', () => {
@@ -389,6 +416,20 @@ describe('what the camera decoded', () => {
 });
 
 describe('choosing a photo or file instead of the camera (design D14)', () => {
+  it('A non-чек QR in a chosen photo asks for another', () => {
+    const outcome = { kind: 'decoded', text: 'WIFI:S:home;P:secret;;' } as const;
+
+    expect(decodedFromImage(startScan('granted'), outcome)).toEqual({
+      kind: 'refused',
+      refusal: { kind: 'not-a-receipt' },
+    });
+    const hinted = decoded(startScan('granted'), 'WIFI:S:other;P:secret;;');
+    expect(decodedFromImage(hinted, outcome)).toEqual({
+      kind: 'refused',
+      refusal: { kind: 'not-a-receipt' },
+    });
+  });
+
   it('A photo already on the phone is looked up the same as a camera scan', () => {
     const fromCamera = decoded(startScan('granted'), GROCERY_QR);
     const fromPhoto = decodedFromImage(startScan('granted'), {
@@ -463,6 +504,58 @@ describe('choosing a photo or file instead of the camera (design D14)', () => {
     // likewise untouched: «Обрати фото» is not offered there (previous test).
     const notFound: FlowState = { kind: 'refused', refusal: { kind: 'not-found' } };
     expect(decodedFromImage(notFound, { kind: 'decoded', text: GROCERY_QR })).toBe(notFound);
+  });
+});
+
+describe('journal details for refused readings', () => {
+  it('A repeated hint is recorded once', () => {
+    const details: string[] = [];
+    let state = startScan('granted');
+    const texts = [
+      ...Array<string>(5).fill('WIFI:S:home;P:secret;;'),
+      'https://cabinet.tax.gov.ua/cashregs/check?id=133104756&fn=4000096193&date=20211212&time=1130',
+    ];
+
+    for (const text of texts) {
+      const before = state;
+      state = decoded(state, text);
+      const detail = readingJournalDetail(before, state);
+      if (detail !== undefined) details.push(detail);
+    }
+
+    expect(details).toEqual(['not-a-receipt', 'incomplete missing=total']);
+  });
+
+  it('A non-чек QR in a chosen photo asks for another', () => {
+    const before = startScan('granted');
+    const after = decodedFromImage(before, {
+      kind: 'decoded',
+      text: 'WIFI:S:home;P:secret;;',
+    });
+
+    expect(readingJournalDetail(before, after)).toBe('not-a-receipt');
+  });
+
+  it('An incomplete чек QR in a chosen photo asks for another', () => {
+    const text =
+      'https://cabinet.tax.gov.ua/cashregs/check?id=133104756&fn=4000096193&date=20211212';
+    const before = startScan('granted');
+    const after = decodedFromImage(before, { kind: 'decoded', text });
+    const detail = readingJournalDetail(before, after);
+
+    expect(detail).toBe('incomplete missing=time,total');
+    for (const value of ['133104756', '4000096193', '20211212']) {
+      expect(detail).not.toContain(value);
+    }
+  });
+
+  it('records only reason names, never QR реквізит values', () => {
+    expect(readingDetail({ kind: 'not-a-receipt' })).toBe('not-a-receipt');
+    const detail = readingDetail({ kind: 'incomplete', missing: ['time', 'total'] });
+    expect(detail).toBe('incomplete missing=time,total');
+    for (const value of ['19930061', '3000876257', '20260912', '140004', '4370.91']) {
+      expect(detail).not.toContain(value);
+    }
   });
 });
 
@@ -774,17 +867,26 @@ describe('the screens are wired to this module', () => {
     expect(form).toContain("pathname: '/transaction/receipt'");
   });
 
-  it('the scanner decodes QR only and latches the first decode', () => {
+  it('the scanner decodes QR only and latches the first accepted decode', () => {
     expect(scan).toContain("barcodeScannerSettings={{ barcodeTypes: ['qr'] }}");
     expect(scan).toContain('onBarcodeScanned={onScanned}');
-    // Both latches: the ref for the decodes that arrive within one commit, and `decoded` itself.
-    expect(scan).toContain('latched.current');
-    expect(scan).toContain('decoded(current, data)');
+    expect(scan).toContain('decoded(s, data)');
+    expect(scan.match(/latched\.current = true/g)).toHaveLength(1);
+    expect(scan.indexOf('latched.current = true')).toBeGreaterThan(
+      scan.indexOf("flow.kind !== 'looking-up'"),
+    );
+    expect(scan.indexOf('latched.current = true')).toBeLessThan(
+      scan.indexOf('await provider.lookup'),
+    );
+    expect(scan).toContain('readingJournalDetail(before, next)');
+    expect(scan.match(/setState\(/g)).toHaveLength(1);
+    expect(scan).toContain('setState(next)');
   });
 
   it('the scanner takes its states, sentences and provider from the tested modules', () => {
     expect(scan).toContain("from '@/ui/receipt-screen'");
     expect(scan).toContain('refusalView(state.refusal)');
+    expect(scan).toContain('refusalView(state.hint)');
     expect(scan).toContain('previewView(state)');
     expect(scan).toContain('chkAllWebProvider');
     // The endpoint is the adapter's business; no screen writes one.
@@ -803,7 +905,7 @@ describe('the screens are wired to this module', () => {
   it('the чек view lists позиції from storage and asks before detaching', () => {
     expect(receipt).toContain('receiptItemRows(loaded.stored.items)');
     // «Скасувати» at the preview goes through the transition that names the case.
-    expect(scan).toContain('cancelPreview(current)');
+    expect(scan).toContain('cancelPreview(s)');
     expect(receipt).toContain('detachConfirmation(receipt)');
     expect(receipt).toContain("Alert.alert('Відкріпити чек?'");
     expect(receipt).toContain('receiptsRepo.remove(receipt.receipt.id)');
@@ -858,7 +960,12 @@ describe('the screens are wired to this module', () => {
   it('«Обрати фото» is wired on the scanning view and needs no camera to work (design D14)', () => {
     expect(scan).toContain("from '@/platform/qr-image-device'");
     expect(scan).toContain('qrImage.pickAndDecode()');
-    expect(scan).toContain('decodedFromImage(current, outcome)');
+    expect(scan).toContain('decodedFromImage(s, outcome)');
+    // A photo accepted while CameraView is still mounted enters the same `look` callback whose
+    // first synchronous step closes the latch; a queued camera decode cannot start a second lookup.
+    expect(scan).toContain(
+      "if (next.kind === 'looking-up' && !latched.current) void look(next)",
+    );
     // Offered beside the live camera view, not only after a refusal.
     expect(scan).toContain("<Action variant=\"secondary\" title={PICK_PHOTO_LABEL} onPress={() => void pickPhoto()} />");
     // And on the `Refused` screen, gated on the module's own `offerPhoto` — never a screen's own

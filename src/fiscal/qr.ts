@@ -133,9 +133,11 @@ function fiscalNumber(text: string | undefined): string | undefined {
  * the tax service needs», which no amount of rescanning the same code will fix. A malformed
  * реквізит counts as a missing one: a `sm` of «780,00» is a сума the lookup cannot send, and the
  * owner is told the сума is what is wrong rather than being handed a request that fails later.
+ * Whitespace, C0 controls and DEL are padding only at the text's ends; the same character inside
+ * a реквізит stays there and makes that реквізит malformed rather than silently changing it.
  */
 export function readReceiptQr(text: string): QrReading {
-  const match = URL_SHAPE.exec(text.trim());
+  const match = URL_SHAPE.exec(text.replace(/^[\s\u0000-\u001F\u007F]+|[\s\u0000-\u001F\u007F]+$/g, ''));
   if (!match) return NOT_A_RECEIPT;
 
   const [, , host = '', path = '', query = ''] = match;

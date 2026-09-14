@@ -120,6 +120,14 @@ describe('the журнал', () => {
     );
   });
 
+  it('renders a refused-reading step with no run', () => {
+    expect(
+      entryLine(entry('r', 'step', 'receipt-scan/refused-reading', 'incomplete missing=time,total')),
+    ).toBe(
+      '2026-09-02 17:00:00.000 · крок · receipt-scan/refused-reading · incomplete missing=time,total',
+    );
+  });
+
   it('renders the mark, the duration and the counts once each, counts in key order', () => {
     const line = entryLine({
       ...entry('n', 'network', 'GET api.monobank.ua/personal/client-info'),

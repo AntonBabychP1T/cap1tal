@@ -205,11 +205,17 @@ export type Refusal =
   | { readonly kind: 'already-has-receipt' }
   | { readonly kind: 'transaction-gone' };
 
+/** A decoded camera reading that is explained beside the still-live viewfinder. */
+export type ScanHint = Extract<
+  Refusal,
+  { readonly kind: 'not-a-receipt' } | { readonly kind: 'incomplete' }
+>;
+
 export type FlowState =
   | { readonly kind: 'idle' }
   /** The camera cannot be used yet; `permission` says whether asking is even possible. */
   | { readonly kind: 'permission'; readonly permission: CameraPermission }
-  | { readonly kind: 'scanning' }
+  | { readonly kind: 'scanning'; readonly hint?: ScanHint }
   | { readonly kind: 'looking-up'; readonly lookup: ReceiptLookup }
   | {
       readonly kind: 'preview';
@@ -264,22 +270,67 @@ export function askedFor(permission: CameraPermission): FlowState {
 /**
  * A QR's text, decoded by the camera.
  *
- * The first decode wins: a state that is not `scanning` is returned untouched, so a second code
- * arriving before the view has closed changes nothing («Two codes in quick succession yield one»).
- * The latch lives here rather than in the screen because here it can be tested.
+ * The first accepted decode wins: an unaccepted reading becomes a hint beside the live camera,
+ * while a state that is not `scanning` is returned untouched. Equal hints preserve the state
+ * object's identity so a repeated camera callback costs no render and no journal entry.
  */
 export function decoded(state: FlowState, text: string): FlowState {
   if (state.kind !== 'scanning') return state;
 
+  const outcome = readingOutcome(text);
+  if (outcome.kind === 'looking-up') return outcome;
+  if (state.hint !== undefined && sameHint(state.hint, outcome)) return state;
+  return { kind: 'scanning', hint: outcome };
+}
+
+function readingOutcome(text: string): Extract<FlowState, { kind: 'looking-up' }> | ScanHint {
   const reading = readReceiptQr(text);
   switch (reading.kind) {
     case 'lookup':
       return { kind: 'looking-up', lookup: reading.lookup };
     case 'incomplete':
-      return { kind: 'refused', refusal: { kind: 'incomplete', missing: reading.missing } };
+      return { kind: 'incomplete', missing: reading.missing };
     default:
-      return { kind: 'refused', refusal: { kind: 'not-a-receipt' } };
+      return { kind: 'not-a-receipt' };
   }
+}
+
+function sameHint(left: ScanHint, right: ScanHint): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'not-a-receipt' || right.kind === 'not-a-receipt') return true;
+  return (
+    left.missing.length === right.missing.length &&
+    left.missing.every((missing, index) => missing === right.missing[index])
+  );
+}
+
+/** Privacy-safe detail for a reading the flow did not accept. */
+export function readingDetail(refusal: ScanHint): string {
+  return refusal.kind === 'not-a-receipt'
+    ? 'not-a-receipt'
+    : `incomplete missing=${refusal.missing.join(',')}`;
+}
+
+/**
+ * The one journal detail produced by a newly shown camera hint or a refused chosen image.
+ * Equal repeated camera hints preserve object identity in `decoded`, so `after === before` is the
+ * deduplication boundary and no QR text or реквізит value is accepted as input here.
+ */
+export function readingJournalDetail(
+  before: FlowState,
+  after: FlowState,
+): string | undefined {
+  if (after === before) return undefined;
+  if (after.kind === 'scanning') {
+    return after.hint === undefined ? undefined : readingDetail(after.hint);
+  }
+  if (
+    after.kind === 'refused' &&
+    (after.refusal.kind === 'not-a-receipt' || after.refusal.kind === 'incomplete')
+  ) {
+    return readingDetail(after.refusal);
+  }
+  return undefined;
 }
 
 /** Leaving the scanner without a code. Nothing was stored, and nothing is left behind. */
@@ -308,12 +359,9 @@ function photoEligible(state: FlowState): boolean {
  * A QR's text, decoded from a photo or file instead of the camera (design D14).
  *
  * Reachable from `scanning` and from the three camera refusals a photo needs none of — states
- * `decoded()` itself refuses, because it exists for the camera's live feed. A successful decode is
- * therefore run through `decoded({ kind: 'scanning' }, text)`, the canonical scanning state, rather
- * than the caller's own: a photo picked while the camera is blocked reaches `looking-up` and the
- * preview exactly as a camera scan would, not a silent no-op. Cancelling the picker leaves whatever
- * state the owner was already in untouched — the scanner if they were scanning, the refusal if the
- * camera could not be used.
+ * a camera's live feed keeps as hints. A decoded photo is one reading, so an unaccepted result is
+ * a refusal, while an accepted one reaches `looking-up` exactly as a camera scan would. Cancelling
+ * the picker leaves whatever state the owner was already in untouched.
  */
 export function decodedFromImage(state: FlowState, outcome: QrImagePickOutcome): FlowState {
   if (!photoEligible(state)) return state;
@@ -324,8 +372,12 @@ export function decodedFromImage(state: FlowState, outcome: QrImagePickOutcome):
       return { kind: 'refused', refusal: { kind: 'image-no-qr' } };
     case 'failed':
       return { kind: 'refused', refusal: { kind: 'image-pick-failed' } };
-    default:
-      return decoded({ kind: 'scanning' }, outcome.text);
+    default: {
+      const reading = readingOutcome(outcome.text);
+      return reading.kind === 'looking-up'
+        ? reading
+        : { kind: 'refused', refusal: reading };
+    }
   }
 }
 

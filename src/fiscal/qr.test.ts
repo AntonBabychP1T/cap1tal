@@ -17,6 +17,40 @@ function lookupOf(text: string): ReceiptLookup {
 }
 
 describe('a чек QR is read into реквізити', () => {
+  const ownersReceipt =
+    'https://cabinet.tax.gov.ua/cashregs/check?date=20260912&time=140004&id=19930061&sm=4370.91&fn=3000876257';
+
+  it('A чек QR ending in a NUL is read as without it', () => {
+    const reading = readReceiptQr(`${ownersReceipt}\u0000`);
+
+    expect(reading).toEqual(readReceiptQr(ownersReceipt));
+    expect(reading).toEqual({
+      kind: 'lookup',
+      lookup: {
+        fiscalNumber: '19930061',
+        registrarNumber: '3000876257',
+        date: '2026-09-12',
+        time: '14:00',
+        seconds: '04',
+        total: money(437091, 'UAH'),
+        sumText: '4370.91',
+      },
+    });
+  });
+
+  it('Whitespace and control characters at either end are ignored', () => {
+    expect(readReceiptQr(` \t${ownersReceipt}\r\n\u0000\u0000`)).toEqual(
+      readReceiptQr(ownersReceipt),
+    );
+  });
+
+  it('A control character inside the text is not ignored', () => {
+    expect(readReceiptQr(ownersReceipt.replace('3000876257', '30008\u000076257'))).toEqual({
+      kind: 'incomplete',
+      missing: ['registrarNumber'],
+    });
+  });
+
   it('A ПРРО QR with seconds and a MAC is read', () => {
     const lookup = lookupOf(
       'https://cabinet.tax.gov.ua/cashregs/check?mac=ABCD&date=20260429&time=222006&id=696582&sm=437.40&fn=4000146829',

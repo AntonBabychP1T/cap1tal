@@ -22,6 +22,7 @@ import {
   lookedUp,
   PICK_PHOTO_LABEL,
   previewView,
+  readingJournalDetail,
   refusalView,
   retry,
   scanAgain,
@@ -68,11 +69,26 @@ export default function ScanReceiptScreen() {
 
   const { id } = useLocalSearchParams<{ id: string }>();
   const [state, setState] = useState<FlowState>(IDLE);
+  const stateRef = useRef<FlowState>(IDLE);
+
+  /** The synchronous source of truth while camera callbacks can outrun a React commit. */
+  const apply = useCallback((step: (current: FlowState) => FlowState): FlowState => {
+    const before = stateRef.current;
+    const next = step(before);
+    if (next !== before) {
+      stateRef.current = next;
+      setState(next);
+      const detail = readingJournalDetail(before, next);
+      if (detail !== undefined) {
+        journal.record('step', 'receipt-scan/refused-reading', detail);
+      }
+    }
+    return next;
+  }, []);
 
   /**
-   * The first decode wins. `decoded` already ignores anything that is not a `scanning` state, but
-   * `onBarcodeScanned` can fire several times within one React commit — before the state that
-   * would stop it has been applied — so the latch is a ref as well (design D11).
+   * The first accepted decode wins. Unaccepted readings keep the latch open; the ref closes only
+   * once `decoded` reaches `looking-up`, before another callback can enter (design D11).
    */
   const latched = useRef(false);
 
@@ -90,18 +106,18 @@ export default function ScanReceiptScreen() {
       const first = startScan(await qrScan.state());
       if (!alive) return;
       if (first.kind !== 'permission') {
-        setState(first);
+        apply(() => first);
         return;
       }
       // `askedFor`, not `startScan`: a refusal the system will accept again is a reason with a
       // button, not a state that renders nothing.
       const answered = askedFor(await qrScan.request());
-      if (alive) setState(answered);
+      if (alive) apply(() => answered);
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [apply]);
 
   useEffect(begin, [begin]);
 
@@ -109,28 +125,30 @@ export default function ScanReceiptScreen() {
   const look = useCallback(
     async (flow: FlowState) => {
       if (flow.kind !== 'looking-up') return;
-      setState(flow);
+      // Camera and chosen-image acceptance meet here. Close the latch before the first await so a
+      // CameraView callback already queued while the picker was open cannot start another lookup.
+      latched.current = true;
+      apply(() => flow);
       const transaction = transactionsRepo.get(id);
       if (!transaction) {
-        setState({ kind: 'refused', refusal: { kind: 'transaction-gone' } });
+        apply(() => ({ kind: 'refused', refusal: { kind: 'transaction-gone' } }));
         return;
       }
-      setState(lookedUp(flow, await provider.lookup(flow.lookup), transaction));
+      const outcome = await provider.lookup(flow.lookup);
+      apply(() => lookedUp(flow, outcome, transaction));
     },
-    [id],
+    [apply, id],
   );
 
   const onScanned = useCallback(
     ({ data }: { data: string }) => {
       if (latched.current) return;
-      latched.current = true;
-      setState((current) => {
-        const next = decoded(current, data);
-        if (next.kind === 'looking-up') void look(next);
-        return next;
-      });
+      const next = apply((s) => decoded(s, data));
+      if (next.kind === 'looking-up') {
+        void look(next);
+      }
     },
-    [look],
+    [apply, look],
   );
 
   /**
@@ -141,12 +159,9 @@ export default function ScanReceiptScreen() {
    */
   const pickPhoto = useCallback(async () => {
     const outcome = await qrImage.pickAndDecode();
-    setState((current) => {
-      const next = decodedFromImage(current, outcome);
-      if (next.kind === 'looking-up') void look(next);
-      return next;
-    });
-  }, [look]);
+    const next = apply((s) => decodedFromImage(s, outcome));
+    if (next.kind === 'looking-up' && !latched.current) void look(next);
+  }, [apply, look]);
 
   /**
    * Attaching. The транзакція is re-read first, so one deleted while the scanner was open ends the
@@ -156,11 +171,11 @@ export default function ScanReceiptScreen() {
     if (state.kind !== 'preview') return;
     const transaction = transactionsRepo.get(id);
     if (!transaction) {
-      setState(storeRefused(state, { kind: 'transaction-gone' }));
+      apply(() => storeRefused(state, { kind: 'transaction-gone' }));
       return;
     }
     if (receiptsRepo.forTransaction(id)) {
-      setState(storeRefused(state, { kind: 'already-has-receipt' }));
+      apply(() => storeRefused(state, { kind: 'already-has-receipt' }));
       return;
     }
     // The identity is the реквізити's, stamped through the domain's own constructor rather than
@@ -173,7 +188,7 @@ export default function ScanReceiptScreen() {
     const elsewhere = receiptsRepo.byIdentity(identity);
     if (elsewhere) {
       const where = transactionsRepo.get(elsewhere.receipt.transactionId)?.description ?? elsewhere.receipt.transactionId;
-      setState(storeRefused(state, { kind: 'attached-elsewhere', where }));
+      apply(() => storeRefused(state, { kind: 'attached-elsewhere', where }));
       return;
     }
 
@@ -196,7 +211,7 @@ export default function ScanReceiptScreen() {
         },
         state.parsed.items.map((item) => ({ ...item, id: newId(), receiptId })),
       );
-      setState(stored(state, receiptId));
+      apply(() => stored(state, receiptId));
       router.back();
     } catch {
       // Storage refused the whole unit; nothing was written, and the owner is told so — in the
@@ -205,31 +220,28 @@ export default function ScanReceiptScreen() {
         ...failureAlert({ title: 'Не прикріплено', where: 'receipt-attach', error: 'Чек не вдалося зберегти. Спробуйте ще раз.', report: reportBug }),
       );
     }
-  }, [id, reportBug, router, state]);
+  }, [apply, id, reportBug, router, state]);
 
   /**
    * Looking the same чек up again, with the реквізити already decoded — the owner's tap and
    * nothing else. No timer, no background attempt, and nothing after this screen is left.
    */
   const again = useCallback(() => {
-    setState((current) => {
-      const next = retry(current);
-      if (next.kind === 'looking-up') void look(next);
-      return next;
-    });
-  }, [look]);
+    const next = apply((s) => retry(s));
+    if (next.kind === 'looking-up') void look(next);
+  }, [apply, look]);
 
   /** Leaving the scanner without a code — the qr-scan spec's «cancelled». */
   const leave = useCallback(() => {
-    setState((current) => cancelled(current));
+    apply((s) => cancelled(s));
     router.back();
-  }, [router]);
+  }, [apply, router]);
 
   /** «Скасувати» at the preview: the чек is dropped and nothing was ever stored. */
   const discard = useCallback(() => {
-    setState((current) => cancelPreview(current));
+    apply((s) => cancelPreview(s));
     router.back();
-  }, [router]);
+  }, [apply, router]);
 
   return (
     <Screen>
@@ -245,6 +257,11 @@ export default function ScanReceiptScreen() {
               onBarcodeScanned={onScanned}
             />
           </View>
+          {state.hint ? (
+            <Card>
+              <ThemedText>{refusalView(state.hint).text}</ThemedText>
+            </Card>
+          ) : null}
           <Action variant="secondary" title={PICK_PHOTO_LABEL} onPress={() => void pickPhoto()} />
         </>
       ) : null}
@@ -264,7 +281,7 @@ export default function ScanReceiptScreen() {
           state={state}
           onScanAgain={() => {
             latched.current = false;
-            setState((current) => scanAgain(current));
+            apply((s) => scanAgain(s));
           }}
           onRetry={again}
           onSettings={() => void qrScan.openSettings()}
