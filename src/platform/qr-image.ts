@@ -9,6 +9,12 @@
  * component, so — unlike the live camera, which is `CameraView` and cannot exist off-screen — it
  * can be called from behind a value the same as any other file the app reads.
  *
+ * A whole-image decode that finds nothing is not the whole story any more: the adapter takes a
+ * second look for a QR whose light margin sits against a background as dark as its own modules
+ * (`openspec/changes/qr-image-quiet-zone/`) before the choice ends as `no-qr` — invisible from
+ * here, since this shape (`decoded | cancelled | no-qr | failed`) already covers it; the outcomes,
+ * this port, and `inMemoryQrImage` are unchanged by that change.
+ *
  * Failures are values, as everywhere in `src/platform`. A picker the owner backs out of is
  * `cancelled`, never a failure. A photo that carries no QR code is its own outcome, `no-qr`, and
  * not folded into `failed`: the phone worked fine, there was simply nothing to find.
