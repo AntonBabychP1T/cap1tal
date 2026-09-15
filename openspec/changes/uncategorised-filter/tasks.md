@@ -52,11 +52,16 @@
 
 ## 5. The emulator and the map
 
-- [ ] 5.1 Run the `smoke-runner` subagent over this change's scenarios: with several витрати in «Без
+- [x] 5.1 Run the `smoke-runner` subagent over this change's scenarios: with several витрати in «Без
       категорії» among categorised ones, follow «Переглянути» from Головний — only the uncategorised
       are listed, the chip reads «Без категорії», titles are описи; pick a категорія on one — it
       leaves the list and Головний's count drops by one; add a рахунок narrowing; «Показати все»
       shows the whole history; «Усі ›» from the feed opens unnarrowed.
+      Smoke 2026-09-15 on Pixel_10_Pro API 37: PASS, no defects. Not reachable on that device: the
+      повернення scenarios (none created) and a non-matching `?only=` value (no UI path) — both
+      proven in `transactions-repo.test.ts` / `transaction-search.test.ts`; the рахунок narrowing
+      ran on a one-рахунок device, so it removed nothing. Seen, not specified: the subtitle «Уся
+      історія» and footer «Це вся історія.» still read under a narrowing.
 - [x] 5.2 Update `docs/app-overview.md` where it describes «Транзакції»: the «Без категорії»
       narrowing and the one-tap categorisation there.
 - [ ] 5.3 Archive only after `home-daily-overview` is archived (its «Потребує уваги» requirement is
