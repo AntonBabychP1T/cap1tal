@@ -3,6 +3,7 @@ import type { Category, Source } from '../domain/category';
 import type { Month, Transaction } from '../domain/transaction';
 import { parseAmount } from './amount-input';
 import { folded, nameMatches } from './labels';
+import { feedTitle, type TransactionLine } from './transaction-line';
 
 /**
  * What the owner typed on «Транзакції», turned into the thing storage can be asked, and the paging
@@ -93,6 +94,30 @@ export function monthFromRoute(asked: string | undefined): Month | undefined {
   return asked !== undefined && isMonth(asked) ? asked : undefined;
 }
 
+/** The `?only=` value that opens «Транзакції» narrowed to «Без категорії». */
+export const ONLY_UNCATEGORISED = 'uncategorised';
+
+/**
+ * Whether «Транзакції» opens narrowed to «Без категорії», read from a `?only=` in the route. It is
+ * how «Потребує уваги» lands the owner on the транзакції it counted instead of on the whole history.
+ * Exactly that one value narrows; anything else, empty or absent narrows nothing.
+ *
+ * Like the місяць, an initial value and never a lock: the chip takes it off like any other.
+ */
+export function uncategorisedFromRoute(asked: string | undefined): boolean {
+  return asked === ONLY_UNCATEGORISED;
+}
+
+/**
+ * What a line on «Транзакції» leads with. Under the «Без категорії» narrowing every line would
+ * lead with the same «Без категорії», which tells the owner nothing about what to pick — so there
+ * the опис leads: «СІЛЬПО Київ», «Uklon». A line with no опис, and every line with the narrowing
+ * off, reads as the стрічка reads.
+ */
+export function searchLineTitle(line: TransactionLine, uncategorisedOnly: boolean): string {
+  return uncategorisedOnly && line.description !== undefined ? line.description : feedTitle(line);
+}
+
 export const PAGE_SIZE = 100;
 
 export interface ShownTransactions {
@@ -134,7 +159,7 @@ export function showMore(
  */
 export function emptyMessage(input: {
   shown: number;
-  /** Whether anything at all is narrowing the list: a typed query, a рахунок or a місяць. */
+  /** Whether anything at all is narrowing the list: a query, a рахунок, a місяць, «Без категорії». */
   narrowed: boolean;
 }): string | null {
   if (input.shown > 0) {

@@ -56,6 +56,7 @@ import { newId } from '@/ui/id';
 import { reportFailure } from '@/ui/journal';
 import { currentMonth } from '@/ui/months';
 import { PICKER_SIZE } from '@/ui/shortlist';
+import { ONLY_UNCATEGORISED } from '@/ui/transaction-search';
 import { onCapturesStored } from '@/ui/notification-drain';
 import { firstRun } from '@/ui/onboarding';
 import { recategorise } from '@/ui/retype';
@@ -624,8 +625,14 @@ export default function MainScreen() {
               {model.attention.rows.map((row, index) => (
                 <View key={row}>
                   {index > 0 ? <Divider /> : null}
+                  {/* The row counts what carries «Без категорії», so it opens exactly those. */}
                   <Pressable
-                    onPress={() => router.push('/transactions')}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/transactions',
+                        params: { only: ONLY_UNCATEGORISED },
+                      })
+                    }
                     accessibilityRole="button"
                     style={styles.attentionRow}>
                     <ThemedText numberOfLines={2} style={styles.attentionLabel}>

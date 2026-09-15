@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account, classifyTransfer, computeBalance } from '../domain/account';
 import { proposeForTransfer } from '../ui/entry-form';
+import { transactionLine } from '../ui/transaction-line';
 import { money } from '../domain/money';
 import {
   expenseByDefault,
@@ -1447,6 +1448,101 @@ describe('transactionsRepo search', () => {
     expect(ids(found)).toEqual(['e-silpo']);
   });
 
+  describe('narrowed to «Без категорії»', () => {
+    const waiting = expenseByDefault({
+      id: 'e-waiting',
+      date: '2026-03-14',
+      accountId: 'card',
+      amount: money(7000, 'UAH'),
+      description: 'СІЛЬПО Київ',
+    });
+    const returned = refund({
+      id: 'r-waiting',
+      date: '2026-03-09',
+      accountId: 'wallet',
+      amount: money(2000, 'UAH'),
+      categoryId: UNCATEGORISED_CATEGORY_ID,
+    });
+    const returnedFood = refund({
+      id: 'r-food',
+      date: '2026-03-15',
+      accountId: 'card',
+      amount: money(1000, 'UAH'),
+      categoryId: 'food',
+    });
+    const unsourced: Income = {
+      id: 'i-unsourced',
+      type: 'income',
+      date: '2026-03-16',
+      accountId: 'card',
+      amount: money(500000, 'UAH'),
+      sourceId: UNSOURCED_SOURCE_ID,
+    };
+
+    beforeEach(() => {
+      for (const t of [waiting, returned, returnedFood, unsourced]) {
+        repo.save(t, storedAt);
+      }
+    });
+
+    it('Scenario: Only the uncategorised витрати are shown', () => {
+      // Beside them: two categorised витрати, a переказ, a повернення in «food», a дохід «Без джерела».
+      expect(ids(repo.search({ ...page, uncategorised: true }))).toEqual([
+        'e-waiting',
+        'r-waiting',
+      ]);
+    });
+
+    it('Scenario: A повернення in «Без категорії» is a question too', () => {
+      const found = ids(repo.search({ ...page, uncategorised: true }));
+
+      expect(found).toContain('r-waiting');
+      expect(found).not.toContain('r-food');
+    });
+
+    it('Scenario: The list and Головний\'s count agree', () => {
+      const found = repo.search({ limit: 10_000, offset: 0, uncategorised: true });
+
+      expect(found).toHaveLength(repo.countUncategorised());
+      // And every one of them is a line the list marks, so the mark, the count and the list agree.
+      const lines = found.map((t) =>
+        transactionLine(t, new Map(), new Map([[UNCATEGORISED_CATEGORY_ID, 'Без категорії']])),
+      );
+      expect(lines.every((line) => line.uncategorised)).toBe(true);
+    });
+
+    it('Scenario: «Без категорії» combines with a рахунок and a місяць', () => {
+      const april = expenseByDefault({
+        id: 'e-waiting-april',
+        date: '2026-04-02',
+        accountId: 'wallet',
+        amount: money(3000, 'UAH'),
+      });
+      repo.save(april, storedAt);
+
+      // A переказ touching «wallet» is not brought in by the рахунок: it carries no категорія.
+      expect(ids(repo.search({ ...page, uncategorised: true, accountId: 'wallet' }))).toEqual([
+        'e-waiting-april',
+        'r-waiting',
+      ]);
+      expect(
+        ids(repo.search({ ...page, uncategorised: true, accountId: 'wallet', month: '2026-03' })),
+      ).toEqual(['r-waiting']);
+      expect(
+        ids(
+          repo.search({ ...page, uncategorised: true, match: { ...noLabels, text: 'сільпо' } }),
+        ),
+      ).toEqual(['e-waiting']);
+    });
+
+    it('Scenario: Nothing left uncategorised says so', () => {
+      repo.save({ ...waiting, categoryId: 'food' }, storedAt);
+      repo.save({ ...returned, categoryId: 'food' }, storedAt);
+
+      expect(repo.search({ ...page, uncategorised: true })).toEqual([]);
+    });
+  });
+
   it('Searching changes nothing stored', () => {
     const before = repo.listAll();
 
@@ -1460,7 +1556,7 @@ describe('transactionsRepo search', () => {
 /**
  * The count behind «Потребує уваги» on Головний. It is a read of what «Без категорії» already is —
  * no new state, and nothing stored to produce it — so what is worth proving is its scope: it looks
- * past the стрічка's ceiling, and it counts витрати and nothing else.
+ * past the стрічка's ceiling, and it counts what carries «Без категорії» and nothing else.
  */
 describe('transactionsRepo uncategorised count', () => {
   let storage: TestStorage;
@@ -1548,6 +1644,22 @@ describe('transactionsRepo uncategorised count', () => {
     repo.save(correction, storedAt);
 
     expect(repo.countUncategorised()).toBe(0);
+  });
+
+  it('Scenario: A повернення in «Без категорії» is counted', () => {
+    // Older data only — the form and retype refuse it — but the feed marks it, so it is waiting.
+    repo.save(
+      refund({
+        id: 'r-1',
+        date: '2026-08-24',
+        accountId: 'card',
+        amount: money(4000, 'UAH'),
+        categoryId: UNCATEGORISED_CATEGORY_ID,
+      }),
+      storedAt,
+    );
+
+    expect(repo.countUncategorised()).toBe(1);
   });
 
   it('Categorising one lowers the count under the same id', () => {

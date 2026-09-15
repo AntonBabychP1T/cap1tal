@@ -1,9 +1,34 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  lte,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 
 import { isoDate, UNCATEGORISED_CATEGORY_ID, type Month, type Transaction } from '../domain/transaction';
 import { toTransaction, toTransactionRow } from './mappers';
 import { transactions } from './schema';
 import type { Storage } from './storage';
+
+/**
+ * «Without a категорія», said once: a витрата or a повернення carrying «Без категорії» — exactly
+ * the lines `transactionLine` marks. Головний's count and the «Транзакції» narrowing both read it,
+ * which is what keeps «Потребує уваги · 7» and the list it opens naming the same seven.
+ *
+ * The повернення is in on purpose: the form and retype never leave one there, but older data can,
+ * the стрічка marks it, and a marked line nothing ever leads to would be a question nobody asks.
+ */
+const uncategorised = and(
+  inArray(transactions.type, ['expense', 'refund']),
+  eq(transactions.categoryId, UNCATEGORISED_CATEGORY_ID),
+)!;
 
 /**
  * Transactions in storage. Speaks domain `Transaction`s only — rows never leave this module.
@@ -136,12 +161,17 @@ export function transactionsRepo(db: Storage) {
       /** One рахунок, counting a переказ on either leg. */
       accountId?: string;
       month?: Month;
+      /** Only what `countUncategorised` counts — the «Без категорії» narrowing. */
+      uncategorised?: boolean;
       limit: number;
       offset: number;
     }): Transaction[] {
       const { match } = input;
       const filters: SQL[] = [];
 
+      if (input.uncategorised) {
+        filters.push(uncategorised);
+      }
       if (input.accountId) {
         filters.push(
           or(
@@ -196,20 +226,18 @@ export function transactionsRepo(db: Storage) {
     },
 
     /**
-     * How many stored витрати still carry «Без категорії» — the one number the «Потребує уваги»
+     * How many stored транзакції still carry «Без категорії» — the one number the «Потребує уваги»
      * section on Головний is built from. A `COUNT(*)` rather than a listing: the screen names the
-     * count and leads to «Транзакції» for the транзакції themselves, and counting in TypeScript
+     * count and leads to «Транзакції» narrowed to those транзакції, and counting in TypeScript
      * over the five latest would answer a different question.
      *
-     * Витрати only. A повернення is never stored without a категорія and a дохід carries a
-     * джерело, not a категорія — «Без джерела» is a different reserved row, and naming it here
-     * would ask the owner to fix something this section never leads to.
+     * The same `uncategorised` predicate that narrowing reads, so the number and the list cannot
+     * disagree. A дохід carries a джерело, not a категорія — «Без джерела» is a different reserved
+     * row, and naming it here would ask the owner to fix something this section never leads to.
      */
     countUncategorised(): number {
       const row = db.get<{ n: number }>(
-        sql`select count(*) as n from ${transactions}
-            where ${transactions.type} = 'expense'
-              and ${transactions.categoryId} = ${UNCATEGORISED_CATEGORY_ID}`,
+        sql`select count(*) as n from ${transactions} where ${uncategorised}`,
       );
       return row?.n ?? 0;
     },

@@ -69,6 +69,9 @@
   витрата or повернення carrying an опис, and not when a дохід's джерело or a переказ changed
   ("Setting a джерело on a дохід offers nothing", "Editing a переказ offers nothing"). Verified on
   the emulator in task 6.1.
+- [ ] 4.6 If `uncategorised-filter` has landed, raise the offer from the «Без категорії» mark on
+  «Транзакції» (`src/app/transactions.tsx`) exactly as from Головний's mark in 4.4 — it is where the
+  owner sorts the pile. Verified on the emulator in task 6.1.
 
 ## 5. The docs
 

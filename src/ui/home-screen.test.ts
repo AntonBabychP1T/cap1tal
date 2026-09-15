@@ -386,11 +386,18 @@ describe('Головний as the overview', () => {
     expect(main).not.toContain('[...stored.feed]');
   });
 
-  it('The counted «Без категорії» row leads where those транзакції are marked', () => {
+  it('Scenario: «Переглянути» opens only what is waiting', () => {
+    // Owner's report, 2026-09-14: the row led to the whole history, not to the транзакції it counts.
     const attention = main.slice(main.indexOf('{model.attention.rows.length > 0 |'));
-    expect(attention.slice(0, attention.indexOf('</ListCard>'))).toContain(
-      "router.push('/transactions')",
+    const block = attention.slice(0, attention.indexOf('</ListCard>'));
+    expect(block).toMatch(
+      /router\.push\(\{\s*pathname: '\/transactions',\s*params: \{ only: ONLY_UNCATEGORISED \},?\s*\}\)/,
     );
+    expect(block).not.toContain("router.push('/transactions')");
+  });
+
+  it("Scenario: The feed's way to all транзакції is not narrowed", () => {
+    expect(main).toContain("action={{ label: 'Усі ›', onPress: () => router.push('/transactions') }}");
   });
 
   it('Scenario: With no рахунок the screen says so and still shows what is stored', () => {

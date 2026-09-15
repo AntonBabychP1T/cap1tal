@@ -1,8 +1,8 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field } from '@/components/form';
+import { Action, Choices, Field, Picker, RowAction } from '@/components/form';
 import { Card, ListCard, ListRow, Mark, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -14,20 +14,28 @@ import {
 } from '@/db/repos';
 import { activeAccounts } from '@/domain/account';
 import { namesById } from '@/domain/category';
-import type { Transaction } from '@/domain/transaction';
+import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
+import { evaluateProgress } from '@/hooks/progress-ports';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
+import { failureAlert } from '@/ui/failure-alert';
 import { accountChoiceLabel } from '@/ui/labels';
 import { monthLabel, monthsOf } from '@/ui/months';
+import { recategorise } from '@/ui/retype';
+import { PICKER_SIZE } from '@/ui/shortlist';
 import {
   emptyMessage,
   monthFromRoute,
+  ONLY_UNCATEGORISED,
   searchCriteria,
+  searchLineTitle,
   showMore,
+  uncategorisedFromRoute,
 } from '@/ui/transaction-search';
 import {
   accountsById,
   feedSubtitle,
-  feedTitle,
   overLimitByMonth,
   transactionLine,
 } from '@/ui/transaction-line';
@@ -36,15 +44,19 @@ import { Spacing } from '@/constants/theme';
 
 /**
  * «Транзакції» — every stored транзакція, not only the latest, with a search over what they say
- * and narrowing by рахунок and місяць. It exists because a history that cannot be searched cannot
+ * and narrowing by рахунок, місяць and «Без категорії». It exists because a history that cannot be searched cannot
  * answer «куди пішли гроші» once it is longer than one screen.
  *
  * Pushed over the tabs and reached from the стрічка on Головний (design D14): search is somewhere
  * you go from the стрічка, not somewhere you live. Every decision — what the query means, what a
  * page is, what to say when there is nothing — is in `src/ui/transaction-search.ts` and
- * `src/db/transactions-repo.ts` under `verify`; this file is the wiring, and it creates, changes
- * and deletes nothing of its own.
+ * `src/db/transactions-repo.ts` under `verify`; this file is the wiring. The one thing it changes
+ * is the категорія of a line in «Без категорії», through the стрічка's own one-tap flow — this is
+ * where «Потребує уваги» sends the owner to sort that pile.
  */
+
+/** How far back the categorising picker reads what the owner reached for last — Головний's window. */
+const RECENT_WINDOW = 50;
 
 /** The value of the «Всі» chip. Not a рахунок id and not a місяць, so it can never be either. */
 const ANY = '';
@@ -52,7 +64,7 @@ const ANY = '';
 export default function TransactionsScreen() {
   const router = useRouter();
 
-  const [stored] = useReloadOnFocus(
+  const [stored, reloadStored] = useReloadOnFocus(
     useCallback(
       () => ({
         accounts: accountsRepo.list(),
@@ -63,6 +75,8 @@ export default function TransactionsScreen() {
         limits: limitsRepo.list(),
         // Only for the місяці the narrowing offers — the list itself is read a page at a time.
         months: monthsOf(transactionsRepo.listAll()),
+        // What the categorising picker puts first — the same recents Головний's picker reads.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
       }),
       [],
     ),
@@ -74,6 +88,9 @@ export default function TransactionsScreen() {
   // `monthFromRoute` is what decides whether that text is a місяць at all, under `verify`.
   const asked = useLocalSearchParams<{ month?: string }>().month;
   const [month, setMonth] = useState(monthFromRoute(asked) ?? ANY);
+  // «Без категорії», on when «Потребує уваги» opened the screen with `?only=uncategorised`.
+  const only = useLocalSearchParams<{ only?: string }>().only;
+  const [uncategorisedOnly, setUncategorisedOnly] = useState(uncategorisedFromRoute(only));
 
   const criteria = useMemo(
     () => searchCriteria(query, stored.categories, stored.sources),
@@ -87,10 +104,11 @@ export default function TransactionsScreen() {
         ...(criteria ? { match: criteria } : {}),
         ...(accountId === ANY ? {} : { accountId }),
         ...(month === ANY ? {} : { month }),
+        ...(uncategorisedOnly ? { uncategorised: true } : {}),
         limit,
         offset,
       }),
-    [accountId, criteria, month],
+    [accountId, criteria, month, uncategorisedOnly],
   );
 
   /**
@@ -106,7 +124,7 @@ export default function TransactionsScreen() {
    * `showMore` is what decides a page, and it is proven in `transaction-search.test.ts`.
    */
   const [pages, setPages] = useState(1);
-  const [shown] = useReloadOnFocus(
+  const [shown, reload] = useReloadOnFocus(
     useCallback(() => {
       let current = showMore([], read);
       for (let more = 1; more < pages; more += 1) {
@@ -129,7 +147,8 @@ export default function TransactionsScreen() {
     [shown.transactions, stored.limits],
   );
 
-  const narrowed = criteria !== undefined || accountId !== ANY || month !== ANY;
+  const narrowed =
+    criteria !== undefined || accountId !== ANY || month !== ANY || uncategorisedOnly;
   const nothing = emptyMessage({ shown: shown.transactions.length, narrowed });
 
   /** Changing the question starts its own first page; what was grown belonged to the old one. */
@@ -143,8 +162,66 @@ export default function TransactionsScreen() {
       setQuery('');
       setAccountId(ANY);
       setMonth(ANY);
+      setUncategorisedOnly(false);
     });
   }, [ask]);
+
+  /**
+   * What the categorising picker offers: every unarchived категорія except «Без категорії», which
+   * is what the line is being moved away from — Головний's picker, with Головний's recents.
+   */
+  const categoryRows = useMemo(
+    () =>
+      expenseCategoryChoices(stored.categories).filter((c) => c.id !== UNCATEGORISED_CATEGORY_ID),
+    [stored.categories],
+  );
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE + 1), [stored.latest]);
+
+  /** The «Без категорії» line whose one-tap picker is open, if any. */
+  const [categorising, setCategorising] = useState<string>();
+  /** Whether that picker has its full list open — so «назад» closes the list before the screen. */
+  const [categoryListOpen, setCategoryListOpen] = useState(false);
+  const closeCategoryList = useCallback(() => setCategoryListOpen(false), []);
+  useCloseOnBack(categorising !== undefined && categoryListOpen, closeCategoryList);
+
+  const reportBug = useCallback(
+    (entryId: string) =>
+      router.push({
+        pathname: '/manage/bug-reports/new',
+        params: { prompt: entryId },
+      }),
+    [router],
+  );
+
+  /**
+   * One tap, as from the стрічка: the same транзакція under the same id, now carrying the pick.
+   * The reload re-reads every page asked for through the same `search`, so under the «Без
+   * категорії» narrowing the line is simply not returned any more and the rest keep their order.
+   */
+  const categorise = useCallback(
+    (t: Transaction, picked: string) => {
+      try {
+        transactionsRepo.save(recategorise(t, picked), new Date());
+        // A транзакція was recorded — one of the moments the прогрес is evaluated at.
+        evaluateProgress();
+        setCategorising(undefined);
+        setCategoryListOpen(false);
+        reload();
+        // The pick is now the most recent категорія: the next picker on this screen puts it first.
+        reloadStored();
+      } catch (error) {
+        Alert.alert(
+          ...failureAlert({
+            title: 'Не збережено',
+            where: 'transaction-recategorise',
+            error,
+            report: reportBug,
+          }),
+        );
+      }
+    },
+    [reload, reloadStored, reportBug],
+  );
 
   const accountChoices = [
     { value: ANY, label: 'Всі' },
@@ -152,6 +229,10 @@ export default function TransactionsScreen() {
       value: a.id,
       label: accountChoiceLabel(a),
     })),
+  ];
+  const categoryChoices = [
+    { value: ANY, label: 'Всі' },
+    { value: ONLY_UNCATEGORISED, label: 'Без категорії' },
   ];
   const monthChoices = [
     { value: ANY, label: 'Всі' },
@@ -180,6 +261,14 @@ export default function TransactionsScreen() {
           selected={accountId}
           onSelect={(picked: string) => ask(() => setAccountId(picked))}
         />
+        <Choices
+          label="Категорія"
+          choices={categoryChoices}
+          selected={uncategorisedOnly ? ONLY_UNCATEGORISED : ANY}
+          onSelect={(picked: string) =>
+            ask(() => setUncategorisedOnly(picked === ONLY_UNCATEGORISED))
+          }
+        />
         {/* Only the місяці something is actually recorded in: a month the owner has nothing in
             could only ever produce «нічого не знайдено». */}
         {stored.months.length > 0 ? (
@@ -204,6 +293,7 @@ export default function TransactionsScreen() {
           <ListCard>
             {shown.transactions.map((t, index) => {
               const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit);
+              const title = searchLineTitle(line, uncategorisedOnly);
               return (
                 <ListRow key={line.id} last={index === shown.transactions.length - 1}>
                   <Pressable
@@ -215,13 +305,14 @@ export default function TransactionsScreen() {
                         <ThemedText
                           numberOfLines={1}
                           themeColor={line.overLimit ? 'textDanger' : undefined}>
-                          {feedTitle(line)}
+                          {title}
                         </ThemedText>
                       </View>
                       <ThemedText type="small" themeColor="textSecondary">
                         {feedSubtitle(line)}
                       </ThemedText>
-                      {line.description ? (
+                      {/* Under «Без категорії» the опис already is the title; said once. */}
+                      {line.description && !(uncategorisedOnly && title === line.description) ? (
                         <ThemedText type="small" themeColor="textMuted">
                           {line.description}
                         </ThemedText>
@@ -240,6 +331,32 @@ export default function TransactionsScreen() {
                       {line.amount}
                     </ThemedText>
                   </Pressable>
+
+                  {/* The one tap behind the mark, as on Головний: picking stores the категорія
+                      without the editing screen ever opening. */}
+                  {line.uncategorised ? (
+                    <View style={styles.rowActions}>
+                      <RowAction
+                        title={categorising === line.id ? 'Згорнути' : 'Обрати категорію'}
+                        onPress={() => {
+                          setCategorising(categorising === line.id ? undefined : line.id);
+                          setCategoryListOpen(false);
+                        }}
+                      />
+                    </View>
+                  ) : null}
+                  {categorising === line.id ? (
+                    <Picker
+                      label="Категорія"
+                      rows={categoryRows}
+                      recentIds={recent.categories}
+                      selected={undefined}
+                      onSelect={(picked: string) => categorise(t, picked)}
+                      noun="categories"
+                      expanded={categoryListOpen}
+                      onExpandedChange={setCategoryListOpen}
+                    />
+                  ) : null}
                 </ListRow>
               );
             })}
@@ -271,5 +388,6 @@ const styles = StyleSheet.create({
   },
   label: { flex: 1, gap: Spacing.half },
   rowTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two - Spacing.half },
+  rowActions: { flexDirection: 'row' },
   amount: { fontWeight: 600 },
 });

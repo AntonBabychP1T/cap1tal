@@ -3,9 +3,19 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import type { Category, Source } from '../domain/category';
+import { account } from '../domain/account';
 import { money } from '../domain/money';
-import type { Transaction } from '../domain/transaction';
-import { monthFromRoute, emptyMessage, PAGE_SIZE, searchCriteria, showMore } from './transaction-search';
+import { expenseByDefault, UNCATEGORISED_CATEGORY_ID, type Transaction } from '../domain/transaction';
+import { feedTitle, transactionLine } from './transaction-line';
+import {
+  monthFromRoute,
+  emptyMessage,
+  PAGE_SIZE,
+  searchCriteria,
+  searchLineTitle,
+  showMore,
+  uncategorisedFromRoute,
+} from './transaction-search';
 
 const categories: readonly Category[] = [
   { id: 'groceries', name: 'Продукти', archived: false },
@@ -169,12 +179,12 @@ describe('the shown list follows storage', () => {
     // Not a `useMemo`: with an empty query — the screen's own default — `searchCriteria('')` is
     // `undefined` on both sides of a focus reload, so a memo keeps the page it computed at mount
     // and the edited транзакція reads as it was.
-    expect(screen).toContain('const [shown] = useReloadOnFocus(');
+    expect(screen).toContain('const [shown, reload] = useReloadOnFocus(');
     expect(screen).not.toMatch(/const shown = useMemo\(/);
   });
 
   it('The рахунок, категорія and місяць it reads beside them are re-read too', () => {
-    expect(screen).toMatch(/const \[stored\] = useReloadOnFocus\(/);
+    expect(screen).toMatch(/const \[stored(, reloadStored)?\] = useReloadOnFocus\(/);
   });
 });
 
@@ -206,5 +216,103 @@ describe('the місяць a route may ask for', () => {
     expect(monthFromRoute('2026-8')).toBeUndefined();
     expect(monthFromRoute('серпень')).toBeUndefined();
     expect(monthFromRoute('2026-08-30')).toBeUndefined();
+  });
+});
+
+describe('«Без категорії» a route may ask for', () => {
+  const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+
+  it('Scenario: Opened narrowed, and widened by hand', () => {
+    expect(uncategorisedFromRoute('uncategorised')).toBe(true);
+    // The other half lives in the screen: seeded state, not a prop, and the same setter the chip
+    // and «Показати все» call — so the route's narrowing is a starting point like any other.
+    expect(screen).toMatch(
+      /const \[uncategorisedOnly, setUncategorisedOnly\] = useState\(\s*uncategorisedFromRoute\(/,
+    );
+    expect(screen).toMatch(/ask\(\(\) => setUncategorisedOnly\(picked === ONLY_UNCATEGORISED\)\)/);
+    expect(screen).toContain('setUncategorisedOnly(false);');
+  });
+
+  it('Scenario: Anything else asked for narrows nothing', () => {
+    expect(uncategorisedFromRoute('продукти')).toBe(false);
+    expect(uncategorisedFromRoute('')).toBe(false);
+    expect(uncategorisedFromRoute(undefined)).toBe(false);
+  });
+
+  it('The narrowing reaches storage and counts as narrowed', () => {
+    expect(screen).toMatch(/uncategorisedOnly \? \{ uncategorised: true \} : \{\}/);
+    expect(screen).toMatch(/const narrowed =[^;]*uncategorisedOnly/);
+  });
+
+  it('Scenario: Nothing left uncategorised says so', () => {
+    // An empty list under the narrowing is a narrowing that matched nothing, not an empty history.
+    expect(emptyMessage({ shown: 0, narrowed: true })).toContain('Нічого не знайдено');
+  });
+});
+
+describe('searchLineTitle', () => {
+  const names = new Map([
+    [UNCATEGORISED_CATEGORY_ID, 'Без категорії'],
+    ['groceries', 'Продукти'],
+  ]);
+  const accounts = new Map([
+    ['card', account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' })],
+  ]);
+  const uklon = transactionLine(
+    expenseByDefault({
+      id: 'e-uklon',
+      date: '2026-09-14',
+      accountId: 'card',
+      amount: money(18000, 'UAH'),
+      description: 'Uklon',
+    }),
+    accounts,
+    names,
+  );
+  const byHand = transactionLine(
+    expenseByDefault({ id: 'e-hand', date: '2026-09-14', accountId: 'card', amount: money(500, 'UAH') }),
+    accounts,
+    names,
+  );
+
+  it('Scenario: The опис is what the owner reads first', () => {
+    expect(searchLineTitle(uklon, true)).toBe('Uklon');
+  });
+
+  it('Scenario: A line without an опис keeps its usual title', () => {
+    expect(searchLineTitle(byHand, true)).toBe(feedTitle(byHand));
+    expect(searchLineTitle(byHand, true)).toBe('Без категорії');
+  });
+
+  it('With the narrowing off every line reads as the стрічка reads', () => {
+    expect(searchLineTitle(uklon, false)).toBe(feedTitle(uklon));
+  });
+
+  it('The screen titles its lines through it', () => {
+    const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+    expect(screen).toContain('searchLineTitle(line, uncategorisedOnly)');
+    // The опис line is dropped only when the narrowing made it the title — never with it off, where
+    // a line reads as the стрічка reads even if its опис happens to equal its категорія.
+    expect(screen).toContain('line.description && !(uncategorisedOnly && title === line.description)');
+  });
+});
+
+describe('categorising from «Транзакції»', () => {
+  const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+
+  it('Scenario: One tap categorises from «Транзакції»', () => {
+    // The feed's own flow: the same decisions, stored under the same id, the mark decides the offer.
+    expect(screen).toContain('transactionsRepo.save(recategorise(t, picked), new Date())');
+    expect(screen).toContain('evaluateProgress()');
+    expect(screen).toMatch(/\.filter\(\(c\) => c\.id !== UNCATEGORISED_CATEGORY_ID\)/);
+    expect(screen).toMatch(/line\.uncategorised \? \(\s*<View style=\{styles\.rowActions\}>/);
+  });
+
+  it('Scenario: A categorised line leaves the uncategorised list', () => {
+    // Storing re-reads every page asked for, through the same `search` the narrowing reads — so the
+    // line that no longer carries «Без категорії» is simply not returned, and the rest keep order.
+    const categorise = screen.slice(screen.indexOf('const categorise = useCallback('));
+    expect(categorise.slice(0, categorise.indexOf('],'))).toContain('reload();');
+    expect(screen).toContain('const [shown, reload] = useReloadOnFocus(');
   });
 });
