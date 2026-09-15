@@ -173,3 +173,8 @@ export function categoryCount(n: number): string {
 export function sourceCount(n: number): string {
   return `${n} ${plural(n, 'джерело', 'джерела', 'джерел')}`;
 }
+
+/** The same three forms for «витрата», for the sentence a розбір leaves behind. */
+export function expenseCount(n: number): string {
+  return `${n} ${plural(n, 'витрата', 'витрати', 'витрат')}`;
+}

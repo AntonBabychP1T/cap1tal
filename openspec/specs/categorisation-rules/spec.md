@@ -2,8 +2,10 @@
 
 ## Purpose
 The owner's stored автокатегоризація rules — "merchant / MCC → category" — and the deterministic
-matching every import source (Saldo CSV, monobank, bank notifications) will run its transactions
-through before anything falls back to «Без категорії».
+matching every source of a витрата runs it through before anything falls back to «Без
+категорії»: the three import sources (Saldo CSV, monobank, bank notifications) and the manual
+entry form alike. Storing a rule, newly created or edited, also sweeps the stored «Без категорії»
+витрати it now matches, so a rule works on the pile the owner already has, not only forward.
 ## Requirements
 ### Requirement: A rule maps merchant and/or MCC to one category
 

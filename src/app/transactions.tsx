@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { Action, Choices, Field, Picker, RowAction } from '@/components/form';
+import { RuleOfferSheet } from '@/components/rule-offer-sheet';
 import { Card, ListCard, ListRow, Mark, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -18,9 +19,10 @@ import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transactio
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { useRuleOffer } from '@/hooks/use-rule-offer';
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
-import { accountChoiceLabel } from '@/ui/labels';
+import { accountChoiceLabel, categoryLabel } from '@/ui/labels';
 import { monthLabel, monthsOf } from '@/ui/months';
 import { recategorise } from '@/ui/retype';
 import { PICKER_SIZE } from '@/ui/shortlist';
@@ -198,6 +200,9 @@ export default function TransactionsScreen() {
    * The reload re-reads every page asked for through the same `search`, so under the «Без
    * категорії» narrowing the line is simply not returned any more and the rest keep their order.
    */
+  /** The offer to remember today's tap as a правило — raised only after the категорія is stored. */
+  const ruleOffer = useRuleOffer(reportBug);
+
   const categorise = useCallback(
     (t: Transaction, picked: string) => {
       try {
@@ -209,6 +214,10 @@ export default function TransactionsScreen() {
         reload();
         // The pick is now the most recent категорія: the next picker on this screen puts it first.
         reloadStored();
+        // The категорія is already stored, never lost by a dismissed offer (design D5).
+        if (t.type === 'expense' || t.type === 'refund') {
+          ruleOffer.raise({ description: t.description, categoryId: picked });
+        }
       } catch (error) {
         Alert.alert(
           ...failureAlert({
@@ -220,7 +229,7 @@ export default function TransactionsScreen() {
         );
       }
     },
-    [reload, reloadStored, reportBug],
+    [reload, reloadStored, reportBug, ruleOffer],
   );
 
   const accountChoices = [
@@ -374,6 +383,14 @@ export default function TransactionsScreen() {
           )}
         </>
       )}
+      <RuleOfferSheet
+        offer={ruleOffer.offer}
+        categoryName={
+          ruleOffer.offer ? categoryLabel(ruleOffer.offer.categoryId, categoryNames) : ''
+        }
+        onAccept={ruleOffer.accept}
+        onDecline={ruleOffer.decline}
+      />
     </Screen>
   );
 }

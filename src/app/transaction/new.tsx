@@ -10,6 +10,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   entryDefaults as entryDefaultsRepo,
+  rules as rulesRepo,
   sources as sourcesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
@@ -28,6 +29,7 @@ import {
   buildEntry,
   defaultAccountId,
   normaliseDescription,
+  proposedCategoryId,
   recordedConfirmation,
   type EntryType,
 } from '@/ui/entry-form';
@@ -91,6 +93,9 @@ export default function NewTransactionScreen() {
         latest: transactionsRepo.listLatest(RECENT_WINDOW),
         categories: categoriesRepo.list(),
         sources: sourcesRepo.list(),
+        // Re-read at the moment the опис is typed, so a правило created since the form opened is
+        // honoured (design D8's reasoning for the offer applies here too).
+        rules: rulesRepo.list(),
       };
     }, []),
   );
@@ -156,6 +161,12 @@ export default function NewTransactionScreen() {
   const [date, setDate] = useState(() => todayIso(new Date()));
   const [categoryId, setCategoryId] = useState<string>();
   const [sourceId, setSourceId] = useState<string>();
+  /**
+   * Whether the owner has tapped a категорія themselves for this recording. While false, the
+   * витрата's категорія follows the опис as it is typed (design D4); the first tap sets this and
+   * the form stops following the опис, however the опис changes next.
+   */
+  const [pickedByOwner, setPickedByOwner] = useState(false);
   /** The опис, optional for every type. Empty is the normal case and stores nothing. */
   const [description, setDescription] = useState('');
   /**
@@ -217,6 +228,7 @@ export default function NewTransactionScreen() {
     setEntry(next);
     setCategoryId(undefined);
     setSourceId(undefined);
+    setPickedByOwner(false);
     setConfirmation(undefined);
     // «Тип» sits above the pickers and stays tappable while one has its full list open. Switching
     // unmounts that picker, so the open state has to go with it — otherwise `useCloseOnBack` keeps
@@ -237,10 +249,31 @@ export default function NewTransactionScreen() {
     setDate(todayIso(new Date()));
     setCategoryId(undefined);
     setSourceId(undefined);
+    setPickedByOwner(false);
     setDescription('');
     setOpen(undefined);
     reload();
   }, [reload]);
+
+  /**
+   * The категорія shown as chosen and the one «Записати» stores — one computation for both, so
+   * they cannot disagree (`proposedCategoryId`, design D4).
+   */
+  const displayedCategoryId = useMemo(
+    () =>
+      proposedCategoryId(
+        { type: entry, description: normaliseDescription(description), categoryId, pickedByOwner },
+        stored.rules,
+      ),
+    [categoryId, description, entry, pickedByOwner, stored.rules],
+  );
+
+  /** The owner's own tap on a категорія chip: it stands, and the form stops following the опис. */
+  const chooseCategory = useCallback((picked: string) => {
+    setPickedByOwner(true);
+    setCategoryId(picked);
+    setConfirmation(undefined);
+  }, []);
 
   const store = useCallback(
     (...written: Transaction[]) => {
@@ -275,7 +308,7 @@ export default function NewTransactionScreen() {
           amount,
           arrived,
           date,
-          categoryId,
+          categoryId: displayedCategoryId,
           sourceId,
           description: normaliseDescription(description),
         },
@@ -309,9 +342,9 @@ export default function NewTransactionScreen() {
   }, [
     amount,
     arrived,
-    categoryId,
     date,
     description,
+    displayedCategoryId,
     entry,
     fromId,
     offered,
@@ -401,9 +434,11 @@ export default function NewTransactionScreen() {
               rows={categoryRows}
               recentIds={recent.categories}
               selected={
-                entry === 'expense' ? (categoryId ?? UNCATEGORISED_CATEGORY_ID) : categoryId
+                entry === 'expense'
+                  ? (displayedCategoryId ?? UNCATEGORISED_CATEGORY_ID)
+                  : categoryId
               }
-              onSelect={changing(setCategoryId)}
+              onSelect={entry === 'expense' ? chooseCategory : changing(setCategoryId)}
               noun="categories"
               expanded={open === 'category'}
               onExpandedChange={opening('category')}

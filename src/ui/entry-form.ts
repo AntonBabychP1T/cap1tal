@@ -1,5 +1,6 @@
 import { computeBalance, type Account } from '../domain/account';
 import { money, type Money } from '../domain/money';
+import { matchRule, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
   proposeFee,
@@ -102,6 +103,34 @@ export function defaultAccountId(
   offered: readonly Account[],
 ): string | undefined {
   return offered.some((a) => a.id === remembered) ? remembered : undefined;
+}
+
+/**
+ * The категорія the entry form shows as chosen, while the owner is still recording a витрата.
+ *
+ * `type` decides who plays at all: a дохід carries a джерело instead of a категорія, a переказ
+ * carries neither, and a повернення returns to the категорія of what was bought — never to
+ * whatever its text resembles — so all three simply keep whatever `draft.categoryId` already is.
+ * Only a витрата follows the опис, and only until `pickedByOwner` says the owner has taken over;
+ * from that moment the form stops looking at the опис for the rest of this recording, however it
+ * changes next (design D4).
+ *
+ * No MCC is passed to `matchRule`: nothing hand-typed carries one, exactly as a чернетка from a
+ * bank сповіщення does not.
+ */
+export function proposedCategoryId(
+  draft: {
+    readonly type: EntryType;
+    readonly description?: string;
+    readonly categoryId?: string;
+    readonly pickedByOwner: boolean;
+  },
+  rules: readonly Rule[],
+): string | undefined {
+  if (draft.type !== 'expense' || draft.pickedByOwner) {
+    return draft.categoryId;
+  }
+  return matchRule(rules, { description: draft.description ?? '' }) ?? draft.categoryId;
 }
 
 /**

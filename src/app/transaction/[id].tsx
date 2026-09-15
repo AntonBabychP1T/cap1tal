@@ -4,6 +4,7 @@ import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { askAboutTransfer } from '@/components/transfer-dialog';
 import { Action, Choices, Field, Picker } from '@/components/form';
+import { RuleOfferSheet } from '@/components/rule-offer-sheet';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -14,16 +15,18 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 import type { Account } from '@/domain/account';
+import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { useRuleOffer } from '@/hooks/use-rule-offer';
 import { failureAlert } from '@/ui/failure-alert';
 import { accountChoicesFor, legsOf } from '@/ui/account-choices';
 import { formatMinorUnits } from '@/ui/amount-input';
 import { categoryChoicesFor, recentlyUsed, sourceChoicesFor } from '@/ui/category-choices';
 import { buildEntry, normaliseDescription, type EntryType } from '@/ui/entry-form';
-import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
+import { accountChoiceLabel, categoryLabel, transactionTypeLabel } from '@/ui/labels';
 import { receiptOffer } from '@/ui/receipt-screen';
 import { labelsAfterRetype, shapesFor } from '@/ui/retype';
 import { PICKER_SIZE } from '@/ui/shortlist';
@@ -108,6 +111,7 @@ export default function EditTransactionScreen() {
     () => categoryChoicesFor(stored.categories, form?.categoryId),
     [form?.categoryId, stored.categories],
   );
+  const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
   const sourceRows = useMemo(
     () => sourceChoicesFor(stored.sources, form?.sourceId),
     [form?.sourceId, stored.sources],
@@ -162,19 +166,27 @@ export default function EditTransactionScreen() {
     [form, original],
   );
 
+  /** Writes what a save decided; navigation is a separate decision (see `apply` below). */
+  const persist = useCallback((...written: Transaction[]) => {
+    const now = new Date();
+    for (const t of written) {
+      transactionsRepo.save(t, now);
+    }
+    // A транзакція was edited. Nothing already earned is ever taken back by it (design D2);
+    // only what the change newly makes true is earned.
+    evaluateProgress();
+  }, []);
+
   const store = useCallback(
     (...written: Transaction[]) => {
-      const now = new Date();
-      for (const t of written) {
-        transactionsRepo.save(t, now);
-      }
-      // A транзакція was edited. Nothing already earned is ever taken back by it (design D2);
-      // only what the change newly makes true is earned.
-      evaluateProgress();
+      persist(...written);
       router.back();
     },
-    [router],
+    [persist, router],
   );
+
+  /** The offer to remember today's edit as a правило — raised only after the категорія is stored. */
+  const ruleOffer = useRuleOffer(reportBug);
 
   const apply = useCallback(() => {
     if (!form || !original) return;
@@ -199,7 +211,8 @@ export default function EditTransactionScreen() {
       );
       if (built.type === 'transfer') {
         // The рахунок the money left decides what may be proposed, and its stored транзакції are
-        // what says how much that person still owed before this переказ.
+        // what says how much that person still owed before this переказ. Editing a переказ offers
+        // no правило, whatever the опис says.
         askAboutTransfer(
           built,
           {
@@ -210,13 +223,32 @@ export default function EditTransactionScreen() {
         );
         return;
       }
-      store(built);
+      persist(built);
+      // The категорія is already stored by the time the offer could show, exactly as design D5
+      // requires — leaving this screen (accepting, declining, or the back gesture) can never lose
+      // it. Offered only when saving actually changed the категорія of a витрата or повернення
+      // that carries an опис — never for a дохід's джерело, and never when nothing moved.
+      const before =
+        (original.type === 'expense' || original.type === 'refund') ? original.categoryId : undefined;
+      const offered =
+        (built.type === 'expense' || built.type === 'refund') &&
+        built.description &&
+        built.categoryId !== before
+          ? ruleOffer.raise({ description: built.description, categoryId: built.categoryId })
+          : undefined;
+      // `ruleOffer.raise` legitimately answers "no offer" too — «Без категорії», a правило that
+      // already covers this опис — and only a real offer keeps the screen open for the sheet;
+      // anything else leaves exactly where saving always left before this offer existed.
+      if (offered) {
+        return;
+      }
+      router.back();
     } catch (error) {
       Alert.alert(
         ...failureAlert({ title: 'Не збережено', where: 'transaction-save', error, report: reportBug }),
       );
     }
-  }, [form, original, reportBug, store, stored.accounts]);
+  }, [form, original, persist, reportBug, router, ruleOffer, store, stored.accounts]);
 
   const remove = useCallback(() => {
     if (!original) return;
@@ -385,6 +417,23 @@ export default function EditTransactionScreen() {
           deleting is never the loudest thing here. */}
       <Action title="Зберегти" onPress={apply} />
       <Action variant="destructive" title="Видалити транзакцію" onPress={remove} />
+      <RuleOfferSheet
+        offer={ruleOffer.offer}
+        categoryName={
+          ruleOffer.offer ? categoryLabel(ruleOffer.offer.categoryId, categoryNames) : ''
+        }
+        // The save this offer follows already wrote the транзакція; leaving the editing screen —
+        // by accepting, declining or the back gesture that `Sheet` treats the same as «Не треба» —
+        // is what «Зберегти» was always going to do next.
+        onAccept={async (merchant) => {
+          await ruleOffer.accept(merchant);
+          router.back();
+        }}
+        onDecline={() => {
+          ruleOffer.decline();
+          router.back();
+        }}
+      />
     </Screen>
   );
 }

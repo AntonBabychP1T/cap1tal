@@ -4,8 +4,11 @@ import {
   type Category,
   type Source,
 } from '../domain/category';
-import type { Rule } from '../domain/rules';
-import { byName, categoryLabel } from './labels';
+import { matchRule, proposeMerchantPattern, type Rule } from '../domain/rules';
+import { UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
+import type { SweepCounts } from '../db/rules-repo';
+import { journal } from './journal';
+import { byName, categoryLabel, expenseCount } from './labels';
 
 /**
  * What the «Категорії», «Джерела» and «Правила» sections of Налаштування show, and what the rule
@@ -132,4 +135,59 @@ export function ruleLine(
     // and an id the map misses shows itself rather than leaving the line blank.
     category: categoryLabel(rule.categoryId, categoryNames),
   };
+}
+
+/** What the offer to remember a правило proposes: the pattern, editable, and the target it names. */
+export interface RuleOffer {
+  readonly merchant: string;
+  readonly categoryId: string;
+}
+
+/**
+ * Whether setting a категорія on a stored витрата or повернення should offer to remember it as a
+ * правило, and what that offer would say (design D5).
+ *
+ * Nothing is offered for a транзакція with no опис — there is no pattern to propose, and a
+ * правило with neither a merchant nor an MCC is rejected — nor for «Без категорії», which is not a
+ * категорія a правило may target. Nor is anything offered when the owner's правила already give
+ * that опис this same категорія: the правило that would be written already exists, under whatever
+ * pattern it carries.
+ */
+export function ruleOffer(input: {
+  readonly description?: string;
+  readonly categoryId: string;
+  readonly rules: readonly Rule[];
+}): RuleOffer | undefined {
+  if (input.categoryId === UNCATEGORISED_CATEGORY_ID) {
+    return undefined;
+  }
+  const merchant = proposeMerchantPattern(input.description);
+  if (merchant === undefined) {
+    return undefined;
+  }
+  if (matchRule(input.rules, { description: input.description ?? '' }) === input.categoryId) {
+    return undefined;
+  }
+  return { merchant, categoryId: input.categoryId };
+}
+
+/**
+ * The one seam every screen stores a правило through: «Правила», the offer from the feed and the
+ * offer from editing alike (design D6). Wraps the save in `journal.step`, so the журнал carries
+ * one operation per pass with its counts and nothing else, and returns the sentence to show when
+ * the sweep moved anything — or nothing when it moved nothing ("A pass that moved nothing says
+ * nothing").
+ *
+ * `save` is the caller's `rulesRepo.save`, taken as a port rather than imported here: this module
+ * stays plain TypeScript with no dependency on `src/db`, which is what lets `verify` run it with
+ * no database at all.
+ */
+export async function storeRule(
+  rule: Rule,
+  save: (rule: Rule) => SweepCounts,
+): Promise<string | undefined> {
+  const counts = await journal.step('rules/sweep', async () => save(rule), {
+    ending: (c) => ({ counts: { examined: c.examined, moved: c.moved } }),
+  });
+  return counts.moved > 0 ? `${expenseCount(counts.moved)} перекатегоризовано.` : undefined;
 }

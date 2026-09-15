@@ -15,12 +15,14 @@ import {
   type Transaction,
   type Transfer,
 } from '../domain/transaction';
+import type { Rule } from '../domain/rules';
 import {
   entryFromRoute,
   buildEntry,
   defaultAccountId,
   normaliseDescription,
   proposeForTransfer,
+  proposedCategoryId,
   recordedConfirmation,
   type EntryDraft,
 } from './entry-form';
@@ -712,6 +714,54 @@ describe('defaultAccountId', () => {
 });
 
 /**
+ * Whether «Нова транзакція» actually follows the опис — `proposedCategoryId` itself is proven
+ * above, but the screen's own wiring (what it feeds the function, what it shows, what it stores)
+ * is JSX `verify` never runs, so the assertions here are structural (rules-everywhere design D4).
+ */
+describe('the entry screen follows the опис', () => {
+  const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+  const entryScreen = source('../app/transaction/new.tsx');
+
+  it('Scenario: Typing a known merchant chooses its категорія / Clearing the опис gives it back', () => {
+    // Recomputed from the current description on every render — not a snapshot taken once — so
+    // typing and clearing both move it, and `stored.rules` is re-read with the rest of the form.
+    expect(entryScreen).toMatch(
+      /proposedCategoryId\(\s*\{ type: entry, description: normaliseDescription\(description\), categoryId, pickedByOwner \},\s*stored\.rules,\s*\)/,
+    );
+    // What the picker shows for a витрата is exactly that computation — falling back to «Без
+    // категорії», never to the raw `categoryId` the owner has not touched.
+    expect(entryScreen).toContain(
+      "entry === 'expense'\n                  ? (displayedCategoryId ?? UNCATEGORISED_CATEGORY_ID)",
+    );
+  });
+
+  it('Scenario: A picked категорія stops following the опис / one tap from being changed', () => {
+    const chooseCategory = entryScreen.slice(entryScreen.indexOf('const chooseCategory = useCallback'));
+    const body = chooseCategory.slice(0, chooseCategory.indexOf('const store = useCallback'));
+    expect(body).toContain('setPickedByOwner(true)');
+    expect(body).toContain('setCategoryId(picked)');
+    // The category picker for a витрата is this same handler — one tap replaces the proposal.
+    expect(entryScreen).toContain("onSelect={entry === 'expense' ? chooseCategory : changing(setCategoryId)}");
+  });
+
+  it('Recording stores exactly the категорія shown, and pickedByOwner resets per recording', () => {
+    expect(entryScreen).toContain('categoryId: displayedCategoryId,');
+    // Switching type and a fresh `clear()` after a store both drop the flag, so the next витрата
+    // follows its own опис from nothing, exactly as a fresh form would.
+    const chooseEntry = entryScreen.slice(
+      entryScreen.indexOf('const chooseEntry = useCallback'),
+      entryScreen.indexOf('const clear = useCallback'),
+    );
+    expect(chooseEntry).toContain('setPickedByOwner(false)');
+    const clear = entryScreen.slice(
+      entryScreen.indexOf('const clear = useCallback'),
+      entryScreen.indexOf('const displayedCategoryId'),
+    );
+    expect(clear).toContain('setPickedByOwner(false)');
+  });
+});
+
+/**
  * The memory itself is one line of wiring on Головний, which `verify` never runs. What can be
  * proven here is the part that would be easy to break: that exactly one place in the app writes
  * it, so an import, a sync and a confirmed чернетка leave it alone.
@@ -936,5 +986,84 @@ describe('the type a route may ask the form to open on', () => {
     expect(entryFromRoute('correction')).toBe('expense');
     expect(entryFromRoute('переказ')).toBe('expense');
     expect(entryFromRoute('TRANSFER')).toBe('expense');
+  });
+});
+
+describe('proposedCategoryId', () => {
+  const atbToGroceries: Rule = {
+    id: 'r-atb',
+    merchant: 'атб',
+    categoryId: 'groceries',
+    createdAt: new Date('2026-03-01T10:00:00.000Z'),
+  };
+
+  it('Scenario: A typed опис proposes its категорія', () => {
+    expect(
+      proposedCategoryId(
+        { type: 'expense', description: 'АТБ 421', pickedByOwner: false },
+        [atbToGroceries],
+      ),
+    ).toBe('groceries');
+  });
+
+  it('Scenario: The owner\'s own pick is not overridden', () => {
+    expect(
+      proposedCategoryId(
+        {
+          type: 'expense',
+          description: 'АТБ 421',
+          categoryId: 'eating-out',
+          pickedByOwner: true,
+        },
+        [atbToGroceries],
+      ),
+    ).toBe('eating-out');
+  });
+
+  it('Scenario: An опис no правило matches proposes nothing', () => {
+    expect(
+      proposedCategoryId(
+        { type: 'expense', description: 'новий заклад', pickedByOwner: false },
+        [atbToGroceries],
+      ),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A правило takes no part in a дохід', () => {
+    expect(
+      proposedCategoryId(
+        { type: 'income', description: 'АТБ 421', pickedByOwner: false },
+        [atbToGroceries],
+      ),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A правило takes no part in a повернення', () => {
+    expect(
+      proposedCategoryId(
+        {
+          type: 'refund',
+          description: 'АТБ 421',
+          categoryId: 'clothing',
+          pickedByOwner: false,
+        },
+        [atbToGroceries],
+      ),
+    ).toBe('clothing');
+  });
+
+  it('a переказ takes nothing either', () => {
+    expect(
+      proposedCategoryId(
+        { type: 'transfer', description: 'АТБ 421', pickedByOwner: false },
+        [atbToGroceries],
+      ),
+    ).toBeUndefined();
+  });
+
+  it('no description proposes nothing, and does not throw', () => {
+    expect(
+      proposedCategoryId({ type: 'expense', pickedByOwner: false }, [atbToGroceries]),
+    ).toBeUndefined();
   });
 });

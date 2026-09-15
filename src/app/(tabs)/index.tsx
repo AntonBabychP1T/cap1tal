@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, RefreshControl, StyleSheet, View, type ScrollView } from 'react-native';
 
 import { Action, Field, Picker, RowAction } from '@/components/form';
+import { RuleOfferSheet } from '@/components/rule-offer-sheet';
 import {
   Card,
   CardGlow,
@@ -35,6 +36,7 @@ import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { useRuleOffer } from '@/hooks/use-rule-offer';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { raise as raiseAlert } from '@/ui/alerting';
@@ -53,6 +55,7 @@ import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { failureAlert } from '@/ui/failure-alert';
 import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
 import { newId } from '@/ui/id';
+import { categoryLabel } from '@/ui/labels';
 import { reportFailure } from '@/ui/journal';
 import { currentMonth } from '@/ui/months';
 import { PICKER_SIZE } from '@/ui/shortlist';
@@ -415,6 +418,9 @@ export default function MainScreen() {
   // `categoryListOpen` stays true.
   useCloseOnBack(categorising !== undefined && categoryListOpen, closeCategoryList);
 
+  /** The offer to remember today's tap as a правило — raised only after the категорія is stored. */
+  const ruleOffer = useRuleOffer(reportBug);
+
   /** One tap from the стрічка: the same transaction under the same id, now carrying the pick. */
   const categorise = useCallback(
     (t: Transaction, picked: string) => {
@@ -425,13 +431,17 @@ export default function MainScreen() {
         evaluateProgress();
         setCategorising(undefined);
         reload();
+        // The категорія is already stored, never lost by a dismissed offer (design D5).
+        if (t.type === 'expense' || t.type === 'refund') {
+          ruleOffer.raise({ description: t.description, categoryId: picked });
+        }
       } catch (error) {
         Alert.alert(
           ...failureAlert({ title: 'Не збережено', where: 'transaction-recategorise', error, report: reportBug }),
         );
       }
     },
-    [reload, reportBug],
+    [reload, reportBug, ruleOffer],
   );
 
   /** What the owner has typed as the сума of a raw чернетка, per чернетка. */
@@ -840,6 +850,14 @@ export default function MainScreen() {
           })}
         </ListCard>
       )}
+      <RuleOfferSheet
+        offer={ruleOffer.offer}
+        categoryName={
+          ruleOffer.offer ? categoryLabel(ruleOffer.offer.categoryId, categoryNames) : ''
+        }
+        onAccept={ruleOffer.accept}
+        onDecline={ruleOffer.decline}
+      />
     </Screen>
   );
 }

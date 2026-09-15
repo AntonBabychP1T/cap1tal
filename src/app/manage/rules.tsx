@@ -12,7 +12,7 @@ import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { expenseCategoryChoices } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
-import { ruleFromDraft, ruleLine, type RuleDraft } from '@/ui/list-management';
+import { ruleFromDraft, ruleLine, storeRule, type RuleDraft } from '@/ui/list-management';
 
 import { Spacing } from '@/constants/theme';
 
@@ -50,20 +50,24 @@ export default function RulesScreen() {
 
   /** `undefined` — the form is closed; a draft with no id — a new rule; with one — an edit. */
   const [draft, setDraft] = useState<(RuleDraft & { id?: string }) | undefined>();
+  /** What the last save's розбір moved, in the owner's words — nothing when it moved nothing. */
+  const [sweptMessage, setSweptMessage] = useState<string>();
 
-  const save = useCallback(() => {
+  const save = useCallback(async () => {
     if (!draft) return;
     try {
       const existing = draft.id ? rulesRepo.get(draft.id) : undefined;
-      rulesRepo.save(
+      const message = await storeRule(
         ruleFromDraft(draft, {
           id: draft.id ?? newId(),
           // An edited rule keeps the moment it was created: `createdAt` is what breaks a tie
           // between two equally specific rules, so editing one must not jump it to the front.
           createdAt: existing?.createdAt ?? new Date(),
         }),
+        rulesRepo.save,
       );
       setDraft(undefined);
+      setSweptMessage(message);
       reload();
     } catch (error) {
       Alert.alert(
@@ -93,7 +97,7 @@ export default function RulesScreen() {
     <Screen>
       <ScreenHeader
         title="Правила"
-        subtitle="«Продавець / MCC → категорія». Застосуються, коли зʼявиться імпорт."
+        subtitle="«Продавець / MCC → категорія» — застосовуються всюди, де витрата отримує категорію."
         back={() => router.back()}
       />
 
@@ -123,8 +127,21 @@ export default function RulesScreen() {
           <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
         </Card>
       ) : (
-        <Action title="Нове правило" onPress={() => setDraft({ ...EMPTY })} />
+        <Action
+          title="Нове правило"
+          onPress={() => {
+            setSweptMessage(undefined);
+            setDraft({ ...EMPTY });
+          }}
+        />
       )}
+      {/* Where the owner is already looking, without scrolling: what the розбір just moved. A
+          pass that moved nothing says nothing (rules-everywhere design D7). */}
+      {sweptMessage ? (
+        <ThemedText type="small" themeColor="textPositive">
+          {sweptMessage}
+        </ThemedText>
+      ) : null}
 
       {stored.rules.length === 0 ? (
         <ThemedText type="small" themeColor="textSecondary">
@@ -147,14 +164,15 @@ export default function RulesScreen() {
                 <View style={styles.actions}>
                   <RowAction
                     title="Змінити"
-                    onPress={() =>
+                    onPress={() => {
+                      setSweptMessage(undefined);
                       setDraft({
                         id: rule.id,
                         merchant: rule.merchant ?? '',
                         mcc: rule.mcc === undefined ? '' : String(rule.mcc),
                         categoryId: rule.categoryId,
-                      })
-                    }
+                      });
+                    }}
                   />
                   <RowAction tone="danger" title="Видалити" onPress={() => remove(rule)} />
                 </View>

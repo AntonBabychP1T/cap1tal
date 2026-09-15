@@ -72,10 +72,13 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   purchase from a hryvnia card, the amount in the merchant's currency; kept for information. The
   expense itself is the UAH the bank charged.
 - **Description** (опис) — the text the bank sent with an imported транзакція — «СІЛЬПО»,
-  «Uklon» — kept on it for information. Nothing computes with it: no total, no баланс and no
-  категорія is decided by an опис, and it survives every edit and retype, so a витрата retyped
-  into a переказ still says where it came from. Manual entry never asks for one. It is the bank's
-  words about the owner, which is why it leaves the phone only under «Продавці» (see AI).
+  «Uklon» — or a note the owner types while recording or editing a транзакція by hand. It changes
+  no total and no баланс, and it survives every edit and retype, so a витрата retyped into a
+  переказ still says where it came from. The one категорія it does decide is a витрата's own: the
+  owner's правила read it, at recording exactly as at import, so typing «АТБ» proposes Groceries
+  before «Записати» is pressed — a proposal, never an override, since a категорія the owner picked
+  themselves always stands. Manual entry does ask for one. It is the bank's words about the owner,
+  or the owner's own, which is why it leaves the phone only under «Продавці» (see AI).
 - **Uncategorised** (без категорії) — an imported transaction no rule recognised. Still an
   expense, still counted as spent, highlighted for one-tap categorisation.
 - **Unsourced** (без джерела) — the income half of "uncategorised": the джерело an imported
@@ -96,7 +99,12 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Source** (джерело доходу) — the label on an income: salary, freelance, parents, gift,
   investments, interest, …
 - **Starter set** **[PROPOSED]** — the owner's Saldo categories and sources, flattened.
-- **Rule** (правило) — "merchant / MCC X → category Y", applied to imports; editable by the owner.
+- **Rule** (правило) — "merchant / MCC X → category Y", editable by the owner. Applied wherever a
+  категорія is decided — the three import sources and manual entry alike — never only to imports.
+- **Sweep** (розбір) — what storing a правило, newly created or edited, does about history: every
+  stored витрата sitting in «Без категорії» that the правила now match moves onto the категорія
+  they give it, at once and without asking. It only ever fills the gap — a категорія the owner
+  chose, or an earlier правило gave, is never revisited.
 - **Limit** (ліміт) — an optional monthly ceiling on a category: at most one per category, a сума
   with a currency code. A category is **over its ліміт** for a month when that month's spent of it
   **in the ліміт's own currency** — the net-of-повернення amount the monthly-picture breakdown

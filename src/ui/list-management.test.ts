@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import type { Category, Source } from '../domain/category';
@@ -8,11 +10,14 @@ import {
   INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
 } from '../domain/transaction';
+import { bindTestJournal } from './journal';
 import {
   manageCategories,
   manageSources,
   ruleFromDraft,
   ruleLine,
+  ruleOffer,
+  storeRule,
   type ManagedRow,
 } from './list-management';
 
@@ -212,5 +217,229 @@ describe('ruleLine', () => {
       criteria: 'сільпо',
       category: 'repair',
     });
+  });
+});
+
+describe('ruleOffer', () => {
+  const noRules: readonly Rule[] = [];
+  const silpoToGroceries: Rule = {
+    id: 'r-silpo',
+    merchant: 'сільпо',
+    categoryId: 'groceries',
+    createdAt: new Date('2026-03-01T10:00:00.000Z'),
+  };
+
+  it('Scenario: Categorising an imported витрата offers the правило', () => {
+    expect(
+      ruleOffer({
+        description: 'СІЛЬПО 123 Київ, вул. Хрещатик',
+        categoryId: 'groceries',
+        rules: noRules,
+      }),
+    ).toEqual({ merchant: 'сільпо', categoryId: 'groceries' });
+  });
+
+  it('Scenario: An опис that starts with no letter proposes the whole of itself', () => {
+    expect(
+      ruleOffer({ description: '7-Eleven Kyiv', categoryId: 'groceries', rules: noRules }),
+    ).toEqual({ merchant: '7-eleven kyiv', categoryId: 'groceries' });
+  });
+
+  it('Scenario: A повернення is offered the правило too', () => {
+    // ruleOffer takes no transaction type at all — the caller decides which types call it, per
+    // "Setting a джерело on a дохід offers nothing" and "Editing a переказ offers nothing" below.
+    expect(
+      ruleOffer({ description: 'СІЛЬПО 123 Київ', categoryId: 'groceries', rules: noRules }),
+    ).toEqual({ merchant: 'сільпо', categoryId: 'groceries' });
+  });
+
+  it('Scenario: A витрата with no опис is offered nothing', () => {
+    expect(ruleOffer({ categoryId: 'groceries', rules: noRules })).toBeUndefined();
+  });
+
+  it('Scenario: Moving a витрата back into «Без категорії» offers nothing', () => {
+    expect(
+      ruleOffer({
+        description: 'СІЛЬПО 123 Київ',
+        categoryId: UNCATEGORISED_CATEGORY_ID,
+        rules: noRules,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: Nothing is offered for a правило that already covers it', () => {
+    expect(
+      ruleOffer({
+        description: 'СІЛЬПО 123',
+        categoryId: 'groceries',
+        rules: [silpoToGroceries],
+      }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A different категорія than the правила give is still offered', () => {
+    expect(
+      ruleOffer({
+        description: 'СІЛЬПО 123',
+        categoryId: 'eating-out',
+        rules: [silpoToGroceries],
+      }),
+    ).toEqual({ merchant: 'сільпо', categoryId: 'eating-out' });
+  });
+
+});
+
+describe('storeRule', () => {
+  const silpo: Rule = {
+    id: 'r-silpo',
+    merchant: 'сільпо',
+    categoryId: 'groceries',
+    createdAt: new Date('2026-03-01T10:00:00.000Z'),
+  };
+
+  it('Scenario: The owner is told how many moved', async () => {
+    bindTestJournal();
+
+    const message = await storeRule(silpo, () => ({ examined: 40, moved: 11 }));
+
+    expect(message).toBe('11 витрат перекатегоризовано.');
+  });
+
+  it('Scenario: A pass that moved nothing says nothing', async () => {
+    bindTestJournal();
+
+    const message = await storeRule(silpo, () => ({ examined: 40, moved: 0 }));
+
+    expect(message).toBeUndefined();
+  });
+
+  it('Scenario: The pass is in the журнал as counts alone', async () => {
+    const tail = bindTestJournal();
+
+    await storeRule(silpo, () => ({ examined: 40, moved: 2 }));
+
+    const steps = tail().filter((entry) => entry.name === 'rules/sweep');
+    // Both ends of the step, and both carry only what a розбір may carry: two numbers, never an
+    // опис, a сума or a назва.
+    expect(steps).toHaveLength(2);
+    expect(steps[1]?.counts).toEqual({ examined: 40, moved: 2 });
+    for (const entry of steps) {
+      expect(Object.keys(entry)).not.toContain('merchant');
+      expect(JSON.stringify(entry)).not.toMatch(/сільпо/i);
+    }
+  });
+
+  it('A refusal from save propagates and stores nothing about the pass', async () => {
+    const tail = bindTestJournal();
+    const refusal = new Error('«Без категорії» не може бути метою правила');
+
+    await expect(
+      storeRule(silpo, () => {
+        throw refusal;
+      }),
+    ).rejects.toBe(refusal);
+
+    const steps = tail().filter((entry) => entry.name === 'rules/sweep');
+    expect(steps).toHaveLength(2);
+    expect(steps[1]?.detail).toBe('не вдалось');
+  });
+});
+
+/**
+ * Who raises the offer, who answers it, and where "no offer" and "editing a переказ" leave the
+ * screen — wiring `verify` never runs, so the assertions are structural, reading the source the
+ * same way `entry-form.test.ts`'s "who may remember a рахунок" does.
+ */
+describe('who raises and answers the offer to remember a правило', () => {
+  const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+  const hook = source('../hooks/use-rule-offer.ts');
+  const sheet = source('../components/rule-offer-sheet.tsx');
+  const home = source('../app/(tabs)/index.tsx');
+  const transactionsScreen = source('../app/transactions.tsx');
+  const editScreen = source('../app/transaction/[id].tsx');
+
+  it('Scenario: One tap in the feed, then the offer', () => {
+    // On both screens that carry the «Без категорії» mark, the offer is raised only after the
+    // save that just set the категорія — never before it (design D5).
+    for (const screen of [home, transactionsScreen]) {
+      const categorise = screen.slice(screen.indexOf('const categorise = useCallback'));
+      const saved = categorise.indexOf('transactionsRepo.save(recategorise(');
+      const raised = categorise.indexOf('ruleOffer.raise(');
+      expect(saved).toBeGreaterThanOrEqual(0);
+      expect(raised).toBeGreaterThan(saved);
+    }
+  });
+
+  it('Scenario: Setting a джерело on a дохід offers nothing', () => {
+    // ruleOffer itself takes no transaction type — the guard is every caller's, and none raises
+    // the offer for anything but a витрата or a повернення.
+    for (const screen of [home, transactionsScreen]) {
+      const categorise = screen.slice(screen.indexOf('const categorise = useCallback'));
+      const guard = categorise.slice(0, categorise.indexOf('ruleOffer.raise('));
+      expect(guard).toContain("t.type === 'expense' || t.type === 'refund'");
+    }
+  });
+
+  it('Scenario: Editing a переказ offers nothing', () => {
+    // The transfer branch returns before the offer code is even reached.
+    const apply = editScreen.slice(editScreen.indexOf('const apply = useCallback'));
+    const transferBranch = apply.slice(
+      apply.indexOf("built.type === 'transfer'"),
+      apply.indexOf('ruleOffer.raise('),
+    );
+    expect(transferBranch).toContain('return;');
+    expect(transferBranch).not.toContain('ruleOffer');
+  });
+
+  it('Scenario: The editing screen offers it too', () => {
+    const apply = editScreen.slice(editScreen.indexOf('const apply = useCallback'));
+    const persistedAt = apply.indexOf('persist(built);');
+    const raisedAt = apply.indexOf('ruleOffer.raise(');
+    // The категорія is already stored (design D5) before the offer is even considered.
+    expect(persistedAt).toBeGreaterThanOrEqual(0);
+    expect(raisedAt).toBeGreaterThan(persistedAt);
+    // Offered only when the категорія this screen shows actually changed.
+    expect(apply).toContain('built.categoryId !== before');
+  });
+
+  it('No offer leaves the editing screen exactly where saving always left it', () => {
+    // The regression this guards: `ruleOffer.raise` legitimately answers "no offer" — no опис,
+    // «Без категорії», a правило that already covers it — and the screen must still navigate back
+    // rather than sit on «Зберегти» with nothing on screen left to answer.
+    const apply = editScreen.slice(editScreen.indexOf('const apply = useCallback'));
+    const afterRaise = apply.slice(apply.indexOf('ruleOffer.raise('));
+    expect(afterRaise).toMatch(/if \(offered\) \{\s*return;\s*\}\s*router\.back\(\);/);
+  });
+
+  it('Scenario: The proposed pattern can be changed before it is stored', () => {
+    // The sheet's own edited state is what `onAccept` is called with — never the offer's original
+    // pattern — and the hook builds the правило from exactly that argument.
+    expect(sheet).toContain('onPress={() => onAccept(pattern)}');
+    const accept = hook.slice(hook.indexOf('const accept = useCallback'));
+    expect(accept).toContain('async (merchant: string) => {');
+    expect(accept).toMatch(
+      /ruleFromDraft\(\s*\{ merchant, mcc: '', categoryId: offer\.categoryId \}/,
+    );
+  });
+
+  it('Scenario: Accepting the offer stores the правило', () => {
+    const accept = hook.slice(hook.indexOf('const accept = useCallback'));
+    expect(accept).toContain('await storeRule(rule, rulesRepo.save)');
+  });
+
+  it('Scenario: An emptied pattern stores nothing', () => {
+    // ruleFromDraft's own refusal is proven above; here only that the hook catches it and shows
+    // the failure rather than leaving it unhandled.
+    const accept = hook.slice(hook.indexOf('const accept = useCallback'));
+    expect(accept).toContain('try {');
+    expect(accept).toContain('catch (error)');
+    expect(accept).toContain('failureAlert(');
+  });
+
+  it('Scenario: Declining keeps the категорія — no правило is stored', () => {
+    const decline = hook.slice(hook.indexOf('const decline ='), hook.indexOf('const accept ='));
+    expect(decline).toContain('setOffer(undefined)');
+    expect(decline).not.toContain('storeRule');
+    expect(decline).not.toContain('rulesRepo.save');
   });
 });
