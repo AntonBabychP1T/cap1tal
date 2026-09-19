@@ -10,19 +10,22 @@ becoming a sixth tab, a home widget or a game.
 
 ### Requirement: «Прогрес» is a pushed screen, never a sixth tab
 
-The app SHALL offer a «Прогрес» screen pushed over the tabs, like «Транзакції» and the рухи of a
-рахунок, reached from Головний and from «Звіти». It SHALL NOT become a tab, and the five tabs SHALL
-stay «Головний», «Місяць», «Рахунки», «Звіти» and «Налаштування».
-
-#### Scenario: The tabs are unchanged
-
-- **WHEN** the owner opens the app after this change
-- **THEN** the same five tabs are there and «Прогрес» is not among them
+«Прогрес» SHALL remain reachable through «Звіти» over the existing five tabs with «Назад», independently of unseen achievements or accepted challenges and without requiring a default Головний widget.
 
 #### Scenario: Звіти leads to Прогрес
+- **GIVEN** no unseen досягнення and no accepted виклик
+- **WHEN** the owner opens «Звіти» and chooses «Прогрес»
+- **THEN** the existing Progress content opens with back navigation and the same five tabs remain
 
-- **WHEN** the owner opens «Звіти»
-- **THEN** «Прогрес» can be opened from it, over the tabs, with a «Назад»
+#### Scenario: The tabs are unchanged
+- **GIVEN** the new default dashboard
+- **WHEN** the app opens
+- **THEN** its five tabs remain Головний, Місяць, Рахунки, Звіти and Налаштування, with Прогрес offered over them rather than as a sixth tab
+
+#### Scenario: Existing data survives removing the home widget
+- **GIVEN** twelve earned досягнення and three accepted виклики
+- **WHEN** the new dashboard is used and Прогрес is opened from Звіти
+- **THEN** all earned facts, evidence, dates, challenge decisions and norms remain intact with unchanged evaluation rules
 
 ### Requirement: «Прогрес» shows виклики, what is in progress and what was earned
 
@@ -86,56 +89,34 @@ and its action.
 - **THEN** it states why it was proposed, the progress with its two сум in one currency, the
   criterion for being finished, and the action that begins it
 
-### Requirement: Головний shows «Прогрес» only when something is waiting
-
-Головний SHALL show a «Прогрес» section only when there is at least one earned досягнення the owner
-has not yet been shown, or at least one accepted виклик. With neither, the section SHALL NOT be
-rendered at all: no heading, no empty state, no placeholder.
-
-The section SHALL hold at most two lines: the unseen досягнення, and the accepted виклик closest to
-being finished. It SHALL lead to «Прогрес» and SHALL record nothing.
-
-#### Scenario: Nothing waiting, no section
-
-- **WHEN** every earned досягнення has been seen and no виклик is accepted
-- **THEN** Головний shows no «Прогрес» section of any kind
-
-#### Scenario: One accepted виклик is shown
-
-- **WHEN** three виклики are accepted
-- **THEN** Головний shows the one closest to being finished, and «Прогрес» is where the rest are
-
 ### Requirement: New досягнення are announced once, quietly, and in one group
 
-WHEN one досягнення has been earned and not yet seen, Головний's «Прогрес» section SHALL name it.
-WHEN two or more have been earned and not yet seen, it SHALL show a single line stating how many
-there are and leading to «Прогрес» — never one line per досягнення, and never a second announcement
-of the same one.
-
-No досягнення SHALL be announced by a dialog that must be dismissed, by a notification to the phone,
-by a sound, or by anything that interrupts what the owner was doing. Opening «Прогрес» SHALL mark
-every unseen досягнення as seen.
+Unseen досягнення SHALL be announced quietly beside the existing «Звіти» entry to «Прогрес» (one name for one, one count line for several), retaining seen state until Прогрес is opened and using no home widget, dialog, sound or phone notification.
 
 #### Scenario: Twelve retroactive досягнення are one line
-
-- **WHEN** the first evaluation on an existing history earns twelve досягнення
-- **THEN** Головний shows one line stating that there are twelve to look at, and no dialog appears
+- **GIVEN** twelve unseen досягнення
+- **WHEN** Звіти is read
+- **THEN** one count line accompanies the Progress entry and reading it alone marks none seen
 
 #### Scenario: One new досягнення is named
-
-- **WHEN** exactly one unseen досягнення exists
-- **THEN** Головний's «Прогрес» section names that досягнення
+- **GIVEN** exactly one unseen досягнення
+- **WHEN** Звіти is read
+- **THEN** its name appears by the Progress entry without an interrupting announcement
 
 #### Scenario: Seen is seen
-
-- **WHEN** the owner opens «Прогрес» while twelve досягнення are unseen and returns to Головний
-- **THEN** the «Прогрес» section no longer announces them, and it is not rendered at all unless a
-  виклик is accepted
+- **GIVEN** twelve unseen досягнення
+- **WHEN** Прогрес is opened and the owner returns to Звіти and Головний
+- **THEN** all twelve are seen, the count announcement disappears, the Reports entry stays, and Home shows no Progress widget
 
 #### Scenario: Nothing is pushed to the phone
+- **GIVEN** an achievement becomes earned at an existing evaluation moment
+- **WHEN** the result is recorded
+- **THEN** no phone notification, sound or interrupting dialog is emitted
 
-- **WHEN** a досягнення is earned
-- **THEN** no сповіщення of any kind is posted to the phone's notification shade
+#### Scenario: Evaluation still happens only at existing moments
+- **GIVEN** the app has already evaluated at startup
+- **WHEN** the owner repeatedly opens Головний or Звіти without changing data
+- **THEN** these renders neither evaluate achievements nor emit any notification
 
 ### Requirement: «Прогрес» is stated in the register of a financial app
 
@@ -165,4 +146,3 @@ there is nothing yet, SHALL show no виклик and no empty progress bars, and
 - **WHEN** the owner opens «Прогрес» on a device holding no транзакція
 - **THEN** one sentence states what the screen is for and that there is nothing yet, and no list,
   bar or placeholder is drawn
-
