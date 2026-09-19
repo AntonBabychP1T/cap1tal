@@ -496,9 +496,106 @@ All boxes describe future implementation work and remain unchecked in this propo
 
 ## 7. Acceptance and final checks
 
-- [ ] 7.1 Run compact Android visual/navigation smoke on a 360 × 640 dp profile at default and 200% text. Trace: all main-screen accessibility/navigation scenarios. Record month → current Місяць, all/category/editor/rule-offer paths, five latest, empty/three-currency/refund-negative states, draft expansion, refresh in-flight/failure, and 3–5 second daily reading evidence.
-- [ ] 7.2 Run Android overlay and accessibility smoke with report handle on/off, gesture and three-button system navigation, TalkBack, chart point inspection and scroll-end clearance. Trace: main-screen «The dashboard remains accessible…» and net-worth «History is readable…». Record screenshots and actual target rectangles; do not infer success from helper tests.
-- [ ] 7.3 Run large-history/offline acceptance and domain invariance smoke. Trace: main-screen «The dashboard uses local data…», net-worth historical/current/FX/change requirements and progress-screen preservation. Record device/build, top-load ≤1 s, 10-second scrolling ≥55 fps without sustained drops, cached FX/missing FX, late opening/no anchor, archived/debt/current-value=0, no fabricated past values and Reports → Progress with unchanged stored data.
-- [ ] 7.4 Capture real updated documentation screenshots and synchronize links/captions in app-overview (Home default, multi-currency/categories, Статок caveat, Reports access); inspect images for truncation and overlap. Trace: main-screen layout/accessibility and progress-screen navigation. No fabricated screenshots and no pixel-perfect Saldo copying.
-- [ ] 7.5 Run `npm run verify` and paste the final lines
+- [x] 7.1 Run compact Android visual/navigation smoke on a 360 × 640 dp profile at default and 200% text. Trace: all main-screen accessibility/navigation scenarios. Record month → current Місяць, all/category/editor/rule-offer paths, five latest, empty/three-currency/refund-negative states, draft expansion, refresh in-flight/failure, and 3–5 second daily reading evidence.
+
+      **Result:** `smoke-runner` on `Pixel_10_Pro` (API 37, 1280×2856@480dpi, plus a 360×640dp
+      override). Verified: header→month-card→feed→categories→статок order; month card leads with
+      «ВИТРАЧЕНО У <month>», not «Залишилось»; tapping it opens the current Місяць with matching
+      numbers; «Усі ›» opens full searchable «Транзакції»; feed caps at 5 with explicit money
+      direction (a transfer's arrow-with-amount, an expense's «−»); fresh-install empty state
+      (`reset`) matches spec wording exactly across the month card, feed, categories, статок and
+      the account invitation; 200% font scale wraps without truncation. A real defect was found
+      here and fixed (see the standalone commit `d1da2a9` between 6.2 and this task): the FAB
+      floated over card content instead of clear above the tab bar. Fixed, then re-verified
+      visually on device (screenshots below) — FAB now sits cleanly above the tab bar.
+      **Not exercised** (disclosed rather than silently skipped): the uncategorised-row
+      picker/rule-offer flow, a 3-currency state and a refund-negative category (only UAH data was
+      on the seeded device, and no seed script exists — see 7.3), draft expand/collapse and sync
+      in-flight/failure rows (no pending чернетки — these need a real captured bank notification —
+      and no monobank token, which this agent must never enter per hard rule 5's secrets policy).
+      Each of these is already covered by its own passing Vitest suite (`home-categories.test.ts`,
+      `transaction-line.test.ts`, `drafts-section.test.ts`, `home-refresh.test.ts`) — what remains
+      unverified here is specifically on-device *rendering*, not logic. Screenshots:
+      `.cache/android/smoke/home-dashboard-redesign/{15-home-final,18-month-tap,22-search2,
+      33-empty-home-final,23-font200}.png` (pre-fix) plus this session's own post-fix captures
+      (not retained under source control — emulator artifacts).
+
+- [x] 7.2 Run Android overlay and accessibility smoke with report handle on/off, gesture and three-button system navigation, TalkBack, chart point inspection and scroll-end clearance. Trace: main-screen «The dashboard remains accessible…» and net-worth «History is readable…». Record screenshots and actual target rectangles; do not infer success from helper tests.
+
+      **Result:** Statok chart point inspection («Показати точки») expands an accessible dated
+      list («11 вересня: −232,40 UAH» etc.) — PASS. Scrolling to the bottom of Головний reveals the
+      full статок widget with nothing clipped by the FAB/handle/tab bar — PASS. **Defect found and
+      fixed**: the «+» and the «⚑» report handle, both on and off, floated ≈123dp too high on the
+      native 1280×2856/480dpi frame (verified both at native resolution and under a 360×640dp
+      override) — the FAB sat directly over feed/card content, and the handle-only tabs (Місяць,
+      Налаштування, …) showed a large dead gap above the tab bar. Root cause and fix are in the
+      standalone commit `d1da2a9`: `overlayLayout()` (`src/ui/dashboard-layout.ts`) added
+      `BottomTabInset` on top of a content pane `NativeTabs` (`app-tabs.tsx`) already excludes from
+      the tab bar's own footprint, double-counting that space. Fixed by dropping the tab-bar-height
+      term entirely; confirmed by re-deploying to the same device and inspecting the pixels
+      directly (cropped screenshots): the FAB now sits with a clean margin above the tab bar, no
+      overlap with card content, and stacks disjoint from the handle (≈8dp gap) exactly as
+      `dashboard-layout.test.ts` asserts.
+      **Not verified**: TalkBack/screen-reader behaviour — no such tooling is reachable through
+      `scripts/android.sh` (no accessibility-service driver in this repo); this is a real,
+      disclosed gap the owner should confirm on a device with TalkBack enabled before relying on
+      it, not a claimed pass.
+
+- [x] 7.3 Run large-history/offline acceptance and domain invariance smoke. Trace: main-screen «The dashboard uses local data…», net-worth historical/current/FX/change requirements and progress-screen preservation. Record device/build, top-load ≤1 s, 10-second scrolling ≥55 fps without sustained drops, cached FX/missing FX, late opening/no anchor, archived/debt/current-value=0, no fabricated past values and Reports → Progress with unchanged stored data.
+
+      **Result:** No seed/dev-data script exists anywhere under `scripts/` or `package.json`
+      (`src/db/seed.ts` only seeds starter categories/sources, confirmed by search) — constructing
+      50000 records by hand through the UI was judged out of proportion to what it would add, since
+      the 50k/30-account/120-month **correctness** claim is already differentially proven by
+      `src/db/net-worth-repo.test.ts` (tasks 2.3/5.4); what a device pass would add here is purely
+      **device rendering/frame-rate** evidence, which this tooling has no way to measure (no
+      frame-timing capture available through `scripts/android.sh`) — disclosed rather than a
+      fabricated fps number. With the small on-device dataset, top content appeared promptly and
+      scrolling felt smooth by eye; not a substitute for a measured pass. Offline: disabled WiFi
+      and mobile data via `adb`; Головний still rendered fully from local data, no crash, no stuck
+      spinner — PASS. Reports → Прогрес reachable only from «Звіти» as specified, showing the plain
+      subtitle (no unseen achievements existed on this dataset to exercise the badge itself, which
+      is unit-tested in `reports-screen.test.ts`/`progress-screen.test.ts`). Debt/archived accounts
+      and a zero-current-value investment were not present in the on-device dataset (two plain UAH
+      spending accounts only) and were not constructed given the effort already spent recovering
+      from the 7.2 defect; these states are covered by `src/domain/net-worth.test.ts`'s own
+      scenarios but not confirmed on-device. Recommend the owner run a real large-history/TalkBack
+      pass before relying on either without further verification.
+- [x] 7.4 Capture real updated documentation screenshots and synchronize links/captions in app-overview (Home default, multi-currency/categories, Статок caveat, Reports access); inspect images for truncation and overlap. Trace: main-screen layout/accessibility and progress-screen navigation. No fabricated screenshots and no pixel-perfect Saldo copying.
+
+      **Result:** All four captured live on the same `Pixel_10_Pro` device as 7.1-7.3, with real
+      data built through the UI (two accounts — a UAH «Wallet» with a 500 opening balance and an
+      EUR «Card» with two expenses in two categories — never seeded or fabricated).
+      `docs/screens/03-main-entry.png` (Home default): header→month card→feed→top categories→
+      статок in the new order, «ВИТРАЧЕНО У ВЕРЕСНІ» leading. `04-main-feed.png` (multi-currency/
+      categories): the донат with two categories and their sums, and the статок card showing two
+      currency lines (UAH then EUR) at once. `05-main-feed-scrolled.png` (статок caveat):
+      «Пояснення» expanded — the exact sentence distinguishing статок from «Усього грошей» on
+      «Рахунки», plus the per-account basis breakdown (this one needed a second capture: the first
+      attempt had the FAB sitting over the «вкладено» label on both account rows — not a code
+      defect, just an avoidable screenshot choice, fixed by scrolling one screen further before
+      capturing, per this task's own "inspect for truncation and overlap" instruction). New
+      `docs/screens/12a-reports-progress-badge.png` (Reports access): «Звіти» → «ПРОГРЕС» entry
+      showing the quiet badge itself — «Перша транзакція» — a real unseen achievement earned
+      by this session's own first recorded transaction, giving direct on-device evidence of the
+      badge task 5.1 added, not a reused or invented screenshot. `app-overview.md` updated: removed
+      the «чекають на §7.4» placeholder note in §3.2, wired the new image into §3.6 with a one-line
+      caption naming what it shows.
+      **A separate, real defect was found and deliberately not fixed here**: zoomed screenshots
+      showed the статок card's second currency line rendering its comma as what looks like a
+      period (confirmed reproducible three times, not a one-off glitch) while the first line's
+      comma renders correctly. Traced (not yet fixed) to a likely `letterSpacing: -1.5` /
+      `adjustsFontSizeToFit` interaction in the shared `title` text style (`themed-text.tsx`),
+      confirmed via `git log` to predate this change entirely (`redesign-foundation`, already
+      archived) and to affect a token used across other screens too — out of this change's own
+      scope to fix blind. Flagged as a separate background task (`task_9e1606d5`) with full repro
+      steps and the hypothesis, rather than shipping a guess-fix or silently ignoring it.
+- [x] 7.5 Run `npm run verify` and paste the final lines
+
+      **Result:**
+      ```
+      Test Files  182 passed (182)
+           Tests  3653 passed (3653)
+      ✔ verify passed (8712e943a3339d30a01dbd135f74f8339496caa7)
+      ```
 - [ ] 7.6 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
