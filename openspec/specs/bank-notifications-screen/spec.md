@@ -164,8 +164,10 @@ storing loses nothing and doubles nothing.
 Головний SHALL show every pending чернетка, newest first, each with its рахунок, its date, the
 notification text, and what it proposes: a витрата of its сума with currency, a дохід
 «Без джерела» of its сума with currency, or a raw чернетка with no сума — showing its
-original-currency reference as information when it carries one. While no чернетка is pending,
-Головний SHALL show no чернетки surface and no empty placeholder.
+original-currency reference as information when it carries one. They SHALL stand in the
+«Потребує уваги» section the main-screen capability defines, which exists only while something is
+waiting. While no чернетка is pending, Головний SHALL show no чернетки surface and no empty
+placeholder.
 
 #### Scenario: A drafted витрата shows its proposal
 
@@ -188,23 +190,26 @@ original-currency reference as information when it carries one. While no чер�
 #### Scenario: No pending чернетки, no surface
 
 - **WHEN** every чернетка has been confirmed or dismissed
-- **THEN** Головний shows no чернетки surface and the entry form with the feed stand as before
+- **THEN** Головний shows no чернетки surface, and the month's status, the money held and the
+  latest транзакції stand as before
 
 ### Requirement: Confirming a чернетка creates its транзакція in the feed
 
 Confirming a pending чернетка SHALL create exactly the транзакція it proposes — the категорія
 decided by the owner's правила at the moment of confirmation with «Без категорії» when none
 matches, a дохід keeping «Без джерела», the чернетка's text carried as the опис, dated the
-чернетка's date — and the транзакція SHALL appear in the feed as an ordinary транзакція,
-editable and retypeable like any other. The confirmed чернетка SHALL leave the pending surface
-and SHALL never return.
+чернетка's date — and the транзакція SHALL be stored as an ordinary транзакція, editable and
+retypeable like any other, taking the place its date gives it among the latest transactions and
+reachable in «Транзакції» whatever that place is. The confirmed чернетка SHALL leave the pending
+surface and SHALL never return.
 
 #### Scenario: An unmatched витрата confirms into «Без категорії»
 
 - **WHEN** the owner confirms a чернетка proposing a витрата of 25000 minor units UAH whose
   text no правило matches
-- **THEN** a витрата of 25000 minor units UAH in «Без категорії» with the text as its опис
-  appears in the feed, and the чернетка is gone — also after the app restarts
+- **THEN** a витрата of 25000 minor units UAH in «Без категорії» with the text as its опис is
+  stored, taking the place its date gives it among the latest transactions, and the чернетка is
+  gone — also after the app restarts
 
 #### Scenario: A чернетка on an archived рахунок still confirms
 
@@ -222,8 +227,8 @@ and SHALL never return.
 #### Scenario: A confirmed дохід keeps «Без джерела»
 
 - **WHEN** the owner confirms a чернетка proposing a дохід of 50000 minor units UAH
-- **THEN** a дохід of 50000 minor units UAH with the джерело «Без джерела» appears in the feed,
-  retypeable by the owner as ever
+- **THEN** a дохід of 50000 minor units UAH with the джерело «Без джерела» is stored, retypeable
+  by the owner as ever
 
 ### Requirement: A raw чернетка confirms only with the owner's сума
 
@@ -241,8 +246,8 @@ as its informational original-currency amount.
 #### Scenario: The supplied сума becomes the витрата
 
 - **WHEN** the owner confirms a raw чернетка on a UAH рахунок supplying "300"
-- **THEN** a витрата of 30000 minor units UAH with the чернетка's text as its опис appears in
-  the feed
+- **THEN** a витрата of 30000 minor units UAH with the чернетка's text as its опис is stored,
+  taking the place its date gives it among the latest transactions
 
 #### Scenario: A foreign reference rides the confirmed витрата
 

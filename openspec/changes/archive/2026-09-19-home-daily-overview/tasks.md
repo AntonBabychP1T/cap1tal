@@ -102,14 +102,24 @@
 
 ## 6. The emulator
 
-- [ ] 6.1 Run the smoke-runner subagent over this change's scenarios: Головний in its normal state,
+- [x] 6.1 Run the smoke-runner subagent over this change's scenarios: Головний in its normal state,
       with «Потребує уваги» and without it, the «+» opening the form, recording and returning, and
       the four navigations (Місяць, Рахунки, «Транзакції», transaction editing); fix what it finds
       and re-run; re-run `npm run verify` after every fix.
-- [ ] 6.2 Only if the smoke pass shows `/transaction/new` resolving to the editor instead of the
+
+      **Result:** `SMOKE home-daily-overview | PASS` — all eight scenarios pass, no defects, no
+      rebuild needed (existing debug APK reused). Screenshots under
+      `.cache/android/smoke/home-daily-overview/`. Nothing to fix.
+- [x] 6.2 Only if the smoke pass shows `/transaction/new` resolving to the editor instead of the
       form (design D1): move the screen to the collision-free route `src/app/entry.tsx`, update the
       «+», `_layout.tsx` and every path-based assertion task 2.4 pointed at
       `src/app/transaction/new.tsx` (`readFileSync` on a path that no longer exists turns the suite
       red), then re-run `npm run verify` green and re-run the smoke. Tick as not needed otherwise.
-- [ ] 6.3 If the smoke pass changed any code, run the diff-reviewer subagent once more over the
+
+      **Result:** Not needed — `/transaction/new` resolved to the entry form with no route
+      collision.
+- [x] 6.3 If the smoke pass changed any code, run the diff-reviewer subagent once more over the
       whole diff and fix its CRITICAL findings until PASS.
+
+      **Result:** Not needed — the smoke pass touched no code, only recorded one транзакція
+      through the app's own entry screen as test data.
