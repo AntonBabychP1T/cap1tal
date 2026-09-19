@@ -26,10 +26,13 @@ the UI. Terms are defined in [glossary.md](glossary.md).
 
 ## 3. What the user needs first
 
-- On opening the app: read the state of the month in a few seconds — how much is left of it, what
-  it has cost, what is waiting for an answer — and see the latest transactions. Adding a
-  transaction is one tap away, behind the «+»: the app is opened to look far more often than to
-  record, and the form used to stand between the owner and everything worth reading.
+- On opening the app: read the state of the month in a few seconds — what it has cost so far, the
+  latest transactions, and what is waiting for an answer — plus статок, a derived reading of every
+  recorded account together, archived and debt accounts included. Where the money went is the
+  daily question this answers, not what remains: «скільки лишилось» stays one tap away, on Місяць,
+  with the rest of the monthly picture. Adding a transaction is one tap away, behind the «+»: the
+  app is opened to look far more often than to record, and the form used to stand between the
+  owner and everything worth reading.
 
 ## 4. Core entities and their boundaries
 

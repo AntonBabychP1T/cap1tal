@@ -193,6 +193,31 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   it is neither дохід nor інвестовано, it reaches залишилось nowhere, and it is listed here beside
   them only so it is never mistaken for one of them.
 
+## Net worth
+
+- **Статок** (net worth) — the sum, separately per currency, of every recorded рахунок's
+  розрахунковий баланс — archived and рахунок-борг included, each with its signed effect — except
+  that an інвестиційний рахунок contributes its latest поточна вартість where the owner has entered
+  one, and its вкладено otherwise, never both. It stores no second баланс, moves no money, and
+  changes no транзакція, місячна картина, ліміт, ціль or досягнення: it is read at the moment it is
+  shown, never entered or kept.
+- **Приблизний статок** (approximate net worth) — a secondary «≈» UAH total converting every
+  non-UAH currency's статок at monobank's most recently cached rate. It appears only when every
+  participating currency has one — a single missing rate withholds the whole conversion and names
+  the currency that is missing — and never stands in place of the exact per-currency readings.
+- **Історія статку** (net worth history) — per-currency розрахункові баланси reconstructed from
+  opening balances and dated транзакція effects alone, from the earliest recorded транзакція
+  through today, at month-ends and today. It never treats an інвестиційний рахунок's поточна
+  вартість, a баланс банку, свідчення досягнення or today's курс as a past market value — an
+  інвестиційний рахунок's history is always its вкладено, named as such, whatever its current
+  reading uses. A рахунок with a nonzero opening balance and no dated транзакція on or before the
+  day in question produces an honest gap rather than an invented number, and a транзакція dated
+  after today is disclosed rather than folded into the curve.
+- **Зміна статку** (net worth change) — the current exact статок against the preceding calendar
+  month-end in the same currency, shown only when both sides share the same reconstructed basis —
+  no поточна вартість substituted for either, no future-dated транзакція touching it — so it never
+  reads as an investment return it is not.
+
 ## Progress
 
 - **Achievement** (досягнення) — постійний факт про результат, якого власник уже досяг: віха

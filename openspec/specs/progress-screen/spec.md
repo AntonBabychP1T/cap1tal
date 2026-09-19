@@ -1,10 +1,11 @@
 # progress-screen Specification
 
 ## Purpose
-«Прогрес» — the pushed screen reached from Головний and from Звіти that shows «Виклики», «У
-процесі» and «Отримані», with a detail per досягнення and per виклик naming its exact condition.
-It exists so that what the history proves and what is worth reaching next have one place to be
-read, without becoming a sixth tab or a game.
+«Прогрес» — the pushed screen reached from «Звіти», which names an unseen досягнення quietly
+beside its own entry rather than on Головний, and that shows «Виклики», «У процесі» and
+«Отримані», with a detail per досягнення and per виклик naming its exact condition. It exists so
+that what the history proves and what is worth reaching next have one place to be read, without
+becoming a sixth tab, a home widget or a game.
 ## Requirements
 
 ### Requirement: «Прогрес» is a pushed screen, never a sixth tab

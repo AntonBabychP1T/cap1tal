@@ -449,8 +449,50 @@ All boxes describe future implementation work and remain unchecked in this propo
 
 ## 6. Synchronized documentation after approval
 
-- [ ] 6.1 Update product-vision §3 and glossary's new Статок term to the agreed primary metric, account membership, valuation basis and honest history limitations. Trace: main-screen «The primary month amount…»; net-worth all requirements. Manual consistency review; preserve monthly formula and §14 exclusions.
-- [ ] 6.2 Update tech-task, app-overview and main-screen/month-screen/progress-screen Purpose text to actual implemented behavior; also reword the `challenges` spec's Purpose paragraph, which still narrates «Потребує уваги» as current product framing. Trace: main-screen order, spent, widgets; progress-screen navigation. Document unchanged Accounts totals and Progress data, no global monthly budget, no new requests. Do not claim future work shipped.
+- [x] 6.1 Update product-vision §3 and glossary's new Статок term to the agreed primary metric, account membership, valuation basis and honest history limitations. Trace: main-screen «The primary month amount…»; net-worth all requirements. Manual consistency review; preserve monthly formula and §14 exclusions.
+
+      **Result:** `docs/product-vision.md` §3 rewritten: leads with «what it has cost so far» and
+      статок instead of «how much is left», and says explicitly that «скільки лишилось» moved to
+      Місяць, one tap away — §8's monthly formula and §14's exclusion list are untouched (checked:
+      no exclusion there mentions net worth, investment pricing or forecasting, all of which
+      статок stays clear of — it is a hand-entered current value or вкладено, never an automatic
+      price). `docs/glossary.md` gained a new «## Net worth» section, four entries — **Статок**
+      (membership: every account, archived and рахунок-борг included, signed; investment
+      valuation basis), **Приблизний статок** (the «≈» UAH total and its all-or-nothing rate
+      requirement), **Історія статку** (reconstructed-balances-only basis, honest gaps, future
+      records disclosed not folded in) and **Зміна статку** (comparable-baseline rule) — each
+      drawn directly from this change's own `net-worth` delta spec requirements rather than
+      paraphrased from memory. Manual consistency review only; no code or test touched, so
+      `npm run verify` is unaffected by this task (see 6.2's note for the run covering both).
+
+- [x] 6.2 Update tech-task, app-overview and main-screen/month-screen/progress-screen Purpose text to actual implemented behavior; also reword the `challenges` spec's Purpose paragraph, which still narrates «Потребує уваги» as current product framing. Trace: main-screen order, spent, widgets; progress-screen navigation. Document unchanged Accounts totals and Progress data, no global monthly budget, no new requests. Do not claim future work shipped.
+
+      **Result:** Main specs' Purpose paragraphs are outside `/opsx:sync`'s reach for an existing
+      capability (the sync skill leaves an existing main spec's Purpose alone even when a delta
+      supplies one), so `openspec/specs/main-screen/spec.md`, `.../month-screen/spec.md` and
+      `.../progress-screen/spec.md` were edited directly — Purpose prose only, Requirements
+      untouched (those sync properly at archive): main-screen now describes the spent-led figure,
+      the compact alerts, top categories and статок in screen order; month-screen says Головний
+      leads with витрачено alone and Місяць is where залишилось and the other five numbers live;
+      progress-screen says «Прогрес» is reached from «Звіти» only, with the quiet unseen badge.
+      `openspec/specs/challenges/spec.md`'s Purpose reworded away from «"Потребує уваги" names
+      what is broken» (that section no longer exists anywhere) to «Головний names what was spent».
+      `docs/tech-task.md`: §1's Головний bullet rewritten to the new order/spent/статок; added a
+      `🔄 У дереві (25/31)` row to the «Зміни поза нумерацією» table (never `✅` — §7's emulator
+      smoke and `diff-reviewer` remain, so nothing here claims the change shipped).
+      `docs/app-overview.md` §3.2 rewritten in full to the new section order (header, month card,
+      uncategorised banner, feed with explicit money-direction signs, collapsed alerts, top
+      categories donut, статок) — the three screenshots are left as the *previous* залишилось-led
+      layout with an explicit note that new ones are §7.4's job (an emulator is needed; no
+      screenshot is fabricated), and §3.2 explicitly names how статок differs from the unchanged
+      «Рахунки» totals. §3.6 rewritten: «Прогрес» is reached only from «Звіти», with the same
+      badge/seen-marking rule as the spec. §3.5 («Звіти») and §6 (a table already stale as of
+      2026-09-07, missing several already-archived changes) were left untouched — outside this
+      task's Trace and, for §6, a much larger pre-existing gap unrelated to this change.
+      No code, no test — `openspec validate` (part of `npm run verify`) is the only mechanical
+      check that touches these files (Purpose sections must exist; it does not read their prose),
+      and it passed together with everything else. `npm run verify`: 3653 tests passed,
+      `d65145b33387400bf315d4834e4bf0205f1ff01f`.
 
 ## 7. Acceptance and final checks
 

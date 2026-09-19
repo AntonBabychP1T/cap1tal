@@ -3,9 +3,9 @@
 ## Purpose
 The Місяць screen — where the owner reads one calendar month: витрачено, інвестовано, відкладено,
 позичено, дохід and залишилось per currency, the spent broken down by category, and the secondary
-approximate UAH figure. It is the answer in full: Головний leads with the month's залишилось and
-its витрачено, Місяць is where all six numbers, their breakdown by category and the months before
-this one are read.
+approximate UAH figure. It is the answer in full: Головний leads with the month's витрачено alone,
+Місяць is where all six numbers — залишилось included — their breakdown by category and the
+months before this one are read.
 ## Requirements
 ### Requirement: The Місяць screen shows the month's numbers per currency
 

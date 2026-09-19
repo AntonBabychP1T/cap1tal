@@ -4,8 +4,8 @@
 The **виклик**: one thing worth doing now, carrying the reason it was proposed, a measurable
 progress, an unambiguous finish and one action to start from. At most three stand at a time,
 chosen deterministically from local aggregates, never by a language model. It exists because
-«Потребує уваги» names what is broken and Місяць names what a month cost, but nothing named
-anything worth reaching.
+Головний names what was spent and Місяць names what a month cost, but nothing named anything
+worth reaching.
 ## Requirements
 
 ### Requirement: A виклик states why it was proposed, how far it has come and when it is done
