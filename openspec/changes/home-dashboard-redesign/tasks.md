@@ -176,7 +176,21 @@ All boxes describe future implementation work and remain unchecked in this propo
       participation, a negative category's exact sign, a refund-only negative center, and both
       currency-selection scenarios. `npm run verify`: 3580 tests passed,
       `4fb8f56ee37bdc78c0132ebb925c2b825f6604f7`.
-- [ ] 3.3 Add pure donut and history geometry with existing chart/theme conventions. Trace: main-screen «Signed or empty breakdowns…» and net-worth «History is readable…». Tests: `src/ui/dashboard-charts.test.ts` — positive sectors reconcile, no negative/zero division, negative/flat axis, bounded path preserves first/last/extrema/gaps, unsampled exact point values remain available.
+- [x] 3.3 Add pure donut and history geometry with existing chart/theme conventions. Trace: main-screen «Signed or empty breakdowns…» and net-worth «History is readable…». Tests: `src/ui/dashboard-charts.test.ts` — positive sectors reconcile, no negative/zero division, negative/flat axis, bounded path preserves first/last/extrema/gaps, unsampled exact point values remain available.
+
+      **Result:** No existing chart geometry to extend (confirmed by exploration — only
+      `icons.tsx`/`icons.ts` set the data/renderer split precedent to follow; `react-native-svg` is
+      already a dependency). Added `src/ui/dashboard-charts.ts`: `donutGeometry` — `neutral` for
+      any negative amount, an all-non-positive total, or no categories, else sectors reconciling
+      exactly to 360°; `historyGeometry` — splits into segments at gaps (never bridged), pads a
+      flat or all-equal value range symmetrically so a division by a zero range never happens, and
+      bounds each segment to ≤120 plotted points via a first/last/local-extrema-then-even-stride
+      downsampler, while every plotted point keeps its original `seriesIndex` so exact values stay
+      reachable from the caller's own untouched series. 13 tests cover sector reconciliation,
+      negative/zero/no-category neutrality, flat/negative-range padding, gap-splitting, bounded
+      downsampling preserving a peak and a trough over 400 points, and exact-value lookup by index
+      after downsampling. `npm run verify`: 3593 tests passed,
+      `1ba14ceb7c504b28fe5428d1f4a2efc565a01091`.
 - [ ] 3.4 Wire explicit current-month and category navigation, including retained month state and rollover. Trace: main-screen «The month card always opens…», «Categories open…». Tests: `src/ui/home-navigation.test.ts` — retained July opens September, October rollover, all-currency category route, remainder opens full month and both correction signs remain reachable; manual route smoke in §7.
 
 ## 4. Daily content and operational controls
