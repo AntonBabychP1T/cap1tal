@@ -1,6 +1,6 @@
 import type { Account } from '../domain/account';
 import { monthlyPicture } from '../domain/monthly-picture';
-import { type CurrencyCode, type Money } from '../domain/money';
+import { type Money } from '../domain/money';
 import type { Month, Transaction } from '../domain/transaction';
 import { needsOwner, type OwnerSituation, type SyncAttempt } from '../monobank/auto';
 import type { MonobankRate } from '../monobank/currency';
@@ -9,7 +9,6 @@ import { byCurrency } from './amount-input';
 import { freshnessLabel } from './dates';
 import { transactionCount } from './labels';
 import { syncedCountLine } from './monobank-screen';
-import { emptyMessageFor, NO_INCOME_NOTE } from './month-screen';
 import { monthInLabel } from './months';
 
 /**
@@ -22,30 +21,25 @@ import { monthInLabel } from './months';
  * Головний shows, in which order, and in what words. See design.md §D5.
  */
 
-/** The glossary's words, as the two headings the status carries. */
-const LEFT_LABEL = 'Залишилось';
+/** The glossary's word, as the heading the status carries. */
 const SPENT_LABEL = 'Витрачено';
 
 export interface HomeMonthStatus {
-  /** «Залишилось у вересні» — the figure's name and the month it is about, in one line. */
+  /** «Витрачено у вересні» — the figure's name and the month it is about, in one line. */
   readonly title: string;
   /**
-   * The month's залишилось, per currency, joined by `totalsLine` — the same joiner the money held
-   * uses, so the two lines cannot drift apart in how they refuse to become one figure: «60315,00
-   * UAH · −70,00 USD». Empty exactly when `emptyMessage` is not null.
+   * The month's витрачено, per currency, joined by `totalsLine` — the same joiner the money held
+   * uses, so the two lines cannot drift apart in how they refuse to become one figure: «125,50
+   * UAH · 2,05 USD». Empty exactly when `emptyMessage` is not null. Signed: a refund-only month
+   * shows a negative amount rather than zero or дохід (main-screen, "Refund-only month remains
+   * negative").
    */
-  readonly left: string;
-  /** «Витрачено», so the screen does not spell the glossary word itself. */
-  readonly spentLabel: string;
-  /** The month's витрачено, per currency, joined the same way. */
   readonly spent: string;
   /**
-   * Why залишилось may be negative: no дохід is recorded in some currency of the month yet. The
-   * sentence Місяць uses, naming the currencies when the month holds more than one. `null` when
-   * every currency of the month has дохід above zero.
+   * What to say instead of an amount: no транзакція at all this month, or only ordinary
+   * unclassified перекази (which touch no monthly number and would otherwise read as a currency
+   * that does not exist). `null` when there is a real spent figure to show.
    */
-  readonly note: string | null;
-  /** What to say instead of the numbers when there are none; `null` when there are. */
   readonly emptyMessage: string | null;
 }
 
@@ -140,18 +134,17 @@ export interface HomeViewModel {
 }
 
 /**
- * Which currencies of the month have no дохід to set their витрати against. Per currency, because
- * Місяць decides it per currency: a month with UAH дохід and USD-only витрати is honestly two
- * situations, and the negative one has to carry its reason where it is shown.
+ * What the month card says instead of an amount: no транзакція at all this month, or ordinary
+ * unclassified перекази alone — two different situations that would otherwise look like the same
+ * blank card (main-screen, "Empty and transfer-only months are distinct"). Its own wording, not
+ * `month-screen.ts`'s `emptyMessageFor`: that one is Місяць's, and this is not a redesign of
+ * Місяць — sharing the function would mean sharing the words, which the two screens no longer do.
  */
-function noteFor(currencies: readonly CurrencyCode[], without: readonly CurrencyCode[]): string | null {
-  if (without.length === 0) {
+function monthEmptyMessage(currencyCount: number, hasTransactions: boolean): string | null {
+  if (currencyCount > 0) {
     return null;
   }
-  if (currencies.length === 1) {
-    return NO_INCOME_NOTE;
-  }
-  return `У цьому місяці ще не записано дохід у ${without.join(' і ')}.`;
+  return hasTransactions ? 'Цього місяця лише перекази.' : 'Цього місяця ще немає транзакцій.';
 }
 
 export function homeViewModel(input: {
@@ -228,15 +221,9 @@ export function homeViewModel(input: {
   return {
     month: input.month,
     status: {
-      title: `${LEFT_LABEL} ${monthInLabel(input.month)}`,
-      left: totalsLine(numbers.map((n) => n.left)),
-      spentLabel: SPENT_LABEL,
+      title: `${SPENT_LABEL} ${monthInLabel(input.month)}`,
       spent: totalsLine(numbers.map((n) => n.spent)),
-      note: noteFor(
-        currencies,
-        currencies.filter((currency) => picture.get(currency)!.income.amount <= 0),
-      ),
-      emptyMessage: emptyMessageFor(currencies.length, input.transactions.length > 0),
+      emptyMessage: monthEmptyMessage(currencies.length, input.transactions.length > 0),
     },
     held:
       totals.total.length > 0

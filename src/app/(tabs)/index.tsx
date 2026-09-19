@@ -540,8 +540,8 @@ export default function MainScreen() {
         <Wordmark />
       </View>
 
-      {/* The month first, and it is the screen's figure: how much of it is left, what it has cost.
-          The same numbers Місяць shows for the same month, which is where the card leads. */}
+      {/* The month first, and it is the screen's figure: what it has cost. The same numbers
+          Місяць shows for the same month, which is where the card leads. */}
       <Pressable onPress={() => router.push('/month')} accessibilityRole="button">
         <Card style={styles.status}>
           <CardGlow />
@@ -552,27 +552,11 @@ export default function MainScreen() {
           {model.status.emptyMessage ? (
             <ThemedText themeColor="textSecondary">{model.status.emptyMessage}</ThemedText>
           ) : (
-            <>
-              {/* One line, shrunk rather than wrapped: two currencies must not push the figure
-                  into a second row and the card into a different height. */}
-              <ThemedText type="title" tabular numberOfLines={1} adjustsFontSizeToFit>
-                {model.status.left}
-              </ThemedText>
-              <View style={styles.statusFoot}>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {model.status.spentLabel}
-                </ThemedText>
-                <ThemedText type="smallBold" themeColor="text" tabular numberOfLines={1}>
-                  {model.status.spent}
-                </ThemedText>
-              </View>
-              {/* Why залишилось may be negative — the reason on the screen rather than guessed. */}
-              {model.status.note ? (
-                <ThemedText type="small" themeColor="textMuted">
-                  {model.status.note}
-                </ThemedText>
-              ) : null}
-            </>
+            // One line, shrunk rather than wrapped: two currencies must not push the figure into
+            // a second row and the card into a different height.
+            <ThemedText type="title" tabular numberOfLines={1} adjustsFontSizeToFit>
+              {model.status.spent}
+            </ThemedText>
           )}
         </Card>
       </Pressable>

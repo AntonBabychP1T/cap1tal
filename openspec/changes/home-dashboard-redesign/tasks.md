@@ -147,7 +147,19 @@ All boxes describe future implementation work and remain unchecked in this propo
 
 ## 3. Month and top categories
 
-- [ ] 3.1 Update Home month model to lead with spent while preserving monthly-picture arithmetic. Trace: main-screen «The primary month amount…». Tests: `src/ui/home-screen.test.ts` — income does not change the primary metric, mixed currencies, negative spent, empty/income-only/transfer-only states; retain monthly-picture identity/property tests.
+- [x] 3.1 Update Home month model to lead with spent while preserving monthly-picture arithmetic. Trace: main-screen «The primary month amount…». Tests: `src/ui/home-screen.test.ts` — income does not change the primary metric, mixed currencies, negative spent, empty/income-only/transfer-only states; retain monthly-picture identity/property tests.
+
+      **Result:** `HomeMonthStatus` now carries `title`/`spent`/`emptyMessage` only — dropped
+      `left`, `spentLabel` and `note` (the "no дохід yet" reason was specific to a залишилось-led
+      card and doesn't apply to spent). Added a home-specific `monthEmptyMessage` with the new
+      wording («Цього місяця ще немає транзакцій» / «Цього місяця лише перекази»), deliberately
+      not sharing `month-screen.ts`'s `emptyMessageFor` — same branching, different words, since
+      this isn't a redesign of Місяць. Patched `index.tsx`'s month card to render `status.spent`
+      as the single primary figure (the fuller header/feed/alerts assembly is task 4.4's). Rewrote
+      the month-status describe block in `home-screen.test.ts` for the new scenarios and fixed two
+      incidental `status.left` assertions in the money-held tests. `monthlyPicture` itself is
+      untouched, so its identity/property tests (in `monthly-picture.test.ts`) still hold.
+      `npm run verify`: 3572 tests passed, `466e376a8fa84d45cbd0276870927d2e74a90d58`.
 - [ ] 3.2 Add category presentation model from categoryBreakdown with stable top-five/remainder ranking. Trace: main-screen «Top categories…», «Category currencies never mix», «Signed or empty breakdowns…». Tests: `src/ui/home-categories.test.ts` — five plus remainder sums to spent, tied names/ids, reserved/archived/zero categories, refund-negative neutral state, default and disappearing currency selection.
 - [ ] 3.3 Add pure donut and history geometry with existing chart/theme conventions. Trace: main-screen «Signed or empty breakdowns…» and net-worth «History is readable…». Tests: `src/ui/dashboard-charts.test.ts` — positive sectors reconcile, no negative/zero division, negative/flat axis, bounded path preserves first/last/extrema/gaps, unsampled exact point values remain available.
 - [ ] 3.4 Wire explicit current-month and category navigation, including retained month state and rollover. Trace: main-screen «The month card always opens…», «Categories open…». Tests: `src/ui/home-navigation.test.ts` — retained July opens September, October rollover, all-currency category route, remainder opens full month and both correction signs remain reachable; manual route smoke in §7.
