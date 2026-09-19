@@ -353,7 +353,35 @@ All boxes describe future implementation work and remain unchecked in this propo
       read-only `unseenAchievementsData`. All achievement/challenge/backup tests untouched and
       still passing. `npm run verify`: 3630 tests passed,
       `75a0e0e4354bcc2fc699e06afb0293dc4a8cdf76`.
-- [ ] 5.2 Define shared overlay clearance from safe-area/tab dimensions and apply it to FAB/report handle with scroll bottom clearance. Trace: main-screen «The dashboard remains accessible…». Tests: `src/ui/dashboard-layout.test.ts` — disjoint ≥48 dp targets, ≥8 dp spacing, tab clearance across compact/large insets; actual rendered coordinates verified in §7.
+- [x] 5.2 Define shared overlay clearance from safe-area/tab dimensions and apply it to FAB/report handle with scroll bottom clearance. Trace: main-screen «The dashboard remains accessible…». Tests: `src/ui/dashboard-layout.test.ts` — disjoint ≥48 dp targets, ≥8 dp spacing, tab clearance across compact/large insets; actual rendered coordinates verified in §7.
+
+      **Result:** New `src/ui/dashboard-layout.ts`: pure `overlayLayout({safeAreaBottom,
+      tabBarHeight, fabSize, handleSize})` — the «+» sits `safeAreaBottom + tabBarHeight + 16dp`
+      above the device's own bottom edge; the report handle stacks `OVERLAY_GAP` (8dp) above the
+      «+»'s own top edge; a scroll column's `paddingBottom` clears the handle's own top edge plus
+      the same 16dp margin. Stacking by construction is what keeps the two disjoint regardless of
+      device or screen, without either needing to know the other is present — load-bearing because
+      the report handle floats over every screen (design D4, `bug-report-here.tsx`) while the «+»
+      floats only over Головний (`surfaces.tsx`'s `Fab`/`Screen`), so the two are never in the same
+      component tree. This replaced two independent, unrelated pixel guesses
+      (`bottom: Spacing.six + Spacing.three` = 80 for the «+», `bottom: TouchTarget * 2` = 96 for
+      the handle) that neither read the device's real safe-area inset nor its real tab bar height
+      and, worked out on paper, actually overlapped by 40dp with no 8dp gap at all — exactly what
+      this task's Trace requirement rules out.
+      Wired into both `.tsx` files via `useSafeAreaInsets()` (`react-native-safe-area-context`,
+      already a dependency, `useSafeAreaInsets` previously uncalled anywhere in `src`) and the
+      previously-unused `BottomTabInset` constant (`constants/theme.ts`, Platform-specific tab bar
+      height placeholder, now given its first caller): `Screen`'s `Fab` and its scroll
+      `contentContainerStyle`, and `BugReportHere`'s handle, each call `overlayLayout` with the
+      same `FAB_SIZE`/`HANDLE_SIZE` formula (`TouchTarget + Spacing.two` / `TouchTarget`) — defined
+      once in each file rather than cross-imported, since the two components never share a tree.
+      `src/ui/dashboard-layout.test.ts` (5 tests, new): disjoint ≥48dp targets with ≥8dp gap;
+      neither target under the tab bar across four safe-area insets (0/16/34/48dp, compact through
+      large) crossed with both platforms' `BottomTabInset`; scroll clearance exceeds both overlays'
+      top edges; a larger safe-area inset or a taller tab bar shifts every offset by exactly that
+      amount. No existing test asserted the old hardcoded values structurally, so nothing else
+      needed updating. `npm run verify`: 3635 tests passed,
+      `4ddafd283cd2eb40985e231e89c0c7cb2ca431f3`.
 - [ ] 5.3 Add coherent data loading, deferred history derivation, memoization and invalidation with cancellation of stale reads. Trace: main-screen «The dashboard uses local data…» and month rollover. Tests: `src/ui/home-data.test.ts` — mutation/focus/sync/capture/restore/valuation/opening edit/date rollover refresh, old result cannot overwrite new, status-only rerender does not rescan history, currency selection sends no requests.
 - [ ] 5.4 Bound rendered chart work independently of history length and profile the fixture. Trace: main-screen «The dashboard uses local data…»; net-worth «History is readable…». Tests: `src/ui/dashboard-charts.test.ts`, `src/db/net-worth-repo.test.ts` — 50k records/30 accounts/120 months, bounded output, no per-account/per-month full-history rescans; record device frame/timing evidence in §7.
 

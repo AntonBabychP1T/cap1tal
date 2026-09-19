@@ -6,16 +6,26 @@ import {
   type RefreshControlProps,
   type ViewProps,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Circle, Svg } from 'react-native-svg';
 
 import { Icon } from './icon';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
-import { Radius, Spacing, TouchTarget, type ThemeColor } from '@/constants/theme';
+import { BottomTabInset, Radius, Spacing, TouchTarget, type ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { overlayLayout } from '@/ui/dashboard-layout';
 import { type IconName } from '@/ui/icons';
+
+/**
+ * The «+»'s own diameter, and the report handle's — shared with `bug-report-here.tsx` by
+ * construction (both read the same `TouchTarget`/`Spacing` tokens) rather than by import, since
+ * the handle lives in a sibling tree this file never renders (design D4). `overlayLayout` stacks
+ * the two from these exact sizes, so the sizes used here and there must never drift apart.
+ */
+const FAB_SIZE = TouchTarget + Spacing.two;
+const HANDLE_SIZE = TouchTarget;
 
 /**
  * The surfaces every screen is built from, so no screen repeats a radius or a hairline colour.
@@ -73,6 +83,13 @@ export function Screen({
    */
   refreshControl?: React.ReactElement<RefreshControlProps>;
 }) {
+  const insets = useSafeAreaInsets();
+  const layout = overlayLayout({
+    safeAreaBottom: insets.bottom,
+    tabBarHeight: BottomTabInset,
+    fabSize: FAB_SIZE,
+    handleSize: HANDLE_SIZE,
+  });
   return (
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.screen} edges={['top']}>
@@ -80,8 +97,12 @@ export function Screen({
           ref={scrollRef}
           refreshControl={refreshControl}
           // A screen with something floating over its corner ends its column above it, so the
-          // last row can always be read and tapped rather than sitting under the «+».
-          contentContainerStyle={[styles.content, overlay ? styles.contentUnderOverlay : null]}
+          // last row can always be read and tapped rather than sitting under the «+» — and clear
+          // of the report handle above it too, since that one floats over this screen regardless.
+          contentContainerStyle={[
+            styles.content,
+            overlay ? { paddingBottom: layout.scrollBottomPadding } : null,
+          ]}
           keyboardShouldPersistTaps="handled">
           {children}
         </ScrollView>
@@ -99,6 +120,13 @@ export function Screen({
  */
 export function Fab({ label = '+', onPress }: { label?: string; onPress: () => void }) {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const layout = overlayLayout({
+    safeAreaBottom: insets.bottom,
+    tabBarHeight: BottomTabInset,
+    fabSize: FAB_SIZE,
+    handleSize: HANDLE_SIZE,
+  });
   return (
     <Pressable
       accessibilityRole="button"
@@ -107,6 +135,7 @@ export function Fab({ label = '+', onPress }: { label?: string; onPress: () => v
       style={({ pressed }) => [
         styles.fab,
         {
+          bottom: layout.fabBottom,
           backgroundColor: theme.accent,
           // The ring is the page showing through, so the «+» keeps its shape over a row it
           // happens to sit on. Nothing here is a shadow — the app draws none.
@@ -756,7 +785,6 @@ export function HeroCard({
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { padding: Spacing.three, gap: Spacing.three },
-  contentUnderOverlay: { paddingBottom: TouchTarget + Spacing.five },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -822,10 +850,10 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: Spacing.three,
-    // Clear of the tab bar the tabs draw over the bottom of every tab screen.
-    bottom: Spacing.six + Spacing.three,
-    width: TouchTarget + Spacing.two,
-    height: TouchTarget + Spacing.two,
+    // `bottom` is set per-render by `overlayLayout` — clear of the safe area and the tab bar the
+    // tabs draw over the bottom of every tab screen, on this device's own insets.
+    width: FAB_SIZE,
+    height: FAB_SIZE,
     borderRadius: Radius.pill,
     borderWidth: 3,
     alignItems: 'center',

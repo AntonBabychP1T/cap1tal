@@ -13,13 +13,15 @@ import {
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Radius, Spacing, TouchTarget } from '@/constants/theme';
+import { BottomTabInset, Colors, Radius, Spacing, TouchTarget } from '@/constants/theme';
 import { reporting as reportingRepo } from '@/db/repos';
 import type { CaptureSettings } from '@/db/reporting-repo';
 import { buildInfo, deviceInfo } from '@/platform/app-build-device';
 import { bugReportFiles } from '@/platform/bug-report-files-device';
 import { screenCapture } from '@/platform/screen-capture-device';
+import { overlayLayout } from '@/ui/dashboard-layout';
 import {
   activate,
   CANCEL_LABEL,
@@ -60,9 +62,26 @@ import { journal } from '@/ui/journal';
  * the frame that must not be photographed. An overlay writes nothing and animates nothing, so
  * «Скасувати» returns the owner to a half-typed form with the keyboard still up.
  */
+
+/**
+ * The handle's own diameter, and the «+»'s — the same formula `surfaces.tsx` uses for its `Fab`,
+ * repeated rather than imported (design D4: this floats over a sibling tree that never renders
+ * the «+»). `overlayLayout` stacks the handle from exactly these two sizes, so a change to either
+ * file's formula has to change both.
+ */
+const HANDLE_SIZE = TouchTarget;
+const FAB_SIZE = TouchTarget + Spacing.two;
+
 export function BugReportHere({ settings }: { settings: CaptureSettings }) {
   const scheme = useColorScheme();
   const theme = Colors[scheme === 'dark' ? 'dark' : 'light'];
+  const insets = useSafeAreaInsets();
+  const layout = overlayLayout({
+    safeAreaBottom: insets.bottom,
+    tabBarHeight: BottomTabInset,
+    fabSize: FAB_SIZE,
+    handleSize: HANDLE_SIZE,
+  });
 
   const [capture, setCapture] = useState<SheetCapture | null>(null);
   const [fields, setFields] = useState<SheetFields>(EMPTY_SHEET);
@@ -257,7 +276,11 @@ export function BugReportHere({ settings }: { settings: CaptureSettings }) {
               // roles are the ones that stay visible against the page and against a card alike.
               style={[
                 styles.handle,
-                { backgroundColor: theme.backgroundSelected, borderColor: theme.cardEdge },
+                {
+                  bottom: layout.handleBottom,
+                  backgroundColor: theme.backgroundSelected,
+                  borderColor: theme.cardEdge,
+                },
               ]}>
               <Text style={[styles.handleMark, { color: theme.accent }]}>⚑</Text>
             </Pressable>
@@ -359,9 +382,10 @@ const styles = StyleSheet.create({
   handle: {
     position: 'absolute',
     right: Spacing.three,
-    bottom: TouchTarget * 2,
-    width: TouchTarget,
-    height: TouchTarget,
+    // `bottom` is set per-render by `overlayLayout`, stacked clear of the «+» on this device's
+    // own insets.
+    width: HANDLE_SIZE,
+    height: HANDLE_SIZE,
     borderRadius: Radius.pill,
     borderWidth: 1,
     alignItems: 'center',
