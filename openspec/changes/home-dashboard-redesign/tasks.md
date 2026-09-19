@@ -598,4 +598,25 @@ All boxes describe future implementation work and remain unchecked in this propo
            Tests  3653 passed (3653)
       ✔ verify passed (8712e943a3339d30a01dbd135f74f8339496caa7)
       ```
-- [ ] 7.6 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+- [x] 7.6 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+
+      **Result:** First pass returned FAIL with 2 CRITICAL findings, both real: "Categorisation
+      stays in place" and "Draft confirmation updates the same record" / "Confirming the last
+      чернетка into «Без категорії» hands off between both alerts" (main-screen delta spec) had
+      zero test evidence anywhere in the repo, and tasks.md's own 7.1 result had already disclosed
+      neither scenario was exercised on-device either. Fixed in commit `0e8a3bb`: two structural
+      tests added to `src/ui/home-screen.test.ts`, following the file's own established
+      `readFileSync`-and-slice convention — one proving the inline categorisation picker and rule
+      offer never route anywhere (isolating the categorise-toggle action from its sibling «Це
+      переказ» action, which legitimately does route, per design D7), one proving `settleDraft`
+      calls `reload()` exactly once for both confirm and dismiss and that `stored.uncategorised`/
+      `stored.drafts` are read inside the same synchronous `useReloadOnFocus` callback — which is
+      what makes the "never a render apart" hand-off true. Re-run independently by the same
+      reviewer against the actual code (not just the fix description): confirmed both are real,
+      falsifiable, correctly-scoped assertions, not vacuous ones.
+      Second pass: **PASS (0 critical, 3 warning, unchanged and non-blocking)** — the three
+      warnings (a few scenario titles covered only under differently-worded predecessor test
+      names; `month.tsx`'s rollover-adjustment logic has no Vitest coverage beyond one on-device
+      smoke click; TalkBack/real-device fps evidence disclosed as not run) were already known from
+      tasks 7.1-7.3's own honest disclosures and are not new findings.
+      `npm run verify`: 3655 tests passed, `0a8c9c1452c79cd7ef7c020b584294239cec9031`.
