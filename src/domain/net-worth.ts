@@ -258,3 +258,75 @@ export function netWorthHistory(input: {
     return { date, totals };
   });
 }
+
+/**
+ * Change (net-worth, "Change requires a comparable previous month-end"). Absolute and, only for a
+ * strictly positive baseline, a signed percentage rounded to one decimal.
+ */
+export interface CurrencyChange {
+  readonly currency: CurrencyCode;
+  readonly absolute: Money;
+  /** Present only when the baseline is strictly positive — a percentage of zero or less lies. */
+  readonly percent?: number;
+  /** The baseline's own date — «від <date>», never described as investment return. */
+  readonly since: IsoDate;
+}
+
+export type ChangeResult =
+  | { readonly status: 'available'; readonly change: CurrencyChange }
+  | {
+      readonly status: 'unavailable';
+      readonly reason: 'no-baseline' | 'valuation-substituted' | 'future-records';
+    };
+
+/** `round(numerator × 1000 / denominator) / 10` — one decimal place, no accumulated drift. */
+function roundToOneDecimal(numerator: number, denominator: number): number {
+  return Math.round((numerator * 1000) / denominator) / 10;
+}
+
+/**
+ * One currency's change from the preceding calendar month-end to the current exact reading.
+ * Suppressed — never silently substituted with an older period — when: the current reading
+ * participates in an investment валюація substitution for this currency (the baseline is always
+ * ledger-basis, a current reading using поточна вартість is not on the same basis); a future-dated
+ * record affects this currency; or no known baseline point exists at all. The caller supplies
+ * `currentUsedValuation` and `hasFutureRecords` (from `currentNetWorth`'s contributions and
+ * `net-worth-repo.ts`'s future-record flag) and `previousMonthEnd` (a point `netWorthHistory`
+ * produced for the preceding month-end, when there is one).
+ */
+export function netWorthChange(input: {
+  readonly current: CurrencyTotal;
+  readonly currentUsedValuation: boolean;
+  readonly hasFutureRecords: boolean;
+  readonly previousMonthEnd?: { readonly date: IsoDate; readonly total: CurrencyTotal };
+}): ChangeResult {
+  if (input.hasFutureRecords) {
+    return { status: 'unavailable', reason: 'future-records' };
+  }
+  if (input.currentUsedValuation) {
+    return { status: 'unavailable', reason: 'valuation-substituted' };
+  }
+  if (
+    input.previousMonthEnd === undefined ||
+    input.previousMonthEnd.total.status !== 'known' ||
+    input.current.status !== 'known'
+  ) {
+    return { status: 'unavailable', reason: 'no-baseline' };
+  }
+  const baseline = input.previousMonthEnd.total.amount;
+  const current = input.current.amount;
+  if (baseline.currency !== current.currency) {
+    throw new Error(`cannot compare ${current.currency} against a ${baseline.currency} baseline`);
+  }
+  const absolute = money(current.amount - baseline.amount, baseline.currency);
+  const percent = baseline.amount > 0 ? roundToOneDecimal(absolute.amount, baseline.amount) : undefined;
+  return {
+    status: 'available',
+    change: {
+      currency: baseline.currency,
+      absolute,
+      since: input.previousMonthEnd.date,
+      ...(percent === undefined ? {} : { percent }),
+    },
+  };
+}

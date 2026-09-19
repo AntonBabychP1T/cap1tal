@@ -118,7 +118,18 @@ All boxes describe future implementation work and remain unchecked in this propo
       the previous balance, the single-point case, future-date bounding, backdated-edit
       recomputation leaving earlier points untouched, and history's total independence from any
       current valuation. `npm run verify`: 3556 tests passed, `e0f2bcb07fdd6f5461aa314ee97093bf0b0aa70d`.
-- [ ] 2.6 Add comparable previous-month-end changes. Trace: net-worth «Change requires…». Tests: `src/domain/net-worth.test.ts` — +20%, zero/negative baseline absolute-only, missing previous month-end, valuation substitution and future records suppress comparison, unrelated currency remains comparable.
+- [x] 2.6 Add comparable previous-month-end changes. Trace: net-worth «Change requires…». Tests: `src/domain/net-worth.test.ts` — +20%, zero/negative baseline absolute-only, missing previous month-end, valuation substitution and future records suppress comparison, unrelated currency remains comparable.
+
+      **Result:** Added `netWorthChange` to `src/domain/net-worth.ts`: takes the current
+      `CurrencyTotal`, whether that currency's current reading used an investment valuation
+      substitution, whether it has future-dated records, and an optional previous-month-end point
+      (all pre-resolved by the caller — this function itself does no lookup, keeping it a small
+      pure decision). Suppresses with an explicit `reason` (`no-baseline` / `valuation-substituted`
+      / `future-records`) rather than ever silently falling back to an older period; percent is
+      computed only for a strictly positive baseline, one decimal via integer-scaled rounding. 7
+      new tests (28 total in the file) cover +20%, zero/negative-baseline absolute-only, a missing
+      baseline, a gap baseline, valuation substitution, future records, and that each currency is
+      judged independently. `npm run verify`: 3563 tests passed, `af603f1878995850a68e6b6b9bf644dbf8d7f5c7`.
 - [ ] 2.7 Add per-currency current readout, approximate UAH and basis explanations using existing conversion rules. Trace: net-worth «Approximate UAH…», «Current valuation…». Tests: `src/ui/net-worth.test.ts` — rounding example, signed conversion, missing EUR including zero total, stale cached rate date, UAH-only, overflow, investment dates/fallbacks, difference from Accounts totals.
 
 ## 3. Month and top categories

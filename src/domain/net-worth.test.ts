@@ -5,8 +5,10 @@ import type { CurrentValue } from './investments';
 import { money } from './money';
 import {
   currentNetWorth,
+  netWorthChange,
   netWorthHistory,
   type AccountHistoryInput,
+  type CurrencyTotal,
   type NetWorthReading,
 } from './net-worth';
 import { expenseByDefault, transfer, type Income, type Transaction } from './transaction';
@@ -404,5 +406,112 @@ describe('netWorthHistory', () => {
     });
     // Whatever the account is "worth" today, August's reconstructed point is вкладено alone.
     expect(totalOf(points, '2026-08-31')).toEqual({ status: 'known', amount: money(100000, 'UAH') });
+  });
+});
+
+const known = (amountMinor: number, currency = 'UAH'): CurrencyTotal => ({
+  status: 'known',
+  amount: money(amountMinor, currency),
+});
+
+describe('netWorthChange', () => {
+  it('Scenario: Positive comparable baseline', () => {
+    const result = netWorthChange({
+      current: known(120000),
+      currentUsedValuation: false,
+      hasFutureRecords: false,
+      previousMonthEnd: { date: '2026-08-31', total: known(100000) },
+    });
+    expect(result).toEqual({
+      status: 'available',
+      change: {
+        currency: 'UAH',
+        absolute: money(20000, 'UAH'),
+        percent: 20,
+        since: '2026-08-31',
+      },
+    });
+  });
+
+  it('Scenario: Zero or negative denominator', () => {
+    const zeroBaseline = netWorthChange({
+      current: known(20000),
+      currentUsedValuation: false,
+      hasFutureRecords: false,
+      previousMonthEnd: { date: '2026-08-31', total: known(0) },
+    });
+    expect(zeroBaseline.status).toBe('available');
+    expect(zeroBaseline.status === 'available' && zeroBaseline.change.absolute).toEqual(money(20000, 'UAH'));
+    expect(zeroBaseline.status === 'available' && zeroBaseline.change.percent).toBeUndefined();
+
+    const negativeBaseline = netWorthChange({
+      current: known(20000),
+      currentUsedValuation: false,
+      hasFutureRecords: false,
+      previousMonthEnd: { date: '2026-08-31', total: known(-10000) },
+    });
+    expect(negativeBaseline.status === 'available' && negativeBaseline.change.absolute).toEqual(
+      money(30000, 'UAH'),
+    );
+    expect(negativeBaseline.status === 'available' && negativeBaseline.change.percent).toBeUndefined();
+  });
+
+  it('Scenario: No matching baseline means no change — missing previous month-end', () => {
+    const result = netWorthChange({
+      current: known(120000),
+      currentUsedValuation: false,
+      hasFutureRecords: false,
+      previousMonthEnd: undefined,
+    });
+    expect(result).toEqual({ status: 'unavailable', reason: 'no-baseline' });
+  });
+
+  it('Scenario: A gap baseline is also no matching baseline', () => {
+    const result = netWorthChange({
+      current: known(120000),
+      currentUsedValuation: false,
+      hasFutureRecords: false,
+      previousMonthEnd: { date: '2026-08-31', total: { status: 'unavailable', reason: 'gap' } },
+    });
+    expect(result).toEqual({ status: 'unavailable', reason: 'no-baseline' });
+  });
+
+  it('Scenario: An investment valuation substitution suppresses comparison', () => {
+    const result = netWorthChange({
+      current: known(120000),
+      currentUsedValuation: true,
+      hasFutureRecords: false,
+      previousMonthEnd: { date: '2026-08-31', total: known(100000) },
+    });
+    expect(result).toEqual({ status: 'unavailable', reason: 'valuation-substituted' });
+  });
+
+  it('Scenario: A future-dated record suppresses comparison', () => {
+    const result = netWorthChange({
+      current: known(120000),
+      currentUsedValuation: false,
+      hasFutureRecords: true,
+      previousMonthEnd: { date: '2026-08-31', total: known(100000) },
+    });
+    expect(result).toEqual({ status: 'unavailable', reason: 'future-records' });
+  });
+
+  it('Scenario: An unrelated currency remains comparable', () => {
+    // A USD future record or valuation substitution must not suppress a UAH comparison — the
+    // caller evaluates each currency with its own flags, never one shared across all of them.
+    const uah = netWorthChange({
+      current: known(120000, 'UAH'),
+      currentUsedValuation: false,
+      hasFutureRecords: false,
+      previousMonthEnd: { date: '2026-08-31', total: known(100000, 'UAH') },
+    });
+    const usd = netWorthChange({
+      current: known(5000, 'USD'),
+      currentUsedValuation: true,
+      hasFutureRecords: false,
+      previousMonthEnd: { date: '2026-08-31', total: known(4000, 'USD') },
+    });
+    expect(uah.status).toBe('available');
+    expect(usd).toEqual({ status: 'unavailable', reason: 'valuation-substituted' });
   });
 });
