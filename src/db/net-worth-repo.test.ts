@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { account, computeBalance, type Account } from '../domain/account';
 import { money, type CurrencyCode } from '../domain/money';
@@ -328,13 +328,26 @@ describe('netWorthRepo — differential verification against computeBalance (tas
       expect(allTransactions.length).toBeGreaterThanOrEqual(50000);
 
       const repo = netWorthRepo(storage.db);
+      // Task 5.4: the same four reads Головний's Статок widget makes on every load, timed
+      // together over this exact 50000-record/30-account/120-month fixture — the one
+      // `dashboard-layout`-style Node proxy for "profile the fixture" that `verify` can run; the
+      // device's own frame rate is recorded on the emulator in §7, not here.
+      const start = performance.now();
       const monthly = repo.monthlyMovement(TODAY);
       const firsts = repo.firstDates(TODAY);
       const firstMovement = repo.firstDateMovement(TODAY);
+      const futureRecords = repo.accountsWithFutureRecords(TODAY);
+      const elapsedMs = performance.now() - start;
 
       // Bounded by accounts x months — a tiny fraction of the transactions that produced it.
       expect(monthly.length).toBeLessThanOrEqual(ACCOUNT_COUNT * MONTH_COUNT);
       expect(monthly.length * 10).toBeLessThan(allTransactions.length);
+      // Bounded by accounts alone — never by how many future-dated records exist.
+      expect(futureRecords.size).toBeLessThanOrEqual(ACCOUNT_COUNT);
+      // Generous on purpose — this guards against an accidental per-account or per-month loop
+      // reappearing, not against normal variance on a shared CI machine. Four bounded SQL
+      // aggregates over 50000 rows finishing in seconds, not this, is the regression it catches.
+      expect(elapsedMs).toBeLessThan(5000);
 
       for (const acc of accountList) {
         // Bounded by `TODAY`, matching what `monthlyMovement`/`firstDateMovement` themselves
@@ -361,4 +374,49 @@ describe('netWorthRepo — differential verification against computeBalance (tas
       storage.close();
     }
   }, 20000);
+
+  it('Scenario: No per-account or per-month full-history rescans — one query per reading, regardless of scale', () => {
+    // Task 5.4. Account/month *count* does not change how many queries a reading issues — only
+    // how many rows the one query it does issue returns — so a small fixture proves the same
+    // thing the 50000-record one above does about *shape*, at a fraction of the cost. A repo that
+    // regressed into looping `db.all` once per account, or once per (account, month) cell, would
+    // fail this test at 5 accounts exactly as it would at 30.
+    const storage = openTestDb();
+    try {
+      seedReferences(storage.db, { categories: ['food'], sources: ['salary'] });
+      const accountList: Account[] = Array.from({ length: 5 }, (_, i) =>
+        account({ id: `acc-${i}`, name: `рахунок ${i}`, kind: 'spending', currency: 'UAH' }),
+      );
+      const write = accountsRepo(storage.db);
+      for (const a of accountList) write.save(a);
+      const tx = transactionsRepo(storage.db);
+      for (const month of monthsBackFrom('2026-09-19', 6)) {
+        for (const acc of accountList) {
+          tx.save(
+            expenseByDefault({
+              id: `e-${acc.id}-${month}`,
+              date: `${month}-10`,
+              accountId: acc.id,
+              amount: money(1000, 'UAH'),
+              categoryId: 'food',
+            }),
+            storedAt,
+          );
+        }
+      }
+
+      const queries = vi.spyOn(storage.db, 'all');
+      const repo = netWorthRepo(storage.db);
+      repo.monthlyMovement('2026-09-19');
+      repo.firstDates('2026-09-19');
+      repo.firstDateMovement('2026-09-19');
+      repo.accountsWithFutureRecords('2026-09-19');
+      // Exactly one `db.all` per reading — five accounts and six months included, summed and
+      // grouped by SQLite itself, never walked one at a time from this side of the connection.
+      expect(queries).toHaveBeenCalledTimes(4);
+      queries.mockRestore();
+    } finally {
+      storage.close();
+    }
+  });
 });

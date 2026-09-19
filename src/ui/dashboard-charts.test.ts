@@ -101,6 +101,30 @@ describe('historyGeometry', () => {
     expect(result.segments[1]!.map((p) => p.seriesIndex)).toEqual([4]);
   });
 
+  it('Scenario: Chart work is bounded independently of history length (task 5.4)', () => {
+    // Realistically Статок's history is at most 120 monthly points (net-worth history is monthly,
+    // never daily), but the bound this module promises is on the *algorithm*, not on that one
+    // known caller — so this proves it holds far past any real caller, at 50000 points, the same
+    // order of magnitude task 5.4's own fixture uses for the repository beneath it.
+    const series: HistorySeriesPoint[] = Array.from({ length: 50000 }, (_, i) => ({
+      x: i / 49999,
+      value: Math.sin(i / 97) * 100000 + i,
+    }));
+    const start = performance.now();
+    const result = historyGeometry(series);
+    const elapsedMs = performance.now() - start;
+
+    expect(result.segments).toHaveLength(1);
+    const plotted = result.segments[0]!;
+    // Bounded output regardless of how long the input series is — the whole point of the budget.
+    expect(plotted.length).toBeLessThanOrEqual(MAX_PLOTTED_POINTS);
+    expect(plotted[0]!.seriesIndex).toBe(0);
+    expect(plotted.at(-1)!.seriesIndex).toBe(49999);
+    // Generous on purpose — this guards against an accidental quadratic pass over the input
+    // reappearing, not against normal variance on a shared CI machine.
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+
   it('Scenario: A bounded path preserves first, last, extrema and gaps under 120 points', () => {
     // A single run of 400 points: a rise to a peak, a fall to a trough, a rise to the end — the
     // two turning points are the extrema a downsampled path must not lose.

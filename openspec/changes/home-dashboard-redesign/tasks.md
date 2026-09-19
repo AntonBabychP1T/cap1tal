@@ -422,7 +422,30 @@ All boxes describe future implementation work and remain unchecked in this propo
       result, that neither `categories` nor `netWorth`'s `useMemo` mentions any status field, and
       that both currency choosers are bare state setters. `npm run verify`: 3651 tests passed,
       `2ca91d54b32f6755c258de647021f69c4d627d88`.
-- [ ] 5.4 Bound rendered chart work independently of history length and profile the fixture. Trace: main-screen «The dashboard uses local data…»; net-worth «History is readable…». Tests: `src/ui/dashboard-charts.test.ts`, `src/db/net-worth-repo.test.ts` — 50k records/30 accounts/120 months, bounded output, no per-account/per-month full-history rescans; record device frame/timing evidence in §7.
+- [x] 5.4 Bound rendered chart work independently of history length and profile the fixture. Trace: main-screen «The dashboard uses local data…»; net-worth «History is readable…». Tests: `src/ui/dashboard-charts.test.ts`, `src/db/net-worth-repo.test.ts` — 50k records/30 accounts/120 months, bounded output, no per-account/per-month full-history rescans; record device frame/timing evidence in §7.
+
+      **Result:** Audited first, same as 5.3: `historyGeometry`'s `MAX_PLOTTED_POINTS` budget
+      (task 3.3) already bounds *output* independently of input length by construction, and
+      `net-worth-repo.ts`'s four readings (task 2.2) were already one `db.all(sql\`...\`)` each —
+      a single SQLite aggregate over a shared `MOVEMENTS` CTE, never a loop issuing one query per
+      account or per month. Nothing needed redesigning; what was missing was proof at the scale
+      this task names, and the Node-only timing proxy for "profile the fixture" that `verify` can
+      actually run — real device frame/timing evidence stays §7's job, on the emulator, exactly as
+      the task says.
+      `src/ui/dashboard-charts.test.ts`: new scenario feeding `historyGeometry` 50000 points
+      (matching the repository fixture's order of magnitude, far past the ~120 real monthly points
+      Статок's own history ever produces) — output stays ≤120 plotted points, first/last survive,
+      and it completes in comfortably under a second, proving the bound is algorithmic and not an
+      accident of realistic input size.
+      `src/db/net-worth-repo.test.ts`: extended task 2.3's existing 50000-record/30-account/
+      120-month differential test (no new fixture generation) to also call and bound
+      `accountsWithFutureRecords` (≤30, one entry per account) and to time all four reads together
+      (<5s, generous — a regression guard against a reintroduced per-account/per-month loop, not a
+      tight perf budget). Added a second, small, fast test (5 accounts × 6 months) that spies on
+      `db.all` and asserts exactly 4 calls across the four readings — a direct behavioural proof of
+      "no per-account/per-month full-history rescans" independent of data volume, since a
+      regression to one-query-per-account would fail this at 5 accounts exactly as at 30.
+      `npm run verify`: 3653 tests passed, `8f3671cf41cb6b9baf10d8e7936947b36137a1b2`.
 
 ## 6. Synchronized documentation after approval
 
