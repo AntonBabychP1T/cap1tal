@@ -3,6 +3,7 @@ import { backupRepo } from './backup-repo';
 import { driveBackupRepo } from './drive-backup-repo';
 import { categoriesRepo } from './categories-repo';
 import { db } from './client';
+import { persistRetyped as persistRetypedImpl } from './counterpart-income-repo';
 import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { importRepo } from './import-repo';
@@ -26,6 +27,11 @@ import { transactionsRepo } from './transactions-repo';
  */
 export const accounts = accountsRepo(db);
 export const transactions = transactionsRepo(db);
+/** A retype or edit's whole write, atomically — see `counterpart-income-repo.ts`'s own doc. */
+export const persistRetyped = (
+  written: Parameters<typeof persistRetypedImpl>[1],
+  storedAt: Date,
+) => persistRetypedImpl(db, written, storedAt);
 /** The monobank rate cache — read for the approximate UAH figure, written when it is refreshed. */
 export const rates = ratesRepo(db);
 /** The owner's editable lists and the правила автокатегоризації — seeded on open, see ./seed.ts. */

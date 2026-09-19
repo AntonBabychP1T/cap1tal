@@ -2,6 +2,9 @@ import { useCallback, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { rules as rulesRepo } from '@/db/repos';
+import type { Account } from '@/domain/account';
+import type { CurrencyCode } from '@/domain/money';
+import type { RuleTarget } from '@/domain/rules';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
 import { ruleFromDraft, ruleOffer, storeRule, type RuleOffer } from '@/ui/list-management';
@@ -27,7 +30,12 @@ export function useRuleOffer(reportBug: (entryId: string) => void) {
   const [offer, setOffer] = useState<RuleOffer | undefined>();
 
   const raise = useCallback(
-    (input: { description?: string; categoryId: string }): RuleOffer | undefined => {
+    (input: {
+      description?: string;
+      target: RuleTarget;
+      fromAccount?: { accountId: string; currency: CurrencyCode };
+      accounts?: readonly Pick<Account, 'id' | 'currency'>[];
+    }): RuleOffer | undefined => {
       const proposed = ruleOffer({ ...input, rules: rulesRepo.list() });
       setOffer(proposed);
       return proposed;
@@ -44,7 +52,14 @@ export function useRuleOffer(reportBug: (entryId: string) => void) {
       }
       try {
         const rule = ruleFromDraft(
-          { merchant, mcc: '', categoryId: offer.categoryId },
+          {
+            merchant,
+            mcc: '',
+            target: offer.target.kind,
+            ...(offer.target.kind === 'category'
+              ? { categoryId: offer.target.categoryId }
+              : { toAccountId: offer.target.toAccountId }),
+          },
           { id: newId(), createdAt: new Date() },
         );
         await storeRule(rule, rulesRepo.save);

@@ -321,8 +321,8 @@ describe('what the репорт says about the phone', () => {
   });
 
   it('says how many migrations this database has had applied', () => {
-    // The one committed migration, since `openTestDb` runs the real migrator over the real folder.
-    expect(repo.migrationsApplied()).toBe(1);
+    // The two committed migrations, since `openTestDb` runs the real migrator over the real folder.
+    expect(repo.migrationsApplied()).toBe(2);
   });
 });
 

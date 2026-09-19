@@ -31,6 +31,11 @@ export function sourceLabel(sourceId: string, names: ReadonlyMap<string, string>
   return labelOf(sourceId, names);
 }
 
+/** A рахунок's own name by id — a правило-переказ's destination, resolved like any other label. */
+export function accountLabel(accountId: string, names: ReadonlyMap<string, string>): string {
+  return labelOf(accountId, names);
+}
+
 /**
  * How the owner's own lists are ordered wherever they are shown: by name, the way Ukrainian
  * orders names, then by id so the order is total. The id matters because two rows may legally

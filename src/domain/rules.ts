@@ -1,23 +1,31 @@
+import type { Account } from './account';
 import {
   UNCATEGORISED_CATEGORY_ID,
   type Transaction,
 } from './transaction';
 
 /**
- * A правило автокатегоризації: "merchant / MCC → category", the owner's own mapping that every
- * витрата is run through before it falls back to «Без категорії» (glossary, "Rule (правило)") —
- * the three import sources, and the entry form when the owner records one by hand.
+ * A правило автокатегоризації: "merchant / MCC → category, or → переказ на рахунок Z", the
+ * owner's own mapping that every витрата is run through before it falls back to «Без категорії»
+ * (glossary, "Rule (правило)") — the three import sources, and the entry form when the owner
+ * records one by hand. A **правило-переказ** targets a destination рахунок instead: money leaving
+ * a linked рахунок it matches is a переказ to that destination, not a витрата (glossary,
+ * "Transfer rule").
  *
- * Nothing here reads or writes storage: the callers load the правила once and call `matchRule`,
- * and `sweepUncategorised` below decides a розбір without performing it.
+ * Nothing here reads or writes storage: the callers load the правила once and call `matchRule` or
+ * `matchCategory`, and `sweepUncategorised` below decides a розбір without performing it.
  */
+export type RuleTarget =
+  | { readonly kind: 'category'; readonly categoryId: string }
+  | { readonly kind: 'transfer'; readonly toAccountId: string };
+
 export interface Rule {
   readonly id: string;
   /** A substring of the merchant description; absent when the rule matches on MCC alone. */
   readonly merchant?: string;
   /** ISO-18245 merchant category code; absent when the rule matches on the merchant alone. */
   readonly mcc?: number;
-  readonly categoryId: string;
+  readonly target: RuleTarget;
   /** The tie-break between two equally specific rules — domain data, not storage metadata. */
   readonly createdAt: Date;
 }
@@ -86,22 +94,74 @@ function beats(candidate: Rule, best: Rule): boolean {
   return candidate.id > best.id;
 }
 
+/** The рахунок money is leaving — what a правило-переказ needs to decide it is eligible at all. */
+export interface FromAccount {
+  readonly accountId: string;
+  readonly currency: Account['currency'];
+}
+
 /**
- * The target category of the best-matching rule, or nothing when no rule matches. Archiving is
- * not consulted — it is not even on `Rule`: archiving hides a category from pickers, not from
- * rules, so a rule keeps matching into an archived category until the owner retargets or deletes
- * it in Налаштування.
+ * A правило-переказ is eligible only when the рахунок the money left is known, its destination
+ * exists, differs from that рахунок, and is in its currency — a переказ from a рахунок to itself,
+ * or across currencies with no сума to state, is not what a rule can decide (categorisation-rules,
+ * "Matching is deterministic and most-specific-first"). A rule targeting a категорія is always
+ * eligible: only a правило-переказ depends on knowing the source at all.
+ */
+function eligible(
+  rule: Rule,
+  from: FromAccount | undefined,
+  accounts: readonly Pick<Account, 'id' | 'currency'>[],
+): boolean {
+  const target = rule.target;
+  if (target.kind === 'category') return true;
+  if (from === undefined) return false;
+  const destination = accounts.find((a) => a.id === target.toAccountId);
+  if (destination === undefined) return false;
+  if (destination.id === from.accountId) return false;
+  return destination.currency === from.currency;
+}
+
+/**
+ * The target of the best-matching rule — a категорія or a переказ to a destination рахунок — or
+ * nothing when no rule matches. `from` is the рахунок the money is leaving, when it is known; a
+ * правило-переказ ineligible for it (design D2's eligibility above) takes no part in the match at
+ * all, so the next best rule decides, exactly as if the ineligible rule did not exist.
+ *
+ * Archiving is not consulted — it is not even on `Rule`: archiving hides a category or a рахунок
+ * from pickers, not from rules, so a rule keeps matching until the owner retargets or deletes it in
+ * Налаштування.
  */
 export function matchRule(
   rules: readonly Rule[],
-  transaction: { readonly description: string; readonly mcc?: number },
-): string | undefined {
+  transaction: {
+    readonly description: string;
+    readonly mcc?: number;
+    readonly from?: FromAccount;
+  },
+  accounts: readonly Pick<Account, 'id' | 'currency'>[] = [],
+): RuleTarget | undefined {
   let best: Rule | undefined;
   for (const rule of rules) {
+    if (!eligible(rule, transaction.from, accounts)) continue;
     if (!matches(rule, transaction)) continue;
     if (best === undefined || beats(rule, best)) best = rule;
   }
-  return best?.categoryId;
+  return best?.target;
+}
+
+/**
+ * `matchRule` for the callers that only ever decide a категорія — the entry form and a чернетка
+ * from a bank сповіщення, neither of which knows a рахунок the money left in the sense a
+ * правило-переказ needs (categorisation-rules, "Правила decide the категорія... a правило-переказ
+ * SHALL take no part"). Passing no `from` makes every правило-переказ ineligible by construction,
+ * so this ranks category rules only and keeps `matchRule`'s ladder as the one place ranking lives.
+ */
+export function matchCategory(
+  rules: readonly Rule[],
+  transaction: { readonly description: string; readonly mcc?: number },
+): string | undefined {
+  const target = matchRule(rules, transaction);
+  return target?.kind === 'category' ? target.categoryId : undefined;
 }
 
 /**
@@ -135,15 +195,17 @@ export function proposeMerchantPattern(description: string | undefined): string 
   return leading.split(/\s+/).slice(0, 2).join(' ');
 }
 
-/** One витрата the розбір moves, and the категорія it moves onto. */
-export interface CategoryMove {
-  readonly id: string;
-  readonly categoryId: string;
-}
+/** One витрата the розбір moves: onto a категорія, or into a переказ to a destination рахунок. */
+export type SweepMove =
+  | { readonly kind: 'category'; readonly id: string; readonly categoryId: string }
+  | { readonly kind: 'transfer'; readonly id: string; readonly toAccountId: string };
 
 /**
  * The розбір: which stored витрати in «Без категорії» the правила now recognise, and where each
- * one goes. It decides and returns; nothing here writes (design decision 1).
+ * one goes. It decides and returns; nothing here writes (design decision 1). Turning a витрата
+ * into a переказ is only the move — keeping its identity, сума, date and опис on both legs, and
+ * absorbing its зустрічний дохід — is the repository's write, using the same shared step every
+ * other переказ a правило makes goes through (design D5).
  *
  * Only витрати in «Без категорії» are considered. A категорія the owner chose — or an earlier
  * правило gave — is a decision, not a gap, so it is never revisited; a повернення is left alone
@@ -160,19 +222,35 @@ export interface CategoryMove {
  * the only write path the app has, but a restore writes the `rules` table directly, so a бекап
  * written elsewhere can land one — and a розбір that moved a витрата from the gap into the gap
  * would change nothing while outranking the правило that would have filled it.
+ *
+ * A правило-переказ that matches a витрата on its own destination, or on a рахунок in another
+ * currency, is ineligible there (design D2) and gives that витрата nothing, so it stays.
  */
 export function sweepUncategorised(
   rules: readonly Rule[],
   transactions: readonly Transaction[],
-): readonly CategoryMove[] {
-  const moves: CategoryMove[] = [];
+  accounts: readonly Pick<Account, 'id' | 'currency'>[],
+): readonly SweepMove[] {
+  const moves: SweepMove[] = [];
   for (const transaction of transactions) {
     if (transaction.type !== 'expense') continue;
     if (transaction.categoryId !== UNCATEGORISED_CATEGORY_ID) continue;
     if (transaction.description === undefined) continue;
-    const categoryId = matchRule(rules, { description: transaction.description });
-    if (categoryId === undefined || categoryId === UNCATEGORISED_CATEGORY_ID) continue;
-    moves.push({ id: transaction.id, categoryId });
+    const target = matchRule(
+      rules,
+      {
+        description: transaction.description,
+        from: { accountId: transaction.accountId, currency: transaction.amount.currency },
+      },
+      accounts,
+    );
+    if (target === undefined) continue;
+    if (target.kind === 'category') {
+      if (target.categoryId === UNCATEGORISED_CATEGORY_ID) continue;
+      moves.push({ kind: 'category', id: transaction.id, categoryId: target.categoryId });
+    } else {
+      moves.push({ kind: 'transfer', id: transaction.id, toAccountId: target.toAccountId });
+    }
   }
   return moves;
 }

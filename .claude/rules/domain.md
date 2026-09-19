@@ -41,6 +41,9 @@ stop and say so; do not "fix" the docs silently.
 - Repayment of a debt above the principal is income (`interest`); the principal is a transfer back.
 - Balance is always derived from an opening balance plus transactions. Never store a balance that
   transactions cannot explain.
+- Sync never pairs two statement rows into a transfer on its own; pairing (a transfer absorbing its
+  counterpart income) happens only as the owner's explicit action — a transfer rule they wrote, or
+  a retype they performed.
 
 ## Monthly picture (calendar month)
 - spent = expenses net of refunds (uncategorised, corrections<0 and fees included)

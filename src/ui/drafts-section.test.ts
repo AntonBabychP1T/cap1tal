@@ -64,7 +64,7 @@ const rawDraft: Draft = {
 const groceries: Rule = {
   id: 'r-groceries',
   merchant: 'сільпо',
-  categoryId: 'groceries',
+  target: { kind: 'category', categoryId: 'groceries' },
   createdAt: new Date('2026-08-27T00:00:00.000Z'),
 };
 

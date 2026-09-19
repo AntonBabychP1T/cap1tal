@@ -10,6 +10,7 @@ import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
+  persistRetyped,
   receipts as receiptsRepo,
   sources as sourcesRepo,
   transactions as transactionsRepo,
@@ -26,9 +27,15 @@ import { accountChoicesFor, legsOf } from '@/ui/account-choices';
 import { formatMinorUnits } from '@/ui/amount-input';
 import { categoryChoicesFor, recentlyUsed, sourceChoicesFor } from '@/ui/category-choices';
 import { buildEntry, normaliseDescription, type EntryType } from '@/ui/entry-form';
-import { accountChoiceLabel, categoryLabel, transactionTypeLabel } from '@/ui/labels';
+import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
+import { ruleTargetLabel } from '@/ui/list-management';
 import { receiptOffer } from '@/ui/receipt-screen';
-import { labelsAfterRetype, shapesFor } from '@/ui/retype';
+import {
+  initialShape,
+  labelsAfterRetype,
+  shapesFor,
+  transferWriteNeedsPairing,
+} from '@/ui/retype';
 import { PICKER_SIZE } from '@/ui/shortlist';
 
 import { Spacing } from '@/constants/theme';
@@ -65,7 +72,10 @@ export default function EditTransactionScreen() {
     [router],
   );
 
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, as } = useLocalSearchParams<{ id: string; as?: string }>();
+  // Only «Це переказ» sends this, and only a витрата honours it (design D7) — `initialShape`
+  // decides which; anything else here is simply not the shape this param asks for.
+  const openAsTransfer = as === 'transfer' ? 'transfer' : undefined;
 
   const [stored] = useReloadOnFocus(
     useCallback(
@@ -100,7 +110,7 @@ export default function EditTransactionScreen() {
     [legs.destination, stored.accounts],
   );
 
-  const [form, setForm] = useState(() => initialForm(original));
+  const [form, setForm] = useState(() => initialForm(original, openAsTransfer));
 
   const from = sourceChoicesList.find((a) => a.id === form?.fromId);
   const to = destinationChoices.find((a) => a.id === form?.toId);
@@ -112,6 +122,7 @@ export default function EditTransactionScreen() {
     [form?.categoryId, stored.categories],
   );
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
   const sourceRows = useMemo(
     () => sourceChoicesFor(stored.sources, form?.sourceId),
     [form?.sourceId, stored.sources],
@@ -166,27 +177,59 @@ export default function EditTransactionScreen() {
     [form, original],
   );
 
-  /** Writes what a save decided; navigation is a separate decision (see `apply` below). */
-  const persist = useCallback((...written: Transaction[]) => {
-    const now = new Date();
-    for (const t of written) {
-      transactionsRepo.save(t, now);
-    }
-    // A транзакція was edited. Nothing already earned is ever taken back by it (design D2);
-    // only what the change newly makes true is earned.
-    evaluateProgress();
-  }, []);
-
-  const store = useCallback(
+  /**
+   * Writes what a save decided, all of it in one database transaction — the переказ (or whatever
+   * it retyped from) and any second leg such as a «Комісія» витрата or a «Відсотки» дохід land
+   * together or not at all (design D5). A written переказ goes through the shared pairing step
+   * when the original was a витрата, or was itself a переказ still awaiting its зустрічний дохід —
+   * `transferWriteNeedsPairing` decides which; everything else is the plain write.
+   * Navigation is a separate decision (see `apply` below).
+   */
+  const persist = useCallback(
     (...written: Transaction[]) => {
-      persist(...written);
-      router.back();
+      persistRetyped(
+        written.map((transaction) => ({
+          transaction,
+          needsPairing: transferWriteNeedsPairing(original, transaction),
+        })),
+        new Date(),
+      );
+      // A транзакція was edited. Nothing already earned is ever taken back by it (design D2);
+      // only what the change newly makes true is earned.
+      evaluateProgress();
     },
-    [persist, router],
+    [original],
   );
 
   /** The offer to remember today's edit as a правило — raised only after the категорія is stored. */
   const ruleOffer = useRuleOffer(reportBug);
+
+  /**
+   * Stores whatever a переказ decision produced and, only when the original was a витрата, offers
+   * to remember it as a правило-переказ — the переказ is already stored by the time the offer can
+   * show (design D6), so declining or the back gesture can never lose it. A cross-currency переказ
+   * offers nothing: `ruleOffer` itself refuses one there.
+   */
+  const storeTransfer = useCallback(
+    (...written: Transaction[]) => {
+      persist(...written);
+      const transferred = written.find((t) => t.type === 'transfer');
+      const offered =
+        original?.type === 'expense' && transferred?.description
+          ? ruleOffer.raise({
+              description: transferred.description,
+              target: { kind: 'transfer', toAccountId: transferred.toAccountId },
+              fromAccount: { accountId: transferred.fromAccountId, currency: transferred.left.currency },
+              accounts: stored.accounts,
+            })
+          : undefined;
+      if (offered) {
+        return;
+      }
+      router.back();
+    },
+    [original, persist, ruleOffer, router, stored.accounts],
+  );
 
   const apply = useCallback(() => {
     if (!form || !original) return;
@@ -211,15 +254,16 @@ export default function EditTransactionScreen() {
       );
       if (built.type === 'transfer') {
         // The рахунок the money left decides what may be proposed, and its stored транзакції are
-        // what says how much that person still owed before this переказ. Editing a переказ offers
-        // no правило, whatever the опис says.
+        // what says how much that person still owed before this переказ. `storeTransfer` offers a
+        // правило-переказ only when the original was a витрата — editing an already-переказ offers
+        // none, whatever the опис says.
         askAboutTransfer(
           built,
           {
             accounts: stored.accounts,
             sourceTransactions: transactionsRepo.listByAccount(built.fromAccountId),
           },
-          store,
+          storeTransfer,
         );
         return;
       }
@@ -234,7 +278,10 @@ export default function EditTransactionScreen() {
         (built.type === 'expense' || built.type === 'refund') &&
         built.description &&
         built.categoryId !== before
-          ? ruleOffer.raise({ description: built.description, categoryId: built.categoryId })
+          ? ruleOffer.raise({
+              description: built.description,
+              target: { kind: 'category', categoryId: built.categoryId },
+            })
           : undefined;
       // `ruleOffer.raise` legitimately answers "no offer" too — «Без категорії», a правило that
       // already covers this опис — and only a real offer keeps the screen open for the sheet;
@@ -248,7 +295,7 @@ export default function EditTransactionScreen() {
         ...failureAlert({ title: 'Не збережено', where: 'transaction-save', error, report: reportBug }),
       );
     }
-  }, [form, original, persist, reportBug, router, ruleOffer, store, stored.accounts]);
+  }, [form, original, persist, reportBug, router, ruleOffer, storeTransfer, stored.accounts]);
 
   const remove = useCallback(() => {
     if (!original) return;
@@ -419,8 +466,8 @@ export default function EditTransactionScreen() {
       <Action variant="destructive" title="Видалити транзакцію" onPress={remove} />
       <RuleOfferSheet
         offer={ruleOffer.offer}
-        categoryName={
-          ruleOffer.offer ? categoryLabel(ruleOffer.offer.categoryId, categoryNames) : ''
+        targetLabel={
+          ruleOffer.offer ? ruleTargetLabel(ruleOffer.offer.target, categoryNames, accountNames) : ''
         }
         // The save this offer follows already wrote the транзакція; leaving the editing screen —
         // by accepting, declining or the back gesture that `Sheet` treats the same as «Не треба» —
@@ -517,9 +564,11 @@ interface Form {
 /**
  * A переказ opens on the сума that left and the account it left; retyping it into a витрата
  * therefore keeps exactly those, and drops the arrived leg. `undefined` means a коригування,
- * which this screen shows rather than edits.
+ * which this screen shows rather than edits. `as` is «Це переказ»'s own param: reached from the
+ * feed mark on a витрата, it opens already switched to переказ with the source rахунок kept and
+ * no destination chosen — `initialShape` decides whether this витрата honours it at all (design D7).
  */
-function initialForm(t: Transaction | undefined): Form | undefined {
+function initialForm(t: Transaction | undefined, as?: 'transfer'): Form | undefined {
   if (!t) return undefined;
   const common = { toId: '', arrived: '', date: t.date, description: t.description ?? '' };
   if (t.type === 'transfer') {
@@ -537,6 +586,10 @@ function initialForm(t: Transaction | undefined): Form | undefined {
   }
   if (t.type === 'correction') {
     return undefined;
+  }
+  if (initialShape(t, as) === 'transfer') {
+    // «Це переказ»: opens as переказ, source рахунок kept, no destination — nothing written yet.
+    return { ...common, shape: 'transfer', fromId: t.accountId, amount: formatMinorUnits(t.amount.amount) };
   }
   return {
     ...common,

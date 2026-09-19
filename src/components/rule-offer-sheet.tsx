@@ -20,12 +20,13 @@ import { Spacing } from '@/constants/theme';
  */
 export function RuleOfferSheet({
   offer,
-  categoryName,
+  targetLabel,
   onAccept,
   onDecline,
 }: {
   offer: RuleOffer | undefined;
-  categoryName: string;
+  /** The category's name, or «переказ на <назва>» for a правило-переказ (design D6). */
+  targetLabel: string;
   onAccept: (merchant: string) => void;
   onDecline: () => void;
 }) {
@@ -53,7 +54,7 @@ export function RuleOfferSheet({
           onChangeText={setPattern}
           autoCapitalize="none"
         />
-        <ThemedText>→ {categoryName}</ThemedText>
+        <ThemedText>→ {targetLabel}</ThemedText>
       </View>
       <View style={styles.actions}>
         <Action title="Запамʼятати" onPress={() => onAccept(pattern)} />

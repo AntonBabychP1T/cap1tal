@@ -55,14 +55,14 @@ import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { failureAlert } from '@/ui/failure-alert';
 import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
 import { newId } from '@/ui/id';
-import { categoryLabel } from '@/ui/labels';
+import { ruleTargetLabel } from '@/ui/list-management';
 import { reportFailure } from '@/ui/journal';
 import { currentMonth } from '@/ui/months';
 import { PICKER_SIZE } from '@/ui/shortlist';
 import { ONLY_UNCATEGORISED } from '@/ui/transaction-search';
 import { onCapturesStored } from '@/ui/notification-drain';
 import { firstRun } from '@/ui/onboarding';
-import { recategorise } from '@/ui/retype';
+import { offersTransferMark, recategorise } from '@/ui/retype';
 import {
   accountsById,
   feedSubtitle,
@@ -301,6 +301,7 @@ export default function MainScreen() {
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
   // The джерела by id too: an imported дохід carries «Без джерела», and the стрічка has to name it.
   const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
   /**
@@ -433,7 +434,7 @@ export default function MainScreen() {
         reload();
         // The категорія is already stored, never lost by a dismissed offer (design D5).
         if (t.type === 'expense' || t.type === 'refund') {
-          ruleOffer.raise({ description: t.description, categoryId: picked });
+          ruleOffer.raise({ description: t.description, target: { kind: 'category', categoryId: picked } });
         }
       } catch (error) {
         Alert.alert(
@@ -821,7 +822,8 @@ export default function MainScreen() {
                 </Pressable>
 
                 {/* The one tap behind the mark: picking here stores the category on the
-                    transaction without the editing screen ever opening. */}
+                    transaction without the editing screen ever opening. Beside it, «Це переказ»
+                    opens editing already switched to переказ — a витрата only (design D7). */}
                 {line.uncategorised ? (
                   <View style={styles.rowActions}>
                     <RowAction
@@ -831,6 +833,12 @@ export default function MainScreen() {
                         setCategoryListOpen(false);
                       }}
                     />
+                    {offersTransferMark(t) ? (
+                      <RowAction
+                        title="Це переказ"
+                        onPress={() => router.push(`/transaction/${line.id}?as=transfer`)}
+                      />
+                    ) : null}
                   </View>
                 ) : null}
                 {categorising === line.id ? (
@@ -852,8 +860,8 @@ export default function MainScreen() {
       )}
       <RuleOfferSheet
         offer={ruleOffer.offer}
-        categoryName={
-          ruleOffer.offer ? categoryLabel(ruleOffer.offer.categoryId, categoryNames) : ''
+        targetLabel={
+          ruleOffer.offer ? ruleTargetLabel(ruleOffer.offer.target, categoryNames, accountNames) : ''
         }
         onAccept={ruleOffer.accept}
         onDecline={ruleOffer.decline}

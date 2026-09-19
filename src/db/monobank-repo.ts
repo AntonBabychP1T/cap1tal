@@ -2,8 +2,9 @@ import { and, asc, eq, lte } from 'drizzle-orm';
 
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
-import { isoDate, type IsoDate, type Transaction } from '../domain/transaction';
+import { isoDate, UNSOURCED_SOURCE_ID, type IsoDate, type Transaction } from '../domain/transaction';
 import { validateLink, type MonobankLink } from '../monobank/link';
+import { absorbIncomeIfAwaited, storeTransferPairing } from './counterpart-income-repo';
 import { toAccountRow, toTransactionRow } from './mappers';
 import {
   accounts,
@@ -464,6 +465,13 @@ export function monobankRepo(db: Storage) {
      * Saldo import gives: `created_at` is the tie-break between транзакції of one calendar date,
      * so writing a page under a single instant would leave the bank's own order to the random
      * suffix of an id.
+     *
+     * A переказ a правило-переказ made from an outgoing item, and an incoming дохід «Без джерела»,
+     * both go through the shared pairing step (design D5): the переказ absorbs a already-stored
+     * зустрічний дохід or awaits one, and an incoming дохід that is some awaiting переказ's
+     * зустрічний дохід is absorbed into it instead of being stored — in this same transaction, so
+     * a failed commit pairs nothing (monobank-sync, "A statement answer pairs a переказ with its
+     * зустрічний дохід in one commit").
      */
     commitStatementAnswer(answer: StatementAnswer): void {
       const monobankAccount = requireAccount(answer.monobankAccountId);
@@ -480,12 +488,15 @@ export function monobankRepo(db: Storage) {
 
       db.transaction((tx) => {
         answer.transactions.forEach((t, index) => {
-          tx.insert(transactionsTable)
-            .values({
-              ...toTransactionRow(t),
-              createdAt: new Date(answer.storedAt.getTime() + index),
-            })
-            .run();
+          const storedAt = new Date(answer.storedAt.getTime() + index);
+          if (t.type === 'transfer') {
+            storeTransferPairing(tx, t, storedAt);
+            return;
+          }
+          if (t.type === 'income' && t.sourceId === UNSOURCED_SOURCE_ID && absorbIncomeIfAwaited(tx, t, storedAt)) {
+            return;
+          }
+          tx.insert(transactionsTable).values({ ...toTransactionRow(t), createdAt: storedAt }).run();
         });
         for (const itemId of answer.newlySeenIds) {
           tx.insert(monobankImportedItems)

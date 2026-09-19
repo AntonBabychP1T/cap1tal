@@ -1,3 +1,4 @@
+import { daysBetween } from './dates';
 import type { Money } from './money';
 import type { IsoDate, Transaction } from './transaction';
 
@@ -143,16 +144,6 @@ export interface ReceiptComparison {
 /** The сума a транзакція of any type puts on one рахунок, or nothing for a переказ. */
 function transactionAmount(t: Transaction): Money | undefined {
   return t.type === 'transfer' ? undefined : t.amount;
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Whole days between two calendar dates, both read as UTC midnights so no device timezone can
- * move them. Both are `IsoDate`, already validated by whoever built them.
- */
-function daysBetween(a: IsoDate, b: IsoDate): number {
-  return Math.round(Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / DAY_MS);
 }
 
 /**

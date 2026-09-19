@@ -84,6 +84,14 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Unsourced** (без джерела) — the income half of "uncategorised": the джерело an imported
   arrival carries while the bank has said only that money came in. A visible starting state, never
   a verdict and never a classification of a refund — the owner retypes it into what it was.
+- **Counterpart income** (зустрічний дохід) — the дохід «Без джерела» the *destination* рахунок of
+  a переказ reports for the same movement the source рахунок already reports as that переказ: same
+  рахунок, same arrived сума and currency, dated within one calendar day, carrying no фіскальний
+  чек and no джерело the owner chose. A переказ made by a правило-переказ or by retyping absorbs it
+  instead of leaving it beside the переказ — the money would otherwise be counted twice, once as
+  the переказ and once as income. If none is stored yet, the переказ **awaits** its зустрічний
+  дохід and absorbs the first monobank statement item that qualifies once it arrives; a переказ
+  absorbs at most one, and once it has, it awaits nothing more.
 - **Draft** (чернетка) — a транзакція an import proposes and the owner has not yet said a word
   about: it sits on a рахунок with a date, the text the bank sent, and a proposed amount, and it
   moves no money — no розрахунковий баланс and no monthly number reads it. Confirming it creates
@@ -99,12 +107,22 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Source** (джерело доходу) — the label on an income: salary, freelance, parents, gift,
   investments, interest, …
 - **Starter set** **[PROPOSED]** — the owner's Saldo categories and sources, flattened.
-- **Rule** (правило) — "merchant / MCC X → category Y", editable by the owner. Applied wherever a
-  категорія is decided — the three import sources and manual entry alike — never only to imports.
+- **Rule** (правило) — "merchant / MCC X → category Y", or "merchant / MCC X → переказ на рахунок
+  Z" (see Transfer rule), editable by the owner. Applied wherever a категорія is decided — the
+  three import sources and manual entry alike — never only to imports; a правило-переказ applies
+  only where a рахунок the money left is known, so manual entry and a чернетка's категорія never
+  see one.
+- **Transfer rule** (правило-переказ) — a правило whose target is a destination рахунок instead of
+  a category: money leaving a linked рахунок that this правило matches is a переказ to that
+  destination, not a витрата. Ranked on the same ladder as every other правило, so the most
+  specific one wins whichever kind it is. Takes no part in matching money leaving its own
+  destination, money in another currency than its destination, or a категорія being decided by
+  hand or from a chernetka — there it is simply not a категорія.
 - **Sweep** (розбір) — what storing a правило, newly created or edited, does about history: every
-  stored витрата sitting in «Без категорії» that the правила now match moves onto the категорія
-  they give it, at once and without asking. It only ever fills the gap — a категорія the owner
-  chose, or an earlier правило gave, is never revisited.
+  stored витрата sitting in «Без категорії» that the правила now match moves onto what they give
+  it, at once and without asking — a категорія, or a переказ when the best правило is a
+  правило-переказ. It only ever fills the gap — a категорія the owner chose, or an earlier правило
+  gave, is never revisited.
 - **Limit** (ліміт) — an optional monthly ceiling on a category: at most one per category, a сума
   with a currency code. A category is **over its ліміт** for a month when that month's spent of it
   **in the ліміт's own currency** — the net-of-повернення amount the monthly-picture breakdown

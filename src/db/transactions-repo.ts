@@ -14,8 +14,31 @@ import {
 
 import { isoDate, UNCATEGORISED_CATEGORY_ID, type Month, type Transaction } from '../domain/transaction';
 import { toTransaction, toTransactionRow } from './mappers';
-import { transactions } from './schema';
+import { counterpartIncomeAwaits, transactions, type TransactionRow } from './schema';
 import type { Storage } from './storage';
+
+/**
+ * `rows`, each turned into a `Transaction` — a переказ among them carrying
+ * `awaitingCounterpartIncome` when its id is one of `awaitingIds`. One extra query per read
+ * rather than a join on every one of them: only переказ rows can possibly await anything, and most
+ * reads here return few enough of those that a second round trip is simpler than joining every
+ * caller through `counterpart_income_awaits` (design D4).
+ */
+function withAwaiting(db: Storage, rows: readonly TransactionRow[]): Transaction[] {
+  const transferIds = rows.filter((row) => row.type === 'transfer').map((row) => row.id);
+  const awaitingIds =
+    transferIds.length === 0
+      ? new Set<string>()
+      : new Set(
+          db
+            .select()
+            .from(counterpartIncomeAwaits)
+            .where(inArray(counterpartIncomeAwaits.transactionId, transferIds))
+            .all()
+            .map((row) => row.transactionId),
+        );
+  return rows.map((row) => toTransaction(row, awaitingIds.has(row.id)));
+}
 
 /**
  * «Without a категорія», said once: a витрата or a повернення carrying «Без категорії» — exactly
@@ -57,6 +80,18 @@ export function transactionsRepo(db: Storage) {
         .values(row)
         .onConflictDoUpdate({ target: transactions.id, set: replaceable })
         .run();
+      // Only a переказ ever awaits, and every stored переказ awaits at most what it says it does:
+      // any id saved as anything else — including a переказ retyped into something else under the
+      // same id — reads back awaiting nothing (persistence, design D4). A CHECK cannot look across
+      // tables, so this is the one write path that keeps it true.
+      if (t.type === 'transfer' && t.awaitingCounterpartIncome) {
+        db.insert(counterpartIncomeAwaits)
+          .values({ transactionId: t.id })
+          .onConflictDoNothing()
+          .run();
+      } else {
+        db.delete(counterpartIncomeAwaits).where(eq(counterpartIncomeAwaits.transactionId, t.id)).run();
+      }
     },
 
     /**
@@ -79,9 +114,10 @@ export function transactionsRepo(db: Storage) {
 
     get(id: string): Transaction | undefined {
       const row = db.select().from(transactions).where(eq(transactions.id, id)).get();
-      return row ? toTransaction(row) : undefined;
+      return row ? withAwaiting(db, [row])[0] : undefined;
     },
 
+    /** Cascades onto `counterpart_income_awaits` — a row with no переказ to describe means nothing. */
     remove(id: string): void {
       db.delete(transactions).where(eq(transactions.id, id)).run();
     },
@@ -94,13 +130,15 @@ export function transactionsRepo(db: Storage) {
       // Validates the month by validating its first day; a bad month cannot reach SQL.
       const first = isoDate(`${month}-01`);
       const last = `${month}-31`;
-      return db
-        .select()
-        .from(transactions)
-        .where(and(gte(transactions.date, first), lte(transactions.date, last)))
-        .orderBy(asc(transactions.date), asc(transactions.id))
-        .all()
-        .map(toTransaction);
+      return withAwaiting(
+        db,
+        db
+          .select()
+          .from(transactions)
+          .where(and(gte(transactions.date, first), lte(transactions.date, last)))
+          .orderBy(asc(transactions.date), asc(transactions.id))
+          .all(),
+      );
     },
 
     /**
@@ -109,13 +147,15 @@ export function transactionsRepo(db: Storage) {
      * insertion order SQLite happens to return.
      */
     listLatest(limit: number): Transaction[] {
-      return db
-        .select()
-        .from(transactions)
-        .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
-        .limit(limit)
-        .all()
-        .map(toTransaction);
+      return withAwaiting(
+        db,
+        db
+          .select()
+          .from(transactions)
+          .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
+          .limit(limit)
+          .all(),
+      );
     },
 
     /**
@@ -124,12 +164,14 @@ export function transactionsRepo(db: Storage) {
      * and "the latest a very large number of them" is not the same question.
      */
     listAll(): Transaction[] {
-      return db
-        .select()
-        .from(transactions)
-        .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
-        .all()
-        .map(toTransaction);
+      return withAwaiting(
+        db,
+        db
+          .select()
+          .from(transactions)
+          .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
+          .all(),
+      );
     },
 
     /**
@@ -213,13 +255,15 @@ export function transactionsRepo(db: Storage) {
         filters.push(alternatives.length > 0 ? or(...alternatives)! : sqlFalse());
       }
 
-      const narrowed = db
-        .select()
-        .from(transactions)
-        .where(filters.length > 0 ? and(...filters) : undefined)
-        .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
-        .all()
-        .map(toTransaction);
+      const narrowed = withAwaiting(
+        db,
+        db
+          .select()
+          .from(transactions)
+          .where(filters.length > 0 ? and(...filters) : undefined)
+          .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
+          .all(),
+      );
 
       const matched = match ? narrowed.filter((t) => satisfies(t, match)) : narrowed;
       return matched.slice(input.offset, input.offset + input.limit);
@@ -244,19 +288,21 @@ export function transactionsRepo(db: Storage) {
 
     /** Everything touching the account, transfers included on either leg. */
     listByAccount(accountId: string): Transaction[] {
-      return db
-        .select()
-        .from(transactions)
-        .where(
-          or(
-            eq(transactions.accountId, accountId),
-            eq(transactions.fromAccountId, accountId),
-            eq(transactions.toAccountId, accountId),
-          ),
-        )
-        .orderBy(asc(transactions.date), asc(transactions.id))
-        .all()
-        .map(toTransaction);
+      return withAwaiting(
+        db,
+        db
+          .select()
+          .from(transactions)
+          .where(
+            or(
+              eq(transactions.accountId, accountId),
+              eq(transactions.fromAccountId, accountId),
+              eq(transactions.toAccountId, accountId),
+            ),
+          )
+          .orderBy(asc(transactions.date), asc(transactions.id))
+          .all(),
+      );
     },
   };
 }

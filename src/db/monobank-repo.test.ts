@@ -919,6 +919,225 @@ describe('monobankRepo — one statement answer', () => {
   });
 });
 
+describe('monobankRepo — commitStatementAnswer pairs a переказ with its зустрічний дохід', () => {
+  let storage: TestStorage;
+  let repo: MonobankRepo;
+  let txs: TransactionsRepo;
+
+  const reserve = account({ id: 'reserve', name: 'РЕЗЕРВ', kind: 'savings', currency: 'UAH' });
+  const monoReserve: FetchedMonobankAccount = {
+    id: 'mono-reserve',
+    kind: 'jar',
+    name: 'РЕЗЕРВ',
+    currency: 'UAH',
+    bankBalance: money(0, 'UAH'),
+  };
+
+  /** The переказ a правило-переказ made from an outgoing item — pure, awaiting by construction. */
+  const outgoingTransfer = (id: string): Transaction => ({
+    type: 'transfer',
+    id,
+    date: '2026-09-14',
+    fromAccountId: 'card',
+    toAccountId: 'reserve',
+    left: money(978, 'UAH'),
+    arrived: money(978, 'UAH'),
+    description: 'Округлення балансу «Резерв»',
+    awaitingCounterpartIncome: true,
+  });
+
+  const incomingUnsourced = (id: string): Transaction => ({
+    type: 'income',
+    id,
+    date: '2026-09-14',
+    accountId: 'reserve',
+    amount: money(978, 'UAH'),
+    sourceId: UNSOURCED_SOURCE_ID,
+  });
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    accountsRepo(storage.db).save(card);
+    accountsRepo(storage.db).save(reserve);
+    repo = monobankRepo(storage.db);
+    txs = transactionsRepo(storage.db);
+    repo.upsertAccounts([monoCard, monoReserve], obtainedAt);
+    repo.link({
+      monobankAccountId: 'mono-card',
+      accountId: 'card',
+      syncStartDate: '2026-08-01',
+      cursorMs: boundaryMs,
+    });
+    repo.link({
+      monobankAccountId: 'mono-reserve',
+      accountId: 'reserve',
+      syncStartDate: '2026-08-01',
+      cursorMs: boundaryMs,
+    });
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: The card is synced before рахунок РЕЗЕРВ', () => {
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [outgoingTransfer('tr1')],
+      newlySeenIds: ['item-out'],
+      bankBalance: money(0, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt,
+    });
+
+    expect(txs.get('tr1')).toMatchObject({ type: 'transfer', awaitingCounterpartIncome: true });
+
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-reserve',
+      transactions: [incomingUnsourced('in1')],
+      newlySeenIds: ['item-in'],
+      bankBalance: money(978, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt: new Date(storedAt.getTime() + 1000),
+    });
+
+    // No дохід of 978 is stored on РЕЗЕРВ, and the переказ awaits nothing.
+    expect(txs.get('in1')).toBeUndefined();
+    const settled = txs.get('tr1');
+    expect(settled?.type).toBe('transfer');
+    expect(settled && 'awaitingCounterpartIncome' in settled).toBe(false);
+    // The item still counts as imported, so it never imports again.
+    expect(repo.importedIds('mono-reserve')).toEqual(new Set(['item-in']));
+  });
+
+  it('Scenario: Рахунок РЕЗЕРВ is synced before the card', () => {
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-reserve',
+      transactions: [incomingUnsourced('in1')],
+      newlySeenIds: ['item-in'],
+      bankBalance: money(978, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt,
+    });
+
+    expect(txs.get('in1')).toMatchObject({ type: 'income', sourceId: UNSOURCED_SOURCE_ID });
+
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [outgoingTransfer('tr1')],
+      newlySeenIds: ['item-out'],
+      bankBalance: money(0, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt: new Date(storedAt.getTime() + 1000),
+    });
+
+    // That дохід is gone, and one переказ of 978 awaits nothing.
+    expect(txs.get('in1')).toBeUndefined();
+    const settled = txs.get('tr1');
+    expect(settled?.type).toBe('transfer');
+    expect(settled && 'awaitingCounterpartIncome' in settled).toBe(false);
+  });
+
+  it('monobank-sync Scenario: A правило-переказ pairs the two legs', () => {
+    // Whichever of the two рахунки is synced first, exactly one транзакція results.
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [outgoingTransfer('tr1')],
+      newlySeenIds: ['item-out'],
+      bankBalance: money(0, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt,
+    });
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-reserve',
+      transactions: [incomingUnsourced('in1')],
+      newlySeenIds: ['item-in'],
+      bankBalance: money(978, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt: new Date(storedAt.getTime() + 1000),
+    });
+
+    const everything = [...txs.listByAccount('card'), ...txs.listByAccount('reserve')];
+    const distinct = new Set(everything.map((t) => t.id));
+    expect(distinct).toEqual(new Set(['tr1']));
+    expect(txs.get('tr1')?.type).toBe('transfer');
+  });
+
+  it('transactions Scenario: A переказ awaiting after a retype is met by a later sync', () => {
+    // Not through commitStatementAnswer at all — as a retype would store it, awaiting.
+    txs.save(outgoingTransfer('tr1'), storedAt);
+    expect(txs.get('tr1')).toMatchObject({ awaitingCounterpartIncome: true });
+
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-reserve',
+      transactions: [incomingUnsourced('in1')],
+      newlySeenIds: ['item-in'],
+      bankBalance: money(978, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt: new Date(storedAt.getTime() + 1000),
+    });
+
+    expect(txs.get('in1')).toBeUndefined();
+    const settled = txs.get('tr1');
+    expect(settled?.type).toBe('transfer');
+    expect(settled && 'awaitingCounterpartIncome' in settled).toBe(false);
+  });
+
+  it('transactions Scenario: An incoming item with no awaiting переказ stays a дохід', () => {
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-reserve',
+      transactions: [incomingUnsourced('in1')],
+      newlySeenIds: ['item-in'],
+      bankBalance: money(978, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt,
+    });
+
+    expect(txs.get('in1')).toMatchObject({ type: 'income', sourceId: UNSOURCED_SOURCE_ID });
+  });
+
+  it('transactions Scenario: A failed commit pairs nothing', () => {
+    // An awaiting переказ already stored on card, exactly as a retype would leave it.
+    txs.save(outgoingTransfer('tr1'), storedAt);
+
+    const rejected = expenseByDefault({
+      id: 'bad',
+      date: '2026-09-14',
+      accountId: 'reserve',
+      amount: money(100, 'UAH'),
+      // A категорія no row has: the foreign key refuses it, after the pairing income in the batch.
+      categoryId: 'no-such-category',
+    });
+
+    expect(() =>
+      repo.commitStatementAnswer({
+        monobankAccountId: 'mono-reserve',
+        transactions: [incomingUnsourced('in1'), rejected],
+        newlySeenIds: ['item-in', 'item-bad'],
+        bankBalance: money(978, 'UAH'),
+        obtainedAt,
+        cursorMs: boundaryMs + 1000,
+        storedAt: new Date(storedAt.getTime() + 1000),
+      }),
+    ).toThrow(/FOREIGN KEY constraint failed/);
+
+    // The переказ still awaits, no дохід from that answer is stored, and the item is not
+    // remembered as imported.
+    expect(txs.get('tr1')).toMatchObject({ awaitingCounterpartIncome: true });
+    expect(txs.get('in1')).toBeUndefined();
+    expect(repo.importedIds('mono-reserve')).toEqual(new Set());
+  });
+});
+
 describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => {
   let storage: TestStorage;
   let repo: MonobankRepo;

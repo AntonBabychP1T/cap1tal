@@ -1,14 +1,16 @@
+import type { Account } from '../domain/account';
 import {
   isReservedCategory,
   isReservedSource,
   type Category,
   type Source,
 } from '../domain/category';
-import { matchRule, proposeMerchantPattern, type Rule } from '../domain/rules';
+import type { CurrencyCode } from '../domain/money';
+import { matchRule, proposeMerchantPattern, type Rule, type RuleTarget } from '../domain/rules';
 import { UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import type { SweepCounts } from '../db/rules-repo';
 import { journal } from './journal';
-import { byName, categoryLabel, expenseCount } from './labels';
+import { accountLabel, byName, categoryLabel, expenseCount } from './labels';
 
 /**
  * What the «Категорії», «Джерела» and «Правила» sections of Налаштування show, and what the rule
@@ -78,7 +80,10 @@ export interface RuleDraft {
   readonly merchant: string;
   /** As typed; empty means the rule has no MCC. */
   readonly mcc: string;
+  /** Which target the form is filling in — the other one's id is dropped when this is saved. */
+  readonly target: 'category' | 'transfer';
   readonly categoryId?: string;
+  readonly toAccountId?: string;
 }
 
 /**
@@ -86,6 +91,10 @@ export interface RuleDraft {
  * language (`failureMessage` puts these in an Alert verbatim). The id and the creation moment
  * come from the caller because this stays pure — and `createdAt` is domain data here, the
  * tie-breaker matching falls back on, not storage metadata (design.md §5).
+ *
+ * `draft.target` decides which of `categoryId` / `toAccountId` is read; the other is dropped even
+ * when the form still carries it from before the owner switched — switching the target SHALL drop
+ * the choice made for the other (categorisation-rules, settings-screen).
  */
 export function ruleFromDraft(
   draft: RuleDraft,
@@ -103,22 +112,47 @@ export function ruleFromDraft(
   if (merchant === '' && mcc === undefined) {
     throw new Error('Правило потребує продавця або MCC');
   }
-  if (draft.categoryId === undefined || draft.categoryId === '') {
-    throw new Error('Правило потребує категорії');
+  let target: RuleTarget;
+  if (draft.target === 'transfer') {
+    if (draft.toAccountId === undefined || draft.toAccountId === '') {
+      throw new Error('Правило потребує рахунку призначення');
+    }
+    target = { kind: 'transfer', toAccountId: draft.toAccountId };
+  } else {
+    if (draft.categoryId === undefined || draft.categoryId === '') {
+      throw new Error('Правило потребує категорії');
+    }
+    target = { kind: 'category', categoryId: draft.categoryId };
   }
   return {
     id: context.id,
     ...(merchant === '' ? {} : { merchant }),
     ...(mcc === undefined ? {} : { mcc }),
-    categoryId: draft.categoryId,
+    target,
     createdAt: context.createdAt,
   };
 }
 
-/** How the «Правила» list shows one rule: its criteria and the target category's name. */
+/**
+ * A `RuleTarget`'s own label: the category's name, or «переказ на <назва>» for a правило-переказ.
+ * A rule keeps working into an archived категорія or рахунок, so both names are resolved the same
+ * way — and an id either map misses shows itself rather than leaving the line blank.
+ */
+export function ruleTargetLabel(
+  target: RuleTarget,
+  categoryNames: ReadonlyMap<string, string>,
+  accountNames: ReadonlyMap<string, string>,
+): string {
+  return target.kind === 'category'
+    ? categoryLabel(target.categoryId, categoryNames)
+    : `переказ на ${accountLabel(target.toAccountId, accountNames)}`;
+}
+
+/** How the «Правила» list shows one rule: its criteria and the target's own label. */
 export function ruleLine(
   rule: Rule,
   categoryNames: ReadonlyMap<string, string>,
+  accountNames: ReadonlyMap<string, string>,
 ): { readonly id: string; readonly criteria: string; readonly category: string } {
   const criteria: string[] = [];
   if (rule.merchant) {
@@ -131,44 +165,71 @@ export function ruleLine(
     id: rule.id,
     // Both criteria read as one line, joined the way an account choice joins its currency.
     criteria: criteria.join(' · '),
-    // A rule keeps working into an archived category, so the name is resolved like any other —
-    // and an id the map misses shows itself rather than leaving the line blank.
-    category: categoryLabel(rule.categoryId, categoryNames),
+    category: ruleTargetLabel(rule.target, categoryNames, accountNames),
   };
 }
 
 /** What the offer to remember a правило proposes: the pattern, editable, and the target it names. */
 export interface RuleOffer {
   readonly merchant: string;
-  readonly categoryId: string;
+  readonly target: RuleTarget;
+}
+
+function sameTarget(a: RuleTarget, b: RuleTarget): boolean {
+  return a.kind === 'category' && b.kind === 'category'
+    ? a.categoryId === b.categoryId
+    : a.kind === 'transfer' && b.kind === 'transfer' && a.toAccountId === b.toAccountId;
 }
 
 /**
- * Whether setting a категорія on a stored витрата or повернення should offer to remember it as a
- * правило, and what that offer would say (design D5).
+ * Whether setting a категорія on a stored витрата or повернення — or retyping one into a переказ —
+ * should offer to remember it as a правило, and what that offer would say (design D5, D6).
  *
  * Nothing is offered for a транзакція with no опис — there is no pattern to propose, and a
  * правило with neither a merchant nor an MCC is rejected — nor for «Без категорії», which is not a
  * категорія a правило may target. Nor is anything offered when the owner's правила already give
- * that опис this same категорія: the правило that would be written already exists, under whatever
- * pattern it carries.
+ * that опис the same target: the правило that would be written already exists, under whatever
+ * pattern it carries. For a переказ, `fromAccount` and `accounts` are what let that check run at
+ * all — with no source known (recording by hand), and for a destination in another currency than
+ * the source, no offer is made either, since such a правило would never match it.
  */
 export function ruleOffer(input: {
   readonly description?: string;
-  readonly categoryId: string;
+  readonly target: RuleTarget;
+  readonly fromAccount?: { readonly accountId: string; readonly currency: CurrencyCode };
+  readonly accounts?: readonly Pick<Account, 'id' | 'currency'>[];
   readonly rules: readonly Rule[];
 }): RuleOffer | undefined {
-  if (input.categoryId === UNCATEGORISED_CATEGORY_ID) {
+  const target = input.target;
+  if (target.kind === 'category' && target.categoryId === UNCATEGORISED_CATEGORY_ID) {
     return undefined;
   }
   const merchant = proposeMerchantPattern(input.description);
   if (merchant === undefined) {
     return undefined;
   }
-  if (matchRule(input.rules, { description: input.description ?? '' }) === input.categoryId) {
+  if (target.kind === 'transfer') {
+    const destination = input.accounts?.find((a) => a.id === target.toAccountId);
+    if (
+      input.fromAccount === undefined ||
+      destination === undefined ||
+      destination.currency !== input.fromAccount.currency
+    ) {
+      return undefined;
+    }
+  }
+  const existing = matchRule(
+    input.rules,
+    {
+      description: input.description ?? '',
+      ...(input.fromAccount ? { from: input.fromAccount } : {}),
+    },
+    input.accounts ?? [],
+  );
+  if (existing !== undefined && sameTarget(existing, input.target)) {
     return undefined;
   }
-  return { merchant, categoryId: input.categoryId };
+  return { merchant, target: input.target };
 }
 
 /**
@@ -187,7 +248,17 @@ export async function storeRule(
   save: (rule: Rule) => SweepCounts,
 ): Promise<string | undefined> {
   const counts = await journal.step('rules/sweep', async () => save(rule), {
-    ending: (c) => ({ counts: { examined: c.examined, moved: c.moved } }),
+    ending: (c) => ({
+      counts: {
+        examined: c.examined,
+        moved: c.moved,
+        transferred: c.transferred,
+        absorbed: c.absorbed,
+      },
+    }),
   });
-  return counts.moved > 0 ? `${expenseCount(counts.moved)} перекатегоризовано.` : undefined;
+  const said: string[] = [];
+  if (counts.moved > 0) said.push(`${expenseCount(counts.moved)} перекатегоризовано.`);
+  if (counts.transferred > 0) said.push(`${expenseCount(counts.transferred)} стали переказами.`);
+  return said.length > 0 ? said.join(' ') : undefined;
 }

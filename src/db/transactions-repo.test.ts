@@ -340,6 +340,89 @@ describe('transactionsRepo', () => {
   });
 });
 
+describe('transactionsRepo — awaitingCounterpartIncome', () => {
+  let storage: TestStorage;
+  let repo: TransactionsRepo;
+
+  const awaitingTransfer: Transfer = {
+    ...transfer({
+      id: 't-awaiting',
+      date: '2026-09-16',
+      fromAccountId: 'card',
+      toAccountId: 'usd',
+      left: money(41000, 'UAH'),
+      arrived: money(1000, 'USD'),
+    }),
+    awaitingCounterpartIncome: true,
+  };
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    seedAccounts(storage);
+    repo = transactionsRepo(storage.db);
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: An awaiting переказ round-trips', () => {
+    repo.save(awaitingTransfer, storedAt);
+    repo.save(crossCurrencyTransfer, storedAt);
+
+    expect(repo.get('t-awaiting')).toEqual(awaitingTransfer);
+    expect(repo.get('t1')).toEqual(crossCurrencyTransfer);
+    expect('awaitingCounterpartIncome' in (repo.get('t1') as object)).toBe(false);
+    // The read paths beyond `get` carry it too.
+    expect(repo.listAll().find((t) => t.id === 't-awaiting')).toEqual(awaitingTransfer);
+    expect(repo.listByAccount('card').find((t) => t.id === 't-awaiting')).toEqual(awaitingTransfer);
+    expect(repo.listMonth('2026-09').find((t) => t.id === 't-awaiting')).toEqual(awaitingTransfer);
+    expect(repo.listLatest(10).find((t) => t.id === 't-awaiting')).toEqual(awaitingTransfer);
+  });
+
+  it('Scenario: A retyped переказ no longer reads back as awaiting', () => {
+    repo.save(awaitingTransfer, storedAt);
+
+    // Saving an edit under the same id, awaiting nothing this time.
+    const { awaitingCounterpartIncome: _awaiting, ...settled } = awaitingTransfer;
+    repo.save(settled, storedAt);
+
+    expect(repo.get('t-awaiting')).toEqual(settled);
+    expect('awaitingCounterpartIncome' in (repo.get('t-awaiting') as object)).toBe(false);
+  });
+
+  it('removing an awaiting переказ leaves no row behind', () => {
+    repo.save(awaitingTransfer, storedAt);
+
+    repo.remove('t-awaiting');
+
+    expect(
+      storage.db.all(sql`SELECT * FROM counterpart_income_awaits WHERE transaction_id = 't-awaiting'`),
+    ).toEqual([]);
+  });
+
+  it('a переказ retyped under the same id into a витрата leaves no row behind', () => {
+    repo.save(awaitingTransfer, storedAt);
+
+    repo.save(
+      expenseByDefault({
+        id: 't-awaiting',
+        date: '2026-09-16',
+        accountId: 'card',
+        amount: money(41000, 'UAH'),
+        categoryId: 'food',
+      }),
+      storedAt,
+    );
+
+    expect(repo.get('t-awaiting')).toMatchObject({ type: 'expense' });
+    expect(
+      storage.db.all(sql`SELECT * FROM counterpart_income_awaits WHERE transaction_id = 't-awaiting'`),
+    ).toEqual([]);
+  });
+});
+
 describe('transactionsRepo on a file database', () => {
   let dir: string;
 

@@ -1,8 +1,10 @@
+import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
 import { matchRule, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
   isoDate,
+  transfer,
   UNSOURCED_SOURCE_ID,
   type Income,
   type Transaction,
@@ -234,6 +236,12 @@ export interface MapContext {
   readonly currency: CurrencyCode;
   /** The owner's правила, applied by description and MCC exactly as any other import applies them. */
   readonly rules: readonly Rule[];
+  /**
+   * Every рахунок, so a правило-переказ's destination can be found and its currency compared.
+   * Absent is the same as empty: no rules could then be eligible transfer rules, exactly as if
+   * `from` decided nothing.
+   */
+  readonly accounts?: readonly Pick<Account, 'id' | 'currency'>[];
   /** The ids already imported for this monobank account. Input and output, never hidden state. */
   readonly seenIds: ReadonlySet<string>;
   readonly newId: () => string;
@@ -255,10 +263,13 @@ export interface MappedStatement {
  * set always produce the same result.
  *
  * Money that left is a витрата in the категорія the owner's правила give it, «Без категорії» when
- * none matches. Money that arrived is a дохід with the reserved джерело «Без джерела» — a starting
- * state, not a verdict: an arriving повернення or cashback is money the owner retypes through
- * витрата into повернення, because a повернення is never income. Nothing here reclassifies it on
- * the owner's behalf, and the «Без джерела» mark is what keeps it visible until they do.
+ * none matches — or, when the best matching правило is a правило-переказ, a переказ to its
+ * destination instead, awaiting its зустрічний дохід (this is pure and never looks at storage; the
+ * caller's commit decides whether one is already stored — design D5). Money that arrived is a
+ * дохід with the reserved джерело «Без джерела» — a starting state, not a verdict: an arriving
+ * повернення or cashback is money the owner retypes through витрата into повернення, because a
+ * повернення is never income. Nothing here reclassifies it on the owner's behalf, and the «Без
+ * джерела» mark is what keeps it visible until they do.
  *
  * A hold maps exactly like a settled operation — a hold is just a transaction — and an item of
  * zero maps to nothing while still being remembered, so it is not re-examined forever.
@@ -287,18 +298,44 @@ export function mapStatement(
     }
 
     if (item.amount.amount < 0) {
-      const categoryId = matchRule(ctx.rules, {
-        description: item.description,
-        mcc: item.mcc,
-      });
+      const amount = money(-item.amount.amount, ctx.currency);
+      const target = matchRule(
+        ctx.rules,
+        {
+          description: item.description,
+          mcc: item.mcc,
+          from: { accountId: ctx.accountId, currency: ctx.currency },
+        },
+        ctx.accounts ?? [],
+      );
+      if (target?.kind === 'transfer') {
+        // The owner's own explicit action (they wrote the правило), so sync's "no invented
+        // переказ" rule does not apply here (monobank-sync, "Sync preserves the transaction
+        // distinctions"). Eligibility already guarantees the destination is in this currency, so
+        // both legs carry the same сума. Pairing with a зустрічний дохід is the caller's commit —
+        // this stays pure and never looks at storage (design D5).
+        transactions.push({
+          ...transfer({
+            id: ctx.newId(),
+            date: item.date,
+            fromAccountId: ctx.accountId,
+            toAccountId: target.toAccountId,
+            left: amount,
+            arrived: amount,
+            ...(item.description ? { description: item.description } : {}),
+          }),
+          awaitingCounterpartIncome: true,
+        });
+        continue;
+      }
       transactions.push(
         expenseByDefault({
           id: ctx.newId(),
           date: item.date,
           accountId: ctx.accountId,
-          amount: money(-item.amount.amount, ctx.currency),
+          amount,
           // No match means no categoryId at all: the «Без категорії» default is the domain's.
-          ...(categoryId ? { categoryId } : {}),
+          ...(target?.kind === 'category' ? { categoryId: target.categoryId } : {}),
           // No original-currency сума — a deferral, not an impossibility: a statement does name
           // the bank's own сума and the currency it is in, but nothing here reads the pair and no
           // screen shows one. What the bank charged the рахунок is exact, and that is what counts.

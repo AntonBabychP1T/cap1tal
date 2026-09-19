@@ -42,7 +42,7 @@ const item = (over: Partial<StatementItem> & Pick<StatementItem, 'id'>): Stateme
 const groceries: Rule = {
   id: 'r1',
   merchant: 'сільпо',
-  categoryId: 'groceries',
+  target: { kind: 'category', categoryId: 'groceries' },
   createdAt: new Date('2026-01-01T00:00:00Z'),
 };
 
@@ -194,6 +194,71 @@ describe('mapStatement', () => {
     });
   });
 
+  it('Scenario: A правило-переказ makes the item a переказ', () => {
+    const roundUp: Rule = {
+      id: 'r-round-up',
+      merchant: 'округлення балансу',
+      target: { kind: 'transfer', toAccountId: 'reserve' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { transactions } = mapStatement(
+      [item({ id: 'a1', description: 'Округлення балансу «Резерв»', amount: money(-479, 'UAH') })],
+      context({
+        accountId: 'platinum',
+        rules: [roundUp],
+        accounts: [
+          { id: 'platinum', currency: 'UAH' },
+          { id: 'reserve', currency: 'UAH' },
+        ],
+      }),
+    );
+    expect(transactions).toEqual([
+      {
+        type: 'transfer',
+        id: 't1',
+        date: '2026-08-26',
+        fromAccountId: 'platinum',
+        toAccountId: 'reserve',
+        left: money(479, 'UAH'),
+        arrived: money(479, 'UAH'),
+        description: 'Округлення балансу «Резерв»',
+        awaitingCounterpartIncome: true,
+      },
+    ]);
+  });
+
+  it("a USD рахунок's item under a UAH destination stays a витрата", () => {
+    const roundUp: Rule = {
+      id: 'r-round-up',
+      merchant: 'округлення балансу',
+      target: { kind: 'transfer', toAccountId: 'reserve' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { transactions } = mapStatement(
+      [
+        item({
+          id: 'a1',
+          description: 'Округлення балансу «Резерв»',
+          amount: money(-479, 'USD'),
+        }),
+      ],
+      context({
+        accountId: 'usd-card',
+        currency: 'USD',
+        rules: [roundUp],
+        accounts: [
+          { id: 'usd-card', currency: 'USD' },
+          { id: 'reserve', currency: 'UAH' },
+        ],
+      }),
+    );
+    expect(transactions[0]).toMatchObject({
+      type: 'expense',
+      amount: money(479, 'USD'),
+      categoryId: UNCATEGORISED_CATEGORY_ID,
+    });
+  });
+
   it('Scenario: Arriving money is a дохід «Без джерела»', () => {
     const { transactions } = mapStatement(
       [
@@ -223,7 +288,7 @@ describe('mapStatement', () => {
     // keeps it visible until they do.
     const { transactions } = mapStatement(
       [item({ id: 'a1', description: 'Кешбек', mcc: 4829, amount: money(25000, 'UAH') })],
-      context({ rules: [{ ...groceries, merchant: 'кешбек', categoryId: 'groceries' }] }),
+      context({ rules: [{ ...groceries, merchant: 'кешбек' }] }),
     );
     expect(transactions[0]).toMatchObject({ type: 'income', sourceId: UNSOURCED_SOURCE_ID });
     // Not even a matching правило turns arriving money into a categorised anything.

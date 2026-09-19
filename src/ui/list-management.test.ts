@@ -131,31 +131,69 @@ describe('manageSources', () => {
 
 const context = { id: 'r1', createdAt: new Date('2026-08-24T09:00:00.000Z') };
 const groceries = new Map([['groceries', 'Groceries']]);
+const accountNames = new Map([['reserve', 'РЕЗЕРВ']]);
 
 describe('ruleFromDraft', () => {
   it('Scenario: A created rule appears in the list', () => {
     // The owner types "сільпо → Groceries"; the trailing space they left is not part of it.
     const rule = ruleFromDraft(
-      { merchant: ' сільпо ', mcc: '', categoryId: 'groceries' },
+      { merchant: ' сільпо ', mcc: '', target: 'category', categoryId: 'groceries' },
       context,
     );
 
     expect(rule).toEqual({
       id: 'r1',
       merchant: 'сільпо',
-      categoryId: 'groceries',
+      target: { kind: 'category', categoryId: 'groceries' },
       createdAt: context.createdAt,
     });
-    expect(ruleLine(rule, groceries)).toEqual({
+    expect(ruleLine(rule, groceries, accountNames)).toEqual({
       id: 'r1',
       criteria: 'сільпо',
       category: 'Groceries',
     });
   });
 
+  it('Scenario: A правило-переказ is stored', () => {
+    const rule = ruleFromDraft(
+      { merchant: 'округлення балансу', mcc: '', target: 'transfer', toAccountId: 'reserve' },
+      context,
+    );
+
+    expect(rule).toEqual({
+      id: 'r1',
+      merchant: 'округлення балансу',
+      target: { kind: 'transfer', toAccountId: 'reserve' },
+      createdAt: context.createdAt,
+    });
+    expect(ruleLine(rule, groceries, accountNames)).toEqual({
+      id: 'r1',
+      criteria: 'округлення балансу',
+      category: 'переказ на РЕЗЕРВ',
+    });
+  });
+
+  it('Scenario: Switching the target drops the other choice', () => {
+    // The form may still carry a category id from before the owner switched — ruleFromDraft reads
+    // only the one `target` names.
+    const rule = ruleFromDraft(
+      {
+        merchant: 'округлення балансу',
+        mcc: '',
+        target: 'transfer',
+        categoryId: 'groceries',
+        toAccountId: 'reserve',
+      },
+      context,
+    );
+
+    expect(rule.target).toEqual({ kind: 'transfer', toAccountId: 'reserve' });
+    expect('categoryId' in rule).toBe(false);
+  });
+
   it('Scenario: A rule with no criterion is rejected', () => {
     expect(() =>
-      ruleFromDraft({ merchant: '   ', mcc: '  ', categoryId: 'groceries' }, context),
+      ruleFromDraft({ merchant: '   ', mcc: '  ', target: 'category', categoryId: 'groceries' }, context),
     ).toThrow('Правило потребує продавця або MCC');
   });
 
@@ -164,29 +202,40 @@ describe('ruleFromDraft', () => {
     // and the MCC stored would then not be the one the owner typed.
     for (const mcc of ['54.11', '5411 грн', 'MCC', '0x15', '1e3', '-5', '+5411']) {
       expect(() =>
-        ruleFromDraft({ merchant: 'сільпо', mcc, categoryId: 'groceries' }, context),
+        ruleFromDraft({ merchant: 'сільпо', mcc, target: 'category', categoryId: 'groceries' }, context),
       ).toThrow('MCC — це число з цифр');
     }
     // A whole number is taken as the integer it is, beside the merchant.
     expect(
-      ruleFromDraft({ merchant: 'сільпо', mcc: ' 5411 ', categoryId: 'groceries' }, context),
+      ruleFromDraft(
+        { merchant: 'сільпо', mcc: ' 5411 ', target: 'category', categoryId: 'groceries' },
+        context,
+      ),
     ).toMatchObject({ merchant: 'сільпо', mcc: 5411 });
   });
 
   it('A rule with no category is rejected', () => {
-    expect(() => ruleFromDraft({ merchant: 'сільпо', mcc: '' }, context)).toThrow(
+    expect(() => ruleFromDraft({ merchant: 'сільпо', mcc: '', target: 'category' }, context)).toThrow(
       'Правило потребує категорії',
     );
-    expect(() => ruleFromDraft({ merchant: 'сільпо', mcc: '', categoryId: '' }, context)).toThrow(
-      'Правило потребує категорії',
+    expect(() =>
+      ruleFromDraft({ merchant: 'сільпо', mcc: '', target: 'category', categoryId: '' }, context),
+    ).toThrow('Правило потребує категорії');
+  });
+
+  it('A правило-переказ with no рахунок is rejected', () => {
+    expect(() => ruleFromDraft({ merchant: 'сільпо', mcc: '', target: 'transfer' }, context)).toThrow(
+      'Правило потребує рахунку призначення',
     );
   });
 
   it('An MCC alone is criterion enough', () => {
-    expect(ruleFromDraft({ merchant: '', mcc: '5411', categoryId: 'groceries' }, context)).toEqual({
+    expect(
+      ruleFromDraft({ merchant: '', mcc: '5411', target: 'category', categoryId: 'groceries' }, context),
+    ).toEqual({
       id: 'r1',
       mcc: 5411,
-      categoryId: 'groceries',
+      target: { kind: 'category', categoryId: 'groceries' },
       createdAt: context.createdAt,
     });
   });
@@ -195,27 +244,41 @@ describe('ruleFromDraft', () => {
 describe('ruleLine', () => {
   const rule = (of: Partial<Rule>): Rule => ({
     id: 'r1',
-    categoryId: 'groceries',
+    target: { kind: 'category', categoryId: 'groceries' },
     createdAt: context.createdAt,
     merchant: 'сільпо',
     ...of,
   });
 
   it('A rule holding both criteria shows both', () => {
-    expect(ruleLine(rule({ mcc: 5411 }), groceries).criteria).toBe('сільпо · MCC 5411');
+    expect(ruleLine(rule({ mcc: 5411 }), groceries, accountNames).criteria).toBe('сільпо · MCC 5411');
   });
 
   it('An MCC-only rule shows just the MCC', () => {
-    expect(ruleLine(rule({ merchant: undefined, mcc: 5411 }), groceries).criteria).toBe('MCC 5411');
+    expect(ruleLine(rule({ merchant: undefined, mcc: 5411 }), groceries, accountNames).criteria).toBe(
+      'MCC 5411',
+    );
   });
 
   it('A target the loaded names miss shows its raw id', () => {
     // Only a half-loaded screen can reach this — every stored rule targets a real row — but the
     // line stays readable instead of blank.
-    expect(ruleLine(rule({ categoryId: 'repair' }), groceries)).toEqual({
+    expect(
+      ruleLine(rule({ target: { kind: 'category', categoryId: 'repair' } }), groceries, accountNames),
+    ).toEqual({
       id: 'r1',
       criteria: 'сільпо',
       category: 'repair',
+    });
+  });
+
+  it('a правило-переказ whose рахунок the loaded names miss shows its raw id', () => {
+    expect(
+      ruleLine(rule({ target: { kind: 'transfer', toAccountId: 'ghost' } }), groceries, accountNames),
+    ).toEqual({
+      id: 'r1',
+      criteria: 'сільпо',
+      category: 'переказ на ghost',
     });
   });
 });
@@ -225,43 +288,51 @@ describe('ruleOffer', () => {
   const silpoToGroceries: Rule = {
     id: 'r-silpo',
     merchant: 'сільпо',
-    categoryId: 'groceries',
+    target: { kind: 'category', categoryId: 'groceries' },
     createdAt: new Date('2026-03-01T10:00:00.000Z'),
   };
+  const category = (categoryId: string): { kind: 'category'; categoryId: string } => ({
+    kind: 'category',
+    categoryId,
+  });
+
+  const platinum = { accountId: 'platinum', currency: 'UAH' };
+  const reserveAccount = { id: 'reserve', currency: 'UAH' };
+  const usdAccount = { id: 'usd', currency: 'USD' };
 
   it('Scenario: Categorising an imported витрата offers the правило', () => {
     expect(
       ruleOffer({
         description: 'СІЛЬПО 123 Київ, вул. Хрещатик',
-        categoryId: 'groceries',
+        target: category('groceries'),
         rules: noRules,
       }),
-    ).toEqual({ merchant: 'сільпо', categoryId: 'groceries' });
+    ).toEqual({ merchant: 'сільпо', target: category('groceries') });
   });
 
   it('Scenario: An опис that starts with no letter proposes the whole of itself', () => {
     expect(
-      ruleOffer({ description: '7-Eleven Kyiv', categoryId: 'groceries', rules: noRules }),
-    ).toEqual({ merchant: '7-eleven kyiv', categoryId: 'groceries' });
+      ruleOffer({ description: '7-Eleven Kyiv', target: category('groceries'), rules: noRules }),
+    ).toEqual({ merchant: '7-eleven kyiv', target: category('groceries') });
   });
 
   it('Scenario: A повернення is offered the правило too', () => {
     // ruleOffer takes no transaction type at all — the caller decides which types call it, per
     // "Setting a джерело on a дохід offers nothing" and "Editing a переказ offers nothing" below.
     expect(
-      ruleOffer({ description: 'СІЛЬПО 123 Київ', categoryId: 'groceries', rules: noRules }),
-    ).toEqual({ merchant: 'сільпо', categoryId: 'groceries' });
+      ruleOffer({ description: 'СІЛЬПО 123 Київ', target: category('groceries'), rules: noRules }),
+    ).toEqual({ merchant: 'сільпо', target: category('groceries') });
   });
 
   it('Scenario: A витрата with no опис is offered nothing', () => {
-    expect(ruleOffer({ categoryId: 'groceries', rules: noRules })).toBeUndefined();
+    expect(ruleOffer({ target: category('groceries'), rules: noRules })).toBeUndefined();
   });
 
   it('Scenario: Moving a витрата back into «Без категорії» offers nothing', () => {
     expect(
       ruleOffer({
         description: 'СІЛЬПО 123 Київ',
-        categoryId: UNCATEGORISED_CATEGORY_ID,
+        target: category(UNCATEGORISED_CATEGORY_ID),
         rules: noRules,
       }),
     ).toBeUndefined();
@@ -271,7 +342,7 @@ describe('ruleOffer', () => {
     expect(
       ruleOffer({
         description: 'СІЛЬПО 123',
-        categoryId: 'groceries',
+        target: category('groceries'),
         rules: [silpoToGroceries],
       }),
     ).toBeUndefined();
@@ -281,34 +352,85 @@ describe('ruleOffer', () => {
     expect(
       ruleOffer({
         description: 'СІЛЬПО 123',
-        categoryId: 'eating-out',
+        target: category('eating-out'),
         rules: [silpoToGroceries],
       }),
-    ).toEqual({ merchant: 'сільпо', categoryId: 'eating-out' });
+    ).toEqual({ merchant: 'сільпо', target: category('eating-out') });
   });
 
+  it('Scenario: Retyping a витрата into a переказ offers the правило-переказ', () => {
+    expect(
+      ruleOffer({
+        description: 'Округлення балансу «Резерв»',
+        target: { kind: 'transfer', toAccountId: 'reserve' },
+        fromAccount: platinum,
+        accounts: [reserveAccount, usdAccount],
+        rules: noRules,
+      }),
+    ).toEqual({ merchant: 'округлення балансу', target: { kind: 'transfer', toAccountId: 'reserve' } });
+  });
+
+  it('Scenario: A cross-currency переказ offers no правило', () => {
+    expect(
+      ruleOffer({
+        description: 'Купівля валюти',
+        target: { kind: 'transfer', toAccountId: 'usd' },
+        fromAccount: platinum,
+        accounts: [reserveAccount, usdAccount],
+        rules: noRules,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A переказ an existing правило-переказ already gives offers nothing', () => {
+    const roundUp: Rule = {
+      id: 'r-round-up',
+      merchant: 'округлення балансу',
+      target: { kind: 'transfer', toAccountId: 'reserve' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    expect(
+      ruleOffer({
+        description: 'Округлення балансу «Резерв»',
+        target: { kind: 'transfer', toAccountId: 'reserve' },
+        fromAccount: platinum,
+        accounts: [reserveAccount, usdAccount],
+        rules: [roundUp],
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe('storeRule', () => {
   const silpo: Rule = {
     id: 'r-silpo',
     merchant: 'сільпо',
-    categoryId: 'groceries',
+    target: { kind: 'category', categoryId: 'groceries' },
     createdAt: new Date('2026-03-01T10:00:00.000Z'),
   };
 
   it('Scenario: The owner is told how many moved', async () => {
     bindTestJournal();
 
-    const message = await storeRule(silpo, () => ({ examined: 40, moved: 11 }));
+    const message = await storeRule(silpo, () => ({
+      examined: 40,
+      moved: 8,
+      transferred: 3,
+      absorbed: 1,
+    }));
 
-    expect(message).toBe('11 витрат перекатегоризовано.');
+    expect(message).toBe('8 витрат перекатегоризовано. 3 витрати стали переказами.');
   });
 
   it('Scenario: A pass that moved nothing says nothing', async () => {
     bindTestJournal();
 
-    const message = await storeRule(silpo, () => ({ examined: 40, moved: 0 }));
+    const message = await storeRule(silpo, () => ({
+      examined: 40,
+      moved: 0,
+      transferred: 0,
+      absorbed: 0,
+    }));
 
     expect(message).toBeUndefined();
   });
@@ -316,13 +438,13 @@ describe('storeRule', () => {
   it('Scenario: The pass is in the журнал as counts alone', async () => {
     const tail = bindTestJournal();
 
-    await storeRule(silpo, () => ({ examined: 40, moved: 2 }));
+    await storeRule(silpo, () => ({ examined: 40, moved: 2, transferred: 1, absorbed: 1 }));
 
     const steps = tail().filter((entry) => entry.name === 'rules/sweep');
-    // Both ends of the step, and both carry only what a розбір may carry: two numbers, never an
+    // Both ends of the step, and both carry only what a розбір may carry: four numbers, never an
     // опис, a сума or a назва.
     expect(steps).toHaveLength(2);
-    expect(steps[1]?.counts).toEqual({ examined: 40, moved: 2 });
+    expect(steps[1]?.counts).toEqual({ examined: 40, moved: 2, transferred: 1, absorbed: 1 });
     for (const entry of steps) {
       expect(Object.keys(entry)).not.toContain('merchant');
       expect(JSON.stringify(entry)).not.toMatch(/сільпо/i);
@@ -417,9 +539,7 @@ describe('who raises and answers the offer to remember a правило', () => 
     expect(sheet).toContain('onPress={() => onAccept(pattern)}');
     const accept = hook.slice(hook.indexOf('const accept = useCallback'));
     expect(accept).toContain('async (merchant: string) => {');
-    expect(accept).toMatch(
-      /ruleFromDraft\(\s*\{ merchant, mcc: '', categoryId: offer\.categoryId \}/,
-    );
+    expect(accept).toMatch(/ruleFromDraft\(\s*\{\s*merchant,\s*mcc: '',\s*target: offer\.target\.kind,/);
   });
 
   it('Scenario: Accepting the offer stores the правило', () => {

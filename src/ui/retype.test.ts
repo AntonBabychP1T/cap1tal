@@ -13,7 +13,15 @@ import {
 } from '../domain/transaction';
 import { buildEntry } from './entry-form';
 import { formatMinorUnits } from './amount-input';
-import { labelsAfterRetype, recategorise, shapesFor, type RetypeShape } from './retype';
+import {
+  initialShape,
+  labelsAfterRetype,
+  offersTransferMark,
+  recategorise,
+  shapesFor,
+  transferWriteNeedsPairing,
+  type RetypeShape,
+} from './retype';
 
 const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
 const jar = account({ id: 'jar', name: 'банка', kind: 'savings', currency: 'UAH' });
@@ -292,5 +300,80 @@ describe('recategorise — the feed\'s one tap', () => {
     });
 
     expect(recategorise(foreign, 'groceries')).toEqual({ ...foreign, categoryId: 'groceries' });
+  });
+});
+
+describe('offersTransferMark', () => {
+  it('a витрата offers «Це переказ»', () => {
+    expect(offersTransferMark(storedExpense)).toBe(true);
+  });
+
+  it('Scenario: A повернення\'s mark offers no «Це переказ»', () => {
+    expect(offersTransferMark(storedRefund)).toBe(false);
+  });
+
+  it('everything else offers no «Це переказ» either', () => {
+    expect(offersTransferMark(storedIncome)).toBe(false);
+    expect(offersTransferMark(storedTransfer)).toBe(false);
+    expect(offersTransferMark(storedCorrection)).toBe(false);
+  });
+});
+
+describe('initialShape', () => {
+  it('Scenario: «Це переказ» opens editing as a переказ', () => {
+    // Shape alone — the screen keeps the source рахунок and chooses no destination by building the
+    // form from the original витрата untouched; nothing here writes or reads storage.
+    expect(initialShape(storedExpense, 'transfer')).toBe('transfer');
+  });
+
+  it('a повернення asked for as переказ still opens on its own shape', () => {
+    // `as=transfer` only ever comes from a витрата's own mark (`offersTransferMark`); a повернення
+    // reaching here anyway is not turned into one.
+    expect(initialShape(storedRefund, 'transfer')).toBe('refund');
+  });
+
+  it('no `as` param opens on the stored shape', () => {
+    expect(initialShape(storedExpense)).toBe('expense');
+    expect(initialShape(storedIncome)).toBe('income');
+    expect(initialShape(storedTransfer)).toBe('transfer');
+  });
+
+  it('Scenario: Leaving without saving changes nothing', () => {
+    // A pure read: computing the initial shape touches neither `storedExpense` nor any store.
+    const before = { ...storedExpense };
+    initialShape(storedExpense, 'transfer');
+    expect(storedExpense).toEqual(before);
+  });
+});
+
+describe('transferWriteNeedsPairing', () => {
+  it('Scenario: A переказ recorded by hand awaits nothing', () => {
+    // No original at all is `new.tsx`'s own case: nothing to pair against.
+    expect(transferWriteNeedsPairing(undefined, storedTransfer)).toBe(false);
+  });
+
+  it('retyping a витрата into a переказ needs pairing', () => {
+    expect(transferWriteNeedsPairing(storedExpense, storedTransfer)).toBe(true);
+  });
+
+  it('Scenario: Editing an awaiting переказ looks again', () => {
+    const awaiting = { ...storedTransfer, awaitingCounterpartIncome: true as const };
+    expect(transferWriteNeedsPairing(awaiting, storedTransfer)).toBe(true);
+  });
+
+  it('editing a переказ that already settled does not look again', () => {
+    expect(transferWriteNeedsPairing(storedTransfer, storedTransfer)).toBe(false);
+  });
+
+  it('Scenario: An awaiting переказ retyped into a витрата leaves nothing awaiting', () => {
+    // Not a transfer write at all, so the plain path is used — and `transactionsRepo.save` is what
+    // then leaves the awaits row gone for this id (design D4), proven at the storage layer.
+    const awaiting = { ...storedTransfer, awaitingCounterpartIncome: true as const };
+    expect(transferWriteNeedsPairing(awaiting, storedExpense)).toBe(false);
+  });
+
+  it('a витрата retyped into anything but a переказ never needs pairing', () => {
+    expect(transferWriteNeedsPairing(storedExpense, storedIncome)).toBe(false);
+    expect(transferWriteNeedsPairing(storedExpense, storedRefund)).toBe(false);
   });
 });

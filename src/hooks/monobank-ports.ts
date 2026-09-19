@@ -1,6 +1,6 @@
 import { AppState } from 'react-native';
 
-import { monobank as monobankRepo, rules as rulesRepo } from '@/db/repos';
+import { accounts as accountsRepo, monobank as monobankRepo, rules as rulesRepo } from '@/db/repos';
 import type { SyncPorts } from '@/monobank/coordinator';
 import { deviceTimer, foregroundRun, withRequestTimeout, REQUEST_TIMEOUT_MS } from '@/monobank/yielding';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
@@ -69,6 +69,7 @@ export function syncPorts(over: Partial<SyncPorts> = {}, run: string = newId()):
     storage: monobankRepo,
     // Read once per run, so a правило created since the last one decides this one.
     rules: () => rulesRepo.list(),
+    accounts: () => accountsRepo.list(),
     nowMs: () => Date.now(),
     now: () => new Date(),
     // The statement's own seconds turned into the day the money moved. `dateOfEpochMs` is shared

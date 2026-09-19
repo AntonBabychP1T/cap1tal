@@ -20,6 +20,7 @@ import {
   categories,
   categoryLimits,
   challengeDecisions,
+  counterpartIncomeAwaits,
   dailyReminder,
   earnedAchievements,
   entryDefaults,
@@ -44,7 +45,7 @@ import {
   spendingNorms,
   transactions,
 } from './schema';
-import { openTestDb, seedReferences, type TestStorage } from './test-db';
+import { openTestDb, openTestDbMigratedTo, seedReferences, type TestStorage } from './test-db';
 
 const card = account({
   id: 'card',
@@ -393,6 +394,7 @@ describe('migrations — the editable lists', () => {
       merchant: 'сільпо',
       mcc: 5411,
       categoryId: 'groceries',
+      toAccountId: null,
       createdAt: new Date(1_700_000_000_000),
     });
     for (const original of everyType) {
@@ -455,6 +457,32 @@ describe('migrations — the editable lists', () => {
     ).toThrow();
     expect(() =>
       db.insert(rules).values({ ...base, id: 'ghost-target', categoryId: 'nope' }).run(),
+    ).toThrow();
+  });
+
+  it('Scenario: A rule row with two targets is refused by storage', () => {
+    const { db } = storage;
+    db.insert(categories).values({ id: 'groceries', name: 'Groceries' }).run();
+    db.insert(accounts).values(toAccountRow(card)).run();
+
+    expect(() =>
+      db
+        .insert(rules)
+        .values({
+          id: 'both-targets',
+          merchant: 'сільпо',
+          categoryId: 'groceries',
+          toAccountId: 'card',
+          createdAt: new Date(1),
+        })
+        .run(),
+    ).toThrow();
+    // Neither target at all is refused the same way.
+    expect(() =>
+      db
+        .insert(rules)
+        .values({ id: 'no-target', merchant: 'сільпо', createdAt: new Date(1) })
+        .run(),
     ).toThrow();
   });
 });
@@ -1727,5 +1755,71 @@ describe('migrations — where a half-paged window got to', () => {
       ['paging_window_to_ms', 0],
       ['paging_request_to_ms', 0],
     ]);
+  });
+});
+
+describe('migrations — правила-перекази and awaiting перекази', () => {
+  it('Scenario: Stored rules and перекази survive the migration', () => {
+    const staged = openTestDbMigratedTo(1);
+    try {
+      const { db } = staged;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      // Written under the old shape alone: no `to_account_id` column exists yet, so the query
+      // builder — which always addresses the current schema's full column set — cannot write this
+      // row; raw SQL is what a device on the old shape actually wrote.
+      db.run(
+        sql`INSERT INTO rules (id, merchant, category_id, created_at) VALUES ('r1', 'сільпо', 'food', 1)`,
+      );
+      db.insert(transactions).values(toTransactionRow(oneOfEachType[2]!)).run();
+
+      staged.migrateToLatest();
+
+      expect(db.select().from(rules).where(eq(rules.id, 'r1')).get()).toMatchObject({
+        categoryId: 'food',
+        toAccountId: null,
+      });
+      const migratedTransfer = db.select().from(transactions).where(eq(transactions.id, 't1')).get();
+      expect(toTransaction(migratedTransfer!)).toEqual(oneOfEachType[2]);
+      // Every previously stored переказ awaits nothing: no row exists for it.
+      expect(db.select().from(counterpartIncomeAwaits).all()).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('Scenario: A fresh database stores a правило-переказ', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      db.insert(rules)
+        .values({ id: 'r1', merchant: 'округлення балансу', toAccountId: 'jar', createdAt: new Date(1) })
+        .run();
+      const awaiting = transfer({
+        id: 't-awaiting',
+        date: '2026-09-16',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(2000, 'UAH'),
+        arrived: money(2000, 'UAH'),
+      });
+      db.insert(transactions).values(toTransactionRow(awaiting)).run();
+      db.insert(counterpartIncomeAwaits).values({ transactionId: 't-awaiting' }).run();
+
+      expect(db.select().from(rules).where(eq(rules.id, 'r1')).get()).toMatchObject({
+        categoryId: null,
+        toAccountId: 'jar',
+      });
+      expect(db.select().from(counterpartIncomeAwaits).all()).toEqual([
+        { transactionId: 't-awaiting' },
+      ]);
+      // Cascade: removing the транзакція removes the awaiting mark with it.
+      db.delete(transactions).where(eq(transactions.id, 't-awaiting')).run();
+      expect(db.select().from(counterpartIncomeAwaits).all()).toEqual([]);
+    } finally {
+      storage.close();
+    }
   });
 });

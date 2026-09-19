@@ -1,6 +1,6 @@
 import { computeBalance, type Account } from '../domain/account';
 import { money, type Money } from '../domain/money';
-import { matchRule, type Rule } from '../domain/rules';
+import { matchCategory, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
   proposeFee,
@@ -115,8 +115,11 @@ export function defaultAccountId(
  * from that moment the form stops looking at the опис for the rest of this recording, however it
  * changes next (design D4).
  *
- * No MCC is passed to `matchRule`: nothing hand-typed carries one, exactly as a чернетка from a
- * bank сповіщення does not.
+ * No MCC is passed to `matchCategory`: nothing hand-typed carries one, exactly as a чернетка from a
+ * bank сповіщення does not. `matchCategory`, not `matchRule`, is what keeps a правило-переказ from
+ * ever proposing a переказ here — recording by hand never turns a витрата into one on the owner's
+ * behalf (categorisation-rules, "Правила decide the категорія... a правило-переказ SHALL take no
+ * part").
  */
 export function proposedCategoryId(
   draft: {
@@ -130,7 +133,7 @@ export function proposedCategoryId(
   if (draft.type !== 'expense' || draft.pickedByOwner) {
     return draft.categoryId;
   }
-  return matchRule(rules, { description: draft.description ?? '' }) ?? draft.categoryId;
+  return matchCategory(rules, { description: draft.description ?? '' }) ?? draft.categoryId;
 }
 
 /**

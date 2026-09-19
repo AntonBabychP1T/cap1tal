@@ -37,7 +37,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 1;
+export const BACKUP_SCHEMA_VERSION = 2;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -140,12 +140,17 @@ export const BACKUP_TABLES: readonly string[] = [
   'investment_values',
 ];
 
-/** A правило, with the `createdAt` that breaks ties between two equally specific ones as epoch ms. */
+/**
+ * A правило, with the `createdAt` that breaks ties between two equally specific ones as epoch ms.
+ * Exactly one of `categoryId` / `toAccountId` is present — never both, never neither — a
+ * правило-переказ names the destination рахунок instead of a category (design D9).
+ */
 export interface BackupRule {
   readonly id: string;
   readonly merchant?: string;
   readonly mcc?: number;
-  readonly categoryId: string;
+  readonly categoryId?: string;
+  readonly toAccountId?: string;
   readonly createdAtMs: number;
 }
 
@@ -471,7 +476,8 @@ function ruleAt(value: unknown, at: string): BackupRule {
     id: stringAt(row.id, `${at}.id`),
     ...optionalString(row, 'merchant', at),
     ...(row.mcc === undefined || row.mcc === null ? {} : { mcc: integerAt(row.mcc, `${at}.mcc`) }),
-    categoryId: stringAt(row.categoryId, `${at}.categoryId`),
+    ...optionalString(row, 'categoryId', at),
+    ...optionalString(row, 'toAccountId', at),
     createdAtMs: integerAt(row.createdAtMs, `${at}.createdAtMs`),
   };
 }
@@ -579,6 +585,7 @@ function transactionAt(value: unknown, at: string): Transaction {
         toAccountId: stringAt(row.toAccountId, `${at}.toAccountId`),
         left: moneyAt(row.left, `${at}.left`),
         arrived: moneyAt(row.arrived, `${at}.arrived`),
+        ...optionalTrue(row, 'awaitingCounterpartIncome', at),
         ...description,
       };
     default:
@@ -652,6 +659,17 @@ function reminderAt(value: unknown, at: string): BackupReminder {
 function optionalMoney(row: Record<string, unknown>, key: string, at: string): Record<string, Money> {
   const value = row[key];
   return value === undefined || value === null ? {} : { [key]: moneyAt(value, `${at}.${key}`) };
+}
+
+/**
+ * A flag that is present only when `true` — `awaitingCounterpartIncome`'s own shape, since the
+ * domain never represents "awaits nothing" as `false`, only as the key's absence.
+ */
+function optionalTrue(row: Record<string, unknown>, key: string, at: string): Record<string, true> {
+  const value = row[key];
+  if (value === undefined || value === null) return {};
+  if (value !== true) fail(`${at}.${key} не є так`);
+  return { [key]: true };
 }
 
 function receiptAt(value: unknown, at: string): BackupReceipt {
@@ -844,7 +862,21 @@ export function checkConsistent(state: BackupState): void {
   }
 
   for (const rule of state.rules) {
-    needsCategory(rule.categoryId, `правило «${rule.id}»`);
+    const what = `правило «${rule.id}»`;
+    const hasCategory = rule.categoryId !== undefined;
+    const hasAccount = rule.toAccountId !== undefined;
+    if (hasCategory === hasAccount) {
+      fail(
+        hasCategory
+          ? `${what} називає і категорію, і рахунок призначення`
+          : `${what} не називає ні категорії, ні рахунку призначення`,
+      );
+    }
+    if (hasCategory) {
+      needsCategory(rule.categoryId!, what);
+    } else {
+      needsAccount(rule.toAccountId!, what);
+    }
   }
   for (const limit of state.limits) {
     needsCategory(limit.categoryId, `ліміт категорії «${limit.categoryId}»`);

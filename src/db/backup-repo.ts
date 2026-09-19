@@ -10,6 +10,7 @@ import {
   categories,
   categoryLimits,
   challengeDecisions,
+  counterpartIncomeAwaits,
   dailyReminder,
   earnedAchievements,
   entryDefaults,
@@ -85,7 +86,8 @@ export function backupRepo(db: Storage): BackupStore {
             // are the same правило, and the бекап has to say so too.
             ...(row.merchant === null ? {} : { merchant: row.merchant }),
             ...(row.mcc === null ? {} : { mcc: row.mcc }),
-            categoryId: row.categoryId,
+            ...(row.categoryId === null ? {} : { categoryId: row.categoryId }),
+            ...(row.toAccountId === null ? {} : { toAccountId: row.toAccountId }),
             createdAtMs: row.createdAt.getTime(),
           })),
         limits: db
@@ -121,15 +123,20 @@ export function backupRepo(db: Storage): BackupStore {
               accountIds: composition.get(row.id) ?? [],
             }));
         })(),
-        transactions: db
-          .select()
-          .from(transactionsTable)
-          .orderBy(asc(transactionsTable.id))
-          .all()
-          .map((row) => ({
-            transaction: toTransaction(row),
+        transactions: (() => {
+          const rows = db
+            .select()
+            .from(transactionsTable)
+            .orderBy(asc(transactionsTable.id))
+            .all();
+          const awaitingIds = new Set(
+            db.select().from(counterpartIncomeAwaits).all().map((row) => row.transactionId),
+          );
+          return rows.map((row) => ({
+            transaction: toTransaction(row, awaitingIds.has(row.id)),
             storedAtMs: row.createdAt.getTime(),
-          })),
+          }));
+        })(),
         ...(committed ? { saldoImportCommittedAtMs: committed.committedAt.getTime() } : {}),
         monobankAccounts: db
           .select()
@@ -311,11 +318,13 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(notificationDrafts).run();
         tx.delete(entryDefaults).run();
         tx.delete(notificationWatches).run();
-        // The чек rows go before the транзакції they hang under. The cascade would take them
-        // anyway, but this file deletes in reference order and says so — a restore that leaned on
-        // a cascade would be one `PRAGMA foreign_keys = OFF` away from leaving orphans behind.
+        // The чек rows and the awaiting marks go before the транзакції they hang under. The
+        // cascade would take them anyway, but this file deletes in reference order and says so —
+        // a restore that leaned on a cascade would be one `PRAGMA foreign_keys = OFF` away from
+        // leaving orphans behind.
         tx.delete(receiptItems).run();
         tx.delete(fiscalReceipts).run();
+        tx.delete(counterpartIncomeAwaits).run();
         // The склад rows go immediately before the цілі they hang under. The cascade would take
         // them anyway; this file deletes in reference order and says so, for the reason stated
         // above the чеки.
@@ -367,7 +376,8 @@ export function backupRepo(db: Storage): BackupStore {
               id: rule.id,
               merchant: rule.merchant ?? null,
               mcc: rule.mcc ?? null,
-              categoryId: rule.categoryId,
+              categoryId: rule.categoryId ?? null,
+              toAccountId: rule.toAccountId ?? null,
               createdAt: new Date(rule.createdAtMs),
             })
             .run();
@@ -405,6 +415,9 @@ export function backupRepo(db: Storage): BackupStore {
               createdAt: new Date(entry.storedAtMs),
             })
             .run();
+          if (entry.transaction.type === 'transfer' && entry.transaction.awaitingCounterpartIncome) {
+            tx.insert(counterpartIncomeAwaits).values({ transactionId: entry.transaction.id }).run();
+          }
         }
         for (const a of state.monobankAccounts) {
           tx.insert(monobankAccounts)

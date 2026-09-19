@@ -993,7 +993,7 @@ describe('proposedCategoryId', () => {
   const atbToGroceries: Rule = {
     id: 'r-atb',
     merchant: 'атб',
-    categoryId: 'groceries',
+    target: { kind: 'category', categoryId: 'groceries' },
     createdAt: new Date('2026-03-01T10:00:00.000Z'),
   };
 
@@ -1065,5 +1065,28 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId({ type: 'expense', pickedByOwner: false }, [atbToGroceries]),
     ).toBeUndefined();
+  });
+
+  it('Scenario: A правило-переказ proposes nothing by hand', () => {
+    const roundUpToTransfer: Rule = {
+      id: 'r-round-up',
+      merchant: 'округлення балансу',
+      target: { kind: 'transfer', toAccountId: 'reserve' },
+      createdAt: new Date('2026-03-01T10:00:00.000Z'),
+    };
+    const bills: Rule = {
+      id: 'r-bills',
+      merchant: 'округлення',
+      target: { kind: 'category', categoryId: 'bills' },
+      createdAt: new Date('2026-01-01T10:00:00.000Z'),
+    };
+    // No `from` reaches `proposedCategoryId` at all — recording by hand names no рахунок yet in the
+    // sense a правило-переказ needs, so it takes no part and the shorter category rule decides.
+    expect(
+      proposedCategoryId(
+        { type: 'expense', description: 'Округлення балансу', pickedByOwner: false },
+        [bills, roundUpToTransfer],
+      ),
+    ).toBe('bills');
   });
 });

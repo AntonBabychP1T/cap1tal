@@ -5,27 +5,35 @@ import { Alert, StyleSheet, View } from 'react-native';
 import { Action, Choices, Field, RowAction } from '@/components/form';
 import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import { categories as categoriesRepo, rules as rulesRepo } from '@/db/repos';
+import { accounts as accountsRepo, categories as categoriesRepo, rules as rulesRepo } from '@/db/repos';
 import { namesById } from '@/domain/category';
 import type { Rule } from '@/domain/rules';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { accountChoicesFor } from '@/ui/account-choices';
 import { expenseCategoryChoices } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
+import { accountChoiceLabel } from '@/ui/labels';
 import { ruleFromDraft, ruleLine, storeRule, type RuleDraft } from '@/ui/list-management';
 
 import { Spacing } from '@/constants/theme';
 
 /**
- * The «Правила» section: the правила автокатегоризації the import steps (6–8) will run their
- * transactions through. Nothing applies them yet — this screen is where they are written down.
+ * The «Правила» section: «продавець і/або MCC → категорія», or — a правило-переказ — «→ переказ
+ * на рахунок». Both are ranked on one ladder (categorisation-rules).
  *
- * A rule's target may be an archived category: archiving hides a category from pickers, not from
- * rules. So the list resolves names against every category, while the form offers only the
- * unarchived ones — retargeting an archived rule is the owner's decision, not a silent one.
+ * A rule's target may be an archived категорія or рахунок: archiving hides either from pickers,
+ * not from rules. So the list resolves names against every категорія and every рахунок, while the
+ * form offers only the unarchived ones — retargeting an archived rule is the owner's decision, not
+ * a silent one.
  */
 
-const EMPTY: RuleDraft = { merchant: '', mcc: '', categoryId: undefined };
+const EMPTY: RuleDraft = { merchant: '', mcc: '', target: 'category', categoryId: undefined };
+
+const TARGET_CHOICES = [
+  { value: 'category' as const, label: 'Категорія' },
+  { value: 'transfer' as const, label: 'Переказ' },
+];
 
 export default function RulesScreen() {
   const router = useRouter();
@@ -38,18 +46,35 @@ export default function RulesScreen() {
   );
 
   const [stored, reload] = useReloadOnFocus(
-    useCallback(() => ({ rules: rulesRepo.list(), categories: categoriesRepo.list() }), []),
+    useCallback(
+      () => ({
+        rules: rulesRepo.list(),
+        categories: categoriesRepo.list(),
+        accounts: accountsRepo.list(),
+      }),
+      [],
+    ),
   );
 
+  /** `undefined` — the form is closed; a draft with no id — a new rule; with one — an edit. */
+  const [draft, setDraft] = useState<(RuleDraft & { id?: string }) | undefined>();
+
   const names = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
   const choices = useMemo(
     () =>
       expenseCategoryChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
     [stored.categories],
   );
+  const accountChoices = useMemo(
+    () =>
+      accountChoicesFor(stored.accounts, draft?.toAccountId).map((a) => ({
+        value: a.id,
+        label: accountChoiceLabel(a),
+      })),
+    [draft?.toAccountId, stored.accounts],
+  );
 
-  /** `undefined` — the form is closed; a draft with no id — a new rule; with one — an edit. */
-  const [draft, setDraft] = useState<(RuleDraft & { id?: string }) | undefined>();
   /** What the last save's розбір moved, in the owner's words — nothing when it moved nothing. */
   const [sweptMessage, setSweptMessage] = useState<string>();
 
@@ -97,7 +122,7 @@ export default function RulesScreen() {
     <Screen>
       <ScreenHeader
         title="Правила"
-        subtitle="«Продавець / MCC → категорія» — застосовуються всюди, де витрата отримує категорію."
+        subtitle="«Продавець / MCC → категорія», або → переказ на рахунок."
         back={() => router.back()}
       />
 
@@ -118,11 +143,28 @@ export default function RulesScreen() {
             placeholder="напр. 5411"
           />
           <Choices
-            label="Категорія"
-            choices={choices}
-            selected={draft.categoryId}
-            onSelect={(categoryId: string) => setDraft({ ...draft, categoryId })}
+            label="Мета"
+            choices={TARGET_CHOICES}
+            selected={draft.target}
+            // Switching drops the other choice — a rule is never submitted naming both
+            // (categorisation-rules, "A rule naming both a category and a рахунок is rejected").
+            onSelect={(target) => setDraft({ ...draft, target })}
           />
+          {draft.target === 'transfer' ? (
+            <Choices
+              label="Переказ на"
+              choices={accountChoices}
+              selected={draft.toAccountId}
+              onSelect={(toAccountId: string) => setDraft({ ...draft, toAccountId })}
+            />
+          ) : (
+            <Choices
+              label="Категорія"
+              choices={choices}
+              selected={draft.categoryId}
+              onSelect={(categoryId: string) => setDraft({ ...draft, categoryId })}
+            />
+          )}
           <Action title="Зберегти" onPress={save} />
           <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
         </Card>
@@ -150,7 +192,7 @@ export default function RulesScreen() {
       ) : (
         <ListCard>
           {stored.rules.map((rule, index) => {
-            const line = ruleLine(rule, names);
+            const line = ruleLine(rule, names, accountNames);
             return (
               <ListRow key={line.id} last={index === stored.rules.length - 1} style={styles.row}>
                 <View style={styles.rowTop}>
@@ -170,7 +212,10 @@ export default function RulesScreen() {
                         id: rule.id,
                         merchant: rule.merchant ?? '',
                         mcc: rule.mcc === undefined ? '' : String(rule.mcc),
-                        categoryId: rule.categoryId,
+                        target: rule.target.kind,
+                        ...(rule.target.kind === 'category'
+                          ? { categoryId: rule.target.categoryId }
+                          : { toAccountId: rule.target.toAccountId }),
                       });
                     }}
                   />

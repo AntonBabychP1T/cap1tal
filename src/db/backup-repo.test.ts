@@ -98,7 +98,7 @@ function seedWorld(db: TestDb): void {
     id: 'r1',
     merchant: 'сільпо',
     mcc: 5411,
-    categoryId: 'food',
+    target: { kind: 'category', categoryId: 'food' },
     createdAt: new Date('2026-05-01T10:00:00.000Z'),
   });
   limitsRepo(db).set({ categoryId: 'food', amount: money(250_000, 'UAH') });
@@ -857,7 +857,7 @@ describe('the round trip a бекап promises', () => {
         id: 'r1',
         merchant: 'сільпо',
         mcc: 5411,
-        categoryId: 'food',
+        target: { kind: 'category', categoryId: 'food' },
         createdAt: new Date('2026-05-01T10:00:00.000Z'),
       },
     ]);
@@ -1239,6 +1239,68 @@ describe('the round trip a бекап promises', () => {
     expect(transactionsRepo(target.db).get('gap')).toMatchObject({
       categoryId: UNCATEGORISED_CATEGORY_ID,
       description: 'СІЛЬПО 123 Київ',
+    });
+  });
+
+  it('Scenario: A правило-переказ and an awaiting переказ survive the round trip', async () => {
+    rulesRepo(source.db).save({
+      id: 'r-reserve',
+      merchant: 'округлення балансу',
+      target: { kind: 'transfer', toAccountId: 'jar' },
+      createdAt: new Date('2026-09-01T10:00:00.000Z'),
+    });
+    transactionsRepo(source.db).save(
+      {
+        type: 'transfer',
+        id: 'tr-awaiting',
+        date: '2026-09-16',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(20_00, 'UAH'),
+        arrived: money(20_00, 'UAH'),
+        awaitingCounterpartIncome: true,
+      },
+      MADE_AT,
+    );
+
+    await roundTrip();
+
+    expect(rulesRepo(target.db).get('r-reserve')?.target).toEqual({ kind: 'transfer', toAccountId: 'jar' });
+    expect(transactionsRepo(target.db).get('tr-awaiting')).toMatchObject({
+      type: 'transfer',
+      awaitingCounterpartIncome: true,
+    });
+  });
+
+  it('Scenario: An older бекап restores with nothing awaiting', async () => {
+    // Written the way `restoreAll` reads an older file: no `awaitingCounterpartIncome` at all.
+    rulesRepo(source.db).save({
+      id: 'r-silpo-2',
+      merchant: 'старе-правило',
+      target: { kind: 'category', categoryId: 'food' },
+      createdAt: new Date('2026-01-01T10:00:00.000Z'),
+    });
+    transactionsRepo(source.db).save(
+      {
+        type: 'transfer',
+        id: 'tr-settled',
+        date: '2026-09-16',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(20_00, 'UAH'),
+        arrived: money(20_00, 'UAH'),
+      },
+      MADE_AT,
+    );
+
+    await roundTrip();
+
+    const restored = transactionsRepo(target.db).get('tr-settled');
+    expect(restored?.type).toBe('transfer');
+    expect(restored && 'awaitingCounterpartIncome' in restored).toBe(false);
+    expect(rulesRepo(target.db).get('r-silpo-2')?.target).toEqual({
+      kind: 'category',
+      categoryId: 'food',
     });
   });
 });

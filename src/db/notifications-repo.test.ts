@@ -136,6 +136,42 @@ describe('notificationsRepo', () => {
     expect(() => repo.confirm(rawDraft.id, expense, storedAt)).toThrow();
     expect(transactionsRepo(storage.db).listAll()).toEqual([]);
   });
+
+  it('Scenario: A confirmed чернетка is not absorbed', () => {
+    seedReferences(storage.db, { sources: ['unsourced'] });
+    // A переказ onto `card` awaiting its зустрічний дохід — exactly what a правило-переказ or a
+    // retype would leave, on the same рахунок a watched app's чернетка is being confirmed onto.
+    const txs = transactionsRepo(storage.db);
+    txs.save(
+      {
+        type: 'transfer',
+        id: 'tr-awaiting',
+        date: '2026-08-26',
+        fromAccountId: 'usd',
+        toAccountId: 'card',
+        left: money(10000, 'USD'),
+        arrived: money(500000, 'UAH'),
+        awaitingCounterpartIncome: true,
+      },
+      storedAt,
+    );
+
+    repo.commitOutcome({ kind: 'drafted', draft: rawDraft, fingerprint: 'f-confirm' }, storedAt);
+    const income = {
+      type: 'income' as const,
+      id: 't-income',
+      date: isoDate('2026-08-26'),
+      accountId: 'card',
+      amount: money(500000, 'UAH'),
+      sourceId: 'unsourced',
+    };
+    repo.confirm(rawDraft.id, income, storedAt);
+
+    // Only `commitOutcome`/`confirm` ever wrote this транзакція — `confirm` never calls the shared
+    // pairing step (transactions, "Only a monobank statement item is absorbed on arrival").
+    expect(txs.get('t-income')).toEqual(income);
+    expect(txs.get('tr-awaiting')).toMatchObject({ awaitingCounterpartIncome: true });
+  });
 });
 
 describe('notificationsRepo across a restart', () => {

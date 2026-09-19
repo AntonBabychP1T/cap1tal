@@ -1,6 +1,6 @@
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
-import { matchRule, type Rule } from '../domain/rules';
+import { matchCategory, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
   isoDate,
@@ -179,8 +179,10 @@ export function processCapture(capture: CapturedNotification, ctx: ProcessContex
   // FR-S3's "або автоматично за правилом", decided here and only here: a правило that recognises
   // the merchant now confirms the витрата now. A правило created later is honoured the moment the
   // owner confirms (`confirmDraft` matches again), but no sweep reaches back for чернетки the
-  // owner has already seen and may mean to dismiss (design D8).
-  const categoryId = matchRule(ctx.rules, { description: text });
+  // owner has already seen and may mean to dismiss (design D8). `matchCategory`, not `matchRule`:
+  // a чернетка's категорія is decided with no рахунок the money left in the sense a
+  // правило-переказ needs, so a правило-переказ takes no part in it.
+  const categoryId = matchCategory(ctx.rules, { description: text });
   if (categoryId !== undefined) {
     return {
       kind: 'auto-confirmed',
@@ -285,7 +287,7 @@ function confirmedExpense(
   amount: Money,
   original: Money | undefined,
 ): ConfirmResult {
-  const categoryId = matchRule(ctx.rules, { description: draft.text });
+  const categoryId = matchCategory(ctx.rules, { description: draft.text });
   return {
     kind: 'confirmed',
     draftId: draft.id,

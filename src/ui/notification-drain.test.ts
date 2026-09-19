@@ -35,7 +35,7 @@ function posted(overrides: Partial<CapturedNotification> = {}): CapturedNotifica
 const groceries: Rule = {
   id: 'r-groceries',
   merchant: 'сільпо',
-  categoryId: 'groceries',
+  target: { kind: 'category', categoryId: 'groceries' },
   createdAt: new Date('2026-08-01T00:00:00.000Z'),
 };
 

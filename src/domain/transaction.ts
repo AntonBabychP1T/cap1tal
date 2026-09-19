@@ -106,6 +106,14 @@ export interface Transfer {
   readonly arrived: Money;
   /** The bank's text; see `Expense.description`. */
   readonly description?: string;
+  /**
+   * Present, and always `true`, only while this переказ still awaits its зустрічний дохід
+   * (glossary, "Counterpart income") — the дохід «Без джерела» the destination рахунок's own
+   * statement reports for the same movement. Absent means it has already absorbed one, was made
+   * by the owner's own hand, or was stored before перекази could await anything at all; only a
+   * переказ ever carries this, never any other transaction type.
+   */
+  readonly awaitingCounterpartIncome?: true;
 }
 
 /** A negative expense in the original category; amount stays positive here. */

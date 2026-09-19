@@ -85,6 +85,48 @@ export function labelsAfterRetype(
 }
 
 /**
+ * Whether the «Без категорії» mark's «Це переказ» action is offered at all — a витрата only
+ * (main-screen, "«Без категорії» is highlighted and categorised in one tap"). A повернення is
+ * already money that left and came back; it is never a переказ, so its mark offers no such thing.
+ */
+export function offersTransferMark(t: Pick<Transaction, 'type'>): boolean {
+  return t.type === 'expense';
+}
+
+/**
+ * What editing opens on when reached through «Це переказ» from the feed mark: the same витрата,
+ * already switched to переказ, keeping the рахунок it left and choosing no destination yet
+ * (design D7). Anything else — no `as=transfer`, or a transaction that is not a витрата — opens on
+ * its own stored shape unchanged. Pure and read-only: nothing here writes, which is what makes
+ * "leaving without saving changes nothing" true by construction rather than by care taken later.
+ */
+export function initialShape(t: Pick<Transaction, 'type'>, as?: 'transfer'): RetypeShape {
+  if (as === 'transfer' && t.type === 'expense') return 'transfer';
+  // A `correction` never reaches this: the screen shows it read-only and builds no form for it.
+  return t.type === 'correction' ? 'expense' : t.type;
+}
+
+/**
+ * Which write a стore of a переказ needs: the shared pairing step (`counterpart-income-repo.ts`)
+ * when the transaction being replaced was a витрата — a правило-переказ or a retype turning one
+ * into a переказ for the first time — or was itself a переказ still awaiting its зустрічний дохід,
+ * so saving an edit of it looks again (transactions, "Saving an edit of a переказ that still
+ * awaits SHALL look again"). Every other write — a new переказ recorded by hand (no original at
+ * all), or retyping *out of* a переказ into a витрата — goes through the plain write instead: a
+ * переказ recorded by hand awaits nothing, and the awaiting flag lives only on a переказ row, so
+ * writing anything else already leaves nothing awaiting (design D4, D5).
+ */
+export function transferWriteNeedsPairing(
+  original: Transaction | undefined,
+  written: Transaction,
+): boolean {
+  if (written.type !== 'transfer') return false;
+  if (original === undefined) return false;
+  if (original.type === 'expense') return true;
+  return original.type === 'transfer' && original.awaitingCounterpartIncome === true;
+}
+
+/**
  * The same transaction under a category the owner just picked — what the feed's one tap stores.
  * Not a retype at all: the type, the id, the сума, the рахунок and the date are untouched, which
  * is exactly why "without the editing screen having opened" is true of it.

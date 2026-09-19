@@ -57,6 +57,10 @@ describe('what a бекап holds', () => {
       // owner's money, and none of it true of another phone. They leave only by «Передати».
       'bug_report_screenshots',
       'bug_reports',
+      // Whether a переказ still awaits its зустрічний дохід travels folded into its own entry in
+      // `transactions` (`awaitingCounterpartIncome`), never as a table of its own — the same
+      // reason a чек's позиції get their own array while this flag does not.
+      'counterpart_income_awaits',
       // Which Google account this phone backs up to, whether its код відновлення was acknowledged,
       // and when it last succeeded — facts about *this* device's connection, never the owner's
       // money. A бекап that carried them would arrive on a new phone claiming a Google connection
@@ -262,6 +266,89 @@ describe('what a бекап holding чеки may not contradict', () => {
   });
 });
 
+describe('what a бекап holding правила may not contradict', () => {
+  const heldWithAccounts: BackupState = {
+    accounts: [
+      {
+        id: 'platinum',
+        name: 'platinum',
+        kind: 'spending',
+        currency: 'UAH',
+        openingBalance: money(0, 'UAH'),
+        archived: false,
+      },
+      {
+        id: 'reserve',
+        name: 'РЕЗЕРВ',
+        kind: 'savings',
+        currency: 'UAH',
+        openingBalance: money(0, 'UAH'),
+        archived: false,
+      },
+    ],
+    categories: [{ id: 'groceries', name: 'Продукти', archived: false }],
+    sources: [],
+    rules: [],
+    limits: [],
+    goals: [],
+    transactions: [],
+    monobankAccounts: [],
+    monobankLinks: [],
+    monobankImportedItems: [],
+    watches: [],
+    receipts: [],
+    receiptItems: [],
+    achievements: [],
+    challengeDecisions: [],
+    norms: [],
+    investmentValues: [],
+  };
+
+  it('accepts a правило-переказ naming a рахунок the бекап holds', () => {
+    expect(() =>
+      checkConsistent({
+        ...heldWithAccounts,
+        rules: [{ id: 'r1', merchant: 'округлення балансу', toAccountId: 'reserve', createdAtMs: 1 }],
+      }),
+    ).not.toThrow();
+  });
+
+  it('Scenario: A правило-переказ pointing outside the бекап stops the restore', () => {
+    expect(() =>
+      checkConsistent({
+        ...heldWithAccounts,
+        rules: [{ id: 'r1', merchant: 'округлення балансу', toAccountId: 'gone', createdAtMs: 1 }],
+      }),
+    ).toThrow(/рахунок, якого в бекапі немає/);
+  });
+
+  it('Scenario: A правило with two targets stops the restore', () => {
+    expect(() =>
+      checkConsistent({
+        ...heldWithAccounts,
+        rules: [
+          {
+            id: 'r1',
+            merchant: 'округлення балансу',
+            categoryId: 'groceries',
+            toAccountId: 'reserve',
+            createdAtMs: 1,
+          },
+        ],
+      }),
+    ).toThrow(/і категорію, і рахунок/);
+  });
+
+  it('a rule naming neither a category nor a рахунок stops the restore', () => {
+    expect(() =>
+      checkConsistent({
+        ...heldWithAccounts,
+        rules: [{ id: 'r1', merchant: 'округлення балансу', createdAtMs: 1 }],
+      }),
+    ).toThrow(/не називає ні категорії, ні рахунку/);
+  });
+});
+
 describe('reading чеки back out of a file', () => {
   it('Scenario: A бекап written before чеки existed restores without them', () => {
     // The шкала of the promise: a file naming neither list parses, and comes back with none.
@@ -340,6 +427,108 @@ describe('reading чеки back out of a file', () => {
     expect(() => parseState({ receipts: [{ ...base, acquisition: 'monobank_auto' }] })).toThrow(
       /способом/,
     );
+  });
+});
+
+describe('reading правила and awaiting перекази back out of a file', () => {
+  it('Scenario: A правило-переказ round-trips', () => {
+    const state = parseState({
+      accounts: [],
+      transactions: [],
+      rules: [{ id: 'r1', merchant: 'округлення балансу', toAccountId: 'reserve', createdAtMs: 1 }],
+    });
+
+    expect(state.rules[0]).toEqual({
+      id: 'r1',
+      merchant: 'округлення балансу',
+      toAccountId: 'reserve',
+      createdAtMs: 1,
+    });
+    expect('categoryId' in (state.rules[0] as object)).toBe(false);
+  });
+
+  it('An older бекап names only categoryId, and reads back with no toAccountId', () => {
+    const state = parseState({
+      accounts: [],
+      transactions: [],
+      rules: [{ id: 'r1', merchant: 'сільпо', categoryId: 'groceries', createdAtMs: 1 }],
+    });
+
+    expect(state.rules[0]).toEqual({
+      id: 'r1',
+      merchant: 'сільпо',
+      categoryId: 'groceries',
+      createdAtMs: 1,
+    });
+    expect('toAccountId' in (state.rules[0] as object)).toBe(false);
+  });
+
+  it('Scenario: An awaiting переказ survives the round trip', () => {
+    const state = parseState({
+      accounts: [],
+      transactions: [
+        {
+          transaction: {
+            type: 'transfer',
+            id: 't1',
+            date: '2026-09-16',
+            fromAccountId: 'platinum',
+            toAccountId: 'reserve',
+            left: { amount: 20, currency: 'UAH' },
+            arrived: { amount: 20, currency: 'UAH' },
+            awaitingCounterpartIncome: true,
+          },
+          storedAtMs: 1,
+        },
+      ],
+    });
+
+    expect(state.transactions[0]?.transaction).toMatchObject({ awaitingCounterpartIncome: true });
+  });
+
+  it('Scenario: An older бекап restores with nothing awaiting', () => {
+    const state = parseState({
+      accounts: [],
+      transactions: [
+        {
+          transaction: {
+            type: 'transfer',
+            id: 't1',
+            date: '2026-09-16',
+            fromAccountId: 'platinum',
+            toAccountId: 'reserve',
+            left: { amount: 20, currency: 'UAH' },
+            arrived: { amount: 20, currency: 'UAH' },
+          },
+          storedAtMs: 1,
+        },
+      ],
+    });
+
+    expect('awaitingCounterpartIncome' in (state.transactions[0]?.transaction as object)).toBe(false);
+  });
+
+  it('refuses a stray non-true value for awaitingCounterpartIncome', () => {
+    expect(() =>
+      parseState({
+        accounts: [],
+        transactions: [
+          {
+            transaction: {
+              type: 'transfer',
+              id: 't1',
+              date: '2026-09-16',
+              fromAccountId: 'platinum',
+              toAccountId: 'reserve',
+              left: { amount: 20, currency: 'UAH' },
+              arrived: { amount: 20, currency: 'UAH' },
+              awaitingCounterpartIncome: 'yes',
+            },
+            storedAtMs: 1,
+          },
+        ],
+      }),
+    ).toThrow(/awaitingCounterpartIncome/);
   });
 });
 

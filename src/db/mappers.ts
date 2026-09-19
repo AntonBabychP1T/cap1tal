@@ -134,7 +134,12 @@ function amountOf(row: TransactionRow): Money {
   return money(required(row.amount, 'amount', row), required(row.currency, 'currency', row));
 }
 
-export function toTransaction(row: TransactionRow): Transaction {
+/**
+ * `awaiting` comes from a join with `counterpart_income_awaits` the caller already did — this
+ * function does no query of its own. `true` only ever matters on a `transfer` row; every other
+ * type ignores it, which is what "only a переказ ever awaits" means on the way out of storage.
+ */
+export function toTransaction(row: TransactionRow, awaiting?: boolean): Transaction {
   const date = isoDate(row.date);
   // Spread, never assigned: a row stored before the column existed loads with no `description`
   // property at all, exactly as a транзакція the owner recorded by hand does, so nothing
@@ -201,6 +206,7 @@ export function toTransaction(row: TransactionRow): Transaction {
           required(row.arrivedAmount, 'arrived_amount', row),
           required(row.arrivedCurrency, 'arrived_currency', row),
         ),
+        ...(awaiting ? { awaitingCounterpartIncome: true } : {}),
         ...description,
       };
     default:

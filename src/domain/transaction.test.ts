@@ -122,6 +122,35 @@ describe('transaction', () => {
     expect(proposeFee(backwards)).toBeNull();
   });
 
+  it('A переказ awaits nothing by default', () => {
+    // No existing flag means every stored переказ awaits nothing — the same default a fresh row
+    // in `counterpart_income_awaits` reads back as.
+    const t = transfer({
+      id: 't-awaits',
+      date: '2026-09-12',
+      fromAccountId: 'platinum',
+      toAccountId: 'reserve',
+      left: money(616, 'UAH'),
+      arrived: money(616, 'UAH'),
+    });
+    expect(t.awaitingCounterpartIncome).toBeUndefined();
+    expect({ ...t, awaitingCounterpartIncome: true as const }.awaitingCounterpartIncome).toBe(true);
+  });
+
+  it('A non-переказ cannot carry `awaitingCounterpartIncome` (by construction)', () => {
+    const t: Expense = expenseByDefault({
+      id: 't-not-transfer',
+      date: '2026-09-12',
+      accountId: 'card',
+      amount: money(100, 'UAH'),
+    });
+    // @ts-expect-error — `awaitingCounterpartIncome` is not a key of `Expense` at all; only a
+    // `Transfer` has it. This is the compile-time proof; if it ever stops erroring, `Expense` has
+    // gained the field and this line — not a runtime assertion — is what would catch it.
+    const bad: Expense = { ...t, awaitingCounterpartIncome: true };
+    expect(bad.accountId).toBe('card');
+  });
+
   it('Transfer amounts are positive', () => {
     const legs = {
       id: 't13',

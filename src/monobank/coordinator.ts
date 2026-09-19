@@ -1,3 +1,4 @@
+import type { Account } from '../domain/account';
 import type { Rule } from '../domain/rules';
 import type { IsoDate } from '../domain/transaction';
 import type { PagingPosition, StatementAnswer, StoredMonobankLink } from '../db/monobank-repo';
@@ -115,6 +116,11 @@ export interface SyncPorts {
   readonly storage: SyncStorage;
   /** The owner's правила автокатегоризації, loaded once for the whole run. */
   readonly rules: () => readonly Rule[];
+  /**
+   * Every рахунок, loaded once for the whole run — a правило-переказ needs to find its
+   * destination. Absent is the same as none: no правило-переказ can then be eligible.
+   */
+  readonly accounts?: () => readonly Pick<Account, 'id' | 'currency'>[];
   /** A monotonic-enough millisecond clock: the run's end, and the pacing between requests. */
   readonly nowMs: () => number;
   /** The same instant as a `Date`, for storage metadata. */
@@ -289,6 +295,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
   }
 
   const rules = ports.rules();
+  const accounts = ports.accounts?.() ?? [];
   /**
    * Seeded from storage, not from `undefined`: the gap belongs to the device, so a run started
    * seconds after the last one ended waits out the rest of it instead of firing at once and being
@@ -484,6 +491,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
       token,
       runToMs,
       rules,
+      accounts,
       ports,
       paced,
       stopping,
@@ -535,11 +543,13 @@ async function syncOneAccount(input: {
   readonly token: string;
   readonly runToMs: number;
   readonly rules: readonly Rule[];
+  readonly accounts: readonly Pick<Account, 'id' | 'currency'>[];
   readonly ports: SyncPorts;
   readonly paced: <T>(request: () => Promise<T>) => Promise<T | Stopped>;
   readonly stopping: () => StoppedOutcome | undefined;
 }): Promise<{ outcome: AccountOutcome; imported: number; reason?: UnavailableReason }> {
-  const { link, bankAccount, obtainedAt, token, runToMs, rules, ports, paced, stopping } = input;
+  const { link, bankAccount, obtainedAt, token, runToMs, rules, accounts, ports, paced, stopping } =
+    input;
 
   let cursorMs = link.cursorMs;
   let seenIds: ReadonlySet<string> = ports.storage.importedIds(link.monobankAccountId);
@@ -593,6 +603,7 @@ async function syncOneAccount(input: {
         accountId: link.accountId,
         currency: bankAccount.currency,
         rules,
+        accounts,
         seenIds: before,
         newId: ports.newId,
       });

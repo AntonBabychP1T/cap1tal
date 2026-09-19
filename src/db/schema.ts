@@ -44,11 +44,14 @@ export const sources = sqliteTable('sources', {
 });
 
 /**
- * A правило автокатегоризації: "merchant and/or MCC → one category". Nothing applies these yet —
- * the importers of steps 6–8 do; this change stores and edits them.
+ * A правило автокатегоризації: "merchant and/or MCC → one category, or → a destination рахунок
+ * (a правило-переказ)". Exactly one target, never both and never neither — the CHECK below, the
+ * same shape `rules_criterion_present` already keeps for the criteria (design D1).
  *
  * `createdAt` is domain data here, not storage metadata: the matching order uses it as the
- * tie-break between two rules that are equally specific.
+ * tie-break between two rules that are equally specific. `to_account_id` restricts like every
+ * other reference to a рахунок: рахунки archive rather than delete, and a правило pointing nowhere
+ * must not silently appear.
  */
 export const rules = sqliteTable(
   'rules',
@@ -58,14 +61,19 @@ export const rules = sqliteTable(
     merchant: text('merchant'),
     /** ISO-18245 merchant category code; NULL when the rule matches on the merchant alone. */
     mcc: integer('mcc'),
-    categoryId: text('category_id')
-      .notNull()
-      .references(() => categories.id, { onDelete: 'restrict' }),
+    /** NULL exactly when the target is a рахунок instead — a правило-переказ. */
+    categoryId: text('category_id').references(() => categories.id, { onDelete: 'restrict' }),
+    /** NULL exactly when the target is a category — a правило-переказ's destination otherwise. */
+    toAccountId: text('to_account_id').references(() => accounts.id, { onDelete: 'restrict' }),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => [
     check('rules_criterion_present', sql`${t.merchant} IS NOT NULL OR ${t.mcc} IS NOT NULL`),
     check('rules_merchant_not_blank', sql`${t.merchant} IS NULL OR length(trim(${t.merchant})) > 0`),
+    check(
+      'rules_target_exactly_one',
+      sql`(${t.categoryId} IS NULL) <> (${t.toAccountId} IS NULL)`,
+    ),
   ],
 );
 
@@ -170,6 +178,29 @@ export type AccountRow = typeof accounts.$inferSelect;
 export type NewAccountRow = typeof accounts.$inferInsert;
 export type TransactionRow = typeof transactions.$inferSelect;
 export type NewTransactionRow = typeof transactions.$inferInsert;
+
+/**
+ * A row means "this переказ still awaits its зустрічний дохід" (glossary; design D4). Its own
+ * table rather than a column on `transactions`: widening `transactions_shape`'s CHECK would force
+ * SQLite to rebuild that table, and rebuilding it under the migrator's own transaction — where
+ * `PRAGMA foreign_keys=OFF` is a no-op — would cascade-delete every фіскальний чек along with it
+ * (`fiscal_receipts.transaction_id` is `ON DELETE CASCADE`).
+ *
+ * `ON DELETE CASCADE` here for the same reason `receipt_items` cascades off `fiscal_receipts`: a
+ * row with no переказ to describe means nothing. No row is "awaits nothing", which is what every
+ * transaction stored before this table existed reads back as, and what a non-переказ always reads
+ * back as — the repository, not a CHECK, is what keeps this row only ever under a переказ id
+ * (`transactionsRepo.save` deletes it for any id saved as anything else), because a CHECK cannot
+ * look across tables.
+ */
+export const counterpartIncomeAwaits = sqliteTable('counterpart_income_awaits', {
+  transactionId: text('transaction_id')
+    .primaryKey()
+    .references(() => transactions.id, { onDelete: 'cascade' }),
+});
+
+export type CounterpartIncomeAwaitRow = typeof counterpartIncomeAwaits.$inferSelect;
+export type NewCounterpartIncomeAwaitRow = typeof counterpartIncomeAwaits.$inferInsert;
 
 /**
  * The cached monobank rate, one row per currency — a cache, not a record of anything the owner

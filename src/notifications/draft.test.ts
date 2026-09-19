@@ -52,7 +52,7 @@ const ACCOUNTS: readonly WatchableAccount[] = [
 const groceries: Rule = {
   id: 'r1',
   merchant: 'сільпо',
-  categoryId: 'groceries',
+  target: { kind: 'category', categoryId: 'groceries' },
   createdAt: new Date('2026-01-01T00:00:00Z'),
 };
 
@@ -242,11 +242,28 @@ describe('processCapture — auto-confirmation за правилом', () => {
     });
   });
 
+  it('a правило-переказ does not decide a чернетка\'s категорія', () => {
+    const roundUpToTransfer: Rule = {
+      id: 'r-transfer',
+      merchant: 'сільпо',
+      target: { kind: 'transfer', toAccountId: 'reserve' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    // Only a правило-переказ matches — a чернетка names no рахунок the money left in the sense a
+    // правило-переказ needs, so it takes no part and the чернетка drafts as usual.
+    const outcome = processCapture(
+      capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }),
+      context({ rules: [roundUpToTransfer] }),
+    );
+
+    expect(outcome.kind).toBe('drafted');
+  });
+
   it('Scenario: An MCC-only правило does not auto-confirm', () => {
     const byMcc: Rule = {
       id: 'r2',
       mcc: 5411,
-      categoryId: 'groceries',
+      target: { kind: 'category', categoryId: 'groceries' },
       createdAt: new Date('2026-01-01T00:00:00Z'),
     };
 

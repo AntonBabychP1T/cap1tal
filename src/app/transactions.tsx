@@ -22,7 +22,8 @@ import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { useRuleOffer } from '@/hooks/use-rule-offer';
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
-import { accountChoiceLabel, categoryLabel } from '@/ui/labels';
+import { accountChoiceLabel } from '@/ui/labels';
+import { ruleTargetLabel } from '@/ui/list-management';
 import { monthLabel, monthsOf } from '@/ui/months';
 import { recategorise } from '@/ui/retype';
 import { PICKER_SIZE } from '@/ui/shortlist';
@@ -139,6 +140,7 @@ export default function TransactionsScreen() {
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
   const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
+  const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
   const overLimit = useMemo(
     () =>
       overLimitByMonth({
@@ -216,7 +218,7 @@ export default function TransactionsScreen() {
         reloadStored();
         // The категорія is already stored, never lost by a dismissed offer (design D5).
         if (t.type === 'expense' || t.type === 'refund') {
-          ruleOffer.raise({ description: t.description, categoryId: picked });
+          ruleOffer.raise({ description: t.description, target: { kind: 'category', categoryId: picked } });
         }
       } catch (error) {
         Alert.alert(
@@ -385,8 +387,8 @@ export default function TransactionsScreen() {
       )}
       <RuleOfferSheet
         offer={ruleOffer.offer}
-        categoryName={
-          ruleOffer.offer ? categoryLabel(ruleOffer.offer.categoryId, categoryNames) : ''
+        targetLabel={
+          ruleOffer.offer ? ruleTargetLabel(ruleOffer.offer.target, categoryNames, accountNames) : ''
         }
         onAccept={ruleOffer.accept}
         onDecline={ruleOffer.decline}

@@ -261,5 +261,5 @@ it('the чек reaches no number the app computes', async () => {
   const source = readFileSync(new URL('./fiscal-receipt.ts', import.meta.url), 'utf8');
   const imported = [...source.matchAll(/^\s*import[^']*'([^']+)'/gm)].map(([, from]) => from);
 
-  expect(imported.toSorted()).toEqual(['./money', './transaction']);
+  expect(imported.toSorted()).toEqual(['./dates', './money', './transaction']);
 });

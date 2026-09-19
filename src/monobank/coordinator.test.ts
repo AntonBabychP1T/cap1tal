@@ -185,6 +185,7 @@ describe('syncLinkedAccounts', () => {
       fetch: fetchImpl,
       storage: repo,
       rules: () => rules,
+      accounts: () => accountsRepo(storage.db).list(),
       // The clock only moves when the run waits, so pacing is entirely the run's own doing.
       nowMs: () => clockMs,
       now: () => new Date(clockMs),
@@ -861,7 +862,7 @@ describe('syncLinkedAccounts', () => {
     const brokenRule: Rule = {
       id: 'r1',
       merchant: 'сільпо',
-      categoryId: 'no-such-category',
+      target: { kind: 'category', categoryId: 'no-such-category' },
       createdAt: new Date(RUN_AT - 1000),
     };
 
