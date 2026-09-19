@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { account, activeAccounts, classifyTransfer, computeBalance, reconcile } from './account';
+import {
+  account,
+  activeAccounts,
+  classifyTransfer,
+  computeBalance,
+  reconcile,
+  transactionEffect,
+} from './account';
 import { money } from './money';
 import { categoryBreakdown, monthlyPicture } from './monthly-picture';
 import {
@@ -222,6 +229,95 @@ describe('computeBalance', () => {
       arrived: money(5000, 'UAH'),
     });
     expect(computeBalance(uahCard, [elsewhere, between])).toEqual(money(100000, 'UAH'));
+  });
+});
+
+describe('transactionEffect', () => {
+  it('Scenario: An expense subtracts from its own account and touches no other', () => {
+    const expense = expenseByDefault({
+      id: 'e1',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(30000, 'UAH'),
+      categoryId: 'food',
+    });
+    expect(transactionEffect('card', expense)).toEqual(money(-30000, 'UAH'));
+    expect(transactionEffect('other', expense)).toBeUndefined();
+  });
+
+  it('Scenario: Income and refunds add their amount', () => {
+    expect(transactionEffect('card', income('card', 50000, 'UAH', 'salary'))).toEqual(
+      money(50000, 'UAH'),
+    );
+    const gotRefund = refund({
+      id: 'r1',
+      date: '2026-03-12',
+      accountId: 'card',
+      amount: money(10000, 'UAH'),
+      categoryId: 'clothes',
+    });
+    expect(transactionEffect('card', gotRefund)).toEqual(money(10000, 'UAH'));
+  });
+
+  it('Scenario: A correction carries its own sign, negative and positive', () => {
+    expect(transactionEffect('wallet', correction('wallet', -3000, 'UAH'))).toEqual(
+      money(-3000, 'UAH'),
+    );
+    expect(transactionEffect('wallet', correction('wallet', 3000, 'UAH'))).toEqual(
+      money(3000, 'UAH'),
+    );
+  });
+
+  it('Scenario: Each transfer leg moves only its own account', () => {
+    const t = transfer({
+      id: 't1',
+      date: '2026-03-15',
+      fromAccountId: 'card',
+      toAccountId: 'usd',
+      left: money(410000, 'UAH'),
+      arrived: money(10000, 'USD'),
+    });
+    expect(transactionEffect('card', t)).toEqual(money(-410000, 'UAH'));
+    expect(transactionEffect('usd', t)).toEqual(money(10000, 'USD'));
+    expect(transactionEffect('elsewhere', t)).toBeUndefined();
+  });
+
+  it('Scenario: Accepted and declined fee proposals leave identical combined effects', () => {
+    // Accepting a fee proposal stores the переказ at the arrived сума on both legs plus a
+    // separate витрата "Комісія"; declining keeps the original left/arrived split. Both must
+    // move the source рахунок by exactly the same total — the fee is accounted for once either
+    // way (rules/domain.md, "Same-currency transfer where arrived < left…").
+    const accepted = [
+      transfer({
+        id: 't-accepted',
+        date: '2026-03-15',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(99500, 'UAH'),
+        arrived: money(99500, 'UAH'),
+      }),
+      expenseByDefault({
+        id: 'fee',
+        date: '2026-03-15',
+        accountId: 'card',
+        amount: money(500, 'UAH'),
+        categoryId: 'fees',
+      }),
+    ];
+    const declined = [
+      transfer({
+        id: 't-declined',
+        date: '2026-03-15',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(100000, 'UAH'),
+        arrived: money(99500, 'UAH'),
+      }),
+    ];
+    const sum = (transactions: readonly (ReturnType<typeof transfer> | ReturnType<typeof expenseByDefault>)[]) =>
+      transactions.reduce((total, t) => total + (transactionEffect('card', t)?.amount ?? 0), 0);
+    expect(sum(accepted)).toBe(-100000);
+    expect(sum(declined)).toBe(-100000);
   });
 });
 

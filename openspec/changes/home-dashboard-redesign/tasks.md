@@ -49,7 +49,16 @@ All boxes describe future implementation work and remain unchecked in this propo
 
 ## 2. Existing account semantics and historical reads
 
-- [ ] 2.1 Factor a shared pure transaction-effect primitive from computeBalance without changing behavior. Trace: net-worth «History is reconstructed…». Tests: `src/domain/account.test.ts` — expenses/refunds/signed corrections, transfer legs and accepted/declined fee effects remain identical.
+- [x] 2.1 Factor a shared pure transaction-effect primitive from computeBalance without changing behavior. Trace: net-worth «History is reconstructed…». Tests: `src/domain/account.test.ts` — expenses/refunds/signed corrections, transfer legs and accepted/declined fee effects remain identical.
+
+      **Result:** Added `transactionEffect(accountId, transaction)` to `src/domain/account.ts`,
+      returning the signed per-account effect of one transaction or `undefined` when it doesn't
+      touch that account; `computeBalance` now folds over it instead of its own switch, with no
+      behaviour change (same `add`/`subtract` currency guards apply since `transactionEffect`
+      always returns an amount in the queried account's own currency). 5 new tests in
+      `account.test.ts` cover expense/income/refund/correction/transfer-leg effects and confirm
+      accepted vs. declined fee proposals still move the source account by the identical total.
+      `npm run verify`: 3527 tests passed, `85d5407537520f2765a541554b8df03e52000911`.
 - [ ] 2.2 Add bounded local account/month movement and first-date reads with as-of cutoff, a bounded first-date end-of-day aggregate and future-record flag. Trace: net-worth «Undated opening money…», «History spans…»; main-screen «The dashboard uses local data…». Tests: `src/db/net-worth-repo.test.ts` — zero/nonzero openings, June 5 initial point excludes a later June 20 movement in the same month, future rows excluded from historical aggregates, all accounts/archived included, multiple currencies and no-transaction accounts retained.
 - [ ] 2.3 Differentially verify aggregate outputs against existing account calculations, including transfer fees and currencies. Trace: net-worth «History is reconstructed…». Tests: `src/db/net-worth-repo.test.ts` — generated histories agree with computeBalance per account/date; results grow by accounts/months rather than raw record count on 50k records.
 - [ ] 2.4 Implement pure current per-currency net-worth contributions and availability. Trace: net-worth «Статок is a reading…», «Archived and debt…», «Current valuation…». Tests: `src/domain/net-worth.test.ts` — replace value rather than add, zero vs missing value, archived money, signed debt, principal/interest, empty/incomplete/overflow states.

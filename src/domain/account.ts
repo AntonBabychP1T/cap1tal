@@ -108,6 +108,41 @@ export function classifyTransfer(input: {
 }
 
 /**
+ * The signed effect one транзакція has on one рахунок's баланс, in that рахунок's own currency —
+ * or `undefined` when the транзакція does not touch that рахунок at all. This is the one rule
+ * `computeBalance` folds over every stored транзакція; net-worth's historical reconstruction uses
+ * this exact function too, so a balance today and a balance on any past date are never two
+ * competing definitions of what a транзакція did to an account (design D5).
+ *
+ * A same-account transfer is rejected at creation, so a рахунок is never both legs of the same
+ * переказ here.
+ */
+export function transactionEffect(
+  accountId: string,
+  transaction: Transaction,
+): Money | undefined {
+  switch (transaction.type) {
+    case 'expense':
+      if (transaction.accountId !== accountId) return undefined;
+      return money(-transaction.amount.amount, transaction.amount.currency);
+    case 'income':
+    case 'refund':
+    case 'correction':
+      // A correction's amount is signed, so returning it moves the balance either way.
+      if (transaction.accountId !== accountId) return undefined;
+      return transaction.amount;
+    case 'transfer':
+      if (transaction.fromAccountId === accountId) {
+        return money(-transaction.left.amount, transaction.left.currency);
+      }
+      if (transaction.toAccountId === accountId) {
+        return transaction.arrived;
+      }
+      return undefined;
+  }
+}
+
+/**
  * The computed balance (розрахунковий баланс): the opening balance plus the effect of every
  * transaction touching the account. Nothing is stored — a balance transactions cannot explain
  * does not exist. An amount in any currency other than the account's is rejected; amounts of
@@ -119,26 +154,9 @@ export function computeBalance(
 ): Money {
   let balance = account.openingBalance;
   for (const t of transactions) {
-    switch (t.type) {
-      case 'expense':
-        if (t.accountId !== account.id) break;
-        balance = subtract(balance, t.amount);
-        break;
-      case 'income':
-      case 'refund':
-      case 'correction':
-        // A correction's amount is signed, so adding it moves the balance either way.
-        if (t.accountId !== account.id) break;
-        balance = add(balance, t.amount);
-        break;
-      case 'transfer':
-        if (t.fromAccountId === account.id) {
-          balance = subtract(balance, t.left);
-        }
-        if (t.toAccountId === account.id) {
-          balance = add(balance, t.arrived);
-        }
-        break;
+    const effect = transactionEffect(account.id, t);
+    if (effect !== undefined) {
+      balance = add(balance, effect);
     }
   }
   return balance;
