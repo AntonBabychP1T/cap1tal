@@ -227,7 +227,22 @@ All boxes describe future implementation work and remain unchecked in this propo
       rejection propagating past a `finally`); fixed one stale structural assertion in
       `home-screen.test.ts`. `npm run verify`: 3604 tests passed,
       `e4348eee37fa3d7956465dd95c81f1d61df3b672`.
-- [ ] 4.2 Implement compact uncategorised banner and collapsed draft/error state. Trace: main-screen «Uncategorised records…», «Operational alerts…»; bank-notifications-screen «Pending чернетки are visible on Головний». Tests: `src/ui/home-screen.test.ts` and `src/ui/drafts-section.test.ts` — seven across history incl refund, unsourced income excluded, last item removes banner, fifty drafts stay collapsed, expand/confirm/dismiss and pending vs failure.
+- [x] 4.2 Implement compact uncategorised banner and collapsed draft/error state. Trace: main-screen «Uncategorised records…», «Operational alerts…»; bank-notifications-screen «Pending чернетки are visible on Головний». Tests: `src/ui/home-screen.test.ts` and `src/ui/drafts-section.test.ts` — seven across history incl refund, unsourced income excluded, last item removes banner, fifty drafts stay collapsed, expand/confirm/dismiss and pending vs failure.
+
+      **Result:** Replaced `HomeAttention`/`attention` with `HomeAlerts`/`alerts` in
+      `home-screen.ts`: `uncategorisedBanner` («7 транзакцій без категорії · Переглянути», `null`
+      at zero — the seven-across-history/unsourced-income-excluded/last-item-removes-banner
+      behavior is `countUncategorised()`'s own, already correct and unchanged), `draftCount` +
+      `draftLabel` («50 чернеток»), and `failureRow` (unchanged `needsOwner` logic, just renamed).
+      Rewrote `index.tsx`'s JSX: the old single "Потребує уваги" accent card is gone; the banner is
+      its own compact row, and the draft/failure rows are up to two collapsed rows in one card —
+      the draft row toggles a local `draftsExpanded` state that gates the existing confirm/dismiss
+      `ListCard` (unchanged logic from `drafts-section.ts`, still 15/15 passing as a regression
+      check — expand/confirm/dismiss and pending-vs-failure behavior was never touched). Updated
+      every structural assertion in `home-screen.test.ts` and `notifications-screen.test.ts` that
+      had regex-matched the old JSX literals, and rewrote the operational-alerts describe block for
+      the new fields. `npm run verify`: 3605 tests passed,
+      `b1423c13c6f425f5a4f6b8afc988cccb3fea904e`.
 - [ ] 4.3 Adjust feed presentation while keeping editor and categorisation paths. Trace: main-screen «The feed shows…». Tests: `src/ui/transaction-line.test.ts` and `src/ui/home-screen.test.ts` — distinct description/category/source, two transfer legs, signed amounts, no-description compactness and latest five/all action; retain repo ordering tests for equal dates/backdating.
 - [ ] 4.4 Assemble header/month/feed/alerts using existing shared surfaces; retain FAB and scroll behavior. Trace: main-screen «Головний presents the daily dashboard», «Opening Головний again…». Tests: `src/ui/home-screen.test.ts` — ordered default sections, no held/progress/large attention/form, all-archived invitation with history; manual first-viewport and focus/refresh smoke in §7.
 - [ ] 4.5 Render category donut, currency control, legend and remainder with accessible alternatives. Trace: main-screen «Top categories…», «Category currencies…», «Categories open…», «The dashboard remains accessible…». Tests: `src/ui/home-categories.test.ts` — text/selected-state labels and route descriptors; rendered layout and TalkBack smoke in §7.

@@ -127,26 +127,18 @@ describe('Головний shows чернетки only while some are pending', 
 
 
   it('Scenario: No pending чернетки, no surface', () => {
-    // The чернетки rows sit inside one guard on a non-empty list, and the heading over them —
-    // «Потребує уваги», which they share with the transactions still without a категорія — inside
-    // the guard that says something is waiting at all. No branch renders a heading or a
-    // placeholder over nothing.
-    expect(main).toContain('{drafts.length > 0 ? (');
-    const rows = main.slice(main.indexOf('{drafts.length > 0 ? ('));
-    const guardedRows = rows.slice(0, rows.indexOf('Останні транзакції'));
+    // The collapsed draft row itself renders only while something is pending, and the expanded
+    // confirm/dismiss surface renders only while both expanded and non-empty — no heading and no
+    // placeholder either way now that «Потребує уваги» no longer exists as a shared section
+    // (main-screen, "Operational alerts remain compact and actionable").
+    expect(main).toContain('{model.alerts.draftCount > 0 ? (');
+    expect(main).toContain('{draftsExpanded && drafts.length > 0 ? (');
+    const expanded = main.slice(main.indexOf('{draftsExpanded && drafts.length > 0 ? ('));
+    const guardedRows = expanded.slice(0, expanded.indexOf('Останні транзакції'));
     expect(guardedRows).toContain('drafts.map(');
     expect(guardedRows).toContain(') : null}');
 
-    // The heading is inside the section's own guard, and the чернетки are inside that section.
-    expect(main).toContain('{model.attention.present ? (');
-    const section = main.slice(main.indexOf('{model.attention.present ? ('));
-    const guardedSection = section.slice(0, section.indexOf('Останні транзакції'));
-    expect(guardedSection).toContain('ATTENTION_TITLE');
-    expect(guardedSection).toContain('{drafts.length > 0 ? (');
-    expect(guardedSection).toContain(') : null}');
-
-    // And what puts the section on the screen counts the pending чернетки, so one pending is one
-    // section — never a heading over an empty block.
+    // What feeds the collapsed row's count is the pending чернетки, so zero pending is zero row.
     expect(main).toContain('pendingDrafts: drafts.length');
   });
 

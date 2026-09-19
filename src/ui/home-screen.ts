@@ -7,7 +7,7 @@ import type { MonobankRate } from '../monobank/currency';
 import { accountTotals, approximateTotals, totalsLine } from './account-totals';
 import { byCurrency } from './amount-input';
 import { freshnessLabel } from './dates';
-import { transactionCount } from './labels';
+import { plural, transactionCount } from './labels';
 import { syncedCountLine } from './monobank-screen';
 import { monthInLabel } from './months';
 
@@ -50,20 +50,31 @@ export interface HomeHeld {
   readonly approximate: string | null;
 }
 
-export interface HomeAttention {
+/**
+ * The compact operational rows below the feed — at most two, both collapsed by default
+ * (main-screen, "Uncategorised records are a compact feed banner", "Operational alerts remain
+ * compact and actionable"). Neither an empty heading nor reserved space stands for one that is
+ * absent: a `null`/zero field renders nothing at all, not a placeholder.
+ */
+export interface HomeAlerts {
   /**
-   * The counted rows the section names — today only «Без категорії». The pending чернетки are the
-   * screen's own block below them: they are answered in place, not counted.
+   * «7 транзакцій без категорії · Переглянути», counted over everything stored, not only the
+   * latest five. `null` at zero — no banner and no reserved space.
    */
-  readonly rows: readonly string[];
+  readonly uncategorisedBanner: string | null;
   /**
-   * The monobank row, when monobank needs the owner: what happened, and that it opens the monobank
-   * screen. `null` the rest of the time, which is nearly always — a failed run over fresh data
-   * puts nothing here (`needsOwner`).
+   * How many pending чернетки — the collapsed row names the count and expands in place to the
+   * existing confirm/dismiss surface (`draftLines`, unchanged). Zero means no row at all.
    */
-  readonly monobank: string | null;
-  /** Whether the section exists at all. False means no heading and no space held for one. */
-  readonly present: boolean;
+  readonly draftCount: number;
+  /** «50 чернеток» — the collapsed row's own text; `''` when `draftCount` is zero. */
+  readonly draftLabel: string;
+  /**
+   * The actionable monobank row, when monobank needs the owner: what happened, and that it opens
+   * the monobank screen. `null` the rest of the time, which is nearly always — a failed run over
+   * fresh data puts nothing here (`needsOwner`).
+   */
+  readonly failureRow: string | null;
 }
 
 /** What the freshness line says, in the owner's words. */
@@ -125,7 +136,7 @@ export interface HomeViewModel {
   readonly status: HomeMonthStatus;
   /** `null` when no unarchived рахунок exists — the screen says so instead. */
   readonly held: HomeHeld | null;
-  readonly attention: HomeAttention;
+  readonly alerts: HomeAlerts;
   /**
    * `null` when monobank is not configured or nothing is linked: an owner who never connected a
    * bank is told nothing about one.
@@ -191,11 +202,6 @@ export function homeViewModel(input: {
 
   const totals = accountTotals(input.accounts, input.balances);
 
-  const rows: string[] = [];
-  if (input.uncategorised > 0) {
-    rows.push(`${transactionCount(input.uncategorised)} без категорії`);
-  }
-
   // A bank the owner never connected, or connected and never linked a рахунок to, gets no line
   // and no row: nothing about monobank appears on this screen at all.
   const bank = input.monobank;
@@ -216,7 +222,7 @@ export function homeViewModel(input: {
   const monobank: HomeMonobank | null = connected
     ? { freshness: freshnessOf(bank, input.now) }
     : null;
-  const attentionRow = situation === undefined ? null : ATTENTION_WORDS[situation];
+  const failureRow = situation === undefined ? null : ATTENTION_WORDS[situation];
 
   return {
     month: input.month,
@@ -232,10 +238,17 @@ export function homeViewModel(input: {
             approximate: approximateTotals(totals.total, input.rates),
           }
         : null,
-    attention: {
-      rows,
-      monobank: attentionRow,
-      present: rows.length > 0 || input.pendingDrafts > 0 || attentionRow !== null,
+    alerts: {
+      uncategorisedBanner:
+        input.uncategorised > 0
+          ? `${transactionCount(input.uncategorised)} без категорії · Переглянути`
+          : null,
+      draftCount: input.pendingDrafts,
+      draftLabel:
+        input.pendingDrafts > 0
+          ? `${input.pendingDrafts} ${plural(input.pendingDrafts, 'чернетка', 'чернетки', 'чернеток')}`
+          : '',
+      failureRow,
     },
     monobank,
   };

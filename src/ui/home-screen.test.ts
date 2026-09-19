@@ -257,53 +257,47 @@ describe('the money held', () => {
   });
 });
 
-describe('«Потребує уваги»', () => {
-  it('Scenario: Nothing waiting, no section', () => {
-    const { attention } = model({ uncategorised: 0, pendingDrafts: 0 });
-
-    expect(attention.present).toBe(false);
-    expect(attention.rows).toEqual([]);
+describe('operational alerts', () => {
+  it('Scenario: A nonzero count of stored uncategorised records is a compact banner', () => {
+    const { alerts } = model({ uncategorised: 7 });
+    expect(alerts.uncategorisedBanner).toBe('7 транзакцій без категорії · Переглянути');
   });
 
-  it('Scenario: Uncategorised транзакції are named and counted', () => {
-    const { attention } = model({ uncategorised: 2 });
-
-    expect(attention.present).toBe(true);
-    expect(attention.rows).toEqual(['2 транзакції без категорії']);
+  it('Scenario: No banner or reserved space at zero', () => {
+    const { alerts } = model({ uncategorised: 0 });
+    expect(alerts.uncategorisedBanner).toBeNull();
   });
 
   it('The count is named in the owner’s plural, one and many alike', () => {
-    expect(model({ uncategorised: 1 }).attention.rows).toEqual(['1 транзакція без категорії']);
-    expect(model({ uncategorised: 7 }).attention.rows).toEqual(['7 транзакцій без категорії']);
+    expect(model({ uncategorised: 1 }).alerts.uncategorisedBanner).toBe(
+      '1 транзакція без категорії · Переглянути',
+    );
+    expect(model({ uncategorised: 7 }).alerts.uncategorisedBanner).toBe(
+      '7 транзакцій без категорії · Переглянути',
+    );
   });
 
-  it('Scenario: A pending чернетка puts the section on the screen', () => {
-    const { attention } = model({ uncategorised: 0, pendingDrafts: 1 });
-
-    // The чернетки are the screen's own block: the section exists for them, and counts nothing.
-    expect(attention.present).toBe(true);
-    expect(attention.rows).toEqual([]);
+  it('Scenario: Answering the last item removes the banner', () => {
+    expect(model({ uncategorised: 1 }).alerts.uncategorisedBanner).not.toBeNull();
+    expect(model({ uncategorised: 0 }).alerts.uncategorisedBanner).toBeNull();
   });
 
-  it('Scenario: Answering the last item takes the section away', () => {
-    // The чернетка confirmed into a категорія its правило matched: nothing counted, nothing
-    // pending, and the section is gone rather than standing empty.
-    expect(model({ uncategorised: 0, pendingDrafts: 1 }).attention.present).toBe(true);
-    expect(model({ uncategorised: 0, pendingDrafts: 0 }).attention.present).toBe(false);
+  it('Scenario: Fifty drafts stay collapsed — the row names only the count', () => {
+    const { alerts } = model({ pendingDrafts: 50 });
+    expect(alerts.draftCount).toBe(50);
+    expect(alerts.draftLabel).toBe('50 чернеток');
   });
 
-  it('Scenario: A чернетка confirmed into «Без категорії» keeps the section', () => {
-    // The other confirmation: no правило matched, so the чернетка left the pending surface and
-    // arrived as a витрата without a категорія — one thing waiting replaced by another.
-    const after = model({ uncategorised: 1, pendingDrafts: 0 });
-
-    expect(after.attention.present).toBe(true);
-    expect(after.attention.rows).toEqual(['1 транзакція без категорії']);
+  it('Scenario: No pending чернетки means no draft row', () => {
+    const { alerts } = model({ pendingDrafts: 0 });
+    expect(alerts.draftCount).toBe(0);
+    expect(alerts.draftLabel).toBe('');
   });
 
-  it('Scenario: Categorising from the feed lowers the count', () => {
-    expect(model({ uncategorised: 3 }).attention.rows).toEqual(['3 транзакції без категорії']);
-    expect(model({ uncategorised: 2 }).attention.rows).toEqual(['2 транзакції без категорії']);
+  it('The draft label is named in the owner’s plural, one and many alike', () => {
+    expect(model({ pendingDrafts: 1 }).alerts.draftLabel).toBe('1 чернетка');
+    expect(model({ pendingDrafts: 2 }).alerts.draftLabel).toBe('2 чернетки');
+    expect(model({ pendingDrafts: 50 }).alerts.draftLabel).toBe('50 чернеток');
   });
 });
 
@@ -401,10 +395,10 @@ describe('Головний as the overview', () => {
     expect(main).not.toContain('[...stored.feed]');
   });
 
-  it('Scenario: «Переглянути» opens only what is waiting', () => {
+  it('Scenario: The uncategorised banner opens only what is waiting', () => {
     // Owner's report, 2026-09-14: the row led to the whole history, not to the транзакції it counts.
-    const attention = main.slice(main.indexOf('{model.attention.rows.length > 0 |'));
-    const block = attention.slice(0, attention.indexOf('</ListCard>'));
+    const banner = main.slice(main.indexOf('{model.alerts.uncategorisedBanner ? ('));
+    const block = banner.slice(0, banner.indexOf('</Pressable>'));
     expect(block).toMatch(
       /router\.push\(\{\s*pathname: '\/transactions',\s*params: \{ only: ONLY_UNCATEGORISED \},?\s*\}\)/,
     );
@@ -438,6 +432,15 @@ describe('Головний as the overview', () => {
     expect(main).not.toContain('monthlyPicture(');
     expect(main).not.toContain('accountTotals(');
     expect(main).not.toContain('approximateTotals(');
+  });
+
+  it('Scenario: Many drafts do not bury the dashboard — collapsed by default, expanded in place', () => {
+    // The draft row toggles local state rather than navigating anywhere; the existing
+    // confirm/dismiss ListCard only renders once that state is true, so no draft body — the
+    // confirm/dismiss surface `drafts-section.test.ts` already proves — mounts before expansion.
+    expect(main).toContain('const [draftsExpanded, setDraftsExpanded] = useState(false)');
+    expect(main).toContain('onPress={() => setDraftsExpanded((expanded) => !expanded)}');
+    expect(main).toContain('{draftsExpanded && drafts.length > 0 ? (');
   });
 });
 
@@ -630,10 +633,9 @@ describe('monobank among what needs attention', () => {
       }),
     });
 
-    expect(view.attention.present).toBe(true);
-    expect(view.attention.monobank).toContain('токен');
-    // The «Без категорії» rows are untouched by it: it is a third kind of row, not one of those.
-    expect(view.attention.rows).toEqual([]);
+    expect(view.alerts.failureRow).toContain('токен');
+    // The «Без категорії» banner is untouched by it: it is a third, independent row.
+    expect(view.alerts.uncategorisedBanner).toBeNull();
   });
 
   it('Scenario: A transient failure over fresh data puts nothing there', () => {
@@ -645,8 +647,7 @@ describe('monobank among what needs attention', () => {
       }),
     });
 
-    expect(view.attention.monobank).toBeNull();
-    expect(view.attention.present).toBe(false);
+    expect(view.alerts.failureRow).toBeNull();
   });
 
   it('a failure over data that has gone stale does put a row there', () => {
@@ -658,8 +659,7 @@ describe('monobank among what needs attention', () => {
       }),
     });
 
-    expect(view.attention.monobank).toContain('не оновлюються');
-    expect(view.attention.present).toBe(true);
+    expect(view.alerts.failureRow).toContain('не оновлюються');
   });
 
   it('Scenario: A failing run over a partly synced bank needs the owner', () => {
@@ -674,15 +674,14 @@ describe('monobank among what needs attention', () => {
       }),
     });
 
-    expect(view.attention.monobank).toContain('не оновлюються');
-    expect(view.attention.present).toBe(true);
+    expect(view.alerts.failureRow).toContain('не оновлюються');
   });
 
   it('Scenario: The monobank row goes when the problem does', () => {
     const failed = model({
       monobank: bank({ attempt: { attemptedAtMs: NOW.getTime(), outcome: 'invalid-token' } }),
     });
-    expect(failed.attention.present).toBe(true);
+    expect(failed.alerts.failureRow).not.toBeNull();
 
     const fixed = model({
       monobank: bank({
@@ -692,9 +691,7 @@ describe('monobank among what needs attention', () => {
       }),
     });
 
-    expect(fixed.attention.monobank).toBeNull();
-    // Nothing else was waiting, so the section is gone with the row.
-    expect(fixed.attention.present).toBe(false);
+    expect(fixed.alerts.failureRow).toBeNull();
   });
 
   it('Scenario: Nothing waiting, no section', () => {
@@ -710,14 +707,19 @@ describe('monobank among what needs attention', () => {
       }),
     });
 
-    expect(view.attention).toEqual({ rows: [], monobank: null, present: false });
+    expect(view.alerts).toEqual({
+      uncategorisedBanner: null,
+      draftCount: 0,
+      draftLabel: '',
+      failureRow: null,
+    });
   });
 
   it('says both situations in Ukrainian, naming no сума and no рахунок', () => {
     for (const outcome of ['invalid-token', 'unavailable']) {
       const row = model({
         monobank: bank({ attempt: { attemptedAtMs: NOW.getTime(), outcome } }),
-      }).attention.monobank;
+      }).alerts.failureRow;
       expect(row).toMatch(/[а-яїієґ]/i);
       expect(row).not.toMatch(/\d/);
       expect(row).not.toMatch(/UAH|USD|EUR/);
@@ -726,8 +728,7 @@ describe('monobank among what needs attention', () => {
 
   it('a device with no monobank at all has no row and no section', () => {
     const view = model({ uncategorised: 0, pendingDrafts: 0 });
-    expect(view.attention.monobank).toBeNull();
-    expect(view.attention.present).toBe(false);
+    expect(view.alerts.failureRow).toBeNull();
   });
 });
 
@@ -779,7 +780,7 @@ describe('what Головний itself wires', () => {
   });
 
   it('the monobank row leads to the monobank screen and nowhere else', () => {
-    const row = main.slice(main.indexOf('{model.attention.monobank ? ('));
+    const row = main.slice(main.indexOf('{model.alerts.failureRow ? ('));
     expect(row.slice(0, row.indexOf('</View>'))).toContain("router.push('/manage/monobank')");
   });
 

@@ -116,9 +116,6 @@ const DRAFT_PORTS = {
   now: () => new Date(),
 };
 
-/** The heading over everything that is waiting on the owner. Nothing waiting, no heading. */
-const ATTENTION_TITLE = 'Потребує уваги';
-
 export default function MainScreen() {
   const router = useRouter();
 
@@ -338,6 +335,8 @@ export default function MainScreen() {
       }),
     [sourceNames, stored.accounts, stored.drafts],
   );
+  /** Collapsed by default (main-screen, "Operational alerts remain compact and actionable"). */
+  const [draftsExpanded, setDraftsExpanded] = useState(false);
 
   /**
    * How much of the bank has synced, and how old the whole of it is — `syncCoverage`'s own answer,
@@ -611,119 +610,113 @@ export default function MainScreen() {
         </Card>
       ) : null}
 
-      {/* What is waiting on the owner: the транзакції still without a категорія, counted, and the
-          чернетки the phone's notifications left, answered in place. Neither, and this whole
-          section is absent — no heading, no empty state. */}
-      {model.attention.present ? (
-        <>
-          {model.attention.rows.length > 0 || model.attention.monobank ? (
-            <Card tone="accent" style={styles.attention}>
-              <View style={styles.attentionHead}>
-                <Mark />
-                <ThemedText type="overline" themeColor="accent">
-                  {ATTENTION_TITLE}
-                </ThemedText>
-              </View>
-              {model.attention.rows.map((row, index) => (
-                <View key={row}>
-                  {index > 0 ? <Divider /> : null}
-                  {/* The row counts what carries «Без категорії», so it opens exactly those. */}
-                  <Pressable
-                    onPress={() =>
-                      router.push({
-                        pathname: '/transactions',
-                        params: { only: ONLY_UNCATEGORISED },
-                      })
-                    }
-                    accessibilityRole="button"
-                    style={styles.attentionRow}>
-                    <ThemedText numberOfLines={2} style={styles.attentionLabel}>
-                      {row}
-                    </ThemedText>
-                    <ThemedText type="link" themeColor="accent">
-                      Переглянути
-                    </ThemedText>
-                    <Chevron />
-                  </Pressable>
-                </View>
-              ))}
-              {/* monobank, and only when it needs the owner: a rejected token at once, anything
-                  else once the data has gone stale. It leads where it is retried. */}
-              {model.attention.monobank ? (
-                <View>
-                  {model.attention.rows.length > 0 ? <Divider /> : null}
-                  <Pressable
-                    onPress={() => router.push('/manage/monobank')}
-                    accessibilityRole="button"
-                    style={styles.attentionRow}>
-                    <ThemedText numberOfLines={2} style={styles.attentionLabel}>
-                      {model.attention.monobank}
-                    </ThemedText>
-                    <ThemedText type="link" themeColor="accent">
-                      Відкрити
-                    </ThemedText>
-                    <Chevron />
-                  </Pressable>
-                </View>
-              ) : null}
-            </Card>
-          ) : (
-            <SectionLabel>{ATTENTION_TITLE}</SectionLabel>
-          )}
-          {drafts.length > 0 ? (
-            <ListCard>
-              {drafts.map((line, index) => (
-                <ListRow key={line.id} last={index === drafts.length - 1} style={styles.row}>
-                  <View style={styles.rowTop}>
-                    <View style={styles.rowLabel}>
-                      <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {`${line.accountName} · ${line.date}`}
-                      </ThemedText>
-                      <ThemedText type="small" themeColor="textMuted">
-                        {line.text}
-                      </ThemedText>
-                      {/* The foreign сума the notification named: information, never a proposal. */}
-                      {line.original ? (
-                        <ThemedText type="small" themeColor="textMuted">
-                          {line.original}
-                        </ThemedText>
-                      ) : null}
-                    </View>
-                    {line.amount ? (
-                      <ThemedText tabular style={styles.amount}>
-                        {line.amount}
-                      </ThemedText>
-                    ) : null}
-                  </View>
+      {/* The uncategorised banner: a compact actionable row, counted over everything stored,
+          absent entirely at zero — no heading, no reserved space (main-screen, "Uncategorised
+          records are a compact feed banner"). */}
+      {model.alerts.uncategorisedBanner ? (
+        <Pressable
+          onPress={() =>
+            router.push({ pathname: '/transactions', params: { only: ONLY_UNCATEGORISED } })
+          }
+          accessibilityRole="button">
+          <Card style={styles.attentionRow}>
+            <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+              {model.alerts.uncategorisedBanner}
+            </ThemedText>
+            <Chevron />
+          </Card>
+        </Pressable>
+      ) : null}
 
-                  {/* A raw чернетка has no сума of its own; it confirms only with one the owner
-                      supplies, in the рахунок's currency and under the manual-entry rules. */}
-                  {line.needsAmount ? (
-                    <Field
-                      label="Сума"
-                      value={draftAmounts[line.id] ?? ''}
-                      onChangeText={(typed: string) =>
-                        setDraftAmounts((current) => ({ ...current, [line.id]: typed }))
-                      }
-                      keyboardType="decimal-pad"
-                      placeholder="0,00"
-                      hint={line.currency}
-                    />
-                  ) : null}
-
-                  <View style={styles.rowActions}>
-                    <RowAction
-                      title="Підтвердити"
-                      onPress={() => confirmDraftLine(line.id, line.needsAmount)}
-                    />
-                    <RowAction title="Відхилити" onPress={() => dismissDraftLine(line)} />
-                  </View>
-                </ListRow>
-              ))}
-            </ListCard>
+      {/* At most two collapsed operational rows: the pending чернетки (count only, expanding in
+          place to the existing confirm/dismiss surface) and an actionable sync failure. Neither,
+          and nothing here renders at all (main-screen, "Operational alerts remain compact and
+          actionable"). */}
+      {model.alerts.draftCount > 0 || model.alerts.failureRow ? (
+        <Card style={styles.attention}>
+          {model.alerts.draftCount > 0 ? (
+            <Pressable
+              onPress={() => setDraftsExpanded((expanded) => !expanded)}
+              accessibilityRole="button"
+              style={styles.attentionRow}>
+              <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+                {model.alerts.draftLabel}
+              </ThemedText>
+              <Chevron />
+            </Pressable>
           ) : null}
-        </>
+          {model.alerts.failureRow ? (
+            <View>
+              {model.alerts.draftCount > 0 ? <Divider /> : null}
+              <Pressable
+                onPress={() => router.push('/manage/monobank')}
+                accessibilityRole="button"
+                style={styles.attentionRow}>
+                <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+                  {model.alerts.failureRow}
+                </ThemedText>
+                <ThemedText type="link" themeColor="accent">
+                  Відкрити
+                </ThemedText>
+                <Chevron />
+              </Pressable>
+            </View>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {draftsExpanded && drafts.length > 0 ? (
+        <ListCard>
+          {drafts.map((line, index) => (
+            <ListRow key={line.id} last={index === drafts.length - 1} style={styles.row}>
+              <View style={styles.rowTop}>
+                <View style={styles.rowLabel}>
+                  <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {`${line.accountName} · ${line.date}`}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textMuted">
+                    {line.text}
+                  </ThemedText>
+                  {/* The foreign сума the notification named: information, never a proposal. */}
+                  {line.original ? (
+                    <ThemedText type="small" themeColor="textMuted">
+                      {line.original}
+                    </ThemedText>
+                  ) : null}
+                </View>
+                {line.amount ? (
+                  <ThemedText tabular style={styles.amount}>
+                    {line.amount}
+                  </ThemedText>
+                ) : null}
+              </View>
+
+              {/* A raw чернетка has no сума of its own; it confirms only with one the owner
+                  supplies, in the рахунок's currency and under the manual-entry rules. */}
+              {line.needsAmount ? (
+                <Field
+                  label="Сума"
+                  value={draftAmounts[line.id] ?? ''}
+                  onChangeText={(typed: string) =>
+                    setDraftAmounts((current) => ({ ...current, [line.id]: typed }))
+                  }
+                  keyboardType="decimal-pad"
+                  placeholder="0,00"
+                  hint={line.currency}
+                />
+              ) : null}
+
+              <View style={styles.rowActions}>
+                <RowAction
+                  title="Підтвердити"
+                  onPress={() => confirmDraftLine(line.id, line.needsAmount)}
+                />
+                <RowAction title="Відхилити" onPress={() => dismissDraftLine(line)} />
+              </View>
+            </ListRow>
+          ))}
+        </ListCard>
       ) : null}
 
       {/* «Прогрес», and only when something is genuinely waiting: an unseen досягнення or an
