@@ -465,6 +465,59 @@ describe('Головний as the overview', () => {
     expect(main).not.toContain('ATTENTION_TITLE');
     expect(main).not.toContain('title="Записати"');
   });
+
+  it('Scenario: Categorisation stays in place — the picker and rule offer work without opening the editor', () => {
+    // The picker mounts inline under the same row, gated on local `categorising` state — never a
+    // navigation, so the row that opened it is exactly the row still on screen underneath it.
+    // (The sibling «Це переказ» action beside it does route, deliberately — design D7 — so the
+    // no-navigation claim is checked on the categorisation action alone, not the whole row.)
+    const rowActions = main.slice(main.indexOf('{line.uncategorised ? ('), main.indexOf('<Picker'));
+    expect(rowActions).toContain("categorising === line.id ? 'Згорнути' : 'Обрати категорію'");
+    const categoriseAction = rowActions.slice(
+      rowActions.indexOf('title={categorising'),
+      rowActions.indexOf('{offersTransferMark'),
+    );
+    expect(categoriseAction).toContain('setCategorising(categorising === line.id ? undefined : line.id)');
+    expect(categoriseAction).not.toContain('router.push');
+
+    const picker = main.slice(main.indexOf('{categorising === line.id ? ('));
+    const pickerBlock = picker.slice(0, picker.indexOf(') : null}'));
+    expect(pickerBlock).toContain('<Picker');
+    expect(pickerBlock).toContain('onSelect={(picked: string) => categorise(t, picked)}');
+    expect(pickerBlock).not.toContain('router.push');
+
+    // `categorise` itself: stores, closes the picker, refreshes and — for a витрата or
+    // повернення only — raises the rule offer, all without ever routing anywhere.
+    const categorise = main.slice(main.indexOf('const categorise = useCallback('));
+    const categoriseBody = categorise.slice(0, categorise.indexOf('[reload, reportBug, ruleOffer]'));
+    expect(categoriseBody).toContain('transactionsRepo.save(recategorise(t, picked), new Date())');
+    expect(categoriseBody).toContain('setCategorising(undefined)');
+    expect(categoriseBody).toContain('reload()');
+    expect(categoriseBody).toContain('ruleOffer.raise(');
+    expect(categoriseBody).not.toContain('router.push');
+  });
+
+  it('Scenario: Draft confirmation updates the same record, and hands off between both alerts', () => {
+    // Confirm and dismiss both end in the one place that reloads — never two separate refreshes
+    // that could show the banner and hide the draft row (or the reverse) a render apart.
+    const settleDraft = main.slice(main.indexOf('const settleDraft = useCallback('));
+    const settleDraftBody = settleDraft.slice(0, settleDraft.indexOf('[reload, reportBug]'));
+    expect(settleDraftBody).toContain('reload()');
+    // Exactly one `reload()` in this body — not a second, later one that could race the first.
+    expect([...settleDraftBody.matchAll(/reload\(\)/g)]).toHaveLength(1);
+
+    expect(main).toContain('confirmPendingDraft(');
+    expect(main).toContain('dismissPendingDraft(');
+    expect(main).toContain('settleDraft(\n          draftId,\n          confirmPendingDraft(');
+    expect(main).toContain('settleDraft(line.id, dismissPendingDraft(draft, DRAFT_PORTS))');
+
+    // The hand-off itself: `stored.uncategorised` (the banner) and `stored.drafts` (the row) are
+    // read inside the very same synchronous `useReloadOnFocus` callback, so the one `reload()`
+    // above always shows both post-confirmation facts together — never one without the other.
+    const read = main.slice(main.indexOf('useReloadOnFocus('), main.indexOf('// The «≈'));
+    expect(read).toContain('uncategorised: transactionsRepo.countUncategorised()');
+    expect(read).toContain('drafts: notificationsRepo.pendingDrafts()');
+  });
 });
 
 describe('how fresh the bank data is', () => {
