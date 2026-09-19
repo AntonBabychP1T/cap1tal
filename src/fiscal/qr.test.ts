@@ -51,6 +51,33 @@ describe('a чек QR is read into реквізити', () => {
     });
   });
 
+  it('A ПРРО QR with a lettered чек number and a colon time is read', () => {
+    // The owner's чек (bug report 2026-09-16): elKasa prints both реквізити in these spellings,
+    // and the tax service serves the чек for them exactly as written.
+    expect(
+      lookupOf(
+        'https://cabinet.tax.gov.ua/cashregs/check?mac=e3300a1cc0ecdb62af956fcaf12d4d7eba17fa9ee8c94f63373d92d0d2165ddf&date=20260912&time=17:21:47&fn=4001481902&id=WwNagtghkq8&sm=219.30',
+      ),
+    ).toEqual({
+      fiscalNumber: 'WwNagtghkq8',
+      registrarNumber: '4001481902',
+      date: '2026-09-12',
+      time: '17:21',
+      seconds: '47',
+      total: money(21930, 'UAH'),
+      sumText: '219.30',
+    });
+  });
+
+  it('A time with colons to the minute is read', () => {
+    const lookup = lookupOf(
+      'https://cabinet.tax.gov.ua/cashregs/check?fn=3000898168&id=45&date=20220904&time=11:30&sm=780.00',
+    );
+
+    expect(lookup.time).toBe('11:30');
+    expect(lookup).not.toHaveProperty('seconds');
+  });
+
   it('A ПРРО QR with seconds and a MAC is read', () => {
     const lookup = lookupOf(
       'https://cabinet.tax.gov.ua/cashregs/check?mac=ABCD&date=20260429&time=222006&id=696582&sm=437.40&fn=4000146829',
@@ -180,11 +207,35 @@ describe('a чек QR that does not carry what the lookup needs', () => {
       kind: 'incomplete',
       missing: ['time'],
     });
-    expect(readReceiptQr(base.replace('id=45', 'id=abc'))).toEqual({
-      kind: 'incomplete',
-      missing: ['fiscalNumber'],
-    });
+
     expect(readReceiptQr(base.replace('fn=3000898168', 'fn='))).toEqual({
+      kind: 'incomplete',
+      missing: ['registrarNumber'],
+    });
+  });
+});
+
+describe('the ПРРО spellings stay strict', () => {
+  const base = 'https://cabinet.tax.gov.ua/cashregs/check?id=45&fn=3000898168&date=20220904&time=1130&sm=780.00';
+
+  it('A malformed фіскальний номер чека or time is incomplete', () => {
+    for (const id of ['45/6', '45%2F6', '45-6', 'Ww%20N']) {
+      expect(readReceiptQr(base.replace('id=45', `id=${id}`))).toEqual({
+        kind: 'incomplete',
+        missing: ['fiscalNumber'],
+      });
+    }
+    // Colons all or none; the ranges hold whichever spelling is used.
+    for (const time of ['17:2147', '1721:47', '25:00', '17:60']) {
+      expect(readReceiptQr(base.replace('time=1130', `time=${time}`))).toEqual({
+        kind: 'incomplete',
+        missing: ['time'],
+      });
+    }
+  });
+
+  it('keeps the реєстратор digits only', () => {
+    expect(readReceiptQr(base.replace('fn=3000898168', 'fn=WwNagtghkq8'))).toEqual({
       kind: 'incomplete',
       missing: ['registrarNumber'],
     });

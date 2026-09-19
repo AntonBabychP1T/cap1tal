@@ -105,12 +105,31 @@ describe('whether the document is the чек that was looked up', () => {
   });
 
   it('refuses a document whose own fiscal number is not the one asked for', () => {
-    const receipt = receiptOf('rro-real-grocery-8-items.xml');
+    const receipt = receiptOf('check01-official-tovar.xml');
 
-    // The packet names <E NO="696582">; asking for 696583 is asking for another чек.
+    // The ПРРО document names ORDERTAXNUM 101234567890123; asking for another is another чек.
     expect(
-      attachable(receipt, lookupFrom('id=696583&fn=3000909908&date=20260429&time=222006&sm=437.40')),
+      attachable(receipt, lookupFrom('id=101234567890124&fn=012345678901&date=20151118&time=201543&sm=417.66')),
     ).toEqual({ kind: 'not-this-receipt', disagreesOn: 'fiscalNumber' });
+  });
+
+  it('A ПРРО чек served as a РРО data packet attaches under a lettered number', () => {
+    // The owner's elKasa чек (bug report 2026-09-16): <E NO="73"> is the till's own counter, and
+    // the фіскальний номер чека «WwNagtghkq8» appears nowhere in the packet.
+    const receipt = receiptOf('prro-elkasa-rro-packet.xml');
+    const outcome = attachable(
+      receipt,
+      lookupFrom('id=WwNagtghkq8&fn=4001481902&date=20260912&time=17:21:47&sm=219.30'),
+    );
+
+    expect(outcome.kind).toBe('attachable');
+    if (outcome.kind === 'attachable') {
+      expect(outcome.attachable).toMatchObject({
+        registrarNumber: '4001481902',
+        fiscalNumber: 'WwNagtghkq8',
+        issuedDate: '2026-09-12',
+      });
+    }
   });
 
   it('accepts the real grocery packet under its own реквізити', () => {

@@ -77,11 +77,14 @@ describe('the real grocery receipt', () => {
     ]);
   });
 
-  it('reads the реєстратор and the document number the packet names', () => {
+  it('reads the реєстратор the packet names, and no фіскальний номер чека', () => {
     const receipt = receiptOf('rro-real-grocery-8-items.xml');
 
     expect(receipt.documentRegistrarNumber).toBe('3000909908');
-    expect(receipt.documentFiscalNumber).toBe('696582');
+    // <E NO> is the till's document counter: a hardware РРО happens to print it as the чек
+    // number, a ПРРО does not («73» for чек «WwNagtghkq8»), so it is never the identity.
+    expect(receipt).not.toHaveProperty('documentFiscalNumber');
+    expect(receiptOf('prro-elkasa-rro-packet.xml')).not.toHaveProperty('documentFiscalNumber');
   });
 
   it('A row without a unit price stays without one', () => {

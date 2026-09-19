@@ -131,14 +131,13 @@ export function parseRroPacket(root: XmlNode): ParseOutcome {
       issuedDate: stamp.date,
       issuedTime: stamp.time,
       total,
-      // The packet names the реєстратор on `<DAT FN>` and repeats it on `<E FN>`; the fiscal
-      // number of the document itself is `<E NO>`.
+      // The packet names the реєстратор on `<DAT FN>` and repeats it on `<E FN>`. It never names
+      // the фіскальний номер чека: `<E NO>` is the till's document counter, which a hardware РРО
+      // prints as the чек number and a ПРРО does not (`NO="73"` for чек «WwNagtghkq8»), so the
+      // identity is left to the реквізити the чек was found by.
       ...(attribute(dat, 'FN') === undefined
         ? {}
         : { documentRegistrarNumber: attribute(dat, 'FN') as string }),
-      ...(attribute(footer, 'NO') === undefined
-        ? {}
-        : { documentFiscalNumber: attribute(footer, 'NO') as string }),
       items: items.map((item) => byLine.get(item.line) ?? item),
     },
   };

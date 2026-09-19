@@ -58,8 +58,11 @@ const RECEIPT_PATH = '/cashregs/check';
 const URL_SHAPE = /^(https?):\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?/i;
 
 const DIGITS = /^\d+$/;
+/** A ПРРО numbers its чеки with letters too («WwNagtghkq8»); the tax service matches them as written. */
+const RECEIPT_NUMBER = /^[0-9A-Za-z]+$/;
 const DATE = /^(\d{4})(\d{2})(\d{2})$/;
-const TIME = /^(\d{2})(\d{2})(\d{2})?$/;
+/** `HHmm[ss]` from a реєстратор, `HH:mm[:ss]` from a ПРРО — colons all or none, never mixed. */
+const TIME = /^(\d{2})(\d{2})(\d{2})?$|^(\d{2}):(\d{2})(?::(\d{2}))?$/;
 
 /**
  * The query string as a map. Later occurrences of a parameter lose to earlier ones — a QR naming
@@ -113,16 +116,23 @@ function calendarDate(text: string): IsoDate | undefined {
 function timeOfDay(text: string): { time: string; seconds?: string } | undefined {
   const match = TIME.exec(text);
   if (!match) return undefined;
-  const [, hh = '', mm = '', ss] = match;
+  const hh = match[1] ?? match[4] ?? '';
+  const mm = match[2] ?? match[5] ?? '';
+  const ss = match[3] ?? match[6];
   if (Number(hh) > 23 || Number(mm) > 59 || (ss !== undefined && Number(ss) > 59)) {
     return undefined;
   }
   return { time: `${hh}:${mm}`, ...(ss === undefined ? {} : { seconds: ss }) };
 }
 
-/** A фіскальний номер, of a чек or of a реєстратор: digits, and nothing that is not. */
-function fiscalNumber(text: string | undefined): string | undefined {
+/** A фіскальний номер реєстратора: digits, and nothing that is not. */
+function registrarNumber(text: string | undefined): string | undefined {
   return text !== undefined && DIGITS.test(text) ? text : undefined;
+}
+
+/** A фіскальний номер чека: ASCII letters and digits, kept exactly as written. */
+function receiptNumber(text: string | undefined): string | undefined {
+  return text !== undefined && RECEIPT_NUMBER.test(text) ? text : undefined;
 }
 
 /**
@@ -149,8 +159,8 @@ export function readReceiptQr(text: string): QrReading {
   const params = queryOf(query);
   // `mac` and anything else the page carries are read by nothing: the tax service ignores them
   // too, and a QR that gains a parameter must not stop being a чек QR.
-  const id = fiscalNumber(params.get('id'));
-  const fn = fiscalNumber(params.get('fn'));
+  const id = receiptNumber(params.get('id'));
+  const fn = registrarNumber(params.get('fn'));
   const date = calendarDate(params.get('date') ?? '');
   const when = timeOfDay(params.get('time') ?? '');
   // «sum» is the alias some registrars print; the tax service's own page reads `sm`.
