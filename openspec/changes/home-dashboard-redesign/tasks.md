@@ -72,7 +72,21 @@ All boxes describe future implementation work and remain unchecked in this propo
       flagging, archived-account participation, cross-currency transfer legs, empty-month gaps and
       the no-transaction-account contract. `npm run verify`: 3534 tests passed,
       `f752058f373e317741d5d4e6c0235cba4ac40f99`.
-- [ ] 2.3 Differentially verify aggregate outputs against existing account calculations, including transfer fees and currencies. Trace: net-worth «History is reconstructed…». Tests: `src/db/net-worth-repo.test.ts` — generated histories agree with computeBalance per account/date; results grow by accounts/months rather than raw record count on 50k records.
+- [x] 2.3 Differentially verify aggregate outputs against existing account calculations, including transfer fees and currencies. Trace: net-worth «History is reconstructed…». Tests: `src/db/net-worth-repo.test.ts` — generated histories agree with computeBalance per account/date; results grow by accounts/months rather than raw record count on 50k records.
+
+      **Result:** Added a scale test generating ~58000 transactions across 30 accounts (mixed
+      UAH/USD/EUR) and 120 months — expenses, income, corrections, and same-currency transfers
+      with a shortfall pattern exercising fee-like splits — wrapped in one `{ behavior: 'immediate'
+      }` transaction for speed (~6s to insert and verify). For every account, both the reading
+      reconstructed from `monthlyMovement`/`firstDateMovement` (opening + repo aggregate) and
+      `computeBalance` over the same account's transactions (bounded to `date <= today`, matching
+      what the repo itself excludes) are asserted equal — at "today" and at the account's own
+      first date. Also asserts `monthlyMovement(...).length <= accounts × months`, an order of
+      magnitude below the record count, proving the O(accounts × months) growth design D5 asks
+      for. One bug caught and fixed in the test itself (not the repo): the unfiltered comparison
+      set included a handful of records dated after "today" within its own month, which the repo
+      correctly excludes as future-dated — filtering the comparison set the same way fixed it.
+      `npm run verify`: 3535 tests passed in ~29s total, `d1c1242bd3a11d31ad9933c0c93df07cf352a31e`.
 - [ ] 2.4 Implement pure current per-currency net-worth contributions and availability. Trace: net-worth «Статок is a reading…», «Archived and debt…», «Current valuation…». Tests: `src/domain/net-worth.test.ts` — replace value rather than add, zero vs missing value, archived money, signed debt, principal/interest, empty/incomplete/overflow states.
 - [ ] 2.5 Build the dated history with coverage gaps and recorded-balance basis. Trace: net-worth «History is reconstructed…», «Undated opening money…», «History spans…». Tests: `src/domain/net-worth.test.ts` — late nonzero opening, no anchor, zero opening, empty months, first day/month ends/today, one date, future records, changed openings/backdated edits and valuation changes leaving past points untouched.
 - [ ] 2.6 Add comparable previous-month-end changes. Trace: net-worth «Change requires…». Tests: `src/domain/net-worth.test.ts` — +20%, zero/negative baseline absolute-only, missing previous month-end, valuation substitution and future records suppress comparison, unrelated currency remains comparable.

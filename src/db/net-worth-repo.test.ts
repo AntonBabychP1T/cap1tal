@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { account } from '../domain/account';
-import { money } from '../domain/money';
-import { expenseByDefault, refund, transfer, type Income, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
+import { account, computeBalance, type Account } from '../domain/account';
+import { money, type CurrencyCode } from '../domain/money';
+import {
+  expenseByDefault,
+  refund,
+  transfer,
+  type Correction,
+  type Income,
+  type Transaction,
+  UNCATEGORISED_CATEGORY_ID,
+} from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
 import { netWorthRepo, type NetWorthRepo } from './net-worth-repo';
 import { openTestDb, seedReferences, type TestStorage } from './test-db';
@@ -24,13 +32,33 @@ const archived = account({
   archived: true,
 });
 
-const income = (id: string, accountId: string, date: string, amountMinor: number): Income => ({
+const income = (
+  id: string,
+  accountId: string,
+  date: string,
+  amountMinor: number,
+  currency: CurrencyCode = 'UAH',
+): Income => ({
   type: 'income',
   id,
   date,
   accountId,
-  amount: money(amountMinor, 'UAH'),
+  amount: money(amountMinor, currency),
   sourceId: 'salary',
+});
+
+const correctionOf = (
+  id: string,
+  accountId: string,
+  date: string,
+  amountMinor: number,
+  currency: CurrencyCode = 'UAH',
+): Correction => ({
+  type: 'correction',
+  id,
+  date,
+  accountId,
+  amount: money(amountMinor, currency),
 });
 
 const storedAt = new Date('2026-01-01T00:00:00.000Z');
@@ -169,4 +197,168 @@ describe('netWorthRepo', () => {
       .sort();
     expect(months).toEqual(['2026-06', '2026-08']);
   });
+});
+
+/** The twelve calendar months ending at, and including, `today`'s month — oldest first. */
+function monthsBackFrom(today: string, count: number): string[] {
+  const [y, m] = today.split('-').map(Number) as [number, number];
+  const months: string[] = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const total = y * 12 + (m - 1) - i;
+    const yy = Math.floor(total / 12);
+    const mm = (total % 12) + 1;
+    months.push(`${yy}-${String(mm).padStart(2, '0')}`);
+  }
+  return months;
+}
+
+/** Every transaction that touches `accountId`, whichever role it plays in a переказ. */
+function touchingAccount(all: readonly Transaction[], accountId: string): Transaction[] {
+  return all.filter(
+    (t) =>
+      (t.type !== 'transfer' && t.accountId === accountId) ||
+      (t.type === 'transfer' && (t.fromAccountId === accountId || t.toAccountId === accountId)),
+  );
+}
+
+describe('netWorthRepo — differential verification against computeBalance (task 2.3)', () => {
+  const TODAY = '2026-09-19';
+  const ACCOUNT_COUNT = 30;
+  const MONTH_COUNT = 120;
+
+  it('Scenario: Generated 50000-record histories agree with computeBalance, bounded by accounts x months', () => {
+    const storage = openTestDb();
+    try {
+      seedReferences(storage.db, { categories: ['food', 'fees'], sources: ['salary'] });
+      const currencyOf = (i: number): CurrencyCode => (i % 5 === 0 ? 'EUR' : i % 3 === 0 ? 'USD' : 'UAH');
+      const accountList: Account[] = Array.from({ length: ACCOUNT_COUNT }, (_, i) =>
+        account({
+          id: `acc-${i}`,
+          name: `рахунок ${i}`,
+          kind: 'spending',
+          currency: currencyOf(i),
+          openingBalance: money(i % 2 === 0 ? 100000 : 0, currencyOf(i)),
+        }),
+      );
+      const write = accountsRepo(storage.db);
+      for (const a of accountList) write.save(a);
+
+      const months = monthsBackFrom(TODAY, MONTH_COUNT);
+      const allTransactions: Transaction[] = [];
+      let counter = 0;
+
+      storage.db.transaction(
+        (tx) => {
+          const repoTx = transactionsRepo(tx);
+          for (const month of months) {
+            for (let i = 0; i < ACCOUNT_COUNT; i++) {
+              const acc = accountList[i]!;
+              // Five repetitions per (month, account) cell so the generated ledger comfortably
+              // exceeds 50000 records while `monthlyMovement`'s output stays exactly accounts x
+              // months — repeating within a cell adds records, never a new (account, month) row.
+              for (let rep = 0; rep < 5; rep++) {
+              const day = String((counter % 27) + 1).padStart(2, '0');
+              const date = `${month}-${day}`;
+
+              const expense = expenseByDefault({
+                id: `e-${counter++}`,
+                date,
+                accountId: acc.id,
+                amount: money(1000 + (counter % 5000), acc.currency),
+                categoryId: 'food',
+              });
+              repoTx.save(expense, storedAt);
+              allTransactions.push(expense);
+
+              const earned = income(`i-${counter}`, acc.id, date, 2000 + (counter % 3000), acc.currency);
+              counter++;
+              repoTx.save(earned, storedAt);
+              allTransactions.push(earned);
+
+              const corr = correctionOf(
+                `c-${counter}`,
+                acc.id,
+                date,
+                counter % 2 === 0 ? 50 : -50,
+                acc.currency,
+              );
+              counter++;
+              repoTx.save(corr, storedAt);
+              allTransactions.push(corr);
+
+              // A same-currency transfer to the next account, shortfall (a Комісія-style split)
+              // on every fourth one — exercising exactly what task 2.1's accepted/declined fee
+              // scenario covers, now differentially against the repository's SQL aggregates.
+              const dest = accountList[(i + 1) % ACCOUNT_COUNT]!;
+              if (dest.currency === acc.currency) {
+                const left = money(500 + (counter % 2000), acc.currency);
+                const shortfall = counter % 4 === 0;
+                const arrived = shortfall ? money(left.amount - 100, acc.currency) : left;
+                const t = transfer({
+                  id: `t-${counter}`,
+                  date,
+                  fromAccountId: acc.id,
+                  toAccountId: dest.id,
+                  left,
+                  arrived,
+                });
+                counter++;
+                repoTx.save(t, storedAt);
+                allTransactions.push(t);
+                if (shortfall) {
+                  const fee = expenseByDefault({
+                    id: `fee-${counter}`,
+                    date,
+                    accountId: acc.id,
+                    amount: money(100, acc.currency),
+                    categoryId: 'fees',
+                  });
+                  counter++;
+                  repoTx.save(fee, storedAt);
+                  allTransactions.push(fee);
+                }
+              }
+              }
+            }
+          }
+        },
+        { behavior: 'immediate' },
+      );
+
+      expect(allTransactions.length).toBeGreaterThanOrEqual(50000);
+
+      const repo = netWorthRepo(storage.db);
+      const monthly = repo.monthlyMovement(TODAY);
+      const firsts = repo.firstDates(TODAY);
+      const firstMovement = repo.firstDateMovement(TODAY);
+
+      // Bounded by accounts x months — a tiny fraction of the transactions that produced it.
+      expect(monthly.length).toBeLessThanOrEqual(ACCOUNT_COUNT * MONTH_COUNT);
+      expect(monthly.length * 10).toBeLessThan(allTransactions.length);
+
+      for (const acc of accountList) {
+        // Bounded by `TODAY`, matching what `monthlyMovement`/`firstDateMovement` themselves
+        // read — a handful of generated records fall after TODAY within its own month (the day
+        // component cycles 1-27), and those are exactly what a future-dated record must not
+        // enter a historical aggregate (net-worth, "Future dates do not extend the curve").
+        const touching = touchingAccount(allTransactions, acc.id).filter((t) => t.date <= TODAY);
+
+        const monthNet = monthly
+          .filter((r) => r.accountId === acc.id)
+          .reduce((sum, r) => sum + r.net, 0);
+        expect(acc.openingBalance.amount + monthNet).toBe(computeBalance(acc, touching).amount);
+
+        const first = firsts.find((r) => r.accountId === acc.id);
+        expect(first).toBeDefined();
+        const firstNet = firstMovement.find((r) => r.accountId === acc.id)?.net ?? 0;
+        const expectedAtFirst = computeBalance(
+          acc,
+          touching.filter((t) => t.date <= first!.firstDate),
+        );
+        expect(acc.openingBalance.amount + firstNet).toBe(expectedAtFirst.amount);
+      }
+    } finally {
+      storage.close();
+    }
+  }, 20000);
 });
