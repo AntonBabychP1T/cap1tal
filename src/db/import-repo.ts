@@ -128,7 +128,7 @@ export function importRepo(db: Storage) {
           sources: plan.sources.length,
           transactions: plan.transactions.length,
         };
-      });
+      }, { behavior: 'immediate' });
     },
   };
 }

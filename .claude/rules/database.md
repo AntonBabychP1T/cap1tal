@@ -12,16 +12,18 @@ paths:
   ~300 lines, re-exported from `schema.ts`). Queries and repositories: `src/db/**`.
 - Migrations: `drizzle/` (SQL files + `drizzle/meta/`), produced by `npm run db:generate` — see
   the one hand-editing clause below.
-  The app applies them at startup with Drizzle's expo-sqlite migrator (`useMigrations` in the
-  root layout, over the generated `drizzle/migrations.js`). The one other caller is
-  `prepareBackgroundStorage()` in `src/platform/background-turn.ts`, which every background task
-  awaits first: a WorkManager chance can land on a process with no Activity, which renders no route
-  and therefore runs no `useMigrations`. It calls the same `migrate` over the same files, so there
-  is still one migration history. The two cannot interleave — drizzle's expo-sqlite `migrate`
-  awaits only while reading the migration files and then calls the sync dialect's `migrate`, which
-  runs every pending statement inside one `BEGIN … COMMIT` without yielding the JS thread, so
-  whichever gets there second reads the journal, finds nothing pending and returns. Nothing else
-  applies migrations.
+  The app applies them at startup through `useStorageMigrations` (`src/hooks/`, called from the
+  root layout), and `prepareBackgroundStorage()` (`src/platform/background-turn.ts`, which every
+  background task awaits first) applies them the same way for a WorkManager chance that lands on a
+  process with no Activity — which renders no route and therefore never mounts the root layout.
+  Both go through `applyMigrations` (`src/db/apply-migrations.ts`) over the same generated
+  `drizzle/migrations.js`, so there is still one migration history. The two callers *can* run at
+  the same time — a chance the phone gives runs in its own JS runtime, on its own thread, against a
+  connection of its own, so nothing at the JS level keeps them apart. What makes it safe: drizzle's
+  migrator wraps every pending migration in one write transaction, so `prepareConnection`'s busy
+  timeout (below) makes the loser's `BEGIN` wait for the winner's `COMMIT` rather than fail at
+  once, and `applyMigrations`'s retry then re-reads the migration table — by then already updated —
+  and finds nothing pending. Nothing else applies migrations.
 
 ## Migrations are append-only
 - **The v1 baseline reset (2026-09-11).** Every migration up to that point was squashed into one
@@ -89,7 +91,20 @@ paths:
 ## Tests
 - DB tests run under Vitest against an in-memory SQLite with the real migrations applied; no
   mocks of the database layer. `better-sqlite3` in tests, `expo-sqlite` at runtime, both through
-  the official Drizzle migrator over the same committed SQL. Both connections must
-  `PRAGMA foreign_keys = ON` — SQLite disables it per connection, which would make every
-  `onDelete` inert.
+  the official Drizzle migrator over the same committed SQL, and both prepared the same way
+  through `prepareConnection` (`src/db/prepare.ts`): `busy_timeout`, then `journal_mode = WAL`,
+  then `PRAGMA foreign_keys = ON` — SQLite disables it per connection, which would make every
+  `onDelete` inert. `test-db.ts` opens every connection with `timeout: 0` first, so a test meets a
+  lock exactly as `expo-sqlite` does — not at all — before `prepareConnection` gives it the wait
+  back.
+- A test about two connections at once uses a file-backed database (`openFileDb`, a temporary
+  directory — `:memory:` cannot be shared) and, where a wait must genuinely be *seen* rather than
+  merely fail at once, holds one connection open on a real `worker_threads` thread
+  (`src/db/concurrency-worker.mjs`, spawned through `src/db/hold-lock.ts`): a synchronous
+  connection that waits blocks its own thread, so nothing on one thread could hold a lock open
+  across a wait of its own. See `src/db/concurrency.test.ts` and `src/db/apply-migrations.test.ts`.
+- Every write transaction takes its write lock at `BEGIN`, not on its first write statement:
+  `{ behavior: 'immediate' }` at every `db.transaction(...)` call, enforced structurally by
+  `src/db/immediate-transactions.test.ts` rather than by review, so a future call site cannot add
+  a deferred one back silently.
 - Run one file: `npx vitest run src/db/<file>.test.ts`. The gate is `npm run verify`.

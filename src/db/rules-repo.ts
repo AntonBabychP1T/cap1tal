@@ -70,7 +70,7 @@ export function rulesRepo(db: Storage) {
           write.setCategory(move.id, move.categoryId);
         }
         return { examined: countUncategorisedExpenses(stored), moved: moves.length };
-      });
+      }, { behavior: 'immediate' });
     },
 
     get(id: string): Rule | undefined {

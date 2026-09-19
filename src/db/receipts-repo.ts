@@ -141,7 +141,7 @@ export function receiptsRepo(db: Storage) {
             })
             .run();
         }
-      });
+      }, { behavior: 'immediate' });
     },
 
     /** The чек of one транзакція, when it carries one. What the транзакція's form reads. */

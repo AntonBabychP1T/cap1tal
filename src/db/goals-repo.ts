@@ -110,7 +110,7 @@ export function goalsRepo(db: Storage) {
         tx.insert(goalAccounts)
           .values(goal.accountIds.map((accountId) => ({ goalId: goal.id, accountId })))
           .run();
-      });
+      }, { behavior: 'immediate' });
     },
 
     get(id: string): AccumulationGoal | undefined {

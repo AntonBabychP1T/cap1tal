@@ -2,6 +2,7 @@ import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
 
+import { applyMigrations } from '@/db/apply-migrations';
 import { db } from '@/db/client';
 import { reporting as reportingRepo } from '@/db/repos';
 import { bindJournal } from '@/ui/journal';
@@ -47,21 +48,23 @@ let prepared: Promise<void> | undefined;
  * The storage a chance needs, when nothing else has set it up.
  *
  * A headless start evaluates no route: `expo-router/entry` registers the root component, and
- * `src/app/_layout.tsx` — where `useMigrations` and `bindJournal` live — runs only when that
- * component renders, which a WorkManager wake-up with no Activity never does. So a chance on a
- * dead process applies the migrations itself, through the very function `useMigrations` calls, and
- * gives the журнал its storage so a `raise` inside the chance is recorded rather than buffered
- * into a process that is about to end.
+ * `src/app/_layout.tsx` — where `useStorageMigrations` and `bindJournal` live — runs only when
+ * that component renders, which a WorkManager wake-up with no Activity never does. So a chance on
+ * a dead process applies the migrations itself, through `applyMigrations` — the same function
+ * `useStorageMigrations` calls — and gives the журнал its storage so a `raise` inside the chance is
+ * recorded rather than buffered into a process that is about to end.
  *
- * The two callers cannot interleave (`.claude/rules/database.md`): drizzle's expo-sqlite `migrate`
- * awaits only while reading the migration files and then calls the sync dialect's `migrate`, which
- * runs every pending statement inside one transaction without yielding the JS thread. Whichever
- * gets there second reads the journal, finds nothing pending and returns.
+ * The two callers *can* run at the same time (`.claude/rules/database.md`): this runs in its own
+ * JS runtime, on its own thread, against a connection of its own, so nothing at the JS level keeps
+ * it apart from the root layout's own call. What makes it safe: drizzle's migrator wraps every
+ * pending migration in one write transaction, so the prepared connection's busy timeout makes the
+ * loser's `BEGIN` wait for the winner's `COMMIT` rather than fail at once, and `applyMigrations`'s
+ * retry then re-reads the migration table — by then already updated — and finds nothing pending.
  */
 export function prepareBackgroundStorage(): Promise<void> {
   if (prepared === undefined) {
     prepared = (async () => {
-      await migrate(db, migrations);
+      await applyMigrations(() => migrate(db, migrations));
       // A no-op when the app is alive and the root layout has already bound it.
       bindJournal(reportingRepo);
     })().catch((thrown: unknown) => {

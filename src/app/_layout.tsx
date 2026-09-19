@@ -1,4 +1,3 @@
-import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
 import {
   DarkTheme,
   DefaultTheme,
@@ -25,6 +24,7 @@ import {
 import { seedStarterSet } from '@/db/seed';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { useOnForeground } from '@/hooks/use-on-foreground';
+import { useStorageMigrations } from '@/hooks/use-storage-migrations';
 import {
   localNotifications,
   onNotificationTapped,
@@ -174,9 +174,10 @@ export default function RootLayout() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const pathname = usePathname();
-  // The one place migrations are applied: every committed migration, in order, before any screen
-  // reads storage. See .claude/rules/database.md.
-  const { success, error } = useMigrations(db, migrations);
+  // One of two places migrations are applied — every committed migration, in order, before any
+  // screen reads storage — the other is a chance the phone gives with no Activity to render this.
+  // See .claude/rules/database.md.
+  const { success, error } = useStorageMigrations(db, migrations);
 
   // Right after the migrations: the owner's starter категорії and джерела. Create-if-missing, so
   // running it on every open costs one statement and can never undo a rename or an archive — see

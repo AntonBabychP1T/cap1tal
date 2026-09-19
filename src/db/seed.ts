@@ -72,6 +72,6 @@ function adoptHandCreatedReservedSources(db: Storage): void {
           .run();
         tx.delete(sources).where(eq(sources.id, stray.id)).run();
       }
-    });
+    }, { behavior: 'immediate' });
   }
 }

@@ -543,7 +543,7 @@ export function backupRepo(db: Storage): BackupStore {
             })
             .run();
         }
-      });
+      }, { behavior: 'immediate' });
     },
   };
 }

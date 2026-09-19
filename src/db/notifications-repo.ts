@@ -173,7 +173,7 @@ export function notificationsRepo(db: Storage) {
         db.transaction((tx) => {
           tx.insert(notificationFingerprints).values({ fingerprint: outcome.fingerprint }).run();
           tx.insert(notificationDrafts).values(row).run();
-        });
+        }, { behavior: 'immediate' });
         return;
       }
       // Nothing may be stored that the date column would take and the reader could not bring
@@ -184,7 +184,7 @@ export function notificationsRepo(db: Storage) {
         tx.insert(transactionsTable)
           .values({ ...toTransactionRow(outcome.transaction), createdAt: storedAt })
           .run();
-      });
+      }, { behavior: 'immediate' });
     },
 
     /**
@@ -207,7 +207,7 @@ export function notificationsRepo(db: Storage) {
           // or on a second surface. Storing the транзакція anyway would double the money.
           throw new Error(`чернетки «${draftId}» вже немає`);
         }
-      });
+      }, { behavior: 'immediate' });
     },
 
     /**

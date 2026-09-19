@@ -312,7 +312,7 @@ export function monobankRepo(db: Storage) {
             })
             .run();
         }
-      });
+      }, { behavior: 'immediate' });
     },
 
     /**
@@ -357,7 +357,7 @@ export function monobankRepo(db: Storage) {
           syncStartDate,
           cursorMs: input.cursorMs,
         });
-      });
+      }, { behavior: 'immediate' });
     },
 
     /**
@@ -423,7 +423,7 @@ export function monobankRepo(db: Storage) {
             cursorMs: input.cursorMs,
           });
         }
-      });
+      }, { behavior: 'immediate' });
     },
 
     /**
@@ -530,7 +530,7 @@ export function monobankRepo(db: Storage) {
           // just said they did not want.
           throw new Error(`рахунок monobank «${answer.monobankAccountId}» уже відʼєднано`);
         }
-      });
+      }, { behavior: 'immediate' });
     },
 
     /**

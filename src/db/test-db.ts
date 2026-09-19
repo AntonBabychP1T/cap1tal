@@ -14,6 +14,7 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 
+import { prepareConnection } from './prepare';
 import * as schema from './schema';
 import { categories, sources } from './schema';
 import { RESERVED_CATEGORIES, RESERVED_SOURCES } from './starter-set';
@@ -34,10 +35,11 @@ export interface TestStorage {
 const MIGRATIONS_FOLDER = fileURLToPath(new URL('../../drizzle', import.meta.url));
 
 function open(filename: string): TestStorage {
-  const sqlite = new Database(filename);
-  // SQLite disables foreign keys per connection; without this every FK and every
-  // `onDelete: 'restrict'` in the schema would be inert.
-  sqlite.pragma('foreign_keys = ON');
+  // `timeout: 0` matches expo-sqlite: no implicit wait on a lock. Without it better-sqlite3's
+  // default 5-second grace would hide a collision the app driver never gets to skip; `prepareConnection`
+  // gives back the wait design D3 chose (design D1).
+  const sqlite = new Database(filename, { timeout: 0 });
+  prepareConnection((sql) => sqlite.exec(sql));
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
   return {
@@ -125,8 +127,8 @@ export function openTestDbMigratedTo(count: number): StagedStorage {
     'utf8',
   );
 
-  const sqlite = new Database(':memory:');
-  sqlite.pragma('foreign_keys = ON');
+  const sqlite = new Database(':memory:', { timeout: 0 });
+  prepareConnection((sql) => sqlite.exec(sql));
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: staged });
   rmSync(staged, { recursive: true, force: true });
