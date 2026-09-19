@@ -210,7 +210,23 @@ All boxes describe future implementation work and remain unchecked in this propo
 
 ## 4. Daily content and operational controls
 
-- [ ] 4.1 Implement compact header model and common manual sync action, keeping coverage/freshness and existing manual-run policy. Trace: main-screen «Sync occupies…». Tests: `src/ui/home-screen.test.ts` and `src/ui/home-refresh.test.ts` — 3/9 coverage, oldest completion, no bank, in-flight join, rejected run clears spinner, no widget-specific requests.
+- [x] 4.1 Implement compact header model and common manual sync action, keeping coverage/freshness and existing manual-run policy. Trace: main-screen «Sync occupies…». Tests: `src/ui/home-screen.test.ts` and `src/ui/home-refresh.test.ts` — 3/9 coverage, oldest completion, no bank, in-flight join, rejected run clears spinner, no widget-specific requests.
+
+      **Result:** Coverage/freshness (3/9, oldest completion, no bank) were already correct and
+      tested via `HomeMonobank`/`freshnessOf` from `home-daily-overview` — no new data model was
+      needed for those; "compact header" is a layout question for task 4.4's assembly, not a new
+      abstraction (`model.monobank !== null` already gates exactly "linked/configured", which is
+      when the 48 dp button belongs). Added `src/ui/home-refresh.ts`'s `manualRefresh`: the one
+      decision pull-to-refresh and the header button now share — quiet when not configured or
+      nothing is linked, otherwise delegates unconditionally to `startSync` (which already joins a
+      run in flight rather than starting a second one, so this never pre-checks `syncing` itself),
+      never swallowing a rejection so the caller's own `finally` still clears its spinner. Wired
+      `index.tsx`'s `pull` callback to call it instead of duplicating the configured/linked check
+      inline. 5 new tests in `home-refresh.test.ts` (no bank not-configured, no bank
+      nothing-linked, a normal call, two overlapping calls both reaching `startSync`, and a
+      rejection propagating past a `finally`); fixed one stale structural assertion in
+      `home-screen.test.ts`. `npm run verify`: 3604 tests passed,
+      `e4348eee37fa3d7956465dd95c81f1d61df3b672`.
 - [ ] 4.2 Implement compact uncategorised banner and collapsed draft/error state. Trace: main-screen «Uncategorised records…», «Operational alerts…»; bank-notifications-screen «Pending чернетки are visible on Головний». Tests: `src/ui/home-screen.test.ts` and `src/ui/drafts-section.test.ts` — seven across history incl refund, unsourced income excluded, last item removes banner, fifty drafts stay collapsed, expand/confirm/dismiss and pending vs failure.
 - [ ] 4.3 Adjust feed presentation while keeping editor and categorisation paths. Trace: main-screen «The feed shows…». Tests: `src/ui/transaction-line.test.ts` and `src/ui/home-screen.test.ts` — distinct description/category/source, two transfer legs, signed amounts, no-description compactness and latest five/all action; retain repo ordering tests for equal dates/backdating.
 - [ ] 4.4 Assemble header/month/feed/alerts using existing shared surfaces; retain FAB and scroll behavior. Trace: main-screen «Головний presents the daily dashboard», «Opening Головний again…». Tests: `src/ui/home-screen.test.ts` — ordered default sections, no held/progress/large attention/form, all-archived invitation with history; manual first-viewport and focus/refresh smoke in §7.

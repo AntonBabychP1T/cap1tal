@@ -49,6 +49,7 @@ import {
 } from '@/ui/drafts-section';
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { currentMonthRoute } from '@/ui/home-navigation';
+import { manualRefresh } from '@/ui/home-refresh';
 import { homeViewModel } from '@/ui/home-screen';
 import { homeProgressSection } from '@/ui/progress-screen';
 import { syncCoverage } from '@/ui/monobank-screen';
@@ -226,28 +227,33 @@ export default function MainScreen() {
     setPulling(true);
     try {
       reload();
-      if (configured !== true || stored.links.length === 0) {
-        return;
-      }
-      const run = newId();
-      await startSync({
-        // The жест is a run the owner asked for — the same division the тихий інтервал draws, and
-        // «Pulling down on Головний refreshes it and syncs monobank now» is where it is drawn — so
-        // it asks the bank for client-info rather than reusing the answer this phone holds. A
-        // refresh that answered «now» with balances up to an hour old would not be a refresh.
-        sync: syncPorts({ asked: true }, run),
-        attempts: monobankRepo,
-        alerts: ALERT_PORTS,
-        run,
-        // `attended()` and not a hardcoded `true`, unlike the run the app shell starts: a pull can
-        // begin a first sync that takes minutes, and the owner who started it may well have put
-        // the phone down. Read at the moment of the failure, like every other caller.
-        attended: attended(),
+      await manualRefresh({
+        configured: configured === true,
+        linkedCount: stored.links.length,
+        startSync: async () => {
+          const run = newId();
+          await startSync({
+            // The жест is a run the owner asked for — the same division the тихий інтервал draws,
+            // and «Pulling down on Головний refreshes it and syncs monobank now» is where it is
+            // drawn — so it asks the bank for client-info rather than reusing the answer this
+            // phone holds. A refresh that answered «now» with balances up to an hour old would
+            // not be a refresh.
+            sync: syncPorts({ asked: true }, run),
+            attempts: monobankRepo,
+            alerts: ALERT_PORTS,
+            run,
+            // `attended()` and not a hardcoded `true`, unlike the run the app shell starts: a
+            // pull can begin a first sync that takes minutes, and the owner who started it may
+            // well have put the phone down. Read at the moment of the failure, like every other
+            // caller.
+            attended: attended(),
+          });
+          // The sync committed, or it did not; either way the зведення is read once and only
+          // what is newly true is earned.
+          evaluateProgress();
+          reload();
+        },
       });
-      // The sync committed, or it did not; either way the зведення is read once and only what is
-      // newly true is earned.
-      evaluateProgress();
-      reload();
     } finally {
       setPulling(false);
     }

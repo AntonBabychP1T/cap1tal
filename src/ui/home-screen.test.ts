@@ -755,11 +755,12 @@ describe('what Головний itself wires', () => {
   it('Scenario: A pull without monobank changes nothing but the reading', () => {
     const pull = main.slice(main.indexOf('const pull = useCallback'));
     const body = pull.slice(0, pull.indexOf('}, ['));
-    // Storage is re-read first and unconditionally; the sync is behind the two conditions, so a
-    // device with no token or no link sends nothing and refuses nothing.
-    expect(body.indexOf('reload()')).toBeLessThan(body.indexOf('startSync('));
-    expect(body).toContain("configured !== true || stored.links.length === 0");
-    expect(body).toContain('return;');
+    // Storage is re-read first and unconditionally; the sync itself is delegated to the tested
+    // `manualRefresh`, which is what keeps a device with no token or no link quiet
+    // (`home-refresh.test.ts`, "No bank remains quiet").
+    expect(body.indexOf('reload()')).toBeLessThan(body.indexOf('manualRefresh('));
+    expect(body).toContain('configured: configured === true');
+    expect(body).toContain('linkedCount: stored.links.length');
   });
 
   it('the spinner is bound to the run, so it ends when the run does', () => {
