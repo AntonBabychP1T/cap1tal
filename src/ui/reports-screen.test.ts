@@ -12,7 +12,35 @@ import {
   FEES_CATEGORY_ID,
   type Transaction,
 } from '../domain/transaction';
+import type { Candidate } from '../progress/catalogue';
+import type { EarnedAchievement } from '../progress/earned';
 import { reportsViewModel } from './reports-screen';
+
+function candidate(over: Partial<Candidate> = {}): Candidate {
+  return {
+    key: 'ledger.transactions:500',
+    template: 'ledger.transactions',
+    group: 'ledger',
+    name: '500 транзакцій',
+    condition: 'Збережено щонайменше 500 транзакцій.',
+    earned: false,
+    dating: 'history',
+    evidence: { kind: 'count', count: 500 },
+    progress: { reached: 300, target: 500 },
+    ...over,
+  };
+}
+
+function earned(over: Partial<EarnedAchievement> = {}): EarnedAchievement {
+  return {
+    key: 'ledger.transactions:500',
+    template: 'ledger.transactions',
+    achievedOn: '2025-04-18',
+    recordedAtMs: august.getTime(),
+    evidence: { kind: 'count', count: 500 },
+    ...over,
+  };
+}
 
 const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
 const usdCard = account({ id: 'usd', name: 'USD card', kind: 'spending', currency: 'USD' });
@@ -709,6 +737,34 @@ describe('one month of each chart is spelled out in full', () => {
   });
 });
 
+describe('the quiet badge beside the Прогрес entry', () => {
+  it('Scenario: One new досягнення is named', () => {
+    const model = view([], {
+      earnedAchievements: [earned({ key: 'k' })],
+      progressCandidates: [candidate({ key: 'k', name: '500 транзакцій' })],
+    });
+    expect(model.progressBadge).toBe('500 транзакцій');
+  });
+
+  it('Scenario: Twelve retroactive досягнення are one line', () => {
+    const model = view([], {
+      earnedAchievements: Array.from({ length: 12 }, (_, i) => earned({ key: `e${i}` })),
+    });
+    expect(model.progressBadge).toBe('Ви вже маєте 12 досягнень');
+  });
+
+  it('Scenario: No unseen still navigable — nothing unseen is null, not a placeholder', () => {
+    const model = view([], {
+      earnedAchievements: [earned({ key: 'a', seenAtMs: 1 }), earned({ key: 'b', seenAtMs: 2 })],
+    });
+    expect(model.progressBadge).toBeNull();
+  });
+
+  it('a device with no прогрес data at all asks for nothing it does not have', () => {
+    expect(view([]).progressBadge).toBeNull();
+  });
+});
+
 /**
  * The tab itself is JSX that `verify` never runs, so what it *shows* is held structurally: the
  * scale and the spelled-out numbers must come out of this model and be drawn, not recomputed
@@ -769,5 +825,30 @@ describe('the Звіти tab draws what this model decided', () => {
     expect(screen.slice(start, end)).not.toContain('/ai-analysis');
     // … because the offer sits after the whole ternary, and so is drawn either way.
     expect(screen.indexOf('/ai-analysis')).toBeGreaterThan(end);
+  });
+
+  it('Scenario: One new досягнення is named / Twelve retroactive досягнення are one line', () => {
+    // The badge is this model's own word, drawn beside the existing entry — never recomputed or
+    // pluralised again on the screen.
+    expect(screen).toContain('model.progressBadge');
+  });
+
+  it('Scenario: No unseen still navigable — the Прогрес entry is never gated on the badge', () => {
+    // `?? '…'` only ever substitutes the default sentence; it is not a `&&`/`?` guard that could
+    // hide the row itself, or the `router.push(PROGRESS_ROUTE)` above it, when nothing is unseen.
+    expect(screen).toContain('model.progressBadge ?? ');
+    expect(screen).not.toContain('model.progressBadge && ');
+    expect(screen).not.toContain('model.progressBadge ? (');
+    expect(screen).toContain('router.push(PROGRESS_ROUTE)');
+  });
+
+  it('Scenario: Home/Reports rendering earns nothing — «Звіти» reads, it never evaluates', () => {
+    // Opening «Прогрес» is the one place that marks seen (`src/app/progress.tsx`); reading
+    // «Звіти» must reach neither that write nor the evaluator itself.
+    for (const call of ['runEvaluation', 'evaluateProgress', 'markAllSeen', 'progressPorts', '.earn(']) {
+      expect(screen, `«Звіти» reaches ${call}`).not.toContain(call);
+    }
+    // What it reads is the same bounded, read-only shape «Прогрес» itself reads from.
+    expect(screen).toContain('unseenAchievementsData');
   });
 });

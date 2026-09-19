@@ -8,15 +8,14 @@ import type { Candidate } from '../progress/catalogue';
 import type { Challenge } from '../progress/challenges';
 import type { EarnedAchievement } from '../progress/earned';
 import {
-  PROGRESS_ROUTE,
   achievementDetail,
   achievementsCount,
   challengeDetail,
   challengeStart,
-  homeProgressSection,
   normRefusal,
   normStep,
   progressViewModel,
+  unseenAchievementsBadge,
   NORM_QUESTION,
   NOTHING_EARNED,
   NOTHING_IN_PROGRESS,
@@ -246,89 +245,34 @@ describe('«Прогрес»', () => {
   });
 });
 
-describe('the «Прогрес» section of Головний', () => {
-  it('Scenario: Nothing waiting, no section', () => {
+describe('the quiet badge beside Звіти → Прогрес', () => {
+  it('Scenario: No unseen still navigable — nothing unseen is null, not an empty placeholder', () => {
     expect(
-      homeProgressSection({
-        earned: [earned({ seenAtMs: 1 }), earned({ key: 'b', seenAtMs: 2 })],
-        accepted: [],
-        candidates: [],
-      }),
+      unseenAchievementsBadge([earned({ seenAtMs: 1 }), earned({ key: 'b', seenAtMs: 2 })], []),
     ).toBeNull();
   });
 
   it('Scenario: One new досягнення is named', () => {
-    const section = homeProgressSection({
-      earned: [earned({ key: 'k', seenAtMs: undefined })],
-      accepted: [],
-      candidates: [candidate({ key: 'k', name: '500 транзакцій' })],
-    })!;
-
-    expect(section.achievements).toBe('500 транзакцій');
-    expect(section.challenge).toBeNull();
+    const badge = unseenAchievementsBadge(
+      [earned({ key: 'k', seenAtMs: undefined })],
+      [candidate({ key: 'k', name: '500 транзакцій' })],
+    );
+    expect(badge).toBe('500 транзакцій');
   });
 
   it('Scenario: Twelve retroactive досягнення are one line', () => {
-    const section = homeProgressSection({
-      earned: Array.from({ length: 12 }, (_, i) => earned({ key: `e${i}` })),
-      accepted: [],
-      candidates: [],
-    })!;
-
-    expect(section.achievements).toBe('Ви вже маєте 12 досягнень');
+    const badge = unseenAchievementsBadge(
+      Array.from({ length: 12 }, (_, i) => earned({ key: `e${i}` })),
+      [],
+    );
+    expect(badge).toBe('Ви вже маєте 12 досягнень');
     // One line, not twelve — and nothing that has to be dismissed.
-    expect(section.achievements!.split('\n')).toHaveLength(1);
+    expect(badge!.split('\n')).toHaveLength(1);
   });
 
   it('Scenario: Seen is seen', () => {
     const seen = Array.from({ length: 12 }, (_, i) => earned({ key: `e${i}`, seenAtMs: 5 }));
-
-    expect(homeProgressSection({ earned: seen, accepted: [], candidates: [] })).toBeNull();
-    // Unless a виклик is accepted, in which case that is all the section holds.
-    const withChallenge = homeProgressSection({
-      earned: seen,
-      accepted: [challenge()],
-      candidates: [],
-    })!;
-    expect(withChallenge.achievements).toBeNull();
-    expect(withChallenge.challenge?.name).toBe('Фінансова подушка');
-  });
-
-  it('leads to «Прогрес» and to nothing else', () => {
-    const section = homeProgressSection({ earned: [earned()], accepted: [], candidates: [] })!;
-
-    expect(section.route).toBe(PROGRESS_ROUTE);
-    // The section holds at most two lines and a way in — and records nothing.
-    expect(Object.keys(section).sort()).toEqual(['achievements', 'challenge', 'route']);
-  });
-
-  it('Scenario: One accepted виклик is shown', () => {
-    const section = homeProgressSection({
-      earned: [],
-      accepted: [
-        challenge({ key: 'a', name: 'Далеко', progress: { kind: 'against', reached: 1, target: 10 } }),
-        challenge({ key: 'b', name: 'Близько', progress: { kind: 'against', reached: 8, target: 10 } }),
-        challenge({ key: 'c', name: 'Середньо', progress: { kind: 'against', reached: 4, target: 10 } }),
-      ],
-      candidates: [],
-    })!;
-
-    expect(section.challenge?.name).toBe('Близько');
-    expect(section.challenge?.progress).toBe('8 з 10');
-  });
-
-  it('ranks a countdown by how little is left', () => {
-    const section = homeProgressSection({
-      earned: [],
-      accepted: [
-        challenge({ key: 'a', name: 'Багато', progress: { kind: 'remaining', remaining: 9 } }),
-        challenge({ key: 'b', name: 'Мало', progress: { kind: 'remaining', remaining: 1 } }),
-      ],
-      candidates: [],
-    })!;
-
-    expect(section.challenge?.name).toBe('Мало');
-    expect(section.challenge?.progress).toBe('залишилось 1 запис');
+    expect(unseenAchievementsBadge(seen, [])).toBeNull();
   });
 
   it('counts досягнення the way Ukrainian counts them', () => {
@@ -340,21 +284,15 @@ describe('the «Прогрес» section of Головний', () => {
 });
 
 describe('what Головний shows beside it', () => {
-  it('Scenario: Nothing waiting leaves Головний as it was', () => {
-    // Two halves. First: with nothing waiting there is no section at all — no heading, no empty
-    // state, no placeholder.
-    expect(
-      homeProgressSection({ earned: [earned({ seenAtMs: 1 })], accepted: [], candidates: [] }),
-    ).toBeNull();
-
-    // Second, and the one that matters: everything else the tab shows holds what it held with
-    // this capability absent. Two claims, and neither can be made by calling a pure function
+  it('Scenario: Home/Reports rendering earns nothing, and Головний reads none of it', () => {
+    // Головний no longer shows «Прогрес» at all — not even the badge, which lives beside the
+    // Звіти entry instead. Two claims, and neither can be made by calling a pure function
     // twice — `homeViewModel` is pure, so `toEqual` between two calls over one world would pass
     // whatever this module did.
     //
     // (a) `homeViewModel` takes no прогрес at all. The type is the proof: `HomeInput` has no
     //     field for a досягнення, a виклик or a норма, so no value of this capability can reach
-    //     «Усього грошей», «Потребує уваги», the місяць or the monobank section.
+    //     «Усього грошей», «Потребує уваги», те місяць чи те monobank section.
     type HomeInput = Parameters<typeof homeViewModel>[0];
     expect({
       earned: true satisfies Excludes<'earned'>,
@@ -366,8 +304,8 @@ describe('what Головний shows beside it', () => {
     }).toBeTruthy();
     expectTypeSatisfied<HomeInput>();
 
-    // (b) The screen passes it none either: the call site names the same nine arguments it named
-    //     before this change, and `progressSection` is computed in its own `useMemo` beside it.
+    // (b) The screen passes it none either: the call site names the same arguments it always
+    //     did, with no прогрес-shaped word anywhere in the call.
     const home = readFileSync(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
     const from = home.indexOf('homeViewModel({');
     // The arguments alone, up to the `useMemo` dependency array that closes the call.
@@ -378,7 +316,6 @@ describe('what Головний shows beside it', () => {
     }
   });
 });
-
 describe('the details', () => {
   it('Scenario: The detail explains why it was earned', () => {
     const detail = achievementDetail({

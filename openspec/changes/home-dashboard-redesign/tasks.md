@@ -323,7 +323,36 @@ All boxes describe future implementation work and remain unchecked in this propo
 
 ## 5. Progress, overlays and data lifecycle
 
-- [ ] 5.1 Remove Home's progress read/render and place quiet unseen name/count by the existing Reports → Progress entry, retaining seen behavior and evaluation triggers. Trace: progress-screen both modified requirements. Tests: `src/ui/progress-screen.test.ts` and `src/ui/reports-screen.test.ts` — twelve as one line, one name, no unseen still navigable, opening Progress marks seen, Home/Reports rendering earns nothing; preserve achievement/challenge/backup tests.
+- [x] 5.1 Remove Home's progress read/render and place quiet unseen name/count by the existing Reports → Progress entry, retaining seen behavior and evaluation triggers. Trace: progress-screen both modified requirements. Tests: `src/ui/progress-screen.test.ts` and `src/ui/reports-screen.test.ts` — twelve as one line, one name, no unseen still navigable, opening Progress marks seen, Home/Reports rendering earns nothing; preserve achievement/challenge/backup tests.
+
+      **Result:** Home's progress read/render was already fully gone as of task 4.4 (no
+      `held`/progress JSX, no `progressSection`/`progressScreenData` call in `index.tsx`). This
+      task did the other half: `src/ui/progress-screen.ts` dropped the dead `HomeProgressSection`
+      interface, `homeProgressSection()` and `closeness()` (zero non-test callers after 4.4) and
+      gained `unseenAchievementsBadge(earned, candidates): string | null` — one name for exactly
+      one unseen досягнення, one `Ви вже маєте N досягнень` line for several, `null` for none;
+      reading never marks anything seen, only `progress.tsx`'s existing `markAllSeen` effect does
+      (untouched). `src/hooks/progress-ports.ts` gained `unseenAchievementsData(now)`, a narrower
+      read alongside `progressScreenData` (both now share a `namedCandidates(now)` helper) that
+      returns just `{candidates, earned}` — the same bounded, read-only storage reading «Прогрес»
+      itself does, without the виклик classification the badge does not need. `reportsViewModel`
+      (`src/ui/reports-screen.ts`) gained optional `progressCandidates`/`earnedAchievements`
+      inputs and a `progressBadge` output field computed via `unseenAchievementsBadge`; `reports.tsx`
+      loads `unseenAchievementsData()` alongside its existing reads and renders
+      `model.progressBadge ?? 'Що вже вийшло і що варто зробити далі'` in the existing Прогрес card,
+      unconditionally — the entry itself was never gated on the badge. Also switched the one
+      `router.push('/progress')` call site to the existing `PROGRESS_ROUTE` constant (was defined
+      but unreferenced), updating the two structural assertions in `screens.test.ts` that quoted
+      the literal.
+      New tests: `progress-screen.test.ts` — `unseenAchievementsBadge`'s no-unseen/one-named/
+      twelve-as-one-line/seen-is-seen/plural-counting scenarios (5), plus the `homeViewModel`
+      type-exclusion proof that Головний reads none of this. `reports-screen.test.ts` — the same
+      badge scenarios through `reportsViewModel` (4), plus structural proof the badge is drawn from
+      the model, the Прогрес entry is never gated on it, and «Звіти» reaches no evaluator or
+      seen-marking write (`runEvaluation`/`evaluateProgress`/`markAllSeen`/`.earn(`) — only the
+      read-only `unseenAchievementsData`. All achievement/challenge/backup tests untouched and
+      still passing. `npm run verify`: 3630 tests passed,
+      `75a0e0e4354bcc2fc699e06afb0293dc4a8cdf76`.
 - [ ] 5.2 Define shared overlay clearance from safe-area/tab dimensions and apply it to FAB/report handle with scroll bottom clearance. Trace: main-screen «The dashboard remains accessible…». Tests: `src/ui/dashboard-layout.test.ts` — disjoint ≥48 dp targets, ≥8 dp spacing, tab clearance across compact/large insets; actual rendered coordinates verified in §7.
 - [ ] 5.3 Add coherent data loading, deferred history derivation, memoization and invalidation with cancellation of stale reads. Trace: main-screen «The dashboard uses local data…» and month rollover. Tests: `src/ui/home-data.test.ts` — mutation/focus/sync/capture/restore/valuation/opening edit/date rollover refresh, old result cannot overwrite new, status-only rerender does not rescan history, currency selection sends no requests.
 - [ ] 5.4 Bound rendered chart work independently of history length and profile the fixture. Trace: main-screen «The dashboard uses local data…»; net-worth «History is readable…». Tests: `src/ui/dashboard-charts.test.ts`, `src/db/net-worth-repo.test.ts` — 50k records/30 accounts/120 months, bounded output, no per-account/per-month full-history rescans; record device frame/timing evidence in §7.

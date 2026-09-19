@@ -17,6 +17,8 @@ import {
 } from '../domain/reports';
 import type { IsoDate, Month, Transaction } from '../domain/transaction';
 import type { MonobankRate } from '../monobank/currency';
+import type { Candidate } from '../progress/catalogue';
+import type { EarnedAchievement } from '../progress/earned';
 import { formatMoney } from './amount-input';
 import { todayIso } from './dates';
 import {
@@ -33,6 +35,7 @@ import {
   SPENDING_GOALS_TITLE,
 } from './labels';
 import { currentMonth, monthLabel, shortMonthLabel } from './months';
+import { unseenAchievementsBadge } from './progress-screen';
 
 /**
  * Everything the «Звіти» tab renders, as data — so what it says is under `verify` even though the
@@ -212,6 +215,12 @@ export interface ReportsViewModel {
   readonly emptyHistoryMessage: string | null;
   /** What to say instead of an empty ціль list, or `null` when there are цілі. */
   readonly emptyGoalsMessage: string | null;
+  /**
+   * The quiet badge beside the existing Прогрес entry — one name for one unseen досягнення, one
+   * count line for several, `null` for none. Reading «Звіти» never marks anything seen; only
+   * opening «Прогрес» itself does, which is that screen's own concern.
+   */
+  readonly progressBadge: string | null;
 }
 
 /** UAH first — the owner's own currency — then the rest alphabetically, so the order is stable. */
@@ -321,6 +330,10 @@ export function reportsViewModel(input: {
   chosenCategoryId?: string;
   /** The month whose numbers are spelled out; ignored when the span does not hold it. */
   chosenMonth?: Month;
+  /** Every досягнення the catalogue can currently name — for the badge beside Прогрес, and only that. */
+  progressCandidates?: readonly Candidate[];
+  /** The earned rows, for the same badge; unseen ones are what it counts. */
+  earnedAchievements?: readonly EarnedAchievement[];
   now: Date;
 }): ReportsViewModel {
   const month = currentMonth(input.now);
@@ -502,6 +515,10 @@ export function reportsViewModel(input: {
     emptyHistoryMessage: emptyHistoryMessageFor(currencies.length, input.transactions.length > 0),
     emptyGoalsMessage:
       accumulation.length === 0 && spending.length === 0 ? 'Цілей поки немає.' : null,
+    progressBadge: unseenAchievementsBadge(
+      input.earnedAchievements ?? [],
+      input.progressCandidates ?? [],
+    ),
   };
 }
 

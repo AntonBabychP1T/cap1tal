@@ -15,7 +15,9 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
+import { unseenAchievementsData } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { PROGRESS_ROUTE } from '@/ui/progress-screen';
 import {
   reportsViewModel,
   type ChartAxis,
@@ -304,6 +306,9 @@ export default function ReportsScreen() {
         // An інвестиційний рахунок's внесок to a ціль is its поточна вартість where the app holds
         // one; the дата is the ціль's own screen's concern, so only the суми come this far.
         currentValues: investmentsRepo.amounts(),
+        // The quiet badge beside Прогрес — read-only, same as opening Прогрес itself would read,
+        // and reading it here marks nothing seen (see progress-ports.ts).
+        ...unseenAchievementsData(),
       }),
       [],
     ),
@@ -326,6 +331,8 @@ export default function ReportsScreen() {
         categories: stored.categories,
         rates: stored.rates,
         currentValues: stored.currentValues,
+        progressCandidates: stored.candidates,
+        earnedAchievements: stored.earned,
         shownCurrency,
         chosenCategoryId,
         chosenMonth,
@@ -555,14 +562,14 @@ export default function ReportsScreen() {
       {/* The way in to «Прогрес», where the цілі already are. Present whether or not anything has
           been earned — «Прогрес» is the screen that says there is nothing yet — and it changes
           nothing this tab already shows. */}
-      <Pressable onPress={() => router.push('/progress')} accessibilityRole="button">
+      <Pressable onPress={() => router.push(PROGRESS_ROUTE)} accessibilityRole="button">
         <Card style={styles.chartCard}>
           <View style={styles.row}>
             <ThemedText type="overline">Прогрес</ThemedText>
             <Chevron />
           </View>
           <ThemedText type="small" themeColor="textSecondary">
-            Що вже вийшло і що варто зробити далі
+            {model.progressBadge ?? 'Що вже вийшло і що варто зробити далі'}
           </ThemedText>
         </Card>
       </Pressable>

@@ -112,14 +112,14 @@ export interface ProgressScreenData {
   readonly summary: ProgressSummary;
 }
 
-/**
- * One bounded reading of storage, turned into everything the прогрес screens show.
- *
- * It is deliberately **read-only**: it calls neither `runEvaluation` nor any writer, so opening
- * «Прогрес» — or leaving it and coming back — cannot earn anything. The evaluation happens at the
- * named moments and nowhere else.
- */
-export function progressScreenData(now: Date = new Date()): ProgressScreenData {
+/** The named candidates one bounded reading produces, and everything they were named from. */
+function namedCandidates(now: Date): {
+  summary: ProgressSummary;
+  today: string;
+  standings: readonly GoalStanding[];
+  norms: ReturnType<typeof progressRepo.norms>;
+  named: readonly Candidate[];
+} {
   const summary = progressRepo.readProgressSummary();
   const today = todayIso(now);
   const norms = progressRepo.norms();
@@ -135,6 +135,35 @@ export function progressScreenData(now: Date = new Date()): ProgressScreenData {
     goals: standings,
     norms,
   });
+
+  return { summary, today, standings, norms, named };
+}
+
+/** What the quiet badge beside «Звіти» → «Прогрес» needs, and nothing a challenge needs. */
+export interface UnseenAchievementsData {
+  readonly candidates: readonly Candidate[];
+  readonly earned: readonly EarnedAchievement[];
+}
+
+/**
+ * The same bounded, read-only reading `progressScreenData` does, narrowed to what the Reports
+ * badge shows: a досягнення's current name and which rows are unseen. It skips the виклик
+ * classification — «Звіти» names a досягнення, never a виклик, beside its Прогрес entry.
+ */
+export function unseenAchievementsData(now: Date = new Date()): UnseenAchievementsData {
+  const { named } = namedCandidates(now);
+  return { candidates: named, earned: progressRepo.listEarned() };
+}
+
+/**
+ * One bounded reading of storage, turned into everything the прогрес screens show.
+ *
+ * It is deliberately **read-only**: it calls neither `runEvaluation` nor any writer, so opening
+ * «Прогрес» — or leaving it and coming back — cannot earn anything. The evaluation happens at the
+ * named moments and nowhere else.
+ */
+export function progressScreenData(now: Date = new Date()): ProgressScreenData {
+  const { summary, today, standings, norms, named } = namedCandidates(now);
 
   const challengeInput = {
     summary,

@@ -280,72 +280,33 @@ export function progressViewModel(input: ProgressInput): ProgressViewModel {
   };
 }
 
-/**
- * The «Прогрес» section of Головний — at most two lines, and nothing at all when nothing is
- * waiting.
- *
- * `null` means the section is **not rendered**: no heading, no empty state, no placeholder. That
- * is the whole of design D11's restraint. When something is waiting it is stated the way a balance
- * is stated — inline, on a screen the owner chose to open — never as a dialog to dismiss, a
- * notification, a sound or anything that interrupts what they were doing.
- */
-export interface HomeProgressSection {
-  /** The unseen досягнення: one named, or one line counting them. `null` when none is unseen. */
-  readonly achievements: string | null;
-  /** The accepted виклик closest to being finished, if any. */
-  readonly challenge: { readonly name: string; readonly progress: string } | null;
-  readonly route: string;
-}
-
 /** Where «Прогрес» itself lives. */
 export const PROGRESS_ROUTE = '/progress';
 
 /**
- * How close a виклик is to finishing, as a share of its target — the ordering Головний uses to
- * pick the one to show. A countdown has no target, so it is ranked by how little is left: fewer
- * items remaining is closer to done.
+ * The quiet badge beside the existing Звіти → Прогрес entry — one name for one unseen
+ * досягнення, one count line for several, `null` for none (progress-screen: "New досягнення are
+ * announced once, quietly, and in one group"). Reading Звіти never marks anything seen — only
+ * opening «Прогрес» itself does, which is `progressViewModel`'s own concern, not this one's.
+ *
+ * Головний held a second line here once — the accepted виклик closest to finishing — but that
+ * was specific to a home widget which main-screen's redesign removed outright; no replacement
+ * for it exists on Звіти, so it is not carried over.
  */
-function closeness(progress: ChallengeProgress): number {
-  if (progress.kind === 'remaining') {
-    // Mapped into the same 0…1 range, monotonically: 1 item left ranks above 5.
-    return 1 / (1 + progress.remaining);
-  }
-  if (progress.target <= 0) {
-    return 1;
-  }
-  return Math.min(1, Math.max(0, progress.reached / progress.target));
-}
-
-export function homeProgressSection(input: {
-  readonly earned: readonly EarnedAchievement[];
-  readonly accepted: readonly Challenge[];
-  readonly candidates: readonly Candidate[];
-}): HomeProgressSection | null {
-  const unseen = input.earned.filter((one) => one.seenAtMs === undefined);
-  const closest = [...input.accepted].sort((a, b) => closeness(b.progress) - closeness(a.progress))[0];
-
-  if (unseen.length === 0 && closest === undefined) {
+export function unseenAchievementsBadge(
+  earned: readonly EarnedAchievement[],
+  candidates: readonly Candidate[],
+): string | null {
+  const unseen = earned.filter((one) => one.seenAtMs === undefined);
+  if (unseen.length === 0) {
     return null;
   }
-
-  const achievements =
-    unseen.length === 0
-      ? null
-      : unseen.length === 1
-        ? // Exactly one: the card names it, because there is a name worth reading.
-          earnedName(newestFirst(unseen)[0]!, input.candidates)
-        : // Two or more: one line, never one line each — after the first evaluation on an existing
-          // phone that would be twelve announcements of the same quiet moment.
-          `Ви вже маєте ${achievementsCount(unseen.length)}`;
-
-  return {
-    achievements,
-    challenge:
-      closest === undefined
-        ? null
-        : { name: closest.name, progress: challengeProgressLabel(closest.progress) },
-    route: PROGRESS_ROUTE,
-  };
+  // Exactly one: name it, because there is a name worth reading. Two or more: one line, never
+  // one line each — after the first evaluation on an existing phone that would be twelve
+  // announcements of the same quiet moment.
+  return unseen.length === 1
+    ? earnedName(newestFirst(unseen)[0]!, candidates)
+    : `Ви вже маєте ${achievementsCount(unseen.length)}`;
 }
 
 /** A досягнення's detail: the exact condition, the свідчення, and the current number beside it. */
