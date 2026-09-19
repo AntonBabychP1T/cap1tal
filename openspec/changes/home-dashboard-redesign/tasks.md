@@ -160,7 +160,22 @@ All boxes describe future implementation work and remain unchecked in this propo
       incidental `status.left` assertions in the money-held tests. `monthlyPicture` itself is
       untouched, so its identity/property tests (in `monthly-picture.test.ts`) still hold.
       `npm run verify`: 3572 tests passed, `466e376a8fa84d45cbd0276870927d2e74a90d58`.
-- [ ] 3.2 Add category presentation model from categoryBreakdown with stable top-five/remainder ranking. Trace: main-screen «Top categories…», «Category currencies never mix», «Signed or empty breakdowns…». Tests: `src/ui/home-categories.test.ts` — five plus remainder sums to spent, tied names/ids, reserved/archived/zero categories, refund-negative neutral state, default and disappearing currency selection.
+- [x] 3.2 Add category presentation model from categoryBreakdown with stable top-five/remainder ranking. Trace: main-screen «Top categories…», «Category currencies never mix», «Signed or empty breakdowns…». Tests: `src/ui/home-categories.test.ts` — five plus remainder sums to spent, tied names/ids, reserved/archived/zero categories, refund-negative neutral state, default and disappearing currency selection.
+
+      **Result:** Added `src/ui/home-categories.ts`: `categoryPresentation` reads the same
+      `categoryBreakdown` the month card's numbers come from, ranks by signed amount descending
+      then `byName` (Ukrainian name, then id — the existing tie-break), and splits into up to five
+      `rows` plus a `remainder` (count/label/signed sum). Currency selection takes the caller's
+      `requestedCurrency` and falls back to UAH-else-first-in-order whenever it's absent or no
+      longer among the breakdown's currencies — the "reset on disappearance" half of the rule;
+      "survives rerenders" is the caller's `useState` to own (task 4.5). No filtering of
+      reserved/archived categories — they participate exactly as `categoryBreakdown` gives them.
+      The neutral-ring decision for negative/zero totals is task 3.3's (donut geometry); this task
+      only guarantees the signed amounts themselves are never clamped or hidden. 8 tests cover the
+      empty case, the five-plus-remainder reconciliation, Ukrainian tie-breaking, reserved/archived
+      participation, a negative category's exact sign, a refund-only negative center, and both
+      currency-selection scenarios. `npm run verify`: 3580 tests passed,
+      `4fb8f56ee37bdc78c0132ebb925c2b825f6604f7`.
 - [ ] 3.3 Add pure donut and history geometry with existing chart/theme conventions. Trace: main-screen «Signed or empty breakdowns…» and net-worth «History is readable…». Tests: `src/ui/dashboard-charts.test.ts` — positive sectors reconcile, no negative/zero division, negative/flat axis, bounded path preserves first/last/extrema/gaps, unsampled exact point values remain available.
 - [ ] 3.4 Wire explicit current-month and category navigation, including retained month state and rollover. Trace: main-screen «The month card always opens…», «Categories open…». Tests: `src/ui/home-navigation.test.ts` — retained July opens September, October rollover, all-currency category route, remainder opens full month and both correction signs remain reachable; manual route smoke in §7.
 
