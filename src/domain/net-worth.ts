@@ -2,7 +2,7 @@ import type { Account } from './account';
 import { contribution } from './goals';
 import type { CurrentValue } from './investments';
 import { money, type CurrencyCode, type Money } from './money';
-import type { IsoDate, Transaction } from './transaction';
+import { monthOf, type IsoDate, type Month, type Transaction } from './transaction';
 
 /**
  * Статок: a derived reading of every recorded рахунок's contribution, never a stored balance of
@@ -26,10 +26,15 @@ export interface AccountContribution {
   readonly asOf?: IsoDate;
 }
 
-/** One currency's total, or why it has none. */
+/**
+ * One currency's total, or why it has none. `overflow`: a sum would be unsafe to represent
+ * exactly. `gap`: at least one account's contribution at this historical date cannot be
+ * reconstructed (net-worth, "Undated opening money produces honest coverage gaps") — the current
+ * reading (`currentNetWorth`) never produces this reason, only the history below does.
+ */
 export type CurrencyTotal =
   | { readonly status: 'known'; readonly amount: Money }
-  | { readonly status: 'unavailable'; readonly reason: 'overflow' };
+  | { readonly status: 'unavailable'; readonly reason: 'overflow' | 'gap' };
 
 export type NetWorthReading =
   | { readonly status: 'empty' }
@@ -104,4 +109,152 @@ export function currentNetWorth(input: {
   }
 
   return { status: 'ready', contributions, totals };
+}
+
+/**
+ * History (net-worth, "History is reconstructed…", "Undated opening money…", "History spans…").
+ *
+ * Always on the ledger basis — вкладено for an investment, never its поточна вартість: no
+ * `currentValues` reach here at all, so a valuation entered today cannot join the curve for a
+ * past date by construction (net-worth, "Today's valuation never changes past points").
+ */
+
+/**
+ * The per-account, per-month ingredients one рахунок's historical points are built from — the
+ * shape `src/db/net-worth-repo.ts` reads, kept here as plain data so this module stays pure. A
+ * рахунок with no `firstDate` has never carried a транзакція on or before the date history is
+ * read for.
+ */
+export interface AccountHistoryInput {
+  readonly account: Account;
+  readonly firstDate?: IsoDate;
+  /** Net effect through (and including) `firstDate` — absent exactly when `firstDate` is. */
+  readonly firstDateNet?: number;
+  /** One entry per calendar month that had any movement; a month absent from it had none. */
+  readonly monthlyNet: ReadonlyMap<Month, number>;
+}
+
+export interface HistoryPoint {
+  readonly date: IsoDate;
+  readonly totals: ReadonlyMap<CurrencyCode, CurrencyTotal>;
+}
+
+const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
+
+/** Small and local on purpose — the domain never imports `src/ui/months.ts` (design D4). */
+function nextMonth(month: Month): Month {
+  const match = MONTH_PATTERN.exec(month)!;
+  const year = Number(match[1]);
+  const m = Number(match[2]);
+  return m === 12
+    ? `${String(year + 1).padStart(4, '0')}-01`
+    : `${String(year).padStart(4, '0')}-${String(m + 1).padStart(2, '0')}`;
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    return leap ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+/** The last calendar date of `month`, as `'YYYY-MM-DD'`. */
+function monthEndDate(month: Month): IsoDate {
+  const match = MONTH_PATTERN.exec(month)!;
+  const year = Number(match[1]);
+  const m = Number(match[2]);
+  return `${month}-${String(daysInMonth(year, m)).padStart(2, '0')}`;
+}
+
+/**
+ * The dated points history reads at: `firstDate` itself, each calendar month-end from its month
+ * through the month before `today`'s, and `today` — deduplicated, in order (net-worth, "History
+ * spans the available record without forecasting"). `today`'s own month never contributes a
+ * separate month-end: `today` stands for it, whether or not `today` is that month's last day.
+ */
+function candidateDates(firstDate: IsoDate, today: IsoDate): IsoDate[] {
+  const todayMonth = monthOf(today);
+  const dates: IsoDate[] = [firstDate];
+  for (let month = monthOf(firstDate); month < todayMonth; month = nextMonth(month)) {
+    dates.push(monthEndDate(month));
+  }
+  dates.push(today);
+  return [...new Set(dates)];
+}
+
+/**
+ * One account's known-ness and value at one candidate `date`. A nonzero opening is unknown before
+ * its own `firstDate` (or forever, absent one) — a zero opening is always known, contributing
+ * nothing before its own first movement (net-worth, "Undated opening money produces honest
+ * coverage gaps"). The one candidate date that is not a month-end or `today` — `globalFirstDate`
+ * — is the one point needing `firstDateNet`'s sub-month precision; every other candidate is a
+ * whole month-end (or `today`, already bounded to it by the repository), so the cumulative
+ * monthly sum is exact there without it.
+ */
+function valueAt(
+  input: AccountHistoryInput,
+  date: IsoDate,
+  globalFirstDate: IsoDate,
+): { readonly known: boolean; readonly amount: number } {
+  const opening = input.account.openingBalance.amount;
+  if (opening !== 0 && (input.firstDate === undefined || date < input.firstDate)) {
+    return { known: false, amount: 0 };
+  }
+  if (date === globalFirstDate && input.firstDate === globalFirstDate) {
+    return { known: true, amount: opening + (input.firstDateNet ?? 0) };
+  }
+  let cumulative = 0;
+  const month = monthOf(date);
+  for (const [m, net] of input.monthlyNet) {
+    if (m <= month) cumulative += net;
+  }
+  return { known: true, amount: opening + cumulative };
+}
+
+/**
+ * The reconstructed Статок history: one point per candidate date, each currency's total known
+ * only when every account of that currency is known at that date, a gap otherwise. No account
+ * anywhere has ever carried a транзакція on or before `today` → no points at all — an empty
+ * history has no span to be honest about, the same rule `reports.ts`'s `historyMonths` uses.
+ */
+export function netWorthHistory(input: {
+  readonly accounts: readonly AccountHistoryInput[];
+  readonly today: IsoDate;
+}): readonly HistoryPoint[] {
+  const firstDates = input.accounts
+    .map((a) => a.firstDate)
+    .filter((d): d is IsoDate => d !== undefined);
+  if (firstDates.length === 0) {
+    return [];
+  }
+  const globalFirstDate = firstDates.reduce((min, d) => (d < min ? d : min));
+
+  const byCurrency = new Map<CurrencyCode, AccountHistoryInput[]>();
+  for (const a of input.accounts) {
+    const list = byCurrency.get(a.account.currency) ?? [];
+    list.push(a);
+    byCurrency.set(a.account.currency, list);
+  }
+
+  return candidateDates(globalFirstDate, input.today).map((date) => {
+    const totals = new Map<CurrencyCode, CurrencyTotal>();
+    for (const [currency, accounts] of byCurrency) {
+      const amounts: number[] = [];
+      let allKnown = true;
+      for (const a of accounts) {
+        const v = valueAt(a, date, globalFirstDate);
+        if (!v.known) {
+          allKnown = false;
+          break;
+        }
+        amounts.push(v.amount);
+      }
+      totals.set(
+        currency,
+        allKnown ? sumSafely(currency, amounts) : { status: 'unavailable', reason: 'gap' },
+      );
+    }
+    return { date, totals };
+  });
 }

@@ -99,7 +99,25 @@ All boxes describe future implementation work and remain unchecked in this propo
       by construction (no `activeAccounts` filtering). 11 tests cover empty/multi-currency/replace
       vs fallback/zero-vs-missing-observation/archived/signed-debt/principal-interest/overflow.
       `npm run verify`: 3546 tests passed, `3b2178c95cc1833be07d67991835ab4e3f20b016`.
-- [ ] 2.5 Build the dated history with coverage gaps and recorded-balance basis. Trace: net-worth «History is reconstructed…», «Undated opening money…», «History spans…». Tests: `src/domain/net-worth.test.ts` — late nonzero opening, no anchor, zero opening, empty months, first day/month ends/today, one date, future records, changed openings/backdated edits and valuation changes leaving past points untouched.
+- [x] 2.5 Build the dated history with coverage gaps and recorded-balance basis. Trace: net-worth «History is reconstructed…», «Undated opening money…», «History spans…». Tests: `src/domain/net-worth.test.ts` — late nonzero opening, no anchor, zero opening, empty months, first day/month ends/today, one date, future records, changed openings/backdated edits and valuation changes leaving past points untouched.
+
+      **Result:** Added `netWorthHistory({ accounts, today })` to `src/domain/net-worth.ts`,
+      taking plain `AccountHistoryInput` (firstDate/firstDateNet/monthlyNet — the shape
+      `net-worth-repo.ts` produces) so the domain stays pure. Candidate dates: the global earliest
+      firstDate across all accounts, each month-end through the month before today's, and today
+      (small local month arithmetic, matching `reports.ts`'s "the domain never imports
+      `src/ui/months.ts`" precedent). Per account per point: a nonzero opening is unknown before
+      its own firstDate (or forever without one), a zero opening is always known; the one
+      non-month-end candidate (the global first date) uses the sub-month-precise firstDateNet,
+      every other candidate is a whole month-end so cumulative monthly sums are exact. A
+      currency's point is a known total only when every account of that currency is known there,
+      else a `gap`. No `currentValues` parameter exists at all, so an investment's поточна
+      вартість cannot reach history by construction. 10 new tests (21 total in the file) cover the
+      June 5/30 sub-month cutoff, a later nonzero opening blocking earlier totals, no-anchor
+      accounts staying unknown forever, zero-opening pre-movement zeros, empty months carrying
+      the previous balance, the single-point case, future-date bounding, backdated-edit
+      recomputation leaving earlier points untouched, and history's total independence from any
+      current valuation. `npm run verify`: 3556 tests passed, `e0f2bcb07fdd6f5461aa314ee97093bf0b0aa70d`.
 - [ ] 2.6 Add comparable previous-month-end changes. Trace: net-worth «Change requires…». Tests: `src/domain/net-worth.test.ts` — +20%, zero/negative baseline absolute-only, missing previous month-end, valuation substitution and future records suppress comparison, unrelated currency remains comparable.
 - [ ] 2.7 Add per-currency current readout, approximate UAH and basis explanations using existing conversion rules. Trace: net-worth «Approximate UAH…», «Current valuation…». Tests: `src/ui/net-worth.test.ts` — rounding example, signed conversion, missing EUR including zero total, stale cached rate date, UAH-only, overflow, investment dates/fallbacks, difference from Accounts totals.
 
