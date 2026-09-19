@@ -382,7 +382,46 @@ All boxes describe future implementation work and remain unchecked in this propo
       amount. No existing test asserted the old hardcoded values structurally, so nothing else
       needed updating. `npm run verify`: 3635 tests passed,
       `4ddafd283cd2eb40985e231e89c0c7cb2ca431f3`.
-- [ ] 5.3 Add coherent data loading, deferred history derivation, memoization and invalidation with cancellation of stale reads. Trace: main-screen «The dashboard uses local data…» and month rollover. Tests: `src/ui/home-data.test.ts` — mutation/focus/sync/capture/restore/valuation/opening edit/date rollover refresh, old result cannot overwrite new, status-only rerender does not rescan history, currency selection sends no requests.
+- [x] 5.3 Add coherent data loading, deferred history derivation, memoization and invalidation with cancellation of stale reads. Trace: main-screen «The dashboard uses local data…» and month rollover. Tests: `src/ui/home-data.test.ts` — mutation/focus/sync/capture/restore/valuation/opening edit/date rollover refresh, old result cannot overwrite new, status-only rerender does not rescan history, currency selection sends no requests.
+
+      **Result:** Audited every named trigger against the existing wiring first, rather than
+      assuming each needed new code. Coherent data loading, memoization and the "status-only
+      rerender does not rescan history"/"currency selection sends no requests" properties were
+      already true by construction: `useReloadOnFocus` (`src/hooks/use-reload-on-focus.ts`) reads
+      every field of `stored` — Статок's included — in one synchronous callback, so there is
+      already exactly one coherent snapshot per reload and never a partial one; `categories` and
+      `netWorth` each carry their own narrow `useMemo` dependency arrays that never mention
+      `configured`/`syncing`/`coverage`/`drafts`/`pulling`, so a status-only rerender already
+      leaves both memoized; the two currency choosers are wired straight to a bare `useState`
+      setter (`onSelectCurrency={setRequestedCategoryCurrency}`), never a wrapper that could reach
+      a repo. Mutation, restore, valuation and opening-balance edits all happen on a screen reached
+      by leaving Головний, so returning is a navigation focus and `useReloadOnFocus` already
+      answers it; sync (`onSyncState`) and чернетка capture (`onCapturesStored`) already had their
+      own subscriptions calling `reload()`.
+      The one trigger genuinely missing was **date/month rollover** — main-screen's own "Rollover
+      updates the month" scenario ("Головний was opened on September 30… local October 1 arrives
+      while it remains open, or the app resumes then"): neither case is a navigation focus, so
+      nothing reloaded `stored.month`/`stored.today` for either. Added `hasDateRolledOver(lastToday,
+      now)` in a new pure module, `src/ui/home-data.ts` (no React, same shape as task 5.2's
+      `dashboard-layout.ts`), and wired it into `index.tsx` two ways — an `AppState` `'change'`
+      listener catching the resume case (any date at all after the phone slept) and a 60s
+      `setInterval` catching the date turning over while the screen was never backgrounded — both
+      calling the same `reload()` every other trigger calls.
+      For "old result cannot overwrite new": the `configured` (monobank-token) focus effect already
+      had a correct, hand-rolled cancel flag; `useCurrentRates.ts` (shared by three screens, out of
+      this task's main-screen scope) already had its own, independently reasoned-through one — left
+      untouched rather than refactored into shared machinery it does not need. Added
+      `makeCancelToken()` to `home-data.ts` as the one tested primitive and moved the `configured`
+      effect (in scope: it is Головний's own) onto it, so this repo's shared cancellation guard now
+      has one proven implementation rather than an unproven convention repeated by hand.
+      New `src/ui/home-data.test.ts` (16 tests): `hasDateRolledOver` across a same-day check, a
+      year boundary and a multi-day resume; `makeCancelToken`'s cancelled/uncancelled/double-cancel/
+      independent-tokens behaviour; structural proof (reading `index.tsx`, the
+      `reports-screen.test.ts`/`progress-screen.test.ts` pattern) that every named trigger reaches
+      `reload()`, that the monobank-token effect checks `token.cancelled()` before applying its
+      result, that neither `categories` nor `netWorth`'s `useMemo` mentions any status field, and
+      that both currency choosers are bare state setters. `npm run verify`: 3651 tests passed,
+      `2ca91d54b32f6755c258de647021f69c4d627d88`.
 - [ ] 5.4 Bound rendered chart work independently of history length and profile the fixture. Trace: main-screen «The dashboard uses local data…»; net-worth «History is readable…». Tests: `src/ui/dashboard-charts.test.ts`, `src/db/net-worth-repo.test.ts` — 50k records/30 accounts/120 months, bounded output, no per-account/per-month full-history rescans; record device frame/timing evidence in §7.
 
 ## 6. Synchronized documentation after approval

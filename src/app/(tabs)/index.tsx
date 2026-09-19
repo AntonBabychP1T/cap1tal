@@ -1,6 +1,14 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, RefreshControl, StyleSheet, View, type ScrollView } from 'react-native';
+import {
+  Alert,
+  AppState,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  View,
+  type ScrollView,
+} from 'react-native';
 
 import { Action, Field, Picker, RowAction } from '@/components/form';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
@@ -54,6 +62,7 @@ import { CategoryWidget } from '@/components/category-widget';
 import { NetWorthWidget } from '@/components/net-worth-widget';
 import { categoryMonthRoute, currentMonthRoute, remainderRoute } from '@/ui/home-navigation';
 import { categoryPresentation } from '@/ui/home-categories';
+import { hasDateRolledOver, makeCancelToken } from '@/ui/home-data';
 import { manualRefresh } from '@/ui/home-refresh';
 import { homeViewModel } from '@/ui/home-screen';
 import { syncCoverage } from '@/ui/monobank-screen';
@@ -196,15 +205,13 @@ export default function MainScreen() {
   const [configured, setConfigured] = useState<boolean>();
   useFocusEffect(
     useCallback(() => {
-      let current = true;
+      const { token, cancel } = makeCancelToken();
       void monobankTokenStore.read().then((read) => {
-        if (current) {
+        if (!token.cancelled()) {
           setConfigured(read.kind === 'ok' && Boolean(read.token));
         }
       });
-      return () => {
-        current = false;
-      };
+      return cancel;
     }, []),
   );
 
@@ -318,6 +325,39 @@ export default function MainScreen() {
    * waiting for the owner to leave the tab and come back.
    */
   useEffect(() => onCapturesStored(reload), [reload]);
+
+  /**
+   * The one reload trigger with no event of its own: the local calendar date moving on while
+   * Головний stays open, or while the app sits backgrounded on it and is then resumed (main-screen,
+   * "Rollover updates the month"). Neither is a navigation focus — nothing was pushed and nothing
+   * was popped — so `useReloadOnFocus` hears about neither on its own.
+   *
+   * Checked two ways rather than one: the `AppState` listener catches the resume, which can land
+   * on any date at all after the phone slept for a day or a week; the interval catches September 30
+   * turning into October 1 while the screen was never once backgrounded. Both call the same
+   * `reload()` every other trigger here calls, so a rollover the owner sees is exactly as coherent
+   * as one they navigated back to.
+   */
+  useEffect(() => {
+    const rolledOver = () => {
+      if (hasDateRolledOver(stored.today, new Date())) {
+        reload();
+      }
+    };
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        rolledOver();
+      }
+    });
+    // Coarse on purpose: a month card that is at most a minute late past midnight costs nothing
+    // an owner sitting on Головний at that exact moment would notice, and a shorter interval
+    // would only spend battery checking a date that changes once a day.
+    const interval = setInterval(rolledOver, 60000);
+    return () => {
+      subscription.remove();
+      clearInterval(interval);
+    };
+  }, [reload, stored.today]);
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
