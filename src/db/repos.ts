@@ -10,6 +10,7 @@ import { importRepo } from './import-repo';
 import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
+import { netWorthRepo } from './net-worth-repo';
 import { notificationsRepo } from './notifications-repo';
 import { progressRepo } from './progress-repo';
 import { ratesRepo } from './rates-repo';
@@ -47,6 +48,8 @@ export const limits = limitsRepo(db);
 export const goals = goalsRepo(db);
 /** The поточна вартість of each інвестиційний рахунок — what the owner last said it is worth. */
 export const investments = investmentsRepo(db);
+/** Статок's bounded local reads — monthly movement, first dates and the future-record flag. */
+export const netWorth = netWorthRepo(db);
 /** What bank notifications have come to: the watched apps, the fingerprints, the чернетки. */
 export const notifications = notificationsRepo(db);
 /** The фіскальні чеки beneath транзакції, with their позиції. Nothing here moves any money. */

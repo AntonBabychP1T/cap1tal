@@ -298,7 +298,28 @@ All boxes describe future implementation work and remain unchecked in this propo
       no-selector-for-one-currency case, and the route-descriptor contract. Rendered
       layout/TalkBack verification is task 7.2's, on the emulator. `npm run verify`: 3610 tests
       passed, `5063acebf6f0b39ed29f6b81a8c06e83f3d894b3`.
-- [ ] 4.6 Render Статок current values, compact history, point inspection, explanation and Accounts link. Trace: main-screen «Статок exposes…»; net-worth «History is readable…». Tests: `src/ui/net-worth.test.ts` — all basis/coverage explanations and exact accessible dated points; rendered flat/negative/gapped charts and Accounts navigation smoke in §7.
+- [x] 4.6 Render Статок current values, compact history, point inspection, explanation and Accounts link. Trace: main-screen «Статок exposes…»; net-worth «History is readable…». Tests: `src/ui/net-worth.test.ts` — all basis/coverage explanations and exact accessible dated points; rendered flat/negative/gapped charts and Accounts navigation smoke in §7.
+
+      **Result:** Added `netWorth` to `src/db/repos.ts` (net-worth-repo's four bounded reads,
+      following the existing one-repo-per-line convention) and `netWorthWidgetModel` to
+      `src/ui/net-worth.ts` — the one assembly function tying together `currentNetWorth`,
+      `netWorthHistory`, `netWorthChange` and the already-built readouts/approximate/explanation
+      helpers into one renderable model, plus `buildHistoryInputs` (groups the repo's three flat
+      readings by account), `historySeriesFor`/`historyPointLabel` (dated points → chart-ready
+      series and per-point accessible text), `selectHistoryCurrency` (independent from the
+      category widget's own selection, same UAH-first fallback rule) and `changeLabel`. Fixed a
+      real bug caught while wiring the renderer: `accountBasisLines` was returning bare account
+      ids as if they were names — it now takes an account-names map and returns a resolved `name`.
+      Added `src/components/net-worth-widget.tsx`: current per-currency values, ≈ UAH, a currency
+      selector (only with 2+ history currencies), an SVG line chart (plain polyline, gaps left as
+      real gaps in the path), the change line, a collapsible accessible point list (this doubles
+      as point inspection — no on-chart touch tracking, given no established interaction pattern
+      exists to extend), a collapsible basis explanation, and a link to Рахунки. Wired into
+      `index.tsx` after the category widget, reading `transactionsRepo.listAll()` and
+      `investmentsRepo.all()` alongside the four net-worth-repo reads. 14 new tests in
+      `net-worth.test.ts` (26 total) cover the new functions and two `netWorthWidgetModel`
+      integration scenarios. Section 4 (daily content and operational controls) is now complete.
+      `npm run verify`: 3626 tests passed, `cecb8d3b63fc8230545d67101b195c46b18b870e`.
 
 ## 5. Progress, overlays and data lifecycle
 

@@ -21,8 +21,10 @@ import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
+  investments as investmentsRepo,
   limits as limitsRepo,
   monobank as monobankRepo,
+  netWorth as netWorthRepo,
   notifications as notificationsRepo,
   rates as ratesRepo,
   rules as rulesRepo,
@@ -49,6 +51,7 @@ import {
 } from '@/ui/drafts-section';
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { CategoryWidget } from '@/components/category-widget';
+import { NetWorthWidget } from '@/components/net-worth-widget';
 import { categoryMonthRoute, currentMonthRoute, remainderRoute } from '@/ui/home-navigation';
 import { categoryPresentation } from '@/ui/home-categories';
 import { manualRefresh } from '@/ui/home-refresh';
@@ -61,6 +64,8 @@ import { newId } from '@/ui/id';
 import { ruleTargetLabel } from '@/ui/list-management';
 import { reportFailure } from '@/ui/journal';
 import { currentMonth } from '@/ui/months';
+import { todayIso } from '@/ui/dates';
+import { netWorthWidgetModel } from '@/ui/net-worth';
 import { PICKER_SIZE } from '@/ui/shortlist';
 import { ONLY_UNCATEGORISED } from '@/ui/transaction-search';
 import { onCapturesStored } from '@/ui/notification-drain';
@@ -131,9 +136,12 @@ export default function MainScreen() {
   const [stored, reload] = useReloadOnFocus(
     useCallback(() => {
       const accounts = accountsRepo.list();
-      const month = currentMonth(new Date());
+      const now = new Date();
+      const month = currentMonth(now);
+      const today = todayIso(now);
       return {
         month,
+        today,
         accounts,
         // The розрахунковий баланс of each рахунок — computed from транзакції, never stored —
         // still decides whether an unarchived one exists at all, for the invitation below.
@@ -142,6 +150,15 @@ export default function MainScreen() {
         ),
         // The month behind the status: the same bounded read Місяць does for the same month.
         monthTransactions: transactionsRepo.listMonth(month),
+        // Статок's current reading needs every transaction, not just this month's — the same
+        // total volume `balances` above already reads, just combined into one list.
+        allTransactions: transactionsRepo.listAll(),
+        investmentValues: investmentsRepo.all(),
+        // Статок's bounded history reads — O(accounts x months), never O(transactions).
+        netWorthMonthly: netWorthRepo.monthlyMovement(today),
+        netWorthFirstDates: netWorthRepo.firstDates(today),
+        netWorthFirstDateMovement: netWorthRepo.firstDateMovement(today),
+        netWorthFutureRecords: netWorthRepo.accountsWithFutureRecords(today),
         rates: ratesRepo.all(),
         feed: transactionsRepo.listLatest(FEED_SIZE),
         // Deeper than the стрічка, and for one purpose: the категорії the picker offers first.
@@ -405,6 +422,37 @@ export default function MainScreen() {
         ...(requestedCategoryCurrency ? { requestedCurrency: requestedCategoryCurrency } : {}),
       }),
     [categoryNames, requestedCategoryCurrency, stored.month, stored.monthTransactions],
+  );
+
+  /** «Статок»: current values, history and the change line — assembled in one tested function. */
+  const [requestedHistoryCurrency, setRequestedHistoryCurrency] = useState<string>();
+  const netWorth = useMemo(
+    () =>
+      netWorthWidgetModel({
+        accounts: stored.accounts,
+        transactions: stored.allTransactions,
+        currentValues: stored.investmentValues,
+        monthlyMovement: stored.netWorthMonthly,
+        firstDates: stored.netWorthFirstDates,
+        firstDateMovement: stored.netWorthFirstDateMovement,
+        accountsWithFutureRecords: stored.netWorthFutureRecords,
+        rates: stored.rates,
+        ...(requestedHistoryCurrency ? { requestedHistoryCurrency } : {}),
+        now: new Date(),
+        today: stored.today,
+      }),
+    [
+      requestedHistoryCurrency,
+      stored.accounts,
+      stored.allTransactions,
+      stored.investmentValues,
+      stored.netWorthFirstDateMovement,
+      stored.netWorthFirstDates,
+      stored.netWorthFutureRecords,
+      stored.netWorthMonthly,
+      stored.rates,
+      stored.today,
+    ],
   );
 
   /** The «Без категорії» line whose one-tap picker is open, if any. */
@@ -810,6 +858,14 @@ export default function MainScreen() {
         onSelectCurrency={setRequestedCategoryCurrency}
         onOpenCategory={(categoryId) => router.push(categoryMonthRoute(categoryId, new Date()))}
         onOpenRemainder={() => router.push(remainderRoute(new Date()))}
+      />
+
+      {/* «Статок»: a derived reading of every recorded рахунок, not a new balance (net-worth,
+          "Статок is a reading of existing account contributions"). */}
+      <NetWorthWidget
+        model={netWorth}
+        onSelectHistoryCurrency={setRequestedHistoryCurrency}
+        onOpenAccounts={() => router.push('/accounts')}
       />
 
       <RuleOfferSheet
