@@ -243,7 +243,24 @@ All boxes describe future implementation work and remain unchecked in this propo
       had regex-matched the old JSX literals, and rewrote the operational-alerts describe block for
       the new fields. `npm run verify`: 3605 tests passed,
       `b1423c13c6f425f5a4f6b8afc988cccb3fea904e`.
-- [ ] 4.3 Adjust feed presentation while keeping editor and categorisation paths. Trace: main-screen «The feed shows…». Tests: `src/ui/transaction-line.test.ts` and `src/ui/home-screen.test.ts` — distinct description/category/source, two transfer legs, signed amounts, no-description compactness and latest five/all action; retain repo ordering tests for equal dates/backdating.
+- [x] 4.3 Adjust feed presentation while keeping editor and categorisation paths. Trace: main-screen «The feed shows…». Tests: `src/ui/transaction-line.test.ts` and `src/ui/home-screen.test.ts` — distinct description/category/source, two transfer legs, signed amounts, no-description compactness and latest five/all action; retain repo ordering tests for equal dates/backdating.
+
+      **Result:** `transaction-line.ts`'s `transactionLine` now shows explicit money direction —
+      `directionalAmount` prefixes expense with «−» (stored positive; the prefix is purely
+      display, `transactionEffect` still owns the real negation) and income/повернення with «+»,
+      and shows коригування's own stored sign explicitly either way; `transferAmount` always
+      draws a directional arrow and now shows **both** leg amounts whenever they differ — same
+      currency or not — fixing a real gap where a same-currency fee-adjusted переказ (left ≠
+      arrived) previously collapsed to one ambiguous number. No category/type icon: no shared icon
+      contract exists yet (`category-icons-and-transaction-visuals` is still unplanned), and the
+      main-screen requirement itself only asks for one "as an extra cue" beside required text,
+      which the existing type/category/source labels already are — introducing one now would risk
+      the "no competing category-icon storage" the design's Migration Plan explicitly warns
+      against. Description/category/source distinction, no-description compactness,
+      editing/categorisation taps and the latest-five/«Усі» action were already correct and are
+      untouched. Updated 4 pre-existing assertions in `transaction-line.test.ts` to the new format
+      and added a same-currency-unequal-legs test (26 tests, was 25). `npm run verify`: 3606 tests
+      passed, `c49464c22423db40af7fbf2656a62a012cf71cf8`.
 - [ ] 4.4 Assemble header/month/feed/alerts using existing shared surfaces; retain FAB and scroll behavior. Trace: main-screen «Головний presents the daily dashboard», «Opening Головний again…». Tests: `src/ui/home-screen.test.ts` — ordered default sections, no held/progress/large attention/form, all-archived invitation with history; manual first-viewport and focus/refresh smoke in §7.
 - [ ] 4.5 Render category donut, currency control, legend and remainder with accessible alternatives. Trace: main-screen «Top categories…», «Category currencies…», «Categories open…», «The dashboard remains accessible…». Tests: `src/ui/home-categories.test.ts` — text/selected-state labels and route descriptors; rendered layout and TalkBack smoke in §7.
 - [ ] 4.6 Render Статок current values, compact history, point inspection, explanation and Accounts link. Trace: main-screen «Статок exposes…»; net-worth «History is readable…». Tests: `src/ui/net-worth.test.ts` — all basis/coverage explanations and exact accessible dated points; rendered flat/negative/gapped charts and Accounts navigation smoke in §7.

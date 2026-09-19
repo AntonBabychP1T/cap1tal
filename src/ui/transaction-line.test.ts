@@ -47,7 +47,7 @@ describe('transactionLine', () => {
     expect(line).toEqual({
       id: 'e1',
       type: 'витрата',
-      amount: '125,50 UAH',
+      amount: '−125,50 UAH',
       accounts: 'mono black',
       date: '2026-08-24',
       category: 'Без категорії',
@@ -71,7 +71,7 @@ describe('transactionLine', () => {
     );
     expect(line).toMatchObject({
       type: 'переказ',
-      amount: '1 000,00 UAH',
+      amount: '→ 1 000,00 UAH',
       accounts: 'mono black → банка',
     });
     expect(line.category).toBeUndefined();
@@ -94,6 +94,24 @@ describe('transactionLine', () => {
     expect(line.accounts).toBe('mono black → долари');
   });
 
+  it('Scenario: Two transfer legs — a same-currency fee split shows both amounts', () => {
+    // A fee-adjusted переказ — same currency, unequal legs — must not collapse to one
+    // number that could be read as either leg.
+    const line = transactionLine(
+      transfer({
+        id: 't3',
+        date: '2026-08-24',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(100000, 'UAH'),
+        arrived: money(99500, 'UAH'),
+      }),
+      byId,
+      names,
+    );
+    expect(line.amount).toBe('1 000,00 UAH → 995,00 UAH');
+  });
+
   it('Income and correction show their own words', () => {
     const income: Income = {
       type: 'income',
@@ -105,7 +123,7 @@ describe('transactionLine', () => {
     };
     expect(transactionLine(income, byId, names)).toMatchObject({
       type: 'дохід',
-      amount: '50 000,00 UAH',
+      amount: '+50 000,00 UAH',
     });
     expect(
       transactionLine(
@@ -222,7 +240,7 @@ describe('transactionLine — the imported опис', () => {
     expect(line.category).toBe('Без категорії');
     expect(line.uncategorised).toBe(true);
     // The опис replaced nothing: amount, account and date are what they were.
-    expect(line.amount).toBe('125,50 UAH');
+    expect(line.amount).toBe('−125,50 UAH');
     expect(line.accounts).toBe('mono black');
     expect(line.date).toBe('2026-08-27');
   });

@@ -4,9 +4,14 @@ import { categoryBreakdown } from '../domain/monthly-picture';
 import {
   monthOf,
   UNCATEGORISED_CATEGORY_ID,
+  type Correction,
+  type Expense,
+  type Income,
   type IsoDate,
   type Month,
+  type Refund,
   type Transaction,
+  type Transfer,
 } from '../domain/transaction';
 import { formatMoney } from './amount-input';
 import { categoryLabel, sourceLabel, transactionTypeLabel } from './labels';
@@ -89,6 +94,34 @@ export function accountNameOf(accountId: string, accountsById: ReadonlyMap<strin
   return accountsById.get(accountId)?.name ?? accountId;
 }
 
+/**
+ * The feed's own explicit money direction (main-screen, "The feed shows the latest five legible
+ * records"): expense «−», income/повернення «+», коригування its stored sign — never a bare
+ * positive number a reader has to infer the direction of from the row's type alone. An expense's
+ * amount is stored positive (`transactionEffect` is what negates it for a balance); this is purely
+ * a display prefix, and `formatMoney`'s own negative rendering already does the rest.
+ */
+function directionalAmount(t: Expense | Income | Refund | Correction): string {
+  if (t.type === 'expense') {
+    return `−${formatMoney(t.amount)}`;
+  }
+  if (t.type === 'correction') {
+    return t.amount.amount >= 0 ? `+${formatMoney(t.amount)}` : formatMoney(t.amount);
+  }
+  return `+${formatMoney(t.amount)}`;
+}
+
+/**
+ * A переказ's two legs: a directional arrow always, both amounts named only when they differ —
+ * same currency or not (main-screen: "a directional arrow with each leg's amount/currency, both
+ * amounts when unequal even in one currency"). Equal legs would otherwise repeat the same figure
+ * twice for no reason a same-currency, fee-free переказ ever gives a reader to resolve.
+ */
+function transferAmount(t: Transfer): string {
+  const equal = t.left.currency === t.arrived.currency && t.left.amount === t.arrived.amount;
+  return equal ? `→ ${formatMoney(t.left)}` : `${formatMoney(t.left)} → ${formatMoney(t.arrived)}`;
+}
+
 export function transactionLine(
   t: Transaction,
   accountsById: ReadonlyMap<string, Account>,
@@ -109,19 +142,15 @@ export function transactionLine(
     ...(t.description ? { description: t.description } : {}),
   };
   if (t.type === 'transfer') {
-    const legs =
-      t.left.currency === t.arrived.currency
-        ? formatMoney(t.left)
-        : `${formatMoney(t.left)} → ${formatMoney(t.arrived)}`;
     return {
       ...common,
-      amount: legs,
+      amount: transferAmount(t),
       accounts: `${accountNameOf(t.fromAccountId, accountsById)} → ${accountNameOf(t.toAccountId, accountsById)}`,
     };
   }
   return {
     ...common,
-    amount: formatMoney(t.amount),
+    amount: directionalAmount(t),
     accounts: accountNameOf(t.accountId, accountsById),
     ...(t.type === 'expense' || t.type === 'refund'
       ? {
