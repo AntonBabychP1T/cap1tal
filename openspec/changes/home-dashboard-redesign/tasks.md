@@ -130,7 +130,20 @@ All boxes describe future implementation work and remain unchecked in this propo
       new tests (28 total in the file) cover +20%, zero/negative-baseline absolute-only, a missing
       baseline, a gap baseline, valuation substitution, future records, and that each currency is
       judged independently. `npm run verify`: 3563 tests passed, `af603f1878995850a68e6b6b9bf644dbf8d7f5c7`.
-- [ ] 2.7 Add per-currency current readout, approximate UAH and basis explanations using existing conversion rules. Trace: net-worth «Approximate UAH…», «Current valuation…». Tests: `src/ui/net-worth.test.ts` — rounding example, signed conversion, missing EUR including zero total, stale cached rate date, UAH-only, overflow, investment dates/fallbacks, difference from Accounts totals.
+- [x] 2.7 Add per-currency current readout, approximate UAH and basis explanations using existing conversion rules. Trace: net-worth «Approximate UAH…», «Current valuation…». Tests: `src/ui/net-worth.test.ts` — rounding example, signed conversion, missing EUR including zero total, stale cached rate date, UAH-only, overflow, investment dates/fallbacks, difference from Accounts totals.
+
+      **Result:** Added `src/ui/net-worth.ts`: `currencyReadouts` (exact per-currency lines,
+      UAH-first, an unavailable one named rather than hidden), `approximateNetWorthUah` (reuses
+      the existing `approximateUah` rounding rule directly — richer than `approximateTotals` since
+      it also names which currency is missing a rate and surfaces the oldest participating rate's
+      own `obtainedAt`, both of which the widget's explanation needs and the Accounts-screen
+      helper never exposed), `accountBasisLines` (per-account explanation text, reusing
+      `calendarLabel` for an investment's observation date) and a static
+      `ACCOUNTS_TOTAL_DIFFERENCE_EXPLANATION` sentence. 10 tests cover the rounding example, signed
+      conversion, EUR-missing-including-zero-total, stale-rate timestamp disclosure, UAH-only,
+      overflow, investment date vs. вкладено fallback, and the Accounts-difference wording. Section
+      2 (net-worth domain + repo) is now complete. `npm run verify`: 3573 tests passed,
+      `323b6d15b2980dc888e41f4a0db999ca60edb974`.
 
 ## 3. Month and top categories
 
