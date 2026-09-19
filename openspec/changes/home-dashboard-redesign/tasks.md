@@ -191,7 +191,22 @@ All boxes describe future implementation work and remain unchecked in this propo
       downsampling preserving a peak and a trough over 400 points, and exact-value lookup by index
       after downsampling. `npm run verify`: 3593 tests passed,
       `1ba14ceb7c504b28fe5428d1f4a2efc565a01091`.
-- [ ] 3.4 Wire explicit current-month and category navigation, including retained month state and rollover. Trace: main-screen «The month card always opens…», «Categories open…». Tests: `src/ui/home-navigation.test.ts` — retained July opens September, October rollover, all-currency category route, remainder opens full month and both correction signs remain reachable; manual route smoke in §7.
+- [x] 3.4 Wire explicit current-month and category navigation, including retained month state and rollover. Trace: main-screen «The month card always opens…», «Categories open…». Tests: `src/ui/home-navigation.test.ts` — retained July opens September, October rollover, all-currency category route, remainder opens full month and both correction signs remain reachable; manual route smoke in §7.
+
+      **Result:** Added `src/ui/home-navigation.ts`: `currentMonthRoute`/`categoryMonthRoute`/
+      `remainderRoute`, pure functions of `now` (never of any retained state) building the exact
+      route strings the existing `/month` and `/category/[month]/[categoryId]` routes already
+      accept — no currency param exists for `categoryMonthRoute` to narrow with, and «Коригування»
+      reaches the same existing route (its both-signs behavior is that route's own, untouched).
+      Wired the month card in `index.tsx` to `currentMonthRoute(new Date())`. `month.tsx` now reads
+      an optional `month` search param and, when it changes, resets its retained `shown` state
+      during render (React's documented "adjusting state" pattern — a plain effect tripped the
+      `react-hooks/set-state-in-effect` lint rule); arriving via the tab bar itself carries no such
+      param, so ordinary retained stepping is untouched. Category-row/«Ще N» wiring has no UI home
+      yet — that's task 4.5's donut — so only the month-card call site is wired now. 5 new tests in
+      `home-navigation.test.ts` plus a structural check and a fixed stale assertion in
+      `home-screen.test.ts`. `npm run verify`: 3599 tests passed,
+      `601f4500eb6988f0863fe94722a852594723125a`.
 
 ## 4. Daily content and operational controls
 

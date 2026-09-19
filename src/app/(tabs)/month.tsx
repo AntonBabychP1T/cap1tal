@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -47,6 +47,20 @@ function Step({ arrow, onPress }: { arrow: string; onPress?: () => void }) {
 export default function MonthScreen() {
   const router = useRouter();
   const [shown, setShown] = useState(() => currentMonth(new Date()));
+
+  // Головний's month card always names the current month explicitly (main-screen, "The month
+  // card always opens the current month"), overriding whatever month stepping had retained here.
+  // Arriving through the tab bar itself carries no `month` param, so retained stepping is
+  // untouched — adjusted during render, React's own way to react to a changed param without the
+  // extra render an effect would cost (https://react.dev/learn/you-might-not-need-an-effect).
+  const { month: forcedMonth } = useLocalSearchParams<{ month?: string }>();
+  const [appliedForcedMonth, setAppliedForcedMonth] = useState(forcedMonth);
+  if (forcedMonth !== appliedForcedMonth) {
+    setAppliedForcedMonth(forcedMonth);
+    if (forcedMonth) {
+      setShown(forcedMonth);
+    }
+  }
 
   const [stored, reload] = useReloadOnFocus(
     useCallback(

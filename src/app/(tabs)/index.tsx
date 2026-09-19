@@ -48,6 +48,7 @@ import {
   type DraftAnswer,
 } from '@/ui/drafts-section';
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
+import { currentMonthRoute } from '@/ui/home-navigation';
 import { homeViewModel } from '@/ui/home-screen';
 import { homeProgressSection } from '@/ui/progress-screen';
 import { syncCoverage } from '@/ui/monobank-screen';
@@ -542,7 +543,7 @@ export default function MainScreen() {
 
       {/* The month first, and it is the screen's figure: what it has cost. The same numbers
           Місяць shows for the same month, which is where the card leads. */}
-      <Pressable onPress={() => router.push('/month')} accessibilityRole="button">
+      <Pressable onPress={() => router.push(currentMonthRoute(new Date()))} accessibilityRole="button">
         <Card style={styles.status}>
           <CardGlow />
           <View style={styles.statusHead}>

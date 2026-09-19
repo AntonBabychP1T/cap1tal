@@ -339,7 +339,15 @@ describe('Головний as the overview', () => {
 
   it('Scenario: The status leads to Місяць', () => {
     const status = main.slice(main.indexOf('{/* The month first'));
-    expect(status.slice(0, status.indexOf('</Pressable>'))).toContain("router.push('/month')");
+    expect(status.slice(0, status.indexOf('</Pressable>'))).toContain(
+      'router.push(currentMonthRoute(new Date()))',
+    );
+  });
+
+  it('Scenario: The month card always opens the current month, never a retained one', () => {
+    // The route is built from the device's own clock, not from anything Місяць retained — the
+    // same function `home-navigation.test.ts` proves against a retained-month scenario.
+    expect(main).toContain("import { currentMonthRoute } from '@/ui/home-navigation'");
   });
 
   it('Scenario: The total leads to Рахунки', () => {
