@@ -261,7 +261,25 @@ All boxes describe future implementation work and remain unchecked in this propo
       untouched. Updated 4 pre-existing assertions in `transaction-line.test.ts` to the new format
       and added a same-currency-unequal-legs test (26 tests, was 25). `npm run verify`: 3606 tests
       passed, `c49464c22423db40af7fbf2656a62a012cf71cf8`.
-- [ ] 4.4 Assemble header/month/feed/alerts using existing shared surfaces; retain FAB and scroll behavior. Trace: main-screen «Головний presents the daily dashboard», «Opening Головний again…». Tests: `src/ui/home-screen.test.ts` — ordered default sections, no held/progress/large attention/form, all-archived invitation with history; manual first-viewport and focus/refresh smoke in §7.
+- [x] 4.4 Assemble header/month/feed/alerts using existing shared surfaces; retain FAB and scroll behavior. Trace: main-screen «Головний presents the daily dashboard», «Opening Головний again…». Tests: `src/ui/home-screen.test.ts` — ordered default sections, no held/progress/large attention/form, all-archived invitation with history; manual first-viewport and focus/refresh smoke in §7.
+
+      **Result:** Reordered `index.tsx` into design D1's sequence: Wordmark → compact header
+      (freshness text + a new 48 dp «Оновити» sync button, both calling the same `pull`/
+      `manualRefresh` the gesture already did — the header had no distinct tappable sync trigger
+      before this) → month card → no-account invitation (still keyed on `model.held === null`,
+      the same signal, even though its card no longer renders) → uncategorised banner → «Останні
+      транзакції» feed → collapsed operational alerts → expanded drafts → `RuleOfferSheet`.
+      Removed entirely: the "На рахунках" held card and the «Прогрес» section (JSX, the
+      `progressSection` useMemo, the `progress: progressScreenData()` read, and the
+      `homeProgressSection`/`progressScreenData` imports) — both REMOVED requirements now have no
+      rendering on Головний; `evaluateProgress()`'s evaluation-trigger calls elsewhere in the file
+      are untouched. Also retired the now-dead `held`/`heldText`/`heldAmount`/`progress`/
+      `progressTop` styles plus two already-orphaned ones (`statusFoot` from task 3.1,
+      `attentionHead` from task 4.2). Fixed two stale structural tests in other files
+      (`home-screen.test.ts`'s held-card test, `screens.test.ts`'s cross-screen progress-reachability
+      test) and one stale doc comment, and added explicit ordering/no-held-progress-form tests.
+      FAB and scroll-to-top behavior are untouched. `npm run verify`: 3608 tests passed,
+      `b57a6d0930e0537b8f775dd34b93b3a9a42d221a`.
 - [ ] 4.5 Render category donut, currency control, legend and remainder with accessible alternatives. Trace: main-screen «Top categories…», «Category currencies…», «Categories open…», «The dashboard remains accessible…». Tests: `src/ui/home-categories.test.ts` — text/selected-state labels and route descriptors; rendered layout and TalkBack smoke in §7.
 - [ ] 4.6 Render Статок current values, compact history, point inspection, explanation and Accounts link. Trace: main-screen «Статок exposes…»; net-worth «History is readable…». Tests: `src/ui/net-worth.test.ts` — all basis/coverage explanations and exact accessible dated points; rendered flat/negative/gapped charts and Accounts navigation smoke in §7.
 

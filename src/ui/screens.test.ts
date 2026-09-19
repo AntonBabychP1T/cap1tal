@@ -409,7 +409,7 @@ describe('where the прогрес is evaluated, and where it is not', () => {
     expect(TABS.some((tab) => tab.routeName === 'progress')).toBe(false);
   });
 
-  it('Scenario: Прогрес is reachable from Звіти, and from Головний when something waits', () => {
+  it('Scenario: Прогрес is reachable from Звіти', () => {
     const reports = readScreen(join('(tabs)', 'reports.tsx'));
     expect(reports).toContain("router.push('/progress')");
     // Scenario: The entry is there with nothing earned — the Pressable is unconditional, not
@@ -418,10 +418,12 @@ describe('where the прогрес is evaluated, and where it is not', () => {
     expect(entry.slice(0, 200)).not.toMatch(/\?\s*\($/m);
     expect(reports).toMatch(/<Pressable onPress=\{\(\) => router\.push\('\/progress'\)\}/);
 
-    // Головний renders the section only when `homeProgressSection` returned one.
+    // Головний no longer renders a «Прогрес» section at all — the REMOVED requirement
+    // "Головний shows «Прогрес» only when something is waiting" has no replacement on Головний;
+    // task 5.1 is what adds the quiet unseen badge beside the Reports entry above.
     const home = readScreen(join('(tabs)', 'index.tsx'));
-    expect(home).toContain('homeProgressSection');
-    expect(home).toMatch(/progressSection \? \(/);
+    expect(home).not.toContain('homeProgressSection');
+    expect(home).not.toContain('progressSection');
   });
 
   it('setting a ліміт is not one of the moments', () => {

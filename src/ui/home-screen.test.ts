@@ -344,17 +344,13 @@ describe('Головний as the overview', () => {
     expect(main).toContain("import { currentMonthRoute } from '@/ui/home-navigation'");
   });
 
-  it('Scenario: The total leads to Рахунки', () => {
-    const held = main.slice(main.indexOf('{model.held ? ('));
-    const card = held.slice(0, held.indexOf('</Pressable>'));
-
-    expect(card).toContain("router.push('/accounts')");
-    // Under its own name and in its own card, so it can never be read as the month's number: the
-    // status wears `type="title"`, this wears the reading size.
-    expect(card).toContain('На рахунках');
-    expect(card).toContain('{model.held.line}');
-    expect(card).not.toContain('type="title"');
-    expect(main.slice(0, main.indexOf('{model.held ? ('))).toContain('type="title"');
+  it('Scenario: Головний presents the daily dashboard — no money-held card of its own', () => {
+    // "Головний opens with how much money there is" / "leads to Рахунки" via that card are both
+    // REMOVED requirements, superseded by Статок (task 4.6, not built yet); until then Головний
+    // has no rendering of `model.held` at all — the field still exists (it gates the no-account
+    // invitation below) but nothing shows its line or its own route to Рахунки.
+    expect(main).not.toContain('model.held.line');
+    expect(main).not.toContain('На рахунках');
   });
 
   it('Scenario: The section stops at five', () => {
@@ -441,6 +437,33 @@ describe('Головний as the overview', () => {
     expect(main).toContain('const [draftsExpanded, setDraftsExpanded] = useState(false)');
     expect(main).toContain('onPress={() => setDraftsExpanded((expanded) => !expanded)}');
     expect(main).toContain('{draftsExpanded && drafts.length > 0 ? (');
+  });
+
+  it('Scenario: Ordered default sections — header, month, feed, alerts, in that order', () => {
+    // design D1's order: header (freshness + sync), the month card, the feed with its optional
+    // banner, then the collapsed operational alerts. No held card and no «Прогрес» section
+    // anywhere between them.
+    const wordmark = main.indexOf('<Wordmark />');
+    const header = main.indexOf('{model.monobank ? (');
+    const month = main.indexOf('router.push(currentMonthRoute(new Date()))');
+    const invitation = main.indexOf('{model.held === null ? (');
+    const banner = main.indexOf('{model.alerts.uncategorisedBanner ? (');
+    const feed = main.indexOf('Останні транзакції');
+    const alerts = main.indexOf('{model.alerts.draftCount > 0 || model.alerts.failureRow ? (');
+
+    expect(wordmark).toBeGreaterThan(-1);
+    expect(header).toBeGreaterThan(wordmark);
+    expect(month).toBeGreaterThan(header);
+    expect(invitation).toBeGreaterThan(month);
+    expect(banner).toBeGreaterThan(invitation);
+    expect(feed).toBeGreaterThan(banner);
+    expect(alerts).toBeGreaterThan(feed);
+  });
+
+  it('Scenario: No large attention section and no entry form remain', () => {
+    expect(main).not.toContain('Потребує уваги');
+    expect(main).not.toContain('ATTENTION_TITLE');
+    expect(main).not.toContain('title="Записати"');
   });
 });
 

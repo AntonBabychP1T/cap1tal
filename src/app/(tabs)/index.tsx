@@ -51,11 +51,10 @@ import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { currentMonthRoute } from '@/ui/home-navigation';
 import { manualRefresh } from '@/ui/home-refresh';
 import { homeViewModel } from '@/ui/home-screen';
-import { homeProgressSection } from '@/ui/progress-screen';
 import { syncCoverage } from '@/ui/monobank-screen';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { failureAlert } from '@/ui/failure-alert';
-import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
+import { evaluateProgress } from '@/hooks/progress-ports';
 import { newId } from '@/ui/id';
 import { ruleTargetLabel } from '@/ui/list-management';
 import { reportFailure } from '@/ui/journal';
@@ -73,17 +72,18 @@ import {
   transactionLine,
 } from '@/ui/transaction-line';
 
-import { Spacing } from '@/constants/theme';
+import { Spacing, TouchTarget } from '@/constants/theme';
 
 /**
- * Головний — the short daily overview the app opens on: how the month is going, what the рахунки
- * hold, what is waiting for an answer, and the five latest транзакції. Recording is behind the «+»
+ * Головний — the daily dashboard the app opens on: the compact header, this month's витрачено,
+ * the latest п'ять транзакції with an optional «Без категорії» banner, and up to two collapsed
+ * operational rows (pending чернетки, an actionable sync failure). Recording is behind the «+»
  * over the bottom-right corner, on its own screen (`transaction/new.tsx`).
  *
  * Everything the screen says is decided in `src/ui` and under `verify` — `homeViewModel` decides
- * the month status, the money-held line and whether «Потребує уваги» exists at all, `draftLines`
- * what a чернетка reads as, `transactionLine` what a row reads and whether it is «Без категорії».
- * This file is the wiring. See design.md §6 and this change's design §D3, §D5, §D6.
+ * the month status and the compact alerts, `draftLines` what a чернетка reads as, `transactionLine`
+ * what a feed row reads and whether it is «Без категорії». This file is the wiring. See
+ * design.md §6 and this change's design §D1, §D3, §D5, §D6.
  */
 
 /** How many транзакції the стрічка shows. The rest are one tap away, in «Транзакції». */
@@ -133,8 +133,8 @@ export default function MainScreen() {
       return {
         month,
         accounts,
-        // The розрахунковий баланс of each рахунок, so «На рахунках» is the sum of the same
-        // numbers Рахунки shows — computed from транзакції, never stored.
+        // The розрахунковий баланс of each рахунок — computed from транзакції, never stored —
+        // still decides whether an unarchived one exists at all, for the invitation below.
         balances: new Map(
           accounts.map((a) => [a.id, computeBalance(a, transactionsRepo.listByAccount(a.id))]),
         ),
@@ -158,9 +158,6 @@ export default function MainScreen() {
         // the attempt says how the last run went. Two local reads, beside the others.
         links: monobankRepo.listLinks(),
         attempt: monobankRepo.attempt(),
-        // The прогрес, read and never evaluated: the earned rows and the accepted виклики are what
-        // decide whether the section exists at all. Nothing here can earn anything.
-        progress: progressScreenData(),
       };
     }, []),
   );
@@ -380,23 +377,6 @@ export default function MainScreen() {
   );
 
   /**
-   * The «Прогрес» section, or `null` — and `null` means the section is not rendered at all.
-   *
-   * Reading it computes no money number, records nothing and changes nothing about the транзакції,
-   * the місячна картина or «Усього грошей»; `homeProgressSection` takes stored rows and has no way
-   * to reach the engine.
-   */
-  const progressSection = useMemo(
-    () =>
-      homeProgressSection({
-        earned: stored.progress.earned,
-        accepted: stored.progress.accepted,
-        candidates: stored.progress.candidates,
-      }),
-    [stored.progress],
-  );
-
-  /**
    * Which categories are over their ліміт, per month of the loaded стрічка. The стрічка holds the
    * latest транзакції, not whole months, so each month it touches — one or two, typically — is
    * read in full for its breakdown. `overLimitByMonth` decides everything; this is the read it
@@ -546,6 +526,30 @@ export default function MainScreen() {
         <Wordmark />
       </View>
 
+      {/* The compact header: how fresh the bank data is, and the same manual sync both the
+          pull gesture and this button reach through `manualRefresh` (main-screen, "Sync
+          occupies a compact header"). Absent entirely for an owner with no monobank. */}
+      {model.monobank ? (
+        <View style={styles.header}>
+          <ThemedText type="small" themeColor="textMuted">
+            {model.monobank.freshness}
+          </ThemedText>
+          <Pressable
+            onPress={() =>
+              pull().catch((thrown: unknown) => {
+                reportFailure('monobank-sync', thrown);
+              })
+            }
+            accessibilityRole="button"
+            accessibilityLabel="Синхронізувати"
+            style={styles.syncButton}>
+            <ThemedText type="link" themeColor="accent">
+              Оновити
+            </ThemedText>
+          </Pressable>
+        </View>
+      ) : null}
+
       {/* The month first, and it is the screen's figure: what it has cost. The same numbers
           Місяць shows for the same month, which is where the card leads. */}
       <Pressable onPress={() => router.push(currentMonthRoute(new Date()))} accessibilityRole="button">
@@ -566,40 +570,6 @@ export default function MainScreen() {
           )}
         </Card>
       </Pressable>
-
-      {/* The money held, its own card and a quieter one: what the рахунки hold is not the month's
-          залишилось, and at a glance the size of the two figures is what says so. */}
-      {model.held ? (
-        <Pressable onPress={() => router.push('/accounts')} accessibilityRole="button">
-          <Card style={styles.held}>
-            <View style={styles.heldText}>
-              <ThemedText type="small" themeColor="textSecondary">
-                На рахунках
-              </ThemedText>
-              {/* Two lines rather than one shrunk to a hairline: three currencies is a normal
-                  amount of money to hold, and «120 425,99 UAH · 1 355,22 EUR · 3 361,76 USD» read
-                  at 60 % of the size is worse than read on two lines. */}
-              <ThemedText type="default" tabular numberOfLines={2} style={styles.heldAmount}>
-                {model.held.line}
-              </ThemedText>
-              {model.held.approximate ? (
-                <ThemedText type="small" themeColor="textMuted" tabular>
-                  {model.held.approximate}
-                </ThemedText>
-              ) : null}
-            </View>
-            <Chevron />
-          </Card>
-        </Pressable>
-      ) : null}
-
-      {/* How fresh the bank data is — «оновлено 3 хв тому». Under the money held, because that is
-          the figure whose age it qualifies. Absent entirely for an owner with no monobank. */}
-      {model.monobank ? (
-        <ThemedText type="small" themeColor="textMuted" style={styles.freshness}>
-          {model.monobank.freshness}
-        </ThemedText>
-      ) : null}
 
       {/* Nothing to record on: the invitation stays on Головний, and the latest транзакції below
           still show whatever is stored. */}
@@ -624,122 +594,6 @@ export default function MainScreen() {
               {model.alerts.uncategorisedBanner}
             </ThemedText>
             <Chevron />
-          </Card>
-        </Pressable>
-      ) : null}
-
-      {/* At most two collapsed operational rows: the pending чернетки (count only, expanding in
-          place to the existing confirm/dismiss surface) and an actionable sync failure. Neither,
-          and nothing here renders at all (main-screen, "Operational alerts remain compact and
-          actionable"). */}
-      {model.alerts.draftCount > 0 || model.alerts.failureRow ? (
-        <Card style={styles.attention}>
-          {model.alerts.draftCount > 0 ? (
-            <Pressable
-              onPress={() => setDraftsExpanded((expanded) => !expanded)}
-              accessibilityRole="button"
-              style={styles.attentionRow}>
-              <ThemedText numberOfLines={2} style={styles.attentionLabel}>
-                {model.alerts.draftLabel}
-              </ThemedText>
-              <Chevron />
-            </Pressable>
-          ) : null}
-          {model.alerts.failureRow ? (
-            <View>
-              {model.alerts.draftCount > 0 ? <Divider /> : null}
-              <Pressable
-                onPress={() => router.push('/manage/monobank')}
-                accessibilityRole="button"
-                style={styles.attentionRow}>
-                <ThemedText numberOfLines={2} style={styles.attentionLabel}>
-                  {model.alerts.failureRow}
-                </ThemedText>
-                <ThemedText type="link" themeColor="accent">
-                  Відкрити
-                </ThemedText>
-                <Chevron />
-              </Pressable>
-            </View>
-          ) : null}
-        </Card>
-      ) : null}
-
-      {draftsExpanded && drafts.length > 0 ? (
-        <ListCard>
-          {drafts.map((line, index) => (
-            <ListRow key={line.id} last={index === drafts.length - 1} style={styles.row}>
-              <View style={styles.rowTop}>
-                <View style={styles.rowLabel}>
-                  <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {`${line.accountName} · ${line.date}`}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textMuted">
-                    {line.text}
-                  </ThemedText>
-                  {/* The foreign сума the notification named: information, never a proposal. */}
-                  {line.original ? (
-                    <ThemedText type="small" themeColor="textMuted">
-                      {line.original}
-                    </ThemedText>
-                  ) : null}
-                </View>
-                {line.amount ? (
-                  <ThemedText tabular style={styles.amount}>
-                    {line.amount}
-                  </ThemedText>
-                ) : null}
-              </View>
-
-              {/* A raw чернетка has no сума of its own; it confirms only with one the owner
-                  supplies, in the рахунок's currency and under the manual-entry rules. */}
-              {line.needsAmount ? (
-                <Field
-                  label="Сума"
-                  value={draftAmounts[line.id] ?? ''}
-                  onChangeText={(typed: string) =>
-                    setDraftAmounts((current) => ({ ...current, [line.id]: typed }))
-                  }
-                  keyboardType="decimal-pad"
-                  placeholder="0,00"
-                  hint={line.currency}
-                />
-              ) : null}
-
-              <View style={styles.rowActions}>
-                <RowAction
-                  title="Підтвердити"
-                  onPress={() => confirmDraftLine(line.id, line.needsAmount)}
-                />
-                <RowAction title="Відхилити" onPress={() => dismissDraftLine(line)} />
-              </View>
-            </ListRow>
-          ))}
-        </ListCard>
-      ) : null}
-
-      {/* «Прогрес», and only when something is genuinely waiting: an unseen досягнення or an
-          accepted виклик. With neither there is no heading, no empty state and no placeholder —
-          Головний is exactly what it was. Twelve retroactive досягнення are one line, never
-          twelve, and never a dialog. */}
-      {progressSection ? (
-        <Pressable
-          onPress={() => router.push(progressSection.route)}
-          accessibilityRole="button">
-          <Card style={styles.progress}>
-            <View style={styles.progressTop}>
-              <ThemedText type="overline">Прогрес</ThemedText>
-              <Chevron />
-            </View>
-            {progressSection.achievements ? (
-              <ThemedText>{progressSection.achievements}</ThemedText>
-            ) : null}
-            {progressSection.challenge ? (
-              <ThemedText type="small" themeColor="textSecondary">
-                {progressSection.challenge.name} — {progressSection.challenge.progress}
-              </ThemedText>
-            ) : null}
           </Card>
         </Pressable>
       ) : null}
@@ -842,6 +696,97 @@ export default function MainScreen() {
           })}
         </ListCard>
       )}
+      {/* At most two collapsed operational rows: the pending чернетки (count only, expanding in
+          place to the existing confirm/dismiss surface) and an actionable sync failure. Neither,
+          and nothing here renders at all (main-screen, "Operational alerts remain compact and
+          actionable"). */}
+      {model.alerts.draftCount > 0 || model.alerts.failureRow ? (
+        <Card style={styles.attention}>
+          {model.alerts.draftCount > 0 ? (
+            <Pressable
+              onPress={() => setDraftsExpanded((expanded) => !expanded)}
+              accessibilityRole="button"
+              style={styles.attentionRow}>
+              <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+                {model.alerts.draftLabel}
+              </ThemedText>
+              <Chevron />
+            </Pressable>
+          ) : null}
+          {model.alerts.failureRow ? (
+            <View>
+              {model.alerts.draftCount > 0 ? <Divider /> : null}
+              <Pressable
+                onPress={() => router.push('/manage/monobank')}
+                accessibilityRole="button"
+                style={styles.attentionRow}>
+                <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+                  {model.alerts.failureRow}
+                </ThemedText>
+                <ThemedText type="link" themeColor="accent">
+                  Відкрити
+                </ThemedText>
+                <Chevron />
+              </Pressable>
+            </View>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {draftsExpanded && drafts.length > 0 ? (
+        <ListCard>
+          {drafts.map((line, index) => (
+            <ListRow key={line.id} last={index === drafts.length - 1} style={styles.row}>
+              <View style={styles.rowTop}>
+                <View style={styles.rowLabel}>
+                  <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {`${line.accountName} · ${line.date}`}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textMuted">
+                    {line.text}
+                  </ThemedText>
+                  {/* The foreign сума the notification named: information, never a proposal. */}
+                  {line.original ? (
+                    <ThemedText type="small" themeColor="textMuted">
+                      {line.original}
+                    </ThemedText>
+                  ) : null}
+                </View>
+                {line.amount ? (
+                  <ThemedText tabular style={styles.amount}>
+                    {line.amount}
+                  </ThemedText>
+                ) : null}
+              </View>
+
+              {/* A raw чернетка has no сума of its own; it confirms only with one the owner
+                  supplies, in the рахунок's currency and under the manual-entry rules. */}
+              {line.needsAmount ? (
+                <Field
+                  label="Сума"
+                  value={draftAmounts[line.id] ?? ''}
+                  onChangeText={(typed: string) =>
+                    setDraftAmounts((current) => ({ ...current, [line.id]: typed }))
+                  }
+                  keyboardType="decimal-pad"
+                  placeholder="0,00"
+                  hint={line.currency}
+                />
+              ) : null}
+
+              <View style={styles.rowActions}>
+                <RowAction
+                  title="Підтвердити"
+                  onPress={() => confirmDraftLine(line.id, line.needsAmount)}
+                />
+                <RowAction title="Відхилити" onPress={() => dismissDraftLine(line)} />
+              </View>
+            </ListRow>
+          ))}
+        </ListCard>
+      ) : null}
+
       <RuleOfferSheet
         offer={ruleOffer.offer}
         targetLabel={
@@ -855,31 +800,22 @@ export default function MainScreen() {
 }
 
 const styles = StyleSheet.create({
-  progress: { gap: Spacing.one },
-  progressTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    gap: Spacing.two,
-  },
-  // Right under the money held, aligned with it rather than centred: it qualifies that figure.
-  freshness: { marginTop: -8, paddingHorizontal: 4 },
   brand: { paddingHorizontal: Spacing.two, paddingBottom: Spacing.one },
-  // Clipped, so the accent rings behind the figure end at the card's own corner.
-  status: { gap: Spacing.two + Spacing.half, overflow: 'hidden' },
-  statusHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  statusFoot: {
+  header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: Spacing.three,
+    paddingHorizontal: Spacing.two,
+    paddingBottom: Spacing.one,
   },
-  held: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
-  heldText: { flex: 1, gap: Spacing.half },
-  heldAmount: { fontWeight: 600 },
+  // A tap target as wide as it is tall, never smaller than the shared minimum — text alone would
+  // shrink it well under that on a short label like «Оновити».
+  syncButton: { minHeight: TouchTarget, minWidth: TouchTarget, alignItems: 'center', justifyContent: 'center' },
+  // Clipped, so the accent rings behind the figure end at the card's own corner.
+  status: { gap: Spacing.two + Spacing.half, overflow: 'hidden' },
+  statusHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   // A card holding one short line does not need a card's full padding around it.
   attention: { gap: Spacing.two, paddingVertical: Spacing.three },
-  attentionHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   attentionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
