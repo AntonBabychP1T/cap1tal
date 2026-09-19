@@ -59,7 +59,19 @@ All boxes describe future implementation work and remain unchecked in this propo
       `account.test.ts` cover expense/income/refund/correction/transfer-leg effects and confirm
       accepted vs. declined fee proposals still move the source account by the identical total.
       `npm run verify`: 3527 tests passed, `85d5407537520f2765a541554b8df03e52000911`.
-- [ ] 2.2 Add bounded local account/month movement and first-date reads with as-of cutoff, a bounded first-date end-of-day aggregate and future-record flag. Trace: net-worth «Undated opening money…», «History spans…»; main-screen «The dashboard uses local data…». Tests: `src/db/net-worth-repo.test.ts` — zero/nonzero openings, June 5 initial point excludes a later June 20 movement in the same month, future rows excluded from historical aggregates, all accounts/archived included, multiple currencies and no-transaction accounts retained.
+- [x] 2.2 Add bounded local account/month movement and first-date reads with as-of cutoff, a bounded first-date end-of-day aggregate and future-record flag. Trace: net-worth «Undated opening money…», «History spans…»; main-screen «The dashboard uses local data…». Tests: `src/db/net-worth-repo.test.ts` — zero/nonzero openings, June 5 initial point excludes a later June 20 movement in the same month, future rows excluded from historical aggregates, all accounts/archived included, multiple currencies and no-transaction accounts retained.
+
+      **Result:** Added `src/db/net-worth-repo.ts`: a shared `MOVEMENTS` SQL fragment (the
+      `transactionEffect` rule restated in SQL, one row per transaction-account touch) reused by
+      four bounded readings — `monthlyMovement`, `firstDates`, `firstDateMovement` (the sub-month
+      cutoff for the first history point) and `accountsWithFutureRecords`. All four key by
+      accountId only and stay silent about currency/archived-status/opening-balance/membership —
+      those live on the `Account` the caller already has; a no-transaction account is simply
+      absent, which the domain layer (2.4/2.5) is what retains. 7 tests in
+      `net-worth-repo.test.ts` cover the June 5/20 sub-month cutoff, future-row exclusion and
+      flagging, archived-account participation, cross-currency transfer legs, empty-month gaps and
+      the no-transaction-account contract. `npm run verify`: 3534 tests passed,
+      `f752058f373e317741d5d4e6c0235cba4ac40f99`.
 - [ ] 2.3 Differentially verify aggregate outputs against existing account calculations, including transfer fees and currencies. Trace: net-worth «History is reconstructed…». Tests: `src/db/net-worth-repo.test.ts` — generated histories agree with computeBalance per account/date; results grow by accounts/months rather than raw record count on 50k records.
 - [ ] 2.4 Implement pure current per-currency net-worth contributions and availability. Trace: net-worth «Статок is a reading…», «Archived and debt…», «Current valuation…». Tests: `src/domain/net-worth.test.ts` — replace value rather than add, zero vs missing value, archived money, signed debt, principal/interest, empty/incomplete/overflow states.
 - [ ] 2.5 Build the dated history with coverage gaps and recorded-balance basis. Trace: net-worth «History is reconstructed…», «Undated opening money…», «History spans…». Tests: `src/domain/net-worth.test.ts` — late nonzero opening, no anchor, zero opening, empty months, first day/month ends/today, one date, future records, changed openings/backdated edits and valuation changes leaving past points untouched.
