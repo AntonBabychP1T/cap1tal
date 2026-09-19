@@ -87,7 +87,18 @@ All boxes describe future implementation work and remain unchecked in this propo
       set included a handful of records dated after "today" within its own month, which the repo
       correctly excludes as future-dated — filtering the comparison set the same way fixed it.
       `npm run verify`: 3535 tests passed in ~29s total, `d1c1242bd3a11d31ad9933c0c93df07cf352a31e`.
-- [ ] 2.4 Implement pure current per-currency net-worth contributions and availability. Trace: net-worth «Статок is a reading…», «Archived and debt…», «Current valuation…». Tests: `src/domain/net-worth.test.ts` — replace value rather than add, zero vs missing value, archived money, signed debt, principal/interest, empty/incomplete/overflow states.
+- [x] 2.4 Implement pure current per-currency net-worth contributions and availability. Trace: net-worth «Статок is a reading…», «Archived and debt…», «Current valuation…». Tests: `src/domain/net-worth.test.ts` — replace value rather than add, zero vs missing value, archived money, signed debt, principal/interest, empty/incomplete/overflow states.
+
+      **Result:** Added `src/domain/net-worth.ts` with `currentNetWorth({ accounts, transactions,
+      currentValues })`, reusing `goals.ts`'s existing `contribution()` (investment current value
+      replaces, never adds to, вкладено) rather than reimplementing it. Returns `{ status: 'empty'
+      }` for zero accounts, else per-account `AccountContribution` (currency, amount, basis
+      `ledger`/`currentValue`, `asOf` date) plus per-currency `CurrencyTotal` — `known` or
+      `unavailable: { reason: 'overflow' }` when a sum would exceed a safe integer (caught from
+      `money()`'s own guard rather than thrown). Includes archived and debt accounts unfiltered,
+      by construction (no `activeAccounts` filtering). 11 tests cover empty/multi-currency/replace
+      vs fallback/zero-vs-missing-observation/archived/signed-debt/principal-interest/overflow.
+      `npm run verify`: 3546 tests passed, `3b2178c95cc1833be07d67991835ab4e3f20b016`.
 - [ ] 2.5 Build the dated history with coverage gaps and recorded-balance basis. Trace: net-worth «History is reconstructed…», «Undated opening money…», «History spans…». Tests: `src/domain/net-worth.test.ts` — late nonzero opening, no anchor, zero opening, empty months, first day/month ends/today, one date, future records, changed openings/backdated edits and valuation changes leaving past points untouched.
 - [ ] 2.6 Add comparable previous-month-end changes. Trace: net-worth «Change requires…». Tests: `src/domain/net-worth.test.ts` — +20%, zero/negative baseline absolute-only, missing previous month-end, valuation substitution and future records suppress comparison, unrelated currency remains comparable.
 - [ ] 2.7 Add per-currency current readout, approximate UAH and basis explanations using existing conversion rules. Trace: net-worth «Approximate UAH…», «Current valuation…». Tests: `src/ui/net-worth.test.ts` — rounding example, signed conversion, missing EUR including zero total, stale cached rate date, UAH-only, overflow, investment dates/fallbacks, difference from Accounts totals.
