@@ -280,7 +280,24 @@ All boxes describe future implementation work and remain unchecked in this propo
       test) and one stale doc comment, and added explicit ordering/no-held-progress-form tests.
       FAB and scroll-to-top behavior are untouched. `npm run verify`: 3608 tests passed,
       `b57a6d0930e0537b8f775dd34b93b3a9a42d221a`.
-- [ ] 4.5 Render category donut, currency control, legend and remainder with accessible alternatives. Trace: main-screen «Top categories…», «Category currencies…», «Categories open…», «The dashboard remains accessible…». Tests: `src/ui/home-categories.test.ts` — text/selected-state labels and route descriptors; rendered layout and TalkBack smoke in §7.
+- [x] 4.5 Render category donut, currency control, legend and remainder with accessible alternatives. Trace: main-screen «Top categories…», «Category currencies…», «Categories open…», «The dashboard remains accessible…». Tests: `src/ui/home-categories.test.ts` — text/selected-state labels and route descriptors; rendered layout and TalkBack smoke in §7.
+
+      **Result:** Extended `home-categories.ts` with `accessibilityLabel` on every row and the
+      remainder, and a new `currencyChips` array (empty unless 2+ currencies exist, each chip
+      carrying its own selected-state label — "UAH, обрано" vs plain "UAH" — so the choice is never
+      colour-only). Added `src/components/category-widget.tsx`: an SVG donut (plain trigonometry,
+      no arc-command approximation needed since this isn't the icon set's bounds-checked glyph
+      table) using the single theme accent at graduated opacity per sector — confirmed via
+      exploration that the theme defines no multi-hue chart palette at all ("Графіт і вохра" is
+      genuinely one accent), so a second palette would fight the design system rather than extend
+      it; a neutral ring (border-coloured, no sectors) for any negative or non-positive total; the
+      remainder grouped into the donut's own last sector so it reconciles to the exact signed
+      center. Wired into `index.tsx` after the operational alerts, with local `useState` for the
+      requested currency and `categoryMonthRoute`/`remainderRoute` (task 3.4) driving navigation.
+      6 new tests in `home-categories.test.ts` (10 total) cover the two new fields, the
+      no-selector-for-one-currency case, and the route-descriptor contract. Rendered
+      layout/TalkBack verification is task 7.2's, on the emulator. `npm run verify`: 3610 tests
+      passed, `5063acebf6f0b39ed29f6b81a8c06e83f3d894b3`.
 - [ ] 4.6 Render Статок current values, compact history, point inspection, explanation and Accounts link. Trace: main-screen «Статок exposes…»; net-worth «History is readable…». Tests: `src/ui/net-worth.test.ts` — all basis/coverage explanations and exact accessible dated points; rendered flat/negative/gapped charts and Accounts navigation smoke in §7.
 
 ## 5. Progress, overlays and data lifecycle

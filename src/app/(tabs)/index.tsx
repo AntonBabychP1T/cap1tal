@@ -48,7 +48,9 @@ import {
   type DraftAnswer,
 } from '@/ui/drafts-section';
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
-import { currentMonthRoute } from '@/ui/home-navigation';
+import { CategoryWidget } from '@/components/category-widget';
+import { categoryMonthRoute, currentMonthRoute, remainderRoute } from '@/ui/home-navigation';
+import { categoryPresentation } from '@/ui/home-categories';
 import { manualRefresh } from '@/ui/home-refresh';
 import { homeViewModel } from '@/ui/home-screen';
 import { syncCoverage } from '@/ui/monobank-screen';
@@ -390,6 +392,19 @@ export default function MainScreen() {
         monthTransactions: (month) => transactionsRepo.listMonth(month),
       }),
     [stored.feed, stored.limits],
+  );
+
+  /** «Топ категорій витрат»: the same місячна breakdown, ranked and currency-selected. */
+  const [requestedCategoryCurrency, setRequestedCategoryCurrency] = useState<string>();
+  const categories = useMemo(
+    () =>
+      categoryPresentation({
+        month: stored.month,
+        transactions: stored.monthTransactions,
+        categoryNames,
+        ...(requestedCategoryCurrency ? { requestedCurrency: requestedCategoryCurrency } : {}),
+      }),
+    [categoryNames, requestedCategoryCurrency, stored.month, stored.monthTransactions],
   );
 
   /** The «Без категорії» line whose one-tap picker is open, if any. */
@@ -786,6 +801,16 @@ export default function MainScreen() {
           ))}
         </ListCard>
       ) : null}
+
+      {/* «Топ категорій витрат»: the same signed monthly breakdown Місяць's own drill-down
+          shows, ranked and currency-selected (main-screen, "Top categories read the same signed
+          monthly breakdown"). Currency selection never narrows what a row's own detail shows. */}
+      <CategoryWidget
+        presentation={categories}
+        onSelectCurrency={setRequestedCategoryCurrency}
+        onOpenCategory={(categoryId) => router.push(categoryMonthRoute(categoryId, new Date()))}
+        onOpenRemainder={() => router.push(remainderRoute(new Date()))}
+      />
 
       <RuleOfferSheet
         offer={ruleOffer.offer}

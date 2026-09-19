@@ -8,6 +8,7 @@ import {
   UNCATEGORISED_CATEGORY_ID,
   type Transaction,
 } from '../domain/transaction';
+import { categoryMonthRoute, currentMonthRoute, remainderRoute } from './home-navigation';
 import { categoryPresentation } from './home-categories';
 
 const names = new Map<string, string>([
@@ -34,7 +35,12 @@ const spent = (
 describe('categoryPresentation', () => {
   it('Scenario: An empty breakdown says «Ще немає витрат»', () => {
     const result = categoryPresentation({ month: '2026-09', transactions: [], categoryNames: names });
-    expect(result).toEqual({ currencies: [], rows: [], emptyMessage: 'Ще немає витрат' });
+    expect(result).toEqual({
+      currencies: [],
+      currencyChips: [],
+      rows: [],
+      emptyMessage: 'Ще немає витрат',
+    });
   });
 
   it('Scenario: Five plus the remainder reconcile', () => {
@@ -50,7 +56,12 @@ describe('categoryPresentation', () => {
     expect(result.center).toEqual(money(280000, 'UAH'));
     expect(result.rows).toHaveLength(5);
     expect(result.rows.map((r) => r.amount.amount)).toEqual([70000, 60000, 50000, 40000, 30000]);
-    expect(result.remainder).toEqual({ count: 2, label: 'Ще 2', amount: money(30000, 'UAH') });
+    expect(result.remainder).toEqual({
+      count: 2,
+      label: 'Ще 2',
+      amount: money(30000, 'UAH'),
+      accessibilityLabel: 'Ще 2 категорії, 300,00 UAH',
+    });
     // The five plus the remainder sum back to the exact spent center.
     const total = result.rows.reduce((s, r) => s + r.amount.amount, 0) + (result.remainder?.amount.amount ?? 0);
     expect(total).toBe(result.center!.amount);
@@ -104,7 +115,14 @@ describe('categoryPresentation', () => {
     ];
     const result = categoryPresentation({ month: '2026-09', transactions, categoryNames: names });
     expect(result.center).toEqual(money(-5000, 'UAH'));
-    expect(result.rows).toEqual([{ categoryId: 'clothes', name: 'Одяг', amount: money(-5000, 'UAH') }]);
+    expect(result.rows).toEqual([
+      {
+        categoryId: 'clothes',
+        name: 'Одяг',
+        amount: money(-5000, 'UAH'),
+        accessibilityLabel: 'Одяг, −50,00 UAH',
+      },
+    ]);
   });
 
   it('Scenario: Two currencies select independently', () => {
@@ -122,6 +140,23 @@ describe('categoryPresentation', () => {
     expect(usdSelected.selectedCurrency).toBe('USD');
     expect(usdSelected.center).toEqual(money(5000, 'USD'));
     expect(usdSelected.rows.every((r) => r.amount.currency === 'USD')).toBe(true);
+
+    // Selected-state labels: never a colour alone standing for which chip is chosen.
+    expect(first.currencyChips).toEqual([
+      { currency: 'UAH', selected: true, accessibilityLabel: 'UAH, обрано' },
+      { currency: 'USD', selected: false, accessibilityLabel: 'USD' },
+    ]);
+    expect(usdSelected.currencyChips).toEqual([
+      { currency: 'UAH', selected: false, accessibilityLabel: 'UAH' },
+      { currency: 'USD', selected: true, accessibilityLabel: 'USD, обрано' },
+    ]);
+  });
+
+  it('Scenario: A single currency offers no selector at all', () => {
+    const transactions = [spent('e1', 'groceries', 10000, 'UAH')];
+    const result = categoryPresentation({ month: '2026-09', transactions, categoryNames: names });
+    expect(result.currencies).toEqual(['UAH']);
+    expect(result.currencyChips).toEqual([]);
   });
 
   it('Scenario: No UAH or a removed selection', () => {
@@ -148,5 +183,25 @@ describe('categoryPresentation', () => {
     });
     expect(usdGone.selectedCurrency).toBe('EUR');
     expect(usdGone.currencies).toEqual(['EUR']);
+  });
+
+  it('Scenario: Currency selection does not narrow the existing detail contract — route descriptors', () => {
+    // Each row and the remainder carry exactly what `categoryMonthRoute`/`remainderRoute`
+    // (`home-navigation.ts`) need — a categoryId and nothing about the currently selected
+    // currency, since the route they build shows every currency regardless.
+    const transactions = [spent('e1', 'groceries', 10000, 'UAH'), spent('e2', 'transport', 5000, 'USD')];
+    const result = categoryPresentation({
+      month: '2026-09',
+      transactions,
+      categoryNames: names,
+      requestedCurrency: 'USD',
+    });
+    const now = new Date('2026-09-19T12:00:00');
+    expect(result.rows.map((r) => categoryMonthRoute(r.categoryId, now))).toEqual([
+      '/category/2026-09/transport',
+    ]);
+    if (result.remainder) {
+      expect(remainderRoute(now)).toBe(currentMonthRoute(now));
+    }
   });
 });
