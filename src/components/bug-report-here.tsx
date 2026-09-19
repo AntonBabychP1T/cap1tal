@@ -15,7 +15,7 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BottomTabInset, Colors, Radius, Spacing, TouchTarget } from '@/constants/theme';
+import { Colors, Radius, Spacing, TouchTarget } from '@/constants/theme';
 import { reporting as reportingRepo } from '@/db/repos';
 import type { CaptureSettings } from '@/db/reporting-repo';
 import { buildInfo, deviceInfo } from '@/platform/app-build-device';
@@ -78,7 +78,6 @@ export function BugReportHere({ settings }: { settings: CaptureSettings }) {
   const insets = useSafeAreaInsets();
   const layout = overlayLayout({
     safeAreaBottom: insets.bottom,
-    tabBarHeight: BottomTabInset,
     fabSize: FAB_SIZE,
     handleSize: HANDLE_SIZE,
   });

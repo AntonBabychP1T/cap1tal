@@ -13,7 +13,7 @@ import { Icon } from './icon';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
-import { BottomTabInset, Radius, Spacing, TouchTarget, type ThemeColor } from '@/constants/theme';
+import { Radius, Spacing, TouchTarget, type ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { overlayLayout } from '@/ui/dashboard-layout';
 import { type IconName } from '@/ui/icons';
@@ -86,7 +86,6 @@ export function Screen({
   const insets = useSafeAreaInsets();
   const layout = overlayLayout({
     safeAreaBottom: insets.bottom,
-    tabBarHeight: BottomTabInset,
     fabSize: FAB_SIZE,
     handleSize: HANDLE_SIZE,
   });
@@ -123,7 +122,6 @@ export function Fab({ label = '+', onPress }: { label?: string; onPress: () => v
   const insets = useSafeAreaInsets();
   const layout = overlayLayout({
     safeAreaBottom: insets.bottom,
-    tabBarHeight: BottomTabInset,
     fabSize: FAB_SIZE,
     handleSize: HANDLE_SIZE,
   });
