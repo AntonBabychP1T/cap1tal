@@ -1,12 +1,5 @@
-# categorisation-rules Specification
+## MODIFIED Requirements
 
-## Purpose
-The owner's stored автокатегоризація rules — "merchant / MCC → category" — and the deterministic
-matching every source of a витрата runs it through before anything falls back to «Без
-категорії»: the three import sources (Saldo CSV, monobank, bank notifications) and the manual
-entry form alike. Storing a rule, newly created or edited, also sweeps the stored «Без категорії»
-витрати it now matches, so a rule works on the pile the owner already has, not only forward.
-## Requirements
 ### Requirement: A rule maps merchant and/or MCC to one category
 
 A rule SHALL hold a merchant pattern (non-empty text), or an MCC (an integer), or both, and
@@ -337,7 +330,7 @@ a правило-переказ be offered for a переказ between раху
 
 #### Scenario: Editing a переказ offers nothing
 
-- **WHEN** a переказ carrying the опис "СІЛЬПО 123 Київ" is edited
+- **WHEN** a stored переказ carrying the опис "СІЛЬПО 123 Київ" is edited
 - **THEN** no правило is offered
 
 #### Scenario: Moving a витрата back into «Без категорії» offers nothing
@@ -504,4 +497,3 @@ lead back to them. A pass that moved nothing SHALL say nothing.
   категорія and turns one into a переказ that absorbs one дохід
 - **THEN** the журнал holds one operation for that pass carrying the counts forty, two, one and one,
   and no опис, сума or назва
-
