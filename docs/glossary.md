@@ -104,6 +104,13 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 
 - **Category** (категорія) — a label on an expense from the owner's own flat list. No hierarchy,
   no tags in v1.
+- **Category icon** (іконка категорії) — a picture from the app's fixed catalogue by which a
+  category is recognised; it never replaces the category's name and counts toward no total,
+  limit, goal, report or analysis package. The three reserved categories have fixed pictures;
+  every other category starts with one from the starter set or its name and keeps it until the
+  owner picks another. Sources carry none. A transaction line also leads with the app-fixed
+  picture of its kind — «Переказ», «Дохід» or «Плюс-мінус» — which is not a category icon and is
+  not owner-chosen.
 - **Source** (джерело доходу) — the label on an income: salary, freelance, parents, gift,
   investments, interest, …
 - **Starter set** **[PROPOSED]** — the owner's Saldo categories and sources, flattened.

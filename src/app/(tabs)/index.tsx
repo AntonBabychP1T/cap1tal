@@ -18,6 +18,7 @@ import {
   Chevron,
   Divider,
   Fab,
+  IconTile,
   ListCard,
   ListRow,
   Mark,
@@ -361,6 +362,7 @@ export default function MainScreen() {
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const categoryIconKeys = useMemo(() => new Map(stored.categories.map((c) => [c.id, c.iconKey])), [stored.categories]);
   const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
   // The джерела by id too: an imported дохід carries «Без джерела», and the стрічка has to name it.
   const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
@@ -716,11 +718,12 @@ export default function MainScreen() {
       ) : (
         <ListCard>
           {stored.feed.map((t, index) => {
-            const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit);
+            const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
             return (
               <ListRow key={line.id} last={index === stored.feed.length - 1} style={styles.row}>
                 <Pressable onPress={() => router.push(`/transaction/${line.id}`)}>
                   <View style={styles.rowTop}>
+                    <IconTile name={line.icon} tone={line.iconTone} />
                     <View style={styles.rowLabel}>
                       <View style={styles.rowTitle}>
                         {/* The mark, not a repainted row: what is uncategorised is the label. */}
@@ -749,13 +752,7 @@ export default function MainScreen() {
                     <ThemedText
                       tabular
                       style={styles.amount}
-                      themeColor={
-                        t.type === 'income'
-                          ? 'textPositive'
-                          : t.type === 'transfer'
-                            ? 'textSecondary'
-                            : undefined
-                      }
+                      themeColor={line.amountTone}
                     >
                       {line.amount}
                     </ThemedText>

@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
+import { Card, IconTile, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
@@ -45,6 +45,7 @@ export default function CategoryMonthScreen() {
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const names = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const categoryIconKeys = useMemo(() => new Map(stored.categories.map((c) => [c.id, c.iconKey])), [stored.categories]);
   const listed = useMemo(
     () => categoryTransactions({ month, categoryId, transactions: stored.transactions }),
     [categoryId, month, stored.transactions],
@@ -111,19 +112,20 @@ export default function CategoryMonthScreen() {
       ) : (
         <ListCard>
           {listed.map((t, index) => {
-            const line = transactionLine(t, byId, names);
+            const line = transactionLine(t, byId, names, new Map(), new Map(), categoryIconKeys);
             return (
               <ListRow key={line.id} last={index === listed.length - 1}>
                 <Pressable
                   onPress={() => router.push(`/transaction/${line.id}`)}
                   style={styles.row}>
+                  <IconTile name={line.icon} tone={line.iconTone} />
                   <View style={styles.label}>
                     <ThemedText numberOfLines={1}>{feedTitle(line)}</ThemedText>
                     <ThemedText type="small" themeColor="textSecondary">
                       {feedSubtitle(line)}
                     </ThemedText>
                   </View>
-                  <ThemedText tabular style={styles.amount}>
+                  <ThemedText tabular style={styles.amount} themeColor={line.amountTone}>
                     {line.amount}
                   </ThemedText>
                 </Pressable>

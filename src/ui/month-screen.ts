@@ -1,4 +1,6 @@
 import type { Account } from '../domain/account';
+import { resolveCategoryIcon } from '../domain/category-icon';
+import type { ThemeColor } from '../constants/theme';
 import { overLimitCategories, type CategoryLimit } from '../domain/limits';
 import type { CurrencyCode } from '../domain/money';
 import {
@@ -12,6 +14,8 @@ import { approximatePicture } from './approx-uah';
 import { categoryLabel } from './labels';
 import { canStepForward, monthLabel, prevMonth } from './months';
 import type { MonobankRate } from '../monobank/currency';
+import { categoryIconDefinition } from './category-icons';
+import type { IconName } from './icons';
 
 /**
  * Everything the Місяць screen renders, as strings — so what it says is under `verify` even though
@@ -45,6 +49,8 @@ export interface MonthBreakdownRow {
   readonly label: string;
   readonly currency: CurrencyCode;
   readonly amount: string;
+  readonly icon: IconName;
+  readonly iconTone: ThemeColor;
   /**
    * The category is over its ліміт for this month, in this row's currency — the screen draws the
    * amount red. Only the row in the ліміт's own currency carries it: the same category's amount in
@@ -163,6 +169,8 @@ export function monthViewModel(input: {
   /** The categories list as the screen loaded it, so a breakdown row reads the owner's own name
    * for the category — a renamed one included. See `categoryLabel` in ./labels. */
   categoryNames: ReadonlyMap<string, string>;
+  /** Optional to keep old pure callers compatible; unknown and absent values always resolve safely. */
+  categoryIconKeys?: ReadonlyMap<string, string | undefined>;
   /** The ліміти as the screen loaded them; an empty list marks nothing. */
   limits: readonly CategoryLimit[];
   /**
@@ -202,14 +210,16 @@ export function monthViewModel(input: {
       // The largest is the first, since that is what the sort just did. Zero or less — a month
       // whose every категорія was refunded away — leaves every bar empty rather than dividing.
       const largest = sorted[0]?.amount ?? 0;
-      const rows: MonthBreakdownRow[] = sorted.map(({ categoryId, label, amount, formatted }) => ({
-        categoryId,
-        label,
-        currency,
-        amount: formatted,
-        overLimit: over.get(categoryId) === currency,
-        share: largest > 0 ? Math.max(0, amount / largest) : 0,
-      }));
+      const rows: MonthBreakdownRow[] = sorted.map(({ categoryId, label, amount, formatted }) => {
+        const overLimit = over.get(categoryId) === currency;
+        const key = resolveCategoryIcon({ id: categoryId, name: label, iconKey: input.categoryIconKeys?.get(categoryId) });
+        return {
+          categoryId, label, currency, amount: formatted, overLimit,
+          icon: categoryIconDefinition(key).glyph,
+          iconTone: overLimit ? 'textDanger' : 'textSecondary',
+          share: largest > 0 ? Math.max(0, amount / largest) : 0,
+        };
+      });
       const numbers = picture.get(currency)!;
       const lead: NumberKey = numbers.income.amount > 0 ? 'left' : 'spent';
       return {

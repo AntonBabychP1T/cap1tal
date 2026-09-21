@@ -37,7 +37,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 2;
+export const BACKUP_SCHEMA_VERSION = 3;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -470,6 +470,21 @@ function namedAt(value: unknown, at: string): Category {
   };
 }
 
+/** Categories gained an optional key; sources deliberately keep the older plain named-row parser. */
+function categoryAt(value: unknown, at: string): Category {
+  const row = objectAt(value, at);
+  const iconKey = row.iconKey;
+  if (iconKey !== undefined && iconKey !== null && (typeof iconKey !== 'string' || iconKey.trim() === '')) {
+    fail(`${at}.iconKey не є непорожньою іконкою категорії`);
+  }
+  return {
+    id: stringAt(row.id, `${at}.id`),
+    name: stringAt(row.name, `${at}.name`),
+    archived: booleanAt(row.archived, `${at}.archived`),
+    ...(iconKey === undefined || iconKey === null ? {} : { iconKey }),
+  };
+}
+
 function ruleAt(value: unknown, at: string): BackupRule {
   const row = objectAt(value, at);
   return {
@@ -794,7 +809,7 @@ export function parseState(value: unknown): BackupState {
   const committedAt = data.saldoImportCommittedAtMs;
   return {
     accounts: listAt(data, 'accounts', accountAt),
-    categories: listAt(data, 'categories', namedAt),
+    categories: listAt(data, 'categories', categoryAt),
     sources: listAt(data, 'sources', namedAt),
     rules: listAt(data, 'rules', ruleAt),
     limits: listAt(data, 'limits', limitAt),

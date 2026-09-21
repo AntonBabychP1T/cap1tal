@@ -328,7 +328,7 @@ describe('rulesRepo on a file database', () => {
     try {
       expect(
         reopened.db.select().from(categories).where(eq(categories.id, 'groceries')).get(),
-      ).toEqual({ id: 'groceries', name: 'Продукти', archived: false });
+      ).toEqual({ id: 'groceries', name: 'Продукти', iconKey: null, archived: false });
       expect(
         reopened.db.select().from(sources).where(eq(sources.id, 'stypendiya')).get(),
       ).toEqual({ id: 'stypendiya', name: 'степендія', archived: true });

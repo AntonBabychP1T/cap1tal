@@ -21,7 +21,7 @@ import {
   reporting as reportingRepo,
   rules as rulesRepo,
 } from '@/db/repos';
-import { seedStarterSet } from '@/db/seed';
+import { fillMissingCategoryIcons, seedStarterSet } from '@/db/seed';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { useOnForeground } from '@/hooks/use-on-foreground';
 import { useStorageMigrations } from '@/hooks/use-storage-migrations';
@@ -191,6 +191,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (success) {
       seedStarterSet(db);
+      fillMissingCategoryIcons(db);
     }
   }, [success]);
 

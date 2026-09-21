@@ -6,11 +6,14 @@ import {
   type Source,
 } from '../domain/category';
 import type { CurrencyCode } from '../domain/money';
+import { resolveCategoryIcon } from '../domain/category-icon';
 import { matchRule, proposeMerchantPattern, type Rule, type RuleTarget } from '../domain/rules';
 import { UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import type { SweepCounts } from '../db/rules-repo';
 import { journal } from './journal';
 import { accountLabel, byName, categoryLabel, expenseCount } from './labels';
+import { categoryIconDefinition } from './category-icons';
+import type { IconName } from './icons';
 
 /**
  * What the «Категорії», «Джерела» and «Правила» sections of Налаштування show, and what the rule
@@ -27,6 +30,9 @@ export interface ManagedRow {
   readonly canRename: boolean;
   readonly canArchive: boolean;
   readonly canUnarchive: boolean;
+  /** Present for categories only; sources intentionally have no visual vocabulary. */
+  readonly icon?: IconName;
+  readonly iconKey?: string;
 }
 
 /**
@@ -64,7 +70,12 @@ function manage(
  * because default recording, the комісія proposal and коригування attribution depend on them.
  */
 export function manageCategories(all: readonly Category[]): ManagedRow[] {
-  return manage(all, isReservedCategory);
+  const icons = new Map(all.map((row) => [row.id, row]));
+  return manage(all, isReservedCategory).map((row) => {
+    const category = icons.get(row.id)!;
+    const iconKey = resolveCategoryIcon(category);
+    return { ...row, iconKey, icon: categoryIconDefinition(iconKey).glyph };
+  });
 }
 
 /**

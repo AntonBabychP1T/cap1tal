@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { sql } from 'drizzle-orm';
 
 import { prepareConnection } from './prepare';
 import * as schema from './schema';
@@ -65,7 +66,10 @@ export function seedReferences(
   ids: { categories?: readonly string[]; sources?: readonly string[] },
 ): void {
   for (const id of ids.categories ?? []) {
-    db.insert(categories).values({ id, name: id }).onConflictDoNothing().run();
+    // This fixture is also used to seed a database paused before a later categories-only
+    // migration. Raw SQL names the old common columns, where the current Drizzle projection would
+    // incorrectly try to write `icon_key` before that migration has run.
+    db.run(sql`INSERT OR IGNORE INTO categories (id, name) VALUES (${id}, ${id})`);
   }
   for (const id of ids.sources ?? []) {
     db.insert(sources).values({ id, name: id }).onConflictDoNothing().run();

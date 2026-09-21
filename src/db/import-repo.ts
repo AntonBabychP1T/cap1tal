@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 
 import { account } from '../domain/account';
+import { startingCategoryIcon } from '../domain/category-icon';
 import { isoDate, type Transaction } from '../domain/transaction';
 import type { ImportPlan } from '../saldo/interpret';
 import { newId } from '../ui/id';
@@ -94,18 +95,18 @@ export function importRepo(db: Storage) {
           }
         }
 
-        for (const [table, proposals] of [
-          [categories, plan.categories],
-          [sources, plan.sources],
-        ] as const) {
-          for (const proposal of proposals) {
+        for (const proposal of plan.categories) {
+          const id = real(proposal.proposedId);
+          const name = listName(proposal.saldoName);
+          tx.insert(categories).values({ id, name, iconKey: startingCategoryIcon({ id, name }) }).run();
+        }
+        for (const proposal of plan.sources) {
             // Through the list's own name rule, not around it: `named-list-repo` is what makes a
             // stored name trimmed, and a name only the import left untrimmed is a name the
             // manage lists could never match again.
-            tx.insert(table)
+            tx.insert(sources)
               .values({ id: real(proposal.proposedId), name: listName(proposal.saldoName) })
               .run();
-          }
         }
 
         plan.transactions.forEach((planned, index) => {

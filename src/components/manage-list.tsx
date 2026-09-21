@@ -3,13 +3,15 @@ import { useCallback, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { Action, Field, RowAction } from './form';
-import { Card, ListCard, ListRow, Screen, ScreenHeader } from './surfaces';
+import { CategoryIconPicker, type PickableCategoryIcon } from './category-icon-picker';
+import { Card, IconTile, ListCard, ListRow, Screen, ScreenHeader } from './surfaces';
 import { ThemedText } from './themed-text';
 
 import { Spacing } from '@/constants/theme';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { failureAlert } from '@/ui/failure-alert';
 import type { ManagedRow } from '@/ui/list-management';
+import { suggestCategoryIcon, type CategoryIconKey } from '@/domain/category-icon';
 
 /**
  * The «Категорії» and «Джерела» sections of Налаштування: one list, the same four verbs, twice.
@@ -26,6 +28,7 @@ export function ManageListScreen({
   rename,
   archive,
   unarchive,
+  categoryIcons,
 }: {
   title: string;
   hint: string;
@@ -37,10 +40,12 @@ export function ManageListScreen({
   where: string;
   /** Must be stable — `useReloadOnFocus` depends on its identity. */
   load: () => ManagedRow[];
-  create: (name: string) => void;
-  rename: (id: string, name: string) => void;
+  create: (name: string, iconKey?: CategoryIconKey) => void;
+  rename: (id: string, name: string, iconKey?: CategoryIconKey) => void;
   archive: (id: string) => void;
   unarchive: (id: string) => void;
+  /** Present only for categories; sources intentionally stay name-only. */
+  categoryIcons?: readonly PickableCategoryIcon[];
 }) {
   const router = useRouter();
   const [rows, reload] = useReloadOnFocus(load);
@@ -51,8 +56,10 @@ export function ManageListScreen({
     [router],
   );
   const [fresh, setFresh] = useState('');
+  const [freshIcon, setFreshIcon] = useState<CategoryIconKey>('tag');
+  const [freshIconPicked, setFreshIconPicked] = useState(false);
   /** The row being renamed, and the name as it is being typed; nothing else is editable at once. */
-  const [editing, setEditing] = useState<{ id: string; name: string }>();
+  const [editing, setEditing] = useState<{ id: string; name: string; iconKey?: CategoryIconKey }>();
 
   // Every write goes through here: the repositories reject an empty or duplicate name by
   // throwing, and the owner reads that sentence rather than watching nothing happen.
@@ -87,12 +94,18 @@ export function ManageListScreen({
       <ScreenHeader title={title} subtitle={hint} back={() => router.back()} />
 
       <Card style={styles.form}>
-        <Field label="Нова назва" value={fresh} onChangeText={setFresh} placeholder="Назва" />
+        <Field label="Нова назва" value={fresh} onChangeText={(name) => {
+          setFresh(name);
+          if (!freshIconPicked) setFreshIcon(suggestCategoryIcon(name));
+        }} placeholder="Назва" />
+        {categoryIcons ? <CategoryIconPicker icons={categoryIcons} value={freshIcon} onChange={(iconKey) => { setFreshIcon(iconKey); setFreshIconPicked(true); }} /> : null}
         <Action
           title="Додати"
           onPress={() => {
-            if (attempt('create', () => create(fresh))) {
+            if (attempt('create', () => create(fresh, categoryIcons ? freshIcon : undefined))) {
               setFresh('');
+              setFreshIcon('tag');
+              setFreshIconPicked(false);
             }
           }}
         />
@@ -108,11 +121,12 @@ export function ManageListScreen({
                   value={editing.name}
                   onChangeText={(name) => setEditing({ id: row.id, name })}
                 />
+                {categoryIcons && editing.iconKey ? <CategoryIconPicker icons={categoryIcons} value={editing.iconKey} onChange={(iconKey) => setEditing({ ...editing, iconKey })} /> : null}
                 <View style={styles.actions}>
                   <RowAction
                     title="Зберегти"
                     onPress={() => {
-                      if (attempt('rename', () => rename(row.id, editing.name))) {
+                      if (attempt('rename', () => rename(row.id, editing.name, editing.iconKey))) {
                         setEditing(undefined);
                       }
                     }}
@@ -123,6 +137,7 @@ export function ManageListScreen({
             ) : (
               <>
                 <View style={styles.rowTop}>
+                  {row.icon ? <IconTile name={row.icon} /> : null}
                   {/* Archived rows stay visible and are set apart, never dropped. */}
                   <ThemedText
                     numberOfLines={1}
@@ -140,7 +155,7 @@ export function ManageListScreen({
                   {row.canRename ? (
                     <RowAction
                       title="Перейменувати"
-                      onPress={() => setEditing({ id: row.id, name: row.name })}
+                      onPress={() => setEditing({ id: row.id, name: row.name, iconKey: row.iconKey as CategoryIconKey | undefined })}
                     />
                   ) : null}
                   {row.canArchive ? (

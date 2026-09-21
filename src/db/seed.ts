@@ -1,6 +1,7 @@
 import { and, eq, ne } from 'drizzle-orm';
 
 import { categories, sources, transactions } from './schema';
+import { startingCategoryIcon } from '../domain/category-icon';
 import { RESERVED_SOURCES, STARTER_CATEGORIES, STARTER_SOURCES } from './starter-set';
 import type { Storage } from './storage';
 
@@ -19,13 +20,23 @@ import type { Storage } from './storage';
 export function seedStarterSet(db: Storage): void {
   adoptHandCreatedReservedSources(db);
   db.insert(categories)
-    .values(STARTER_CATEGORIES.map((row) => ({ id: row.id, name: row.name })))
+    .values(STARTER_CATEGORIES.map((row) => ({ id: row.id, name: row.name, iconKey: startingCategoryIcon(row) })))
     .onConflictDoNothing()
     .run();
   db.insert(sources)
     .values(STARTER_SOURCES.map((row) => ({ id: row.id, name: row.name })))
     .onConflictDoNothing()
     .run();
+}
+
+/** One-time repair for rows from before `icon_key`; never recomputes an owner-picked value. */
+export function fillMissingCategoryIcons(db: Storage): void {
+  const missing = db.select().from(categories).all().filter((row) => row.iconKey === null);
+  db.transaction((tx) => {
+    for (const row of missing) {
+      tx.update(categories).set({ iconKey: startingCategoryIcon(row) }).where(eq(categories.id, row.id)).run();
+    }
+  }, { behavior: 'immediate' });
 }
 
 /**

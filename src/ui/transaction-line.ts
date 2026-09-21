@@ -1,4 +1,5 @@
 import type { Account } from '../domain/account';
+import { resolveCategoryIcon } from '../domain/category-icon';
 import { overLimitCategories, type CategoryLimit } from '../domain/limits';
 import { categoryBreakdown } from '../domain/monthly-picture';
 import {
@@ -15,6 +16,9 @@ import {
 } from '../domain/transaction';
 import { formatMoney } from './amount-input';
 import { categoryLabel, sourceLabel, transactionTypeLabel } from './labels';
+import { categoryIconDefinition } from './category-icons';
+import type { IconName } from './icons';
+import type { ThemeColor } from '../constants/theme';
 
 /**
  * One row of the стрічка: what the feed requirement asks it to show — the amount with its
@@ -26,6 +30,10 @@ export interface TransactionLine {
   /** витрата, переказ, дохід, повернення, коригування. */
   readonly type: string;
   readonly amount: string;
+  /** The row's leading glyph and the two independent tones the renderer must preserve. */
+  readonly icon: IconName;
+  readonly iconTone: ThemeColor;
+  readonly amountTone: ThemeColor;
   readonly accounts: string;
   readonly date: IsoDate;
   /** The category label where the type has one; absent otherwise. */
@@ -131,6 +139,8 @@ export function transactionLine(
   sourceNames: ReadonlyMap<string, string> = new Map(),
   /** Per month, the categories over their ліміт — `overLimitByMonth` above. Empty marks nothing. */
   overLimit: ReadonlyMap<Month, ReadonlySet<string>> = new Map(),
+  /** Stored keys are separate from labels so a rename cannot recompute a picture. */
+  categoryIconKeys: ReadonlyMap<string, string | undefined> = new Map(),
 ): TransactionLine {
   const common = {
     id: t.id,
@@ -138,6 +148,9 @@ export function transactionLine(
     date: t.date,
     uncategorised: false,
     overLimit: false,
+    icon: 'tag' as IconName,
+    iconTone: 'textSecondary' as ThemeColor,
+    amountTone: 'text' as ThemeColor,
     // Guarded, not assigned: an empty опис is no опис, and the row must stay compact.
     ...(t.description ? { description: t.description } : {}),
   };
@@ -145,10 +158,11 @@ export function transactionLine(
     return {
       ...common,
       amount: transferAmount(t),
+      icon: 'transfer',
       accounts: `${accountNameOf(t.fromAccountId, accountsById)} → ${accountNameOf(t.toAccountId, accountsById)}`,
     };
   }
-  return {
+  const line: TransactionLine = {
     ...common,
     amount: directionalAmount(t),
     accounts: accountNameOf(t.accountId, accountsById),
@@ -163,6 +177,17 @@ export function transactionLine(
       : {}),
     ...(t.type === 'income' ? { source: sourceLabel(t.sourceId, sourceNames) } : {}),
   };
+  if (t.type === 'expense' || t.type === 'refund') {
+    const icon = categoryIconDefinition(resolveCategoryIcon({
+      id: t.categoryId,
+      name: categoryNames.get(t.categoryId) ?? t.categoryId,
+      iconKey: categoryIconKeys.get(t.categoryId),
+    })).glyph;
+    return { ...line, icon, iconTone: line.overLimit ? 'textDanger' : 'textSecondary' };
+  }
+  if (t.type === 'income') return { ...line, icon: 'income', iconTone: 'textPositive', amountTone: 'textPositive' };
+  if (t.type === 'correction') return { ...line, icon: 'plusMinus' };
+  return line;
 }
 
 /**
@@ -181,7 +206,7 @@ export function feedTitle(line: TransactionLine): string {
 
 export function feedSubtitle(line: TransactionLine): string {
   const labelled = line.category !== undefined || line.source !== undefined;
-  return `${labelled ? line.accounts : line.type} · ${line.date}`;
+  return `${line.type === 'повернення' ? 'повернення' : labelled ? line.accounts : line.type} · ${line.date}`;
 }
 
 export function accountsById(accounts: readonly Account[]): ReadonlyMap<string, Account> {

@@ -5,6 +5,7 @@ import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { Action, Choices, Field } from '@/components/form';
 import {
   Card,
+  IconTile,
   ListCard,
   ListRow,
   Mark,
@@ -97,6 +98,7 @@ export default function AccountMovementsScreen() {
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const categoryIconKeys = useMemo(() => new Map(stored.categories.map((c) => [c.id, c.iconKey])), [stored.categories]);
   const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
 
   const movements = useMemo(
@@ -326,12 +328,13 @@ export default function AccountMovementsScreen() {
       ) : (
         <ListCard>
           {movements.transactions.map((t, index) => {
-            const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit);
+            const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
             return (
               <ListRow key={line.id} last={index === movements.transactions.length - 1}>
                 <Pressable
                   onPress={() => router.push(`/transaction/${line.id}`)}
                   style={styles.row}>
+                  <IconTile name={line.icon} tone={line.iconTone} />
                   <View style={styles.label}>
                     <View style={styles.rowTitle}>
                       {line.uncategorised ? <Mark /> : null}
@@ -353,13 +356,7 @@ export default function AccountMovementsScreen() {
                   <ThemedText
                     tabular
                     style={styles.amount}
-                    themeColor={
-                      t.type === 'income'
-                        ? 'textPositive'
-                        : t.type === 'transfer'
-                          ? 'textSecondary'
-                          : undefined
-                    }>
+                    themeColor={line.amountTone}>
                     {line.amount}
                   </ThemedText>
                 </Pressable>

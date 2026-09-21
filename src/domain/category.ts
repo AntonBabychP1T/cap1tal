@@ -14,6 +14,8 @@ import {
 export interface Category {
   readonly id: string;
   readonly name: string;
+  /** App-owned key of the picture this category wears; old rows are filled on opening. */
+  readonly iconKey?: string;
   /** An archived row keeps its history and is offered in no picker. */
   readonly archived: boolean;
 }

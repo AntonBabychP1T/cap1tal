@@ -4,7 +4,7 @@ import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { Action, Choices, Field, Picker, RowAction } from '@/components/form';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
-import { Card, ListCard, ListRow, Mark, Screen, ScreenHeader } from '@/components/surfaces';
+import { Card, IconTile, ListCard, ListRow, Mark, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
@@ -139,6 +139,7 @@ export default function TransactionsScreen() {
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const categoryIconKeys = useMemo(() => new Map(stored.categories.map((c) => [c.id, c.iconKey])), [stored.categories]);
   const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
   const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
   const overLimit = useMemo(
@@ -303,13 +304,14 @@ export default function TransactionsScreen() {
         <>
           <ListCard>
             {shown.transactions.map((t, index) => {
-              const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit);
+              const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
               const title = searchLineTitle(line, uncategorisedOnly);
               return (
                 <ListRow key={line.id} last={index === shown.transactions.length - 1}>
                   <Pressable
                     onPress={() => router.push(`/transaction/${line.id}`)}
-                    style={styles.row}>
+                  style={styles.row}>
+                    <IconTile name={line.icon} tone={line.iconTone} />
                     <View style={styles.label}>
                       <View style={styles.rowTitle}>
                         {line.uncategorised ? <Mark /> : null}
@@ -332,13 +334,7 @@ export default function TransactionsScreen() {
                     <ThemedText
                       tabular
                       style={styles.amount}
-                      themeColor={
-                        t.type === 'income'
-                          ? 'textPositive'
-                          : t.type === 'transfer'
-                            ? 'textSecondary'
-                            : undefined
-                      }>
+                      themeColor={line.amountTone}>
                       {line.amount}
                     </ThemedText>
                   </Pressable>

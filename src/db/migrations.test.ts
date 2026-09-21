@@ -382,6 +382,7 @@ describe('migrations — the editable lists', () => {
     expect(db.select().from(categories).where(eq(categories.id, 'groceries')).get()).toEqual({
       id: 'groceries',
       name: 'Groceries',
+      iconKey: null,
       archived: false,
     });
     expect(db.select().from(sources).where(eq(sources.id, 'salary')).get()).toEqual({

@@ -850,6 +850,7 @@ describe('the round trip a бекап promises', () => {
     expect(after.categories.find((c) => c.id === 'old')).toEqual({
       id: 'old',
       name: 'Старе',
+      iconKey: 'tag',
       archived: true,
     });
     expect(rulesRepo(target.db).list()).toEqual([

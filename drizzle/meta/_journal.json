@@ -15,6 +15,13 @@
       "when": 1789831527662,
       "tag": "0001_cloudy_betty_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789886065534,
+      "tag": "0002_broken_wendell_vaughn",
+      "breakpoints": true
     }
   ]
 }

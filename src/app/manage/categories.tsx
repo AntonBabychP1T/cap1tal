@@ -4,6 +4,8 @@ import { ManageListScreen } from '@/components/manage-list';
 import { categories as categoriesRepo } from '@/db/repos';
 import { newId } from '@/ui/id';
 import { manageCategories } from '@/ui/list-management';
+import { PICKABLE_CATEGORY_ICONS } from '@/ui/category-icons';
+import type { CategoryIconKey } from '@/domain/category-icon';
 
 /**
  * The «Категорії» section. Everything it decides — the order, which verbs a row offers, that
@@ -17,10 +19,11 @@ export default function CategoriesScreen() {
       where="categories"
       hint="Куди пішли гроші. Архівна категорія лишається на своїх транзакціях, але її більше не пропонують."
       load={useCallback(() => manageCategories(categoriesRepo.list()), [])}
-      create={useCallback((name: string) => {
-        categoriesRepo.create({ id: newId(), name });
+      categoryIcons={PICKABLE_CATEGORY_ICONS}
+      create={useCallback((name: string, iconKey?: CategoryIconKey) => {
+        categoriesRepo.create({ id: newId(), name, iconKey });
       }, [])}
-      rename={useCallback((id: string, name: string) => categoriesRepo.rename(id, name), [])}
+      rename={useCallback((id: string, name: string, iconKey?: CategoryIconKey) => categoriesRepo.update(id, { name, iconKey }), [])}
       archive={useCallback((id: string) => categoriesRepo.archive(id), [])}
       unarchive={useCallback((id: string) => categoriesRepo.unarchive(id), [])}
     />

@@ -64,7 +64,7 @@ describe('categoriesRepo', () => {
   it('Scenario: A created category is available', () => {
     repo.create({ id: 'repairs', name: 'Ремонт' });
 
-    expect(repo.get('repairs')).toEqual({ id: 'repairs', name: 'Ремонт', archived: false });
+    expect(repo.get('repairs')).toEqual({ id: 'repairs', name: 'Ремонт', iconKey: 'wrench', archived: false });
     expect(activeCategories(repo.list()).map((c) => c.name)).toContain('Ремонт');
   });
 
@@ -74,7 +74,7 @@ describe('categoriesRepo', () => {
 
     repo.rename('groceries', 'Продукти');
 
-    expect(repo.get('groceries')).toEqual({ id: 'groceries', name: 'Продукти', archived: false });
+    expect(repo.get('groceries')).toEqual({ id: 'groceries', name: 'Продукти', iconKey: 'basket', archived: false });
     expect(storedExpense('e1').categoryId).toBe('groceries');
     expect(namesById(repo.list()).get('groceries')).toBe('Продукти');
   });
@@ -150,6 +150,7 @@ describe('categoriesRepo', () => {
     expect(repo.create({ id: 'pets-2', name: 'Pets' })).toEqual({
       id: 'pets-2',
       name: 'Pets',
+      iconKey: 'paw',
       archived: false,
     });
   });
@@ -212,8 +213,8 @@ describe('categoriesRepo — what the mutation tests found missing', () => {
 
     repo.create({ id: 'pets-2', name: 'Pets' });
 
-    expect(repo.get('pets-2')).toEqual({ id: 'pets-2', name: 'Pets', archived: false });
-    expect(repo.get('pets')).toEqual({ id: 'pets', name: 'Pets', archived: true });
+    expect(repo.get('pets-2')).toEqual({ id: 'pets-2', name: 'Pets', iconKey: 'paw', archived: false });
+    expect(repo.get('pets')).toEqual({ id: 'pets', name: 'Pets', iconKey: 'paw', archived: true });
     expect(activeCategories(repo.list()).map((c) => c.id)).toContain('pets-2');
     expect(activeCategories(repo.list()).map((c) => c.id)).not.toContain('pets');
   });

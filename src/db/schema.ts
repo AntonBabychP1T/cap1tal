@@ -32,6 +32,8 @@ export const accounts = sqliteTable('accounts', {
 export const categories = sqliteTable('categories', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
+  /** Nullable only while rows written before category icons are being upgraded on opening. */
+  iconKey: text('icon_key'),
   /** Archived rows keep their history; they are offered in no picker. */
   archived: integer('archived', { mode: 'boolean' }).notNull().default(sql`0`),
 });

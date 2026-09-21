@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import {
   Card,
   Divider,
+  IconTile,
   Meter,
   Screen,
   SectionLabel,
@@ -94,6 +95,7 @@ export default function MonthScreen() {
         transactions: stored.transactions,
         rates: stored.rates,
         categoryNames: namesById(stored.categories),
+        categoryIconKeys: new Map(stored.categories.map((c) => [c.id, c.iconKey])),
         limits: stored.limits,
         previousTransactions: stored.previousTransactions,
         now: new Date(),
@@ -199,9 +201,10 @@ export default function MonthScreen() {
                     <Pressable
                       key={row.categoryId}
                       onPress={() => router.push(`/category/${model.month}/${row.categoryId}`)}>
-                      <View style={styles.line}>
+                      <View style={styles.breakdownLine}>
                         {/* Over its ліміт for this month, in this row's own currency: the amount
                             and its category turn red, and nothing else about the row changes. */}
+                        <IconTile name={row.icon} tone={row.iconTone} />
                         <ThemedText
                           numberOfLines={1}
                           style={styles.label}
@@ -270,7 +273,16 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
     gap: Spacing.two,
   },
-  label: { flex: 1 },
+  /* Same row, plus an IconTile: baseline alignment only knows about text, and a View mixed into
+     it throws off the row's own height, which is what pushed `meter` up into the label below
+     (baseline aligns `line` above; a category row's tile needs its own centred alignment). */
+  breakdownLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.twoHalf,
+  },
+  label: { flex: 1, minWidth: 0 },
   meter: { marginTop: Spacing.two - Spacing.half },
   amount: { fontWeight: 600 },
 });

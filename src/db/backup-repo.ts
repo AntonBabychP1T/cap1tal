@@ -68,7 +68,12 @@ export function backupRepo(db: Storage): BackupStore {
           .from(categories)
           .orderBy(asc(categories.id))
           .all()
-          .map((row) => ({ id: row.id, name: row.name, archived: row.archived })),
+          .map((row) => ({
+            id: row.id,
+            name: row.name,
+            archived: row.archived,
+            ...(row.iconKey === null ? {} : { iconKey: row.iconKey }),
+          })),
         sources: db
           .select()
           .from(sources)
@@ -365,7 +370,7 @@ export function backupRepo(db: Storage): BackupStore {
           tx.insert(accounts).values(toAccountRow(a)).run();
         }
         for (const c of state.categories) {
-          tx.insert(categories).values({ id: c.id, name: c.name, archived: c.archived }).run();
+          tx.insert(categories).values({ id: c.id, name: c.name, archived: c.archived, iconKey: c.iconKey ?? null }).run();
         }
         for (const s of state.sources) {
           tx.insert(sources).values({ id: s.id, name: s.name, archived: s.archived }).run();
