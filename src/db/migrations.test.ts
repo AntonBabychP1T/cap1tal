@@ -22,6 +22,7 @@ import {
   challengeDecisions,
   counterpartIncomeAwaits,
   dailyReminder,
+  dashboardLayout,
   earnedAchievements,
   entryDefaults,
   fiscalReceipts,
@@ -1821,6 +1822,65 @@ describe('migrations — правила-перекази and awaiting перек
       expect(db.select().from(counterpartIncomeAwaits).all()).toEqual([]);
     } finally {
       storage.close();
+    }
+  });
+});
+
+describe('migrations — the dashboard layout', () => {
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: Fresh install uses the four-widget default', () => {
+    const { db } = storage;
+
+    // No row means «follow this installed version's current default» — nothing is written by
+    // the migration itself.
+    expect(db.select().from(dashboardLayout).all()).toEqual([]);
+
+    db.insert(dashboardLayout)
+      .values({ id: 'home', schemaVersion: 1, itemsJson: '[]' })
+      .run();
+    expect(db.select().from(dashboardLayout).all()).toEqual([
+      { id: 'home', schemaVersion: 1, itemsJson: '[]' },
+    ]);
+
+    // One row, never two: the CHECK is what keeps the table to a single preference.
+    expect(() =>
+      db.insert(dashboardLayout).values({ id: 'home', schemaVersion: 1, itemsJson: '[]' }).run(),
+    ).toThrow();
+    expect(() =>
+      db.insert(dashboardLayout).values({ id: 'other', schemaVersion: 1, itemsJson: '[]' }).run(),
+    ).toThrow();
+
+    // A schema_version that is not positive is refused by storage as well as by the repository.
+    db.delete(dashboardLayout).run();
+    expect(() =>
+      db.insert(dashboardLayout).values({ id: 'home', schemaVersion: 0, itemsJson: '[]' }).run(),
+    ).toThrow();
+  });
+
+  it('successfully upgrades an existing installation with no backfill', () => {
+    const staged = openTestDbMigratedTo(3);
+    try {
+      const { db } = staged;
+      // Before this migration the table does not exist at all.
+      expect(() => db.select().from(dashboardLayout).all()).toThrow();
+
+      staged.migrateToLatest();
+
+      // The upgrade adds the table empty — a device that already existed gets no row and
+      // therefore no opinion of its own about a layout it never customised, exactly like a
+      // fresh install.
+      expect(db.select().from(dashboardLayout).all()).toEqual([]);
+    } finally {
+      staged.close();
     }
   });
 });

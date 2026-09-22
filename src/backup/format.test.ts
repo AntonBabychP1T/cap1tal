@@ -808,3 +808,46 @@ describe('what a бекап holding поточні вартості may not cont
     ]);
   });
 });
+
+describe('the dashboard layout in a бекап', () => {
+  it('Scenario: An older backup restores to the current default', () => {
+    // A бекап written before dashboard layout existed names no `dashboardLayout` at all.
+    expect(parseState({}).dashboardLayout).toBeUndefined();
+  });
+
+  it('accepts an unknown or duplicated widget identity as structurally valid data', () => {
+    // Unlike accounts, categories or sources, a widget identity is never checked against a
+    // registry here — normalization owns that (design D7).
+    const layout = {
+      schemaVersion: 1,
+      items: [
+        { id: 'net-worth', visible: true },
+        { id: 'net-worth', visible: false },
+        { id: 'some-widget-this-app-has-never-heard-of', visible: true },
+      ],
+    };
+    expect(parseState({ dashboardLayout: layout }).dashboardLayout).toEqual(layout);
+  });
+
+  it('refuses a schema version that is not a positive integer', () => {
+    expect(() => parseState({ dashboardLayout: { schemaVersion: 0, items: [] } })).toThrow();
+    expect(() => parseState({ dashboardLayout: { schemaVersion: 1.5, items: [] } })).toThrow();
+    expect(() => parseState({ dashboardLayout: { schemaVersion: 'one', items: [] } })).toThrow();
+  });
+
+  it('refuses an item that is not a well-typed widget entry', () => {
+    expect(() =>
+      parseState({
+        dashboardLayout: { schemaVersion: 1, items: [{ id: 'net-worth', visible: 'yes' }] },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseState({ dashboardLayout: { schemaVersion: 1, items: [{ visible: true }] } }),
+    ).toThrow();
+  });
+
+  it('round-trips a custom layout through the parser', () => {
+    const layout = { schemaVersion: 1, items: [{ id: 'progress', visible: true }] };
+    expect(parseState({ dashboardLayout: layout }).dashboardLayout).toEqual(layout);
+  });
+});

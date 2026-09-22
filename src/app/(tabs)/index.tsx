@@ -30,6 +30,7 @@ import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
+  dashboardLayout as dashboardLayoutRepo,
   investments as investmentsRepo,
   limits as limitsRepo,
   monobank as monobankRepo,
@@ -61,6 +62,7 @@ import {
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { CategoryWidget } from '@/components/category-widget';
 import { NetWorthWidget } from '@/components/net-worth-widget';
+import { homeDashboardReadPlan } from '@/ui/home-dashboard';
 import { categoryMonthRoute, currentMonthRoute, remainderRoute } from '@/ui/home-navigation';
 import { categoryPresentation } from '@/ui/home-categories';
 import { hasDateRolledOver, makeCancelToken } from '@/ui/home-data';
@@ -69,8 +71,15 @@ import { homeViewModel } from '@/ui/home-screen';
 import { syncCoverage } from '@/ui/monobank-screen';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { failureAlert } from '@/ui/failure-alert';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
+import {
+  PROGRESS_ROUTE,
+  progressViewModel,
+  progressWidgetPreview,
+  unseenAchievementsBadge,
+} from '@/ui/progress-screen';
 import { newId } from '@/ui/id';
+import type { DashboardWidgetId } from '@/dashboard/layout';
 import { ruleTargetLabel } from '@/ui/list-management';
 import { reportFailure } from '@/ui/journal';
 import { currentMonth } from '@/ui/months';
@@ -149,31 +158,47 @@ export default function MainScreen() {
       const now = new Date();
       const month = currentMonth(now);
       const today = todayIso(now);
+
+      // The layout is read first, synchronously — SQLite allows it — so every read below it is
+      // conditional on what it says. A hidden widget therefore costs its dedicated read nothing,
+      // and a newly introduced one is simply not among `plan.visibleIds` yet (design D6).
+      const layout = dashboardLayoutRepo.read();
+      const plan = homeDashboardReadPlan(layout.items);
+
       return {
         month,
         today,
+        plan,
+        layoutDiagnostic: layout.diagnostic,
         accounts,
         // The розрахунковий баланс of each рахунок — computed from транзакції, never stored —
-        // still decides whether an unarchived one exists at all, for the invitation below.
+        // still decides whether an unarchived one exists at all, for the invitation below. Not
+        // gated by any widget: the invitation is fixed, not a widget (design D5).
         balances: new Map(
           accounts.map((a) => [a.id, computeBalance(a, transactionsRepo.listByAccount(a.id))]),
         ),
-        // The month behind the status: the same bounded read Місяць does for the same month.
-        monthTransactions: transactionsRepo.listMonth(month),
-        // Статок's current reading needs every transaction, not just this month's — the same
-        // total volume `balances` above already reads, just combined into one list.
-        allTransactions: transactionsRepo.listAll(),
-        investmentValues: investmentsRepo.all(),
+        // The month behind «Витрачено» and «Топ категорій» — the same bounded read Місяць does
+        // for the same month, shared by both widgets and read once between them.
+        monthTransactions: plan.needsMonthTransactions ? transactionsRepo.listMonth(month) : [],
+        // Статок's current reading needs every transaction ever recorded — the one read this
+        // screen skips whenever «Статок» itself is hidden.
+        allTransactions: plan.needsNetWorth ? transactionsRepo.listAll() : [],
+        investmentValues: plan.needsNetWorth ? investmentsRepo.all() : new Map(),
         // Статок's bounded history reads — O(accounts x months), never O(transactions).
-        netWorthMonthly: netWorthRepo.monthlyMovement(today),
-        netWorthFirstDates: netWorthRepo.firstDates(today),
-        netWorthFirstDateMovement: netWorthRepo.firstDateMovement(today),
-        netWorthFutureRecords: netWorthRepo.accountsWithFutureRecords(today),
+        netWorthMonthly: plan.needsNetWorth ? netWorthRepo.monthlyMovement(today) : [],
+        netWorthFirstDates: plan.needsNetWorth ? netWorthRepo.firstDates(today) : [],
+        netWorthFirstDateMovement: plan.needsNetWorth ? netWorthRepo.firstDateMovement(today) : [],
+        netWorthFutureRecords: plan.needsNetWorth
+          ? netWorthRepo.accountsWithFutureRecords(today)
+          : new Set<string>(),
         rates: ratesRepo.all(),
-        feed: transactionsRepo.listLatest(FEED_SIZE),
+        feed: plan.needsFeed ? transactionsRepo.listLatest(FEED_SIZE) : [],
         // Deeper than the стрічка, and for one purpose: the категорії the picker offers first.
-        latest: transactionsRepo.listLatest(RECENT_WINDOW),
-        // Everything stored that still carries «Без категорії» — counted, not listed.
+        latest: plan.needsFeed ? transactionsRepo.listLatest(RECENT_WINDOW) : [],
+        // The read-only прогrес reading — evaluates nothing, marks nothing seen (design D6).
+        progressData: plan.needsProgress ? progressScreenData(now) : undefined,
+        // Everything stored that still carries «Без категорії» — counted, not listed. Always
+        // read: the banner is fixed, not a widget, and stays visible whatever is hidden.
         uncategorised: transactionsRepo.countUncategorised(),
         // Every row, archived included: pickers filter, but a feed line still shows the name of a
         // category that has since been archived.
@@ -466,23 +491,30 @@ export default function MainScreen() {
     [categoryNames, requestedCategoryCurrency, stored.month, stored.monthTransactions],
   );
 
-  /** «Статок»: current values, history and the change line — assembled in one tested function. */
+  /**
+   * «Статок»: current values, history and the change line — assembled in one tested function.
+   * `undefined` whenever the widget is hidden, since its dedicated reads were skipped too
+   * (design D6) — there is nothing correct this could compute from an empty history it never
+   * asked for.
+   */
   const [requestedHistoryCurrency, setRequestedHistoryCurrency] = useState<string>();
   const netWorth = useMemo(
     () =>
-      netWorthWidgetModel({
-        accounts: stored.accounts,
-        transactions: stored.allTransactions,
-        currentValues: stored.investmentValues,
-        monthlyMovement: stored.netWorthMonthly,
-        firstDates: stored.netWorthFirstDates,
-        firstDateMovement: stored.netWorthFirstDateMovement,
-        accountsWithFutureRecords: stored.netWorthFutureRecords,
-        rates: stored.rates,
-        ...(requestedHistoryCurrency ? { requestedHistoryCurrency } : {}),
-        now: new Date(),
-        today: stored.today,
-      }),
+      stored.plan.needsNetWorth
+        ? netWorthWidgetModel({
+            accounts: stored.accounts,
+            transactions: stored.allTransactions,
+            currentValues: stored.investmentValues,
+            monthlyMovement: stored.netWorthMonthly,
+            firstDates: stored.netWorthFirstDates,
+            firstDateMovement: stored.netWorthFirstDateMovement,
+            accountsWithFutureRecords: stored.netWorthFutureRecords,
+            rates: stored.rates,
+            ...(requestedHistoryCurrency ? { requestedHistoryCurrency } : {}),
+            now: new Date(),
+            today: stored.today,
+          })
+        : undefined,
     [
       requestedHistoryCurrency,
       stored.accounts,
@@ -492,10 +524,33 @@ export default function MainScreen() {
       stored.netWorthFirstDates,
       stored.netWorthFutureRecords,
       stored.netWorthMonthly,
+      stored.plan.needsNetWorth,
       stored.rates,
       stored.today,
     ],
   );
+
+  /**
+   * «Прогрес»: the same quiet badge «Звіти» shows, and at most one leading row from the already
+   * ordered sections — read-only, exactly like the full screen's own reading (design D6).
+   * `undefined` whenever the widget is hidden, since `stored.progressData` was never read.
+   */
+  const progressPreview = useMemo(() => {
+    if (!stored.progressData) {
+      return undefined;
+    }
+    const data = stored.progressData;
+    const model = progressViewModel({
+      candidates: data.candidates,
+      earned: data.earned,
+      offered: data.offered,
+      accepted: data.accepted,
+      dismissed: data.dismissed,
+      hasHistory: data.hasHistory,
+      now: new Date(),
+    });
+    return progressWidgetPreview(model, unseenAchievementsBadge(data.earned, data.candidates));
+  }, [stored.progressData]);
 
   /** The «Без категорії» line whose one-tap picker is open, if any. */
   const [categorising, setCategorising] = useState<string>();
@@ -609,6 +664,201 @@ export default function MainScreen() {
     [reportBug, settleDraft, stored.drafts],
   );
 
+  /**
+   * One known widget's whole content, exhaustively — adding an id to the registry without a case
+   * here is a compile error (the `default` branch below), never a silently blank widget. Every
+   * widget reads only what `stored` already conditionally loaded for it (design D6); nothing here
+   * computes a balance, a monthly number or a досягнення of its own.
+   */
+  function renderWidget(id: DashboardWidgetId) {
+    switch (id) {
+      case 'month-spent':
+        return (
+          <Pressable
+            key={id}
+            onPress={() => router.push(currentMonthRoute(new Date()))}
+            accessibilityRole="button">
+            <Card style={styles.status}>
+              <CardGlow />
+              <View style={styles.statusHead}>
+                <ThemedText type="overline">{model.status.title}</ThemedText>
+                <Chevron />
+              </View>
+              {model.status.emptyMessage ? (
+                <ThemedText themeColor="textSecondary">{model.status.emptyMessage}</ThemedText>
+              ) : (
+                // One line, shrunk rather than wrapped: two currencies must not push the figure
+                // into a second row and the card into a different height.
+                <ThemedText type="title" tabular numberOfLines={1} adjustsFontSizeToFit>
+                  {model.status.spent}
+                </ThemedText>
+              )}
+            </Card>
+          </Pressable>
+        );
+
+      case 'latest-transactions':
+        return (
+          <View key={id}>
+            {/* The section says what it is — the latest only — and offers the whole history
+                beside it. The offer does not depend on having a long one: search is where the
+                owner goes to look for something, not a reward for having recorded enough. */}
+            <SectionLabel
+              note={`останні ${FEED_SIZE}`}
+              action={{ label: 'Усі ›', onPress: () => router.push('/transactions') }}>
+              Останні транзакції
+            </SectionLabel>
+            {stored.feed.length === 0 ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                Поки нічого не записано.
+              </ThemedText>
+            ) : (
+              <ListCard>
+                {stored.feed.map((t, index) => {
+                  const line = transactionLine(
+                    t,
+                    byId,
+                    categoryNames,
+                    sourceNames,
+                    overLimit,
+                    categoryIconKeys,
+                  );
+                  return (
+                    <ListRow key={line.id} last={index === stored.feed.length - 1} style={styles.row}>
+                      <Pressable onPress={() => router.push(`/transaction/${line.id}`)}>
+                        <View style={styles.rowTop}>
+                          <IconTile name={line.icon} tone={line.iconTone} />
+                          <View style={styles.rowLabel}>
+                            <View style={styles.rowTitle}>
+                              {/* The mark, not a repainted row: what is uncategorised is the
+                                  label. */}
+                              {line.uncategorised ? <Mark /> : null}
+                              {/* The category over its ліміт for this транзакція's month turns
+                                  red, and nothing else on the line changes. */}
+                              <ThemedText
+                                numberOfLines={1}
+                                themeColor={line.overLimit ? 'textDanger' : undefined}
+                              >
+                                {feedTitle(line)}
+                              </ThemedText>
+                            </View>
+                            <ThemedText type="small" themeColor="textSecondary">
+                              {feedSubtitle(line)}
+                            </ThemedText>
+                            {/* The bank's own text, on its own line: what an uncategorised
+                                «СІЛЬПО Київ» actually was, before the owner has said. A manual
+                                транзакція has none and gets no empty row. */}
+                            {line.description ? (
+                              <ThemedText type="small" themeColor="textMuted">
+                                {line.description}
+                              </ThemedText>
+                            ) : null}
+                          </View>
+                          <ThemedText tabular style={styles.amount} themeColor={line.amountTone}>
+                            {line.amount}
+                          </ThemedText>
+                        </View>
+                      </Pressable>
+
+                      {/* The one tap behind the mark: picking here stores the category on the
+                          transaction without the editing screen ever opening. Beside it, «Це
+                          переказ» opens editing already switched to переказ — a витрата only
+                          (design D7). */}
+                      {line.uncategorised ? (
+                        <View style={styles.rowActions}>
+                          <RowAction
+                            title={categorising === line.id ? 'Згорнути' : 'Обрати категорію'}
+                            onPress={() => {
+                              setCategorising(categorising === line.id ? undefined : line.id);
+                              setCategoryListOpen(false);
+                            }}
+                          />
+                          {offersTransferMark(t) ? (
+                            <RowAction
+                              title="Це переказ"
+                              onPress={() => router.push(`/transaction/${line.id}?as=transfer`)}
+                            />
+                          ) : null}
+                        </View>
+                      ) : null}
+                      {categorising === line.id ? (
+                        <Picker
+                          label="Категорія"
+                          rows={categoryRows}
+                          recentIds={recent.categories}
+                          selected={undefined}
+                          onSelect={(picked: string) => categorise(t, picked)}
+                          noun="categories"
+                          expanded={categoryListOpen}
+                          onExpandedChange={setCategoryListOpen}
+                        />
+                      ) : null}
+                    </ListRow>
+                  );
+                })}
+              </ListCard>
+            )}
+          </View>
+        );
+
+      case 'top-categories':
+        return (
+          // «Топ категорій витрат»: the same signed monthly breakdown Місяць's own drill-down
+          // shows, ranked and currency-selected (main-screen, "Top categories read the same
+          // signed monthly breakdown"). Currency selection never narrows what a row's own detail
+          // shows.
+          <CategoryWidget
+            key={id}
+            presentation={categories}
+            onSelectCurrency={setRequestedCategoryCurrency}
+            onOpenCategory={(categoryId) => router.push(categoryMonthRoute(categoryId, new Date()))}
+            onOpenRemainder={() => router.push(remainderRoute(new Date()))}
+          />
+        );
+
+      case 'net-worth':
+        // Always defined here: `netWorth` is computed exactly when `plan.needsNetWorth`, which is
+        // exactly when this id is among `plan.visibleIds`.
+        return netWorth ? (
+          // «Статок»: a derived reading of every recorded рахунок, not a new balance (net-worth,
+          // "Статок is a reading of existing account contributions").
+          <NetWorthWidget
+            key={id}
+            model={netWorth}
+            onSelectHistoryCurrency={setRequestedHistoryCurrency}
+            onOpenAccounts={() => router.push('/accounts')}
+          />
+        ) : null;
+
+      case 'progress':
+        return progressPreview ? (
+          <Pressable key={id} onPress={() => router.push(PROGRESS_ROUTE)} accessibilityRole="button">
+            <Card style={styles.status}>
+              <View style={styles.statusHead}>
+                <ThemedText type="overline">{progressPreview.title}</ThemedText>
+                <Chevron />
+              </View>
+              <ThemedText
+                numberOfLines={progressPreview.nothingYet ? undefined : 1}
+                themeColor={progressPreview.leadLabel ? undefined : 'textSecondary'}>
+                {progressPreview.nothingYet ?? progressPreview.leadLabel ?? 'Поки що нічого не запропоновано.'}
+              </ThemedText>
+              {progressPreview.badge ? (
+                <ThemedText type="small" themeColor="accent">
+                  {progressPreview.badge}
+                </ThemedText>
+              ) : null}
+            </Card>
+          </Pressable>
+        ) : null;
+
+      default: {
+        const exhaustive: never = id;
+        return exhaustive;
+      }
+    }
+  }
+
   return (
     <Screen
       scrollRef={scrollRef}
@@ -626,9 +876,20 @@ export default function MainScreen() {
       }
       overlay={<Fab onPress={() => router.push('/transaction/new')} />}>
       {/* The app's own name, not the tab's — the tab bar below already says which screen this is,
-          and the reference reads as a product rather than as a form because of it. */}
+          and the reference reads as a product rather than as a form because of it. Beside it, the
+          one action that opens dashboard editing: no sync, no write, just navigation (main-screen,
+          "The header opens dashboard editing"). */}
       <View style={styles.brand}>
         <Wordmark />
+        <Pressable
+          onPress={() => router.push('/manage/home-dashboard')}
+          accessibilityRole="button"
+          accessibilityLabel="Налаштувати Головний"
+          style={styles.customiseButton}>
+          <ThemedText type="link" themeColor="accent">
+            Налаштувати
+          </ThemedText>
+        </Pressable>
       </View>
 
       {/* The compact header: how fresh the bank data is, and the same manual sync both the
@@ -655,26 +916,9 @@ export default function MainScreen() {
         </View>
       ) : null}
 
-      {/* The month first, and it is the screen's figure: what it has cost. The same numbers
-          Місяць shows for the same month, which is where the card leads. */}
-      <Pressable onPress={() => router.push(currentMonthRoute(new Date()))} accessibilityRole="button">
-        <Card style={styles.status}>
-          <CardGlow />
-          <View style={styles.statusHead}>
-            <ThemedText type="overline">{model.status.title}</ThemedText>
-            <Chevron />
-          </View>
-          {model.status.emptyMessage ? (
-            <ThemedText themeColor="textSecondary">{model.status.emptyMessage}</ThemedText>
-          ) : (
-            // One line, shrunk rather than wrapped: two currencies must not push the figure into
-            // a second row and the card into a different height.
-            <ThemedText type="title" tabular numberOfLines={1} adjustsFontSizeToFit>
-              {model.status.spent}
-            </ThemedText>
-          )}
-        </Card>
-      </Pressable>
+      {/* The fixed service rail: directly below the header, before every widget, whatever the
+          owner has hidden or reordered (main-screen, "Operational alerts remain compact and
+          actionable"). None of it has a registry id — it cannot be hidden or moved. */}
 
       {/* Nothing to record on: the invitation stays on Головний, and the latest транзакції below
           still show whatever is stored. */}
@@ -687,7 +931,7 @@ export default function MainScreen() {
 
       {/* The uncategorised banner: a compact actionable row, counted over everything stored,
           absent entirely at zero — no heading, no reserved space (main-screen, "Uncategorised
-          records are a compact feed banner"). */}
+          records are a compact feed banner"). Visible even with «Останні 5 транзакцій» hidden. */}
       {model.alerts.uncategorisedBanner ? (
         <Pressable
           onPress={() =>
@@ -703,99 +947,6 @@ export default function MainScreen() {
         </Pressable>
       ) : null}
 
-      {/* The section says what it is — the latest only — and offers the whole history beside it.
-          The offer does not depend on having a long one: search is where the owner goes to look
-          for something, not a reward for having recorded enough. */}
-      <SectionLabel
-        note={`останні ${FEED_SIZE}`}
-        action={{ label: 'Усі ›', onPress: () => router.push('/transactions') }}>
-        Останні транзакції
-      </SectionLabel>
-      {stored.feed.length === 0 ? (
-        <ThemedText type="small" themeColor="textSecondary">
-          Поки нічого не записано.
-        </ThemedText>
-      ) : (
-        <ListCard>
-          {stored.feed.map((t, index) => {
-            const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
-            return (
-              <ListRow key={line.id} last={index === stored.feed.length - 1} style={styles.row}>
-                <Pressable onPress={() => router.push(`/transaction/${line.id}`)}>
-                  <View style={styles.rowTop}>
-                    <IconTile name={line.icon} tone={line.iconTone} />
-                    <View style={styles.rowLabel}>
-                      <View style={styles.rowTitle}>
-                        {/* The mark, not a repainted row: what is uncategorised is the label. */}
-                        {line.uncategorised ? <Mark /> : null}
-                        {/* The category over its ліміт for this транзакція's month turns red, and
-                            nothing else on the line changes. */}
-                        <ThemedText
-                          numberOfLines={1}
-                          themeColor={line.overLimit ? 'textDanger' : undefined}
-                        >
-                          {feedTitle(line)}
-                        </ThemedText>
-                      </View>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {feedSubtitle(line)}
-                      </ThemedText>
-                      {/* The bank's own text, on its own line: what an uncategorised «СІЛЬПО Київ»
-                          actually was, before the owner has said. A manual транзакція has none and
-                          gets no empty row. */}
-                      {line.description ? (
-                        <ThemedText type="small" themeColor="textMuted">
-                          {line.description}
-                        </ThemedText>
-                      ) : null}
-                    </View>
-                    <ThemedText
-                      tabular
-                      style={styles.amount}
-                      themeColor={line.amountTone}
-                    >
-                      {line.amount}
-                    </ThemedText>
-                  </View>
-                </Pressable>
-
-                {/* The one tap behind the mark: picking here stores the category on the
-                    transaction without the editing screen ever opening. Beside it, «Це переказ»
-                    opens editing already switched to переказ — a витрата only (design D7). */}
-                {line.uncategorised ? (
-                  <View style={styles.rowActions}>
-                    <RowAction
-                      title={categorising === line.id ? 'Згорнути' : 'Обрати категорію'}
-                      onPress={() => {
-                        setCategorising(categorising === line.id ? undefined : line.id);
-                        setCategoryListOpen(false);
-                      }}
-                    />
-                    {offersTransferMark(t) ? (
-                      <RowAction
-                        title="Це переказ"
-                        onPress={() => router.push(`/transaction/${line.id}?as=transfer`)}
-                      />
-                    ) : null}
-                  </View>
-                ) : null}
-                {categorising === line.id ? (
-                  <Picker
-                    label="Категорія"
-                    rows={categoryRows}
-                    recentIds={recent.categories}
-                    selected={undefined}
-                    onSelect={(picked: string) => categorise(t, picked)}
-                    noun="categories"
-                    expanded={categoryListOpen}
-                    onExpandedChange={setCategoryListOpen}
-                  />
-                ) : null}
-              </ListRow>
-            );
-          })}
-        </ListCard>
-      )}
       {/* At most two collapsed operational rows: the pending чернетки (count only, expanding in
           place to the existing confirm/dismiss surface) and an actionable sync failure. Neither,
           and nothing here renders at all (main-screen, "Operational alerts remain compact and
@@ -887,23 +1038,18 @@ export default function MainScreen() {
         </ListCard>
       ) : null}
 
-      {/* «Топ категорій витрат»: the same signed monthly breakdown Місяць's own drill-down
-          shows, ranked and currency-selected (main-screen, "Top categories read the same signed
-          monthly breakdown"). Currency selection never narrows what a row's own detail shows. */}
-      <CategoryWidget
-        presentation={categories}
-        onSelectCurrency={setRequestedCategoryCurrency}
-        onOpenCategory={(categoryId) => router.push(categoryMonthRoute(categoryId, new Date()))}
-        onOpenRemainder={() => router.push(remainderRoute(new Date()))}
-      />
+      {/* The known widgets, in the owner's saved order — each rendered exactly once, through the
+          exhaustive switch above (main-screen, "A saved layout controls only known widgets"). */}
+      {stored.plan.visibleIds.map((id) => renderWidget(id))}
 
-      {/* «Статок»: a derived reading of every recorded рахунок, not a new balance (net-worth,
-          "Статок is a reading of existing account contributions"). */}
-      <NetWorthWidget
-        model={netWorth}
-        onSelectHistoryCurrency={setRequestedHistoryCurrency}
-        onOpenAccounts={() => router.push('/accounts')}
-      />
+      {/* Every widget hidden: the header, the customise action and any service item above still
+          stand; this is the compact explanation that takes their place (dashboard-layout, "Every
+          widget may be hidden"). */}
+      {stored.plan.visibleIds.length === 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          Усі віджети приховано. «Налаштувати» вище поверне будь-який з них.
+        </ThemedText>
+      ) : null}
 
       <RuleOfferSheet
         offer={ruleOffer.offer}
@@ -918,7 +1064,17 @@ export default function MainScreen() {
 }
 
 const styles = StyleSheet.create({
-  brand: { paddingHorizontal: Spacing.two, paddingBottom: Spacing.one },
+  brand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.two,
+    paddingBottom: Spacing.one,
+  },
+  // A tap target as wide as it is tall, never smaller than the shared minimum — text alone would
+  // shrink it well under that on a short label like «Налаштувати» (main-screen, "Reordering is
+  // understandable and accessible").
+  customiseButton: { minHeight: TouchTarget, minWidth: TouchTarget, alignItems: 'center', justifyContent: 'center' },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',

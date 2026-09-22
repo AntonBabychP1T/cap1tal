@@ -676,3 +676,84 @@ describe('which sync runs ask the bank for balances', () => {
     expect(sources['_layout.tsx']).not.toMatch(asksInSyncPorts);
   });
 });
+
+describe('dashboard editing', () => {
+  const editor = () => read('manage/home-dashboard.tsx');
+  const home = () => read('(tabs)/index.tsx');
+
+  it('Scenario: Header action opens the editor', () => {
+    // Named, sized and wired exactly as main-screen requires — and reached through plain
+    // navigation, never a callback that could also start a run.
+    expect(home()).toContain("accessibilityLabel=\"Налаштувати Головний\"");
+    expect(home()).toContain("router.push('/manage/home-dashboard')");
+  });
+
+  it('the header action starts no sync and writes nothing', () => {
+    // The action's own onPress is one statement: a push, and nothing that reaches syncPorts,
+    // startSync or a repository write.
+    const onPressBlock = home().match(
+      /onPress=\{\(\) => router\.push\('\/manage\/home-dashboard'\)\}/,
+    );
+    expect(onPressBlock).not.toBeNull();
+    expect(home()).not.toMatch(/router\.push\('\/manage\/home-dashboard'\)[\s\S]{0,80}(startSync|syncPorts)/);
+  });
+
+  it('Scenario: A widget is hidden and the choice survives restart', () => {
+    // The switch persists through the same repository Головний itself reads — there is no
+    // separate draft state a leave-without-saving could discard.
+    expect(editor()).toContain('onValueChange={(visible) => toggle(row.id, visible)}');
+    expect(editor()).toContain('dashboardLayoutRepo.save(next)');
+  });
+
+  it('Scenario: Reordering visible widgets changes Головний', () => {
+    // The move handlers write through the same `persist` → `dashboardLayoutRepo.save` path as the
+    // switch, so a move is exactly as durable as a visibility change, and Головний's own read
+    // (`homeDashboardPlan`/`dashboardLayoutRepo.read`) picks it straight up on next focus.
+    expect(editor()).toContain("move(row.id, 'up')");
+    expect(editor()).toContain("move(row.id, 'down')");
+    expect(editor()).toContain('moveWidget(items, id, direction)');
+  });
+
+  it('Scenario: Cancelled reset changes nothing', () => {
+    // «Скасувати» is offered before the destructive «Скинути», and only the destructive branch
+    // calls `reset()` — cancelling the confirmation reaches neither it nor `setItems`.
+    const resetDialog = editor().match(/Alert\.alert\(\s*'Скинути до стандартного вигляду'[\s\S]{0,600}/);
+    expect(resetDialog).not.toBeNull();
+    const body = resetDialog![0]!;
+    expect(body.indexOf("style: 'cancel'")).toBeLessThan(body.indexOf("style: 'destructive'"));
+    expect(body.indexOf("style: 'destructive'")).toBeLessThan(body.indexOf('dashboardLayoutRepo.reset()'));
+  });
+});
+
+describe('the optional Прогрес widget on Головний', () => {
+  const home = () => read('(tabs)/index.tsx');
+
+  it('navigates to the full «Прогрес» screen, never a widget-only route', () => {
+    const progressCase = home().slice(
+      home().indexOf("case 'progress':"),
+      home().indexOf('default: {'),
+    );
+    expect(progressCase).toContain('router.push(PROGRESS_ROUTE)');
+  });
+
+  it('reads progressScreenData only, and only conditionally — never evaluateProgress', () => {
+    const progressCase = home().slice(
+      home().indexOf("case 'progress':"),
+      home().indexOf('default: {'),
+    );
+    expect(progressCase).not.toContain('evaluateProgress');
+    expect(progressCase).not.toContain('markAllSeen');
+    expect(home()).toContain('plan.needsProgress ? progressScreenData(now) : undefined');
+  });
+
+  it('Scenario: A device with nothing yet says so plainly — the widget renders the model\'s own sentence, not an invented one', () => {
+    const progressCase = home().slice(
+      home().indexOf("case 'progress':"),
+      home().indexOf('default: {'),
+    );
+    // The exact sentence flows from `progressPreview.nothingYet` (itself `model.nothingYet`,
+    // `src/ui/progress-screen.ts`), never a hardcoded string sitting beside it.
+    expect(progressCase).toContain('progressPreview.nothingYet ?? progressPreview.leadLabel');
+    expect(progressCase).not.toMatch(/leadLabel \?\? '[^']*немає/);
+  });
+});

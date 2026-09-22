@@ -33,6 +33,11 @@ the UI. Terms are defined in [glossary.md](glossary.md).
   with the rest of the monthly picture. Adding a transaction is one tap away, behind the «+»: the
   app is opened to look far more often than to record, and the form used to stand between the
   owner and everything worth reading.
+- **[PROPOSED]** This fixed set is a stable default, not a mandate: the owner may show, hide and
+  reorder these few known widgets from a small editor, so a reading they do not want costs no
+  space and one they check first can lead. What is waiting for an answer — a bank the app cannot
+  reach, records still «Без категорії» — always stays put beneath the header, however the owner
+  has arranged the rest, because it needs them regardless of what they came to read today.
 
 ## 4. Core entities and their boundaries
 

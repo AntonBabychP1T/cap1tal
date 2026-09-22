@@ -22,6 +22,13 @@
       "when": 1789886065534,
       "tag": "0002_broken_wendell_vaughn",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790059347133,
+      "tag": "0003_pink_wind_dancer",
+      "breakpoints": true
     }
   ]
 }

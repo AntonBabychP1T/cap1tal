@@ -332,10 +332,13 @@ describe('Головний as the overview', () => {
   });
 
   it('Scenario: The status leads to Місяць', () => {
-    const status = main.slice(main.indexOf('{/* The month first'));
-    expect(status.slice(0, status.indexOf('</Pressable>'))).toContain(
-      'router.push(currentMonthRoute(new Date()))',
+    // The month card is the «month-spent» widget's own case in the exhaustive switch — rendered
+    // through it whenever the owner has it visible, never hard-coded into the JSX return.
+    const monthCase = main.slice(
+      main.indexOf("case 'month-spent':"),
+      main.indexOf("case 'latest-transactions':"),
     );
+    expect(monthCase).toContain('router.push(currentMonthRoute(new Date()))');
   });
 
   it('Scenario: The month card always opens the current month, never a retained one', () => {
@@ -375,9 +378,10 @@ describe('Головний as the overview', () => {
   });
 
   it('Scenario: What was recorded is on Головний when the owner returns', () => {
-    // Returning from the entry screen is a navigation focus, and the стрічка is re-read on it.
+    // Returning from the entry screen is a navigation focus, and the стрічка is re-read on it —
+    // whenever «Останні 5 транзакцій» is visible; hidden, the read is skipped entirely (design D6).
     expect(main).toContain('useReloadOnFocus(');
-    expect(main).toContain('feed: transactionsRepo.listLatest(FEED_SIZE)');
+    expect(main).toContain('plan.needsFeed ? transactionsRepo.listLatest(FEED_SIZE) : []');
   });
 
   it('Scenario: A back-dated транзакція takes its own place', () => {
@@ -385,7 +389,7 @@ describe('Головний as the overview', () => {
     // by date, then by recording recency (proven in `transactions-repo.test.ts`, "The latest
     // listing is newest first"). So today's транзакція stands first and one dated a week ago
     // stands where its date puts it, without the screen deciding anything.
-    expect(main).toContain('feed: transactionsRepo.listLatest(FEED_SIZE)');
+    expect(main).toContain('plan.needsFeed ? transactionsRepo.listLatest(FEED_SIZE) : []');
     expect(main).toContain('stored.feed.map((t, index) =>');
     expect(main).not.toContain('stored.feed.sort');
     expect(main).not.toContain('[...stored.feed]');
@@ -401,6 +405,21 @@ describe('Головний as the overview', () => {
     expect(block).not.toContain("router.push('/transactions')");
   });
 
+  it('Scenario: Hiding the feed does not hide the required action', () => {
+    // The banner is in the fixed service rail — a wholly separate block from the exhaustive
+    // widget switch, and never conditioned on «Останні 5 транзакцій» being visible.
+    const bannerBlock = main.slice(
+      main.indexOf('{model.alerts.uncategorisedBanner ? ('),
+      main.indexOf('{model.alerts.draftCount > 0 || model.alerts.failureRow ? ('),
+    );
+    expect(bannerBlock).not.toContain('needsFeed');
+    expect(bannerBlock).not.toContain("case 'latest-transactions'");
+    // It sits entirely before the widget loop, so it renders whatever the owner has hidden.
+    expect(main.indexOf('{model.alerts.uncategorisedBanner ? (')).toBeLessThan(
+      main.indexOf('{stored.plan.visibleIds.map((id) => renderWidget(id))}'),
+    );
+  });
+
   it("Scenario: The feed's way to all транзакції is not narrowed", () => {
     expect(main).toContain("action={{ label: 'Усі ›', onPress: () => router.push('/transactions') }}");
   });
@@ -414,13 +433,16 @@ describe('Головний as the overview', () => {
     expect(guarded).toContain('title="До Рахунків"');
     expect(guarded).toContain("router.push('/accounts')");
 
-    // And what it does not swallow: the latest транзакції stand outside that branch, so a device
-    // whose every рахунок is archived still shows what is stored.
+    // And what it does not swallow: the feed widget is a wholly separate case of the exhaustive
+    // switch, unreachable from inside this conditional and never guarded by `model.held` — a
+    // device whose every рахунок is archived still shows any visible feed.
     expect(guarded).not.toContain('Останні транзакції');
     expect(guarded).not.toContain('stored.feed.map(');
-    expect(main.indexOf('Останні транзакції')).toBeGreaterThan(
-      main.indexOf('{model.held === null ? ('),
+    const feedCase = main.slice(
+      main.indexOf("case 'latest-transactions':"),
+      main.indexOf("case 'top-categories':"),
     );
+    expect(feedCase).not.toContain('model.held');
   });
 
   it('No number is computed on the screen — it reads the tested model', () => {
@@ -439,25 +461,43 @@ describe('Головний as the overview', () => {
     expect(main).toContain('{draftsExpanded && drafts.length > 0 ? (');
   });
 
-  it('Scenario: Ordered default sections — header, month, feed, alerts, in that order', () => {
-    // design D1's order: header (freshness + sync), the month card, the feed with its optional
-    // banner, then the collapsed operational alerts. No held card and no «Прогрес» section
-    // anywhere between them.
+  it('Scenario: Ordered default sections — header, the fixed service rail, then the visible widgets', () => {
+    // customizable-home-dashboard design D5: the fixed service rail sits directly below the
+    // header and before every widget. Order *among* widgets is the owner's own saved order
+    // (`plan.visibleIds`), decided at runtime, not fixed in this file — so this only proves the
+    // rail precedes the widget loop, not any one widget's position relative to another.
     const wordmark = main.indexOf('<Wordmark />');
     const header = main.indexOf('{model.monobank ? (');
-    const month = main.indexOf('router.push(currentMonthRoute(new Date()))');
     const invitation = main.indexOf('{model.held === null ? (');
     const banner = main.indexOf('{model.alerts.uncategorisedBanner ? (');
-    const feed = main.indexOf('Останні транзакції');
     const alerts = main.indexOf('{model.alerts.draftCount > 0 || model.alerts.failureRow ? (');
+    const widgets = main.indexOf('{stored.plan.visibleIds.map((id) => renderWidget(id))}');
 
     expect(wordmark).toBeGreaterThan(-1);
     expect(header).toBeGreaterThan(wordmark);
-    expect(month).toBeGreaterThan(header);
-    expect(invitation).toBeGreaterThan(month);
+    expect(invitation).toBeGreaterThan(header);
     expect(banner).toBeGreaterThan(invitation);
-    expect(feed).toBeGreaterThan(banner);
-    expect(alerts).toBeGreaterThan(feed);
+    expect(alerts).toBeGreaterThan(banner);
+    expect(widgets).toBeGreaterThan(alerts);
+  });
+
+  it('Scenario: Every widget may be hidden — header, customise action and the recovery sentence remain', () => {
+    // Guarded only by `visibleIds.length === 0`, never nested inside anything that would hide it
+    // along with a widget — and it appears after the widget loop, which is where an owner who
+    // hid everything would otherwise see a blank screen.
+    const sentence = main.slice(main.indexOf('{stored.plan.visibleIds.length === 0 ? ('));
+    const guarded = sentence.slice(0, sentence.indexOf(') : null}'));
+    expect(guarded).toContain('Усі віджети приховано');
+
+    const widgets = main.indexOf('{stored.plan.visibleIds.map((id) => renderWidget(id))}');
+    const recovery = main.indexOf('{stored.plan.visibleIds.length === 0 ? (');
+    expect(recovery).toBeGreaterThan(widgets);
+
+    // The header wordmark and «Налаштувати» action are not inside any conditional at all — they
+    // precede both the service rail and the widget loop unconditionally (already proven above),
+    // so hiding every widget cannot hide them too.
+    expect(main.indexOf('<Wordmark />')).toBeLessThan(main.indexOf('{model.monobank ? ('));
+    expect(main).toContain('accessibilityLabel="Налаштувати Головний"');
   });
 
   it('Scenario: No large attention section and no entry form remain', () => {
@@ -497,7 +537,7 @@ describe('Головний as the overview', () => {
     expect(categoriseBody).not.toContain('router.push');
   });
 
-  it('Scenario: Draft confirmation updates the same record, and hands off between both alerts', () => {
+  it('Scenario: Draft confirmation updates the same record — Scenario: Confirming the last чернетка into «Без категорії» hands off between both alerts', () => {
     // Confirm and dismiss both end in the one place that reloads — never two separate refreshes
     // that could show the banner and hide the draft row (or the reverse) a render apart.
     const settleDraft = main.slice(main.indexOf('const settleDraft = useCallback('));
@@ -720,6 +760,21 @@ describe('monobank among what needs attention', () => {
         synced: 1,
         oldestCompletedAtMs: NOW.getTime() - HOUR,
         attempt: { attemptedAtMs: NOW.getTime(), outcome: 'unavailable' },
+      }),
+    });
+
+    expect(view.alerts.failureRow).toBeNull();
+  });
+
+  it('Scenario: Routine postponement is not an error', () => {
+    // «перенесено» (`needsOwner`'s own «postponed», proven directly in `monobank/auto.test.ts`,
+    // "A postponed attempt needs nobody") is a healthy outcome, not a failure — even over data
+    // that would otherwise read as stale, with no other needs-owner condition standing.
+    const view = model({
+      monobank: bank({
+        synced: 1,
+        oldestCompletedAtMs: NOW.getTime() - 30 * HOUR,
+        attempt: { attemptedAtMs: NOW.getTime(), outcome: 'postponed' },
       }),
     });
 

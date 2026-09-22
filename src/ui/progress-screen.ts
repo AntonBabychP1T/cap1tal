@@ -309,6 +309,42 @@ export function unseenAchievementsBadge(
     : `Ви вже маєте ${achievementsCount(unseen.length)}`;
 }
 
+/** What the optional Прогрес widget on Головний shows — a title, at most one leading row. */
+export interface ProgressWidgetPreview {
+  readonly title: string;
+  /** The first row's own name, in `progressViewModel`'s own section order; `null` with nothing yet. */
+  readonly leadLabel: string | null;
+  /** The same quiet badge «Звіти» shows — present only while something is unseen. */
+  readonly badge: string | null;
+  /**
+   * The exact sentence the full «Прогрес» screen states when no транзакція is stored at all
+   * (progress-screen, "A device with nothing yet says so plainly") — carried through verbatim
+   * rather than reworded, so the widget never invents a second sentence for the same state.
+   * `null` whenever history exists, whatever `leadLabel` and `badge` say.
+   */
+  readonly nothingYet: string | null;
+}
+
+/**
+ * A compact, read-only projection of the already ordered `progressViewModel` and the same quiet
+ * unseen badge «Звіти» shows (customizable-home-dashboard design D6). It evaluates nothing and
+ * marks nothing seen — both inputs are already-read values, and the widget only re-shapes them;
+ * only opening the full «Прогрес» screen keeps that existing write (progress-screen, "New
+ * досягнення are announced once, quietly, and in one group").
+ */
+export function progressWidgetPreview(
+  model: ProgressViewModel,
+  badge: string | null,
+): ProgressWidgetPreview {
+  const lead = model.challenges[0] ?? model.inProgress[0] ?? model.earned[0];
+  return {
+    title: 'Прогрес',
+    leadLabel: lead ? lead.name : null,
+    badge,
+    nothingYet: model.nothingYet,
+  };
+}
+
 /** A досягнення's detail: the exact condition, the свідчення, and the current number beside it. */
 export interface AchievementDetail {
   readonly name: string;

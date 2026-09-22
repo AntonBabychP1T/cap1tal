@@ -15,6 +15,7 @@ import {
   normRefusal,
   normStep,
   progressViewModel,
+  progressWidgetPreview,
   unseenAchievementsBadge,
   NORM_QUESTION,
   NOTHING_EARNED,
@@ -283,12 +284,71 @@ describe('the quiet badge beside Звіти → Прогрес', () => {
   });
 });
 
+describe('the optional Прогрес widget on Головний', () => {
+  it('Scenario: A deliberately visible Progress widget shows the same quiet badge, then loses it', () => {
+    const candidates = [candidate({ key: 'k', name: '500 транзакцій' })];
+    const unseen = [earned({ key: 'k', seenAtMs: undefined })];
+    const model = progressViewModel(input({ earned: unseen, candidates }));
+    const badge = unseenAchievementsBadge(unseen, candidates);
+
+    const preview = progressWidgetPreview(model, badge);
+    expect(preview.title).toBe('Прогрес');
+    // The same quiet badge «Звіти» shows — one call, shared, never a second decision.
+    expect(preview.badge).toBe('500 транзакцій');
+
+    // Once seen, the same shape shows no badge — exactly as «Звіти» would show none either
+    // (progress-screen, "Seen is seen").
+    const seen = [earned({ key: 'k', seenAtMs: NOW.getTime() })];
+    const seenBadge = unseenAchievementsBadge(seen, candidates);
+    const seenModel = progressViewModel(input({ earned: seen, candidates }));
+    expect(progressWidgetPreview(seenModel, seenBadge).badge).toBeNull();
+  });
+
+  it('shows the first row from whichever section has one, in progressViewModel`s own order', () => {
+    const withChallenge = progressViewModel(input({ offered: [challenge()] }));
+    expect(progressWidgetPreview(withChallenge, null).leadLabel).toBe('Фінансова подушка');
+
+    const withEarnedOnly = progressViewModel(
+      input({ earned: [earned()], candidates: [candidate({ earned: true })] }),
+    );
+    expect(progressWidgetPreview(withEarnedOnly, null).leadLabel).toBe('500 транзакцій');
+
+    const withNothingYet = progressViewModel(input({ hasHistory: false }));
+    expect(progressWidgetPreview(withNothingYet, null).leadLabel).toBeNull();
+  });
+
+  it('Scenario: A device with nothing yet says so plainly — the widget states the same sentence, verbatim', () => {
+    // The full screen's own sentence, carried through unchanged — never a second, invented one
+    // for the same state (progress-screen, "A device with nothing yet says so plainly").
+    const withNothingYet = progressViewModel(input({ hasHistory: false }));
+    expect(withNothingYet.nothingYet).toBe(NOTHING_YET);
+
+    const preview = progressWidgetPreview(withNothingYet, null);
+    expect(preview.nothingYet).toBe(NOTHING_YET);
+    expect(preview.leadLabel).toBeNull();
+    expect(preview.badge).toBeNull();
+
+    // And it is null whenever history exists, whatever the lead row and badge say — the two
+    // states are never conflated behind one placeholder.
+    const withHistory = progressViewModel(input({ offered: [challenge()] }));
+    expect(progressWidgetPreview(withHistory, null).nothingYet).toBeNull();
+  });
+
+  it('evaluates nothing and marks nothing seen: both arguments are already-read values', () => {
+    // The type signature is the whole proof: `progressWidgetPreview` takes a `ProgressViewModel`
+    // and a badge string, neither of which gives it a repository, a clock or an evaluator to
+    // reach — only `progressRepo.markAllSeen`, called from opening «Прогрес» itself, ever writes.
+    expect(progressWidgetPreview.length).toBe(2);
+  });
+});
+
 describe('what Головний shows beside it', () => {
-  it('Scenario: Home/Reports rendering earns nothing, and Головний reads none of it', () => {
-    // Головний no longer shows «Прогрес» at all — not even the badge, which lives beside the
-    // Звіти entry instead. Two claims, and neither can be made by calling a pure function
-    // twice — `homeViewModel` is pure, so `toEqual` between two calls over one world would pass
-    // whatever this module did.
+  it('Scenario: Home/Reports rendering earns nothing, and the financial view model reads none of it', () => {
+    // The optional Прогрес widget (customizable-home-dashboard) is wired through its own
+    // `progressViewModel`/`progressWidgetPreview` call, entirely separate from `homeViewModel` —
+    // which still takes no прогрес-shaped input at all, whether or not the widget is visible.
+    // Two claims, and neither can be made by calling a pure function twice — `homeViewModel` is
+    // pure, so `toEqual` between two calls over one world would pass whatever this module did.
     //
     // (a) `homeViewModel` takes no прогрес at all. The type is the proof: `HomeInput` has no
     //     field for a досягнення, a виклик or a норма, so no value of this capability can reach

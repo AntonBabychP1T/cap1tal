@@ -1,7 +1,7 @@
 import { asc } from 'drizzle-orm';
 
 import type { BackupStore } from '../backup/backup';
-import type { BackupState } from '../backup/format';
+import type { BackupDashboardLayout, BackupState } from '../backup/format';
 import { money } from '../domain/money';
 import { isoDate } from '../domain/transaction';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
@@ -12,6 +12,7 @@ import {
   challengeDecisions,
   counterpartIncomeAwaits,
   dailyReminder,
+  dashboardLayout,
   earnedAchievements,
   entryDefaults,
   fiscalReceipts,
@@ -61,6 +62,7 @@ export function backupRepo(db: Storage): BackupStore {
     snapshot(): BackupState {
       const committed = db.select().from(saldoImport).all()[0];
       const reminder = db.select().from(dailyReminder).all()[0];
+      const layout = db.select().from(dashboardLayout).all()[0];
       return {
         accounts: db.select().from(accounts).orderBy(asc(accounts.id)).all().map(toAccount),
         categories: db
@@ -289,6 +291,16 @@ export function backupRepo(db: Storage): BackupStore {
               },
             }
           : {}),
+        // Only when the owner has ever customised or reset the layout; a device that has never
+        // touched it carries no row and restores to the installed version's current default.
+        ...(layout
+          ? {
+              dashboardLayout: {
+                schemaVersion: layout.schemaVersion,
+                items: JSON.parse(layout.itemsJson) as BackupDashboardLayout['items'],
+              },
+            }
+          : {}),
       };
     },
 
@@ -343,6 +355,7 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(monobankAccounts).run();
         tx.delete(saldoImport).run();
         tx.delete(dailyReminder).run();
+        tx.delete(dashboardLayout).run();
         // The прогрес is replaced wholesale like everything else: a відновлення that left this
         // phone's earned set in place would describe a history that is no longer here. The three
         // reference nothing, so they may go anywhere in this order.
@@ -558,6 +571,19 @@ export function backupRepo(db: Storage): BackupStore {
               enabled: state.reminder.enabled,
               hour: state.reminder.time.hour,
               minute: state.reminder.time.minute,
+            })
+            .run();
+        }
+        if (state.dashboardLayout) {
+          // Inserted exactly as the бекап carried it — normalization is a read-time concern
+          // (`src/dashboard/layout.ts`), so an unknown or duplicated identity restores unchanged
+          // and is repaired the next time anything reads the row. A бекап naming none leaves no
+          // row, which is the current default (design D2/D7).
+          tx.insert(dashboardLayout)
+            .values({
+              id: 'home',
+              schemaVersion: state.dashboardLayout.schemaVersion,
+              itemsJson: JSON.stringify(state.dashboardLayout.items),
             })
             .run();
         }

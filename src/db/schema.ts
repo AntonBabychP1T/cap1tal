@@ -726,11 +726,39 @@ export const entryDefaults = sqliteTable(
   (t) => [check('entry_defaults_single_row', sql`${t.id} = 'entry'`)],
 );
 
+/**
+ * The owner's dashboard layout — which of Головний's known widgets show, and in what order. One
+ * row, `'home'`, the same single-row idiom `daily_reminder` and `entry_defaults` keep, CHECK and
+ * all — a new customisation replaces the row rather than adding to it.
+ *
+ * No row means «follow this installed version's current default» (`src/dashboard/layout.ts`), so
+ * a fresh install and a reset both simply hold no row rather than a copy of today's default that
+ * a later version would have to migrate. `schemaVersion` is the *payload's* own version — bumped
+ * only if the JSON shape itself changes, independent of this table's own SQL migration — and
+ * `itemsJson` is the normalized `StoredDashboardLayout` the layout module reads and writes; SQLite
+ * cannot check a JSON array's own shape, so `src/db/dashboard-layout-repo.ts` does (design D3).
+ */
+export const dashboardLayout = sqliteTable(
+  'dashboard_layout',
+  {
+    /** Always `'home'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    schemaVersion: integer('schema_version').notNull(),
+    itemsJson: text('items_json').notNull(),
+  },
+  (t) => [
+    check('dashboard_layout_single_row', sql`${t.id} = 'home'`),
+    check('dashboard_layout_schema_version_positive', sql`${t.schemaVersion} > 0`),
+  ],
+);
+
 export type DailyReminderRow = typeof dailyReminder.$inferSelect;
 export type NewDailyReminderRow = typeof dailyReminder.$inferInsert;
 export type AlertRow = typeof alerts.$inferSelect;
 export type EntryDefaultsRow = typeof entryDefaults.$inferSelect;
 export type NewEntryDefaultsRow = typeof entryDefaults.$inferInsert;
+export type DashboardLayoutRow = typeof dashboardLayout.$inferSelect;
+export type NewDashboardLayoutRow = typeof dashboardLayout.$inferInsert;
 
 /**
  * A фіскальний чек: the composition of a purchase, beneath the транзакція that paid for it.

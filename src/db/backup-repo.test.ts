@@ -12,6 +12,7 @@ import {
 import { canonicalJson, crc32 } from '../backup/canonical';
 import type { BackupState } from '../backup/format';
 import { account, computeBalance } from '../domain/account';
+import { defaultDashboardLayout, moveWidget, setWidgetVisibility } from '../dashboard/layout';
 import { money } from '../domain/money';
 import {
   CORRECTION_CATEGORY_ID,
@@ -23,6 +24,7 @@ import {
 import { accountsRepo } from './accounts-repo';
 import { backupRepo, type BackupRepo } from './backup-repo';
 import { categoriesRepo } from './categories-repo';
+import { dashboardLayoutRepo } from './dashboard-layout-repo';
 import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { importRepo } from './import-repo';
@@ -1159,6 +1161,15 @@ describe('the round trip a бекап promises', () => {
 
   it('Scenario: A restore that fails partway leaves the phone as it was', async () => {
     seedWorld(target.db);
+    // The prior layout on the phone being restored onto, and a *different* incoming one in the
+    // бекап about to fail — so a rollback that merely left dashboard_layout untouched by accident
+    // (because nothing else forced it to write) could not pass for one that is truly atomic.
+    dashboardLayoutRepo(target.db).save(
+      setWidgetVisibility(defaultDashboardLayout(), 'net-worth', false),
+    );
+    dashboardLayoutRepo(source.db).save(
+      setWidgetVisibility(defaultDashboardLayout(), 'progress', true),
+    );
     const repo = backupRepo(target.db);
     const before = repo.snapshot();
 
@@ -1197,6 +1208,11 @@ describe('the round trip a бекап promises', () => {
     expect(() => repo.replaceAll(constraintBroken)).toThrow();
     expect(repo.snapshot()).toEqual(before);
     expect(target.db.select().from(transactionsTable).all()).toHaveLength(10);
+    // Scenario: Layout restore is atomic with the money — the phone's own prior layout stands,
+    // never the бекап's incoming one, exactly like every рахунок and транзакція above.
+    expect(dashboardLayoutRepo(target.db).read().items.find((i) => i.id === 'net-worth')!.visible).toBe(
+      false,
+    );
   });
 
   it('passes a refusal through untouched, having written nothing', async () => {
@@ -1450,6 +1466,68 @@ describe('the нагадування travels; this phone`s failures do not', () 
       enabled: true,
       time: { hour: 21, minute: 0 },
     });
+  });
+});
+
+describe('the dashboard layout travels; a restore replaces it rather than merging it', () => {
+  let source: TestStorage;
+  let target: TestStorage;
+
+  beforeEach(() => {
+    source = openTestDb();
+    seedWorld(source.db);
+    target = openTestDb();
+  });
+  afterEach(() => {
+    source.close();
+    target.close();
+  });
+
+  async function roundTrip(): Promise<void> {
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+  }
+
+  it('Scenario: Custom layout survives the round trip', async () => {
+    const customised = setWidgetVisibility(
+      moveWidget(defaultDashboardLayout(), 'net-worth', 'up'),
+      'progress',
+      true,
+    );
+    dashboardLayoutRepo(source.db).save(customised);
+
+    await roundTrip();
+
+    expect(dashboardLayoutRepo(target.db).read()).toEqual({ items: customised });
+  });
+
+  it('Scenario: Restore replaces the local preference', async () => {
+    dashboardLayoutRepo(source.db).save(
+      setWidgetVisibility(defaultDashboardLayout(), 'top-categories', false),
+    );
+    dashboardLayoutRepo(target.db).save(
+      setWidgetVisibility(defaultDashboardLayout(), 'net-worth', false),
+    );
+
+    await roundTrip();
+
+    // Only the бекап's own preference remains — the target's prior customisation is replaced,
+    // never merged into it.
+    const read = dashboardLayoutRepo(target.db).read();
+    expect(read.items.find((i) => i.id === 'top-categories')!.visible).toBe(false);
+    expect(read.items.find((i) => i.id === 'net-worth')!.visible).toBe(true);
+  });
+
+  it('Scenario: An older backup restores to the current default', async () => {
+    // The source names no dashboard layout at all — a бекап written before this change simply
+    // holds fewer things (backup-file design D5).
+    dashboardLayoutRepo(target.db).save(
+      setWidgetVisibility(defaultDashboardLayout(), 'progress', true),
+    );
+
+    await roundTrip();
+
+    expect(dashboardLayoutRepo(target.db).read()).toEqual({ items: defaultDashboardLayout() });
   });
 });
 

@@ -37,7 +37,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 3;
+export const BACKUP_SCHEMA_VERSION = 4;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -138,6 +138,9 @@ export const BACKUP_TABLES: readonly string[] = [
   // the owner had already told the app, and no re-fetch could put it back. It is their money data,
   // which is the line drawn above — what is excluded is this *phone's* facts, never theirs.
   'investment_values',
+  // The owner's dashboard layout: a deliberate customisation, the same class of preference
+  // `daily_reminder` already travels for (design D7 of customizable-home-dashboard).
+  'dashboard_layout',
 ];
 
 /**
@@ -204,6 +207,18 @@ export interface BackupImportedItem {
 export interface BackupReminder {
   readonly enabled: boolean;
   readonly time: TimeOfDay;
+}
+
+/**
+ * The owner's dashboard layout: the payload's own schema version and one entry per widget id the
+ * device that wrote it named, in its saved order. `id` is `string`, not the closed
+ * `DashboardWidgetId` union (design D2/D7) — an unknown or duplicate identity is structurally
+ * valid data here; normalization, not backup validation, decides what an app version renders, the
+ * same total-parse-then-normalize split `src/dashboard/layout.ts` already draws for storage.
+ */
+export interface BackupDashboardLayout {
+  readonly schemaVersion: number;
+  readonly items: readonly { readonly id: string; readonly visible: boolean }[];
 }
 
 /**
@@ -333,6 +348,8 @@ export interface BackupState {
   readonly norms: readonly BackupSpendingNorm[];
   /** One per рахунок that has one. Empty on a бекап written before вартості existed. */
   readonly investmentValues: readonly BackupInvestmentValue[];
+  /** The dashboard layout; absent on a device where the owner never customised or reset it. */
+  readonly dashboardLayout?: BackupDashboardLayout;
 }
 
 /** The whole file: the marker, the versions, the moment, the integrity value and the contents. */
@@ -670,6 +687,26 @@ function reminderAt(value: unknown, at: string): BackupReminder {
   return { enabled: booleanAt(row.enabled, `${at}.enabled`), time: { hour, minute } };
 }
 
+/**
+ * One dashboard layout entry, checked for shape only — `id` may be anything this app does not
+ * know and the same id may repeat. Structural validity is the whole of what a бекап promises
+ * here; `normalizeDashboardLayout` is what turns saved order and state into something an
+ * installed version renders (design D7).
+ */
+function dashboardLayoutItemAt(value: unknown, at: string): { id: string; visible: boolean } {
+  const row = objectAt(value, at);
+  return { id: stringAt(row.id, `${at}.id`), visible: booleanAt(row.visible, `${at}.visible`) };
+}
+
+function dashboardLayoutAt(value: unknown, at: string): BackupDashboardLayout {
+  const row = objectAt(value, at);
+  const schemaVersion = integerAt(row.schemaVersion, `${at}.schemaVersion`);
+  if (schemaVersion < 1) {
+    fail(`${at}.schemaVersion не є додатним цілим числом`);
+  }
+  return { schemaVersion, items: listAt(row, 'items', dashboardLayoutItemAt) };
+}
+
 /** An optional сума: absent stays absent, exactly as `optionalString` keeps an absent name away. */
 function optionalMoney(row: Record<string, unknown>, key: string, at: string): Record<string, Money> {
   const value = row[key];
@@ -837,6 +874,11 @@ export function parseState(value: unknown): BackupState {
     // A бекап written before поточні вартості existed names none, and comes back with none — the
     // same way `watches` and the чеки already do (design D5).
     investmentValues: listAt(data, 'investmentValues', investmentValueAt),
+    // A бекап written before dashboard layout existed names none, and restores to the current
+    // default the same way `reminder`'s absence restores to off (design D7).
+    ...(data.dashboardLayout === undefined || data.dashboardLayout === null
+      ? {}
+      : { dashboardLayout: dashboardLayoutAt(data.dashboardLayout, 'dashboardLayout') }),
   };
 }
 
