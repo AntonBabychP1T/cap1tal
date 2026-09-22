@@ -155,10 +155,10 @@ export function CategoryWidget({
               accessibilityRole="button"
               accessibilityLabel={row.accessibilityLabel}
               style={styles.legendRow}>
-              <ThemedText numberOfLines={1} style={styles.legendName}>
+              <ThemedText type="small" numberOfLines={1}>
                 {row.name}
               </ThemedText>
-              <ThemedText tabular numberOfLines={1}>
+              <ThemedText type="small" tabular numberOfLines={1} themeColor="textSecondary">
                 {formatMoney(row.amount)}
               </ThemedText>
             </Pressable>
@@ -169,10 +169,10 @@ export function CategoryWidget({
               accessibilityRole="button"
               accessibilityLabel={presentation.remainder.accessibilityLabel}
               style={styles.legendRow}>
-              <ThemedText numberOfLines={1} themeColor="textSecondary" style={styles.legendName}>
+              <ThemedText type="small" numberOfLines={1} themeColor="textSecondary">
                 {presentation.remainder.label}
               </ThemedText>
-              <ThemedText tabular numberOfLines={1} themeColor="textSecondary">
+              <ThemedText type="small" tabular numberOfLines={1} themeColor="textSecondary">
                 {formatMoney(presentation.remainder.amount)}
               </ThemedText>
             </Pressable>
@@ -199,10 +199,15 @@ const styles = StyleSheet.create({
     minHeight: 32,
     justifyContent: 'center',
   },
-  body: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  /* flex-start, not center: the legend is taller than the donut whenever it holds more than a
+     couple of rows (each is now name-over-amount), and centering the row on the taller legend
+     pushed the donut down past where the legend starts — the numbers read as floating above the
+     chart rather than beside it. */
+  body: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
   donutWrap: { width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' },
   donutCenter: { position: 'absolute', alignItems: 'center', paddingHorizontal: Spacing.two },
-  legend: { flex: 1, gap: Spacing.two - Spacing.half },
-  legendRow: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.two },
-  legendName: { flex: 1 },
+  legend: { flex: 1, minWidth: 0, gap: Spacing.two },
+  /* Name over its amount, not beside it: beside the donut's fixed diameter, a row wide enough for
+     a long Ukrainian category name AND a six-digit сума in one line does not exist on a phone. */
+  legendRow: { gap: Spacing.half },
 });

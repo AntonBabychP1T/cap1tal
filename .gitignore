@@ -61,3 +61,7 @@ npm-debug.log*
 
 # python bytecode from the icon generator
 __pycache__/
+
+# codedb-mcp index (scripts/codedb-mcp.sh); only the config is committed
+.codedb-mcp/*
+!.codedb-mcp/codedb-mcp.toml

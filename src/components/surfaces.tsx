@@ -824,6 +824,11 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     flexDirection: 'row',
+    // A `note` with no natural upper bound (a рахунок group's total across every currency it
+    // holds) wraps onto its own line below the heading rather than squeezing the heading —
+    // shrinking the heading instead turned a short uppercase, tracked word like «ІНВЕСТИЦІЙНІ»
+    // into a vertical stack of syllables, which is worse than any two-line note.
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: Spacing.three,
@@ -835,9 +840,18 @@ const styles = StyleSheet.create({
     // Tighter than the gap to the section's own action: a glyph and a count belong *to* the
     // heading, and reading as one thing is what says so.
     gap: Spacing.oneHalf,
-    flexShrink: 1,
   },
-  sectionRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  /**
+   * `flex-end`: on its own wrapped line under a `justify-content: space-between` row, a lone item
+   * packs to the line's start unless told otherwise — this keeps the note reading right, whether
+   * it shares the heading's line or falls to one of its own.
+   */
+  sectionRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    alignSelf: 'flex-end',
+  },
   sectionAction: {
     borderRadius: Radius.pill,
     borderWidth: StyleSheet.hairlineWidth,

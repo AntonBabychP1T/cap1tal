@@ -12,7 +12,7 @@ context: |
   currency; every transaction is an expense unless typed otherwise.
   Verification: `npm run verify` (openspec validate → lint → typecheck → vitest) is the only
   definition of green; it must stay under a minute and never need an emulator or native build.
-  Agent rules live in CLAUDE.md and .claude/rules/*.md.
+  Agent rules live in AGENTS.md (shared), CLAUDE.md (Claude Code layer) and .claude/rules/*.md.
 
 # Rules injected only for the matching artifact.
 rules:

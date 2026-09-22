@@ -70,10 +70,14 @@ export function NetWorthWidget({
         </Pressable>
       </View>
 
-      {model.readouts.map((readout) => (
+      {model.readouts.map((readout, i) => (
         <ThemedText
           key={readout.currency}
-          type="title"
+          // `title` is the one number a screen leads with; a рахунок in every currency the owner
+          // holds is several numbers, so only the first (UAH first, `currencyReadouts`' own order)
+          // gets it and the rest read one step under, same as a screen that also says something
+          // else (`hero`'s own doc comment).
+          type={i === 0 ? 'title' : 'hero'}
           tabular
           numberOfLines={1}
           adjustsFontSizeToFit

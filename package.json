@@ -2,7 +2,7 @@
   "name": "cap1tal",
   "version": "0.0.0",
   "private": true,
-  "description": "Personal money tracker. Product: docs/product-vision.md. Agent setup: CLAUDE.md.",
+  "description": "Personal money tracker. Product: docs/product-vision.md. Agent setup: AGENTS.md (shared) + CLAUDE.md.",
   "main": "index.ts",
   "engines": {
     "node": ">=24"

@@ -1,0 +1,19 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+# Codex project configuration (loaded because this checkout is trusted). Instructions come
+# from AGENTS.md at the root; the navigation skill from .agents/skills/repo-code-navigation.
+
+[mcp_servers.codedb-mcp]
+command = "scripts/codedb-mcp.sh"
+args = []
+
+# All five tools are read-only against the project-local index.
+[mcp_servers.codedb-mcp.tools.codedb_graph_query]
+approval_mode = "approve"
+[mcp_servers.codedb-mcp.tools.codedb_symbol]
+approval_mode = "approve"
+[mcp_servers.codedb-mcp.tools.codedb_outline]
+approval_mode = "approve"
+[mcp_servers.codedb-mcp.tools.codedb_read]
+approval_mode = "approve"
+[mcp_servers.codedb-mcp.tools.codedb_status]
+approval_mode = "approve"

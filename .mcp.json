@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "codedb-mcp": {
+      "type": "stdio",
+      "command": "scripts/codedb-mcp.sh",
+      "args": []
+    }
+  }
+}
