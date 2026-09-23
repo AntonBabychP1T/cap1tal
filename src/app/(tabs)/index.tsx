@@ -12,16 +12,15 @@ import {
 
 import { Action, Field, Picker, RowAction } from '@/components/form';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
+import { TransactionRow } from '@/components/transaction-row';
 import {
   Card,
   CardGlow,
   Chevron,
   Divider,
   Fab,
-  IconTile,
   ListCard,
   ListRow,
-  Mark,
   Screen,
   SectionLabel,
   Wordmark,
@@ -725,40 +724,19 @@ export default function MainScreen() {
                   );
                   return (
                     <ListRow key={line.id} last={index === stored.feed.length - 1} style={styles.row}>
-                      <Pressable onPress={() => router.push(`/transaction/${line.id}`)}>
-                        <View style={styles.rowTop}>
-                          <IconTile name={line.icon} tone={line.iconTone} />
-                          <View style={styles.rowLabel}>
-                            <View style={styles.rowTitle}>
-                              {/* The mark, not a repainted row: what is uncategorised is the
-                                  label. */}
-                              {line.uncategorised ? <Mark /> : null}
-                              {/* The category over its ліміт for this транзакція's month turns
-                                  red, and nothing else on the line changes. */}
-                              <ThemedText
-                                numberOfLines={1}
-                                themeColor={line.overLimit ? 'textDanger' : undefined}
-                              >
-                                {feedTitle(line)}
-                              </ThemedText>
-                            </View>
-                            <ThemedText type="small" themeColor="textSecondary">
-                              {feedSubtitle(line)}
-                            </ThemedText>
-                            {/* The bank's own text, on its own line: what an uncategorised
-                                «СІЛЬПО Київ» actually was, before the owner has said. A manual
-                                транзакція has none and gets no empty row. */}
-                            {line.description ? (
-                              <ThemedText type="small" themeColor="textMuted">
-                                {line.description}
-                              </ThemedText>
-                            ) : null}
-                          </View>
-                          <ThemedText tabular style={styles.amount} themeColor={line.amountTone}>
-                            {line.amount}
-                          </ThemedText>
-                        </View>
-                      </Pressable>
+                      <TransactionRow
+                        icon={line.icon}
+                        iconTone={line.iconTone}
+                        marked={line.uncategorised}
+                        title={feedTitle(line)}
+                        titleTone={line.overLimit ? 'textDanger' : undefined}
+                        titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
+                        subtitle={feedSubtitle(line, new Date())}
+                        description={line.description}
+                        amount={line.amount}
+                        amountTone={line.amountTone}
+                        onPress={() => router.push(`/transaction/${line.id}`)}
+                      />
 
                       {/* The one tap behind the mark: picking here stores the category on the
                           transaction without the editing screen ever opening. Beside it, «Це
@@ -1106,7 +1084,6 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   rowLabel: { flex: 1, gap: Spacing.half },
-  rowTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two - Spacing.half },
   rowActions: { flexDirection: 'row' },
   amount: { fontWeight: 600 },
 });

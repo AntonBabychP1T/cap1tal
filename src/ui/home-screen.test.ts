@@ -106,7 +106,7 @@ describe('the month status', () => {
     });
 
     expect(status.title).toBe('Витрачено у вересні');
-    expect(status.spent).toBe('1 685,00 UAH');
+    expect(status.spent).toBe('1 685,00 UAH');
     expect(status.emptyMessage).toBeNull();
   });
 
@@ -116,7 +116,7 @@ describe('the month status', () => {
     });
 
     // Two amounts, in the app's order, joined so neither can be read as a sum of the other.
-    expect(status.spent).toBe('1 000,00 UAH · 50,00 USD');
+    expect(status.spent).toBe('1 000,00 UAH · 50,00 USD');
     expect(status.spent).not.toContain('150');
   });
 
@@ -130,7 +130,7 @@ describe('the month status', () => {
     });
     const { status } = model({ transactions: [gotRefund] });
 
-    expect(status.spent).toBe('−50,00 UAH');
+    expect(status.spent).toBe('−50,00 UAH');
     expect(status.emptyMessage).toBeNull();
   });
 
@@ -141,13 +141,13 @@ describe('the month status', () => {
 
     // Витрачено is the витрата alone — the jar top-up is відкладено, which Головний no longer
     // shows at all (it is one tap away on Місяць).
-    expect(status.spent).toBe('2 000,00 UAH');
+    expect(status.spent).toBe('2 000,00 UAH');
   });
 
   it('Scenario: A transfer onto an інвестиційний рахунок is not витрачено either', () => {
     const { status } = model({ transactions: [income(5_000_000), into('bonds', 800_000)] });
 
-    expect(status.spent).toBe('0,00 UAH');
+    expect(status.spent).toBe('0,00 UAH');
   });
 
   it('Scenario: Empty and transfer-only months are distinct — no transactions at all', () => {
@@ -182,7 +182,7 @@ describe('the month status', () => {
 
     // A jar top-up moves відкладено, so the month has a currency (spent zero) and is not empty.
     expect(status.emptyMessage).toBeNull();
-    expect(status.spent).toBe('0,00 UAH');
+    expect(status.spent).toBe('0,00 UAH');
   });
 
   it('The title is the month it is about, not the one the tests were written in', () => {
@@ -209,8 +209,8 @@ describe('the money held', () => {
       balances: balances({ card: money(32_974_800, 'UAH') }),
     });
 
-    expect(status.spent).toBe('1 685,00 UAH');
-    expect(held?.line).toBe('329 748,00 UAH');
+    expect(status.spent).toBe('1 685,00 UAH');
+    expect(held?.line).toBe('329 748,00 UAH');
     expect(held?.approximate).toBeNull();
   });
 
@@ -221,8 +221,8 @@ describe('the money held', () => {
       balances: balances({ card: money(1_305_000, 'UAH') }),
     });
 
-    expect(status.spent).toBe('2 650,00 UAH');
-    expect(held?.line).toBe('13 050,00 UAH');
+    expect(status.spent).toBe('2 650,00 UAH');
+    expect(held?.line).toBe('13 050,00 UAH');
   });
 
   it('Scenario: Two currencies read as two amounts', () => {
@@ -231,7 +231,7 @@ describe('the money held', () => {
       rates: [USD_RATE],
     });
 
-    expect(held?.line).toBe('329 748,00 UAH · 700,00 USD');
+    expect(held?.line).toBe('329 748,00 UAH · 700,00 USD');
     expect(held?.approximate).toBe('≈ 358 623,00 грн');
   });
 
@@ -241,7 +241,7 @@ describe('the money held', () => {
       rates: [],
     });
 
-    expect(held?.line).toBe('329 748,00 UAH · 700,00 USD');
+    expect(held?.line).toBe('329 748,00 UAH · 700,00 USD');
     expect(held?.approximate).toBeNull();
   });
 

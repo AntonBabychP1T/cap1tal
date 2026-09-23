@@ -1,13 +1,12 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { StyleSheet, Switch, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
-import { Action, Field } from '@/components/form';
+import { Action, Field, ThemedSwitch } from '@/components/form';
 import { Banner, Card, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { reminders as remindersRepo } from '@/db/repos';
 import { useOnForeground } from '@/hooks/use-on-foreground';
-import { useTheme } from '@/hooks/use-theme';
 import { localNotifications } from '@/platform/local-notifications-device';
 import { formatTimeOfDay, DEFAULT_REMINDER_TIME } from '@/reminders/time';
 import {
@@ -37,7 +36,6 @@ const PORTS = { notifications: localNotifications, storage: remindersRepo };
 
 export default function RemindersScreen() {
   const router = useRouter();
-  const theme = useTheme();
   const [state, setState] = useState<ReminderState>();
   const [typed, setTyped] = useState<string>();
   const [refusal, setRefusal] = useState<string>();
@@ -144,11 +142,10 @@ export default function RemindersScreen() {
           <Card style={styles.card}>
             <View style={styles.row}>
               <ThemedText type="small">Нагадувати щодня</ThemedText>
-              <Switch
+              <ThemedSwitch
                 value={section.on}
                 onValueChange={toggle}
                 disabled={busy || !section.permission.switchable}
-                trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
               />
             </View>
             <Field

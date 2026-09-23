@@ -1,12 +1,11 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Switch, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
-import { Action } from '@/components/form';
+import { Action, ThemedSwitch } from '@/components/form';
 import { Banner, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { dashboardLayout as dashboardLayoutRepo } from '@/db/repos';
-import { useTheme } from '@/hooks/use-theme';
 import {
   defaultDashboardLayout,
   moveWidget,
@@ -32,7 +31,6 @@ import { Spacing, TouchTarget } from '@/constants/theme';
  */
 export default function HomeDashboardScreen() {
   const router = useRouter();
-  const theme = useTheme();
 
   const reportBug = useCallback(
     (entryId: string) =>
@@ -128,10 +126,9 @@ export default function HomeDashboardScreen() {
                   {row.ordinal}
                 </ThemedText>
               </View>
-              <Switch
+              <ThemedSwitch
                 value={row.visible}
                 onValueChange={(visible) => toggle(row.id, visible)}
-                trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
               />
             </View>
             <View style={styles.moves}>

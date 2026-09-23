@@ -1,19 +1,19 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet } from 'react-native';
 
-import { Action, Choices, Field, RowAction } from '@/components/form';
-import { ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
+import { Action, Choices, Field } from '@/components/form';
+import { Chevron, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { categories as categoriesRepo, limits as limitsRepo } from '@/db/repos';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { failureAlert } from '@/ui/failure-alert';
 import {
-  DEFAULT_LIMIT_CURRENCY,
   LIMIT_CURRENCIES,
   LIMIT_IS_A_SPENDING_GOAL,
   limitFromDraft,
+  limitDraftFor,
   limitRows,
   type LimitDraft,
 } from '@/ui/limits-section';
@@ -100,7 +100,23 @@ export default function LimitsScreen() {
       <ListCard>
         {rows.map((row, index) => (
           <ListRow key={row.categoryId} last={index === rows.length - 1} style={styles.row}>
-            <View style={styles.rowTop}>
+            {/* The row is the way into its editor (settings-screen, "A management list leads
+                with its rows and edits a row from the row"): thirty «Встановити» buttons made the
+                list a button grid. */}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityHint={row.limit ? 'Змінити або прибрати ліміт' : 'Встановити ліміт'}
+              onPress={() =>
+                setEditing(
+                  editing?.categoryId === row.categoryId
+                    ? undefined
+                    : {
+                        categoryId: row.categoryId,
+                        draft: limitDraftFor(stored.limits.find((l) => l.categoryId === row.categoryId)),
+                      },
+                )
+              }
+              style={({ pressed }) => [styles.rowTop, pressed ? styles.pressed : null]}>
               <ThemedText
                 numberOfLines={1}
                 style={styles.name}
@@ -113,7 +129,8 @@ export default function LimitsScreen() {
                 themeColor={row.limit ? 'textSecondary' : 'textMuted'}>
                 {row.limit ?? 'без ліміту'}
               </ThemedText>
-            </View>
+              <Chevron />
+            </Pressable>
             {/* An archived category is here only because it still carries a ліміт: it is set
                 apart so the leftover can be found and cleared, and it leaves once it is. */}
             {row.archived ? (
@@ -132,6 +149,7 @@ export default function LimitsScreen() {
                   }
                   keyboardType="decimal-pad"
                   placeholder="0,00"
+                  autoFocus
                 />
                 <Choices
                   label="Валюта"
@@ -142,28 +160,19 @@ export default function LimitsScreen() {
                   }
                 />
                 <Action title="Зберегти" onPress={save} />
-                <Action variant="secondary" title="Скасувати" onPress={closeEditor} />
-              </>
-            ) : (
-              <View style={styles.actions}>
-                <RowAction
-                  title={row.limit ? 'Змінити' : 'Встановити'}
-                  onPress={() =>
-                    setEditing({
-                      categoryId: row.categoryId,
-                      draft: { amount: '', currency: DEFAULT_LIMIT_CURRENCY },
-                    })
-                  }
-                />
                 {row.limit ? (
-                  <RowAction
-                    tone="quiet"
-                    title="Прибрати"
-                    onPress={() => clear(row.categoryId, row.name)}
+                  <Action
+                    variant="destructive"
+                    title="Прибрати ліміт"
+                    onPress={() => {
+                      closeEditor();
+                      clear(row.categoryId, row.name);
+                    }}
                   />
                 ) : null}
-              </View>
-            )}
+                <Action variant="secondary" title="Скасувати" onPress={closeEditor} />
+              </>
+            ) : null}
           </ListRow>
         ))}
       </ListCard>
@@ -176,9 +185,10 @@ const styles = StyleSheet.create({
   rowTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'baseline',
+    alignItems: 'center',
     gap: Spacing.two,
+    minHeight: 40,
   },
   name: { flex: 1 },
-  actions: { flexDirection: 'row', gap: Spacing.two },
+  pressed: { opacity: 0.75 },
 });

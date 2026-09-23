@@ -12,6 +12,8 @@ import {
   changeLabel,
   currencyReadouts,
   historyPointLabel,
+  historyPointRows,
+  historySpanOf,
   historySeriesFor,
   netWorthWidgetModel,
   selectHistoryCurrency,
@@ -127,8 +129,16 @@ describe('approximateNetWorthUah', () => {
 });
 
 describe('accountBasisLines', () => {
-  it('Scenario: An investment observation names its date; a fallback names вкладено', () => {
+  const kinds = new Map([
+    ['bonds', 'investment' as const],
+    ['inzhur', 'investment' as const],
+    ['card', 'spending' as const],
+  ]);
+
+  it('A card is not «вкладено»', () => {
     const contributions: AccountContribution[] = [
+      { accountId: 'card', currency: 'UAH', amount: money(230000, 'UAH'), basis: 'ledger' },
+      { accountId: 'inzhur', currency: 'UAH', amount: money(2630728, 'UAH'), basis: 'ledger' },
       {
         accountId: 'bonds',
         currency: 'UAH',
@@ -136,18 +146,15 @@ describe('accountBasisLines', () => {
         basis: 'currentValue',
         asOf: '2026-06-01',
       },
-      {
-        accountId: 'card',
-        currency: 'UAH',
-        amount: money(100000, 'UAH'),
-        basis: 'ledger',
-      },
     ];
     const accountNames = new Map([
       ['bonds', 'military bonds'],
+      ['inzhur', 'інжур'],
       ['card', 'mono black'],
     ]);
-    expect(accountBasisLines(contributions, accountNames, now)).toEqual([
+    expect(accountBasisLines(contributions, accountNames, now, kinds)).toEqual([
+      { accountId: 'card', name: 'mono black', amount: `2${T}300,00 UAH`, basis: '' },
+      { accountId: 'inzhur', name: 'інжур', amount: `26${T}307,28 UAH`, basis: 'вкладено' },
       // Same year as `now` (2026): calendarLabel omits it, as it does everywhere else.
       {
         accountId: 'bonds',
@@ -155,15 +162,17 @@ describe('accountBasisLines', () => {
         amount: `1${T}500,00 UAH`,
         basis: 'поточна вартість на 1 червня',
       },
-      { accountId: 'card', name: 'mono black', amount: `1${T}000,00 UAH`, basis: 'вкладено' },
     ]);
   });
 
-  it('An account id with no name falls back to the id itself', () => {
+  it('An account id with no name falls back to the id itself, and claims no basis', () => {
     const contributions: AccountContribution[] = [
       { accountId: 'ghost', currency: 'UAH', amount: money(0, 'UAH'), basis: 'ledger' },
     ];
-    expect(accountBasisLines(contributions, new Map(), now)[0]?.name).toBe('ghost');
+    expect(accountBasisLines(contributions, new Map(), now, kinds)[0]).toMatchObject({
+      name: 'ghost',
+      basis: '',
+    });
   });
 });
 
@@ -247,7 +256,7 @@ describe('changeLabel', () => {
       status: 'available',
       change: { currency: 'UAH', absolute: money(20000, 'UAH'), percent: 20, since: '2026-08-31' },
     };
-    expect(changeLabel(change, now)).toBe('+200,00 UAH · +20.0% · від 31 серпня');
+    expect(changeLabel(change, now)).toBe('+200,00 UAH · +20,0% · від 31 серпня');
   });
 
   it('Scenario: Zero or negative denominator — absolute only, no percentage', () => {
@@ -338,5 +347,72 @@ describe('netWorthWidgetModel', () => {
     // baseline exists and a change line is produced rather than an "unavailable" sentence.
     expect(model.changeText).toBeDefined();
     expect(model.changeText).toMatch(/^[+−]/);
+  });
+});
+
+describe('historyPointRows', () => {
+  const at = new Date(2026, 8, 23, 12, 0, 0);
+
+  it('Fifteen unknown month-ends read as one line', () => {
+    const points = [
+      point('2024-10-28', undefined, 'gap'),
+      point('2024-10-31', undefined, 'gap'),
+      point('2024-11-30', undefined, 'gap'),
+      point('2026-01-31', undefined, 'gap'),
+      point('2026-02-28', 16039349),
+      point('2026-09-23', 18744916),
+    ];
+    expect(historyPointRows(points, 'UAH', at).map((r) => r.label)).toEqual([
+      '28 жовтня 2024 — 31 січня: невідомо — недостатньо даних за цей період',
+      `28 лютого: 160${T}393,49 UAH`,
+      `23 вересня: 187${T}449,16 UAH`,
+    ]);
+  });
+
+  it('A run broken by a known point is two ranges', () => {
+    const points = [
+      point('2026-05-31', undefined, 'gap'),
+      point('2026-06-30', undefined, 'gap'),
+      point('2026-07-31', 100),
+      point('2026-08-31', undefined, 'gap'),
+      point('2026-09-23', undefined, 'gap'),
+    ];
+    expect(historyPointRows(points, 'UAH', at).map((r) => r.label)).toEqual([
+      '31 травня — 30 червня: невідомо — недостатньо даних за цей період',
+      '31 липня: 1,00 UAH',
+      '31 серпня — 23 вересня: невідомо — недостатньо даних за цей період',
+    ]);
+  });
+
+  it('A single unknown point reads as one date, not a range', () => {
+    const points = [point('2026-08-31', undefined, 'gap'), point('2026-09-23', 100)];
+    expect(historyPointRows(points, 'UAH', at)[0]?.label).toBe(
+      '31 серпня: невідомо — недостатньо даних за цей період',
+    );
+  });
+
+  it('Different reasons are never folded together', () => {
+    const points = [point('2026-07-31', undefined, 'gap'), point('2026-08-31', undefined, 'overflow')];
+    expect(historyPointRows(points, 'UAH', at)).toHaveLength(2);
+  });
+
+  it('Every row has a distinct key', () => {
+    const points = [point('2026-07-31', undefined, 'gap'), point('2026-08-31', 1), point('2026-09-23', 2)];
+    const keys = historyPointRows(points, 'UAH', at).map((r) => r.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe('historySpanOf', () => {
+  const at = new Date(2026, 8, 23, 12, 0, 0);
+
+  it('The chart names its span', () => {
+    const points = [point('2024-10-28', undefined, 'gap'), point('2026-08-31', 1), point('2026-09-23', 2)];
+    expect(historySpanOf(points, at)).toEqual({ first: '28 жовтня 2024', last: '23 вересня' });
+  });
+
+  it('A single point has no span', () => {
+    expect(historySpanOf([point('2026-09-23', 2)], at)).toBeUndefined();
+    expect(historySpanOf([], at)).toBeUndefined();
   });
 });

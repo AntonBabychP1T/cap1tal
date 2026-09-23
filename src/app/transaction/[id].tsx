@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { askAboutTransfer } from '@/components/transfer-dialog';
-import { Action, Choices, Field, Picker } from '@/components/form';
+import { Action, Choices, DateField, Field, Picker } from '@/components/form';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
@@ -402,13 +402,7 @@ export default function EditTransactionScreen() {
             hint={crossCurrency ? to.currency : `${to.currency} — порожнє означає без комісії`}
           />
         ) : null}
-        <Field
-          label="Дата"
-          value={form.date}
-          onChangeText={(date) => setForm({ ...form, date })}
-          autoCapitalize="none"
-          placeholder="РРРР-ММ-ДД"
-        />
+        <DateField value={form.date} onChange={(date) => setForm({ ...form, date })} now={new Date()} />
         {/* The опис, editable whatever put it there — an import, a чернетка or the owner's own
             hand. No placeholder: a транзакція carrying none shows an empty field and nothing
             standing in for a description it does not have. */}

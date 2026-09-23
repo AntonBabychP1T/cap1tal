@@ -17,15 +17,16 @@ import { ThemedText } from './themed-text';
  * explanation/point list are expanded.
  */
 
-const CHART_WIDTH = 280;
+/** The width the chart is drawn at before the card has measured itself. */
+const FALLBACK_CHART_WIDTH = 280;
 const CHART_HEIGHT = 96;
 
-function chartPath(series: ReturnType<typeof historyGeometry>): string {
+function chartPath(series: ReturnType<typeof historyGeometry>, width: number): string {
   return series.segments
     .map((segment) =>
       segment
         .map((p, i) => {
-          const x = p.x * CHART_WIDTH;
+          const x = p.x * width;
           const y = CHART_HEIGHT - p.y * CHART_HEIGHT;
           return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
         })
@@ -46,6 +47,8 @@ export function NetWorthWidget({
   const theme = useTheme();
   const [explanationOpen, setExplanationOpen] = useState(false);
   const [pointsOpen, setPointsOpen] = useState(false);
+  /** The chart spans the card: measured, because a fixed 280 left a wide card's right third empty. */
+  const [chartWidth, setChartWidth] = useState(FALLBACK_CHART_WIDTH);
 
   if (model.emptyMessage) {
     return (
@@ -126,10 +129,37 @@ export function NetWorthWidget({
             accessibilityLabel="Історія розрахункових балансів, інвестиції за вкладеним">
             Історія розрахункових балансів · інвестиції за вкладеним
           </ThemedText>
-          <View accessible accessibilityLabel="Графік історії статку">
-            <Svg width={CHART_WIDTH} height={CHART_HEIGHT} viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}>
-              <Path d={chartPath(geometry)} fill="none" stroke={theme.accent} strokeWidth={2} />
+          <View
+            accessible
+            accessibilityLabel={
+              model.historySpan
+                ? `Графік історії статку, з ${model.historySpan.first} по ${model.historySpan.last}`
+                : 'Графік історії статку'
+            }
+            onLayout={({ nativeEvent }) => {
+              const width = Math.round(nativeEvent.layout.width);
+              if (width > 0 && width !== chartWidth) setChartWidth(width);
+            }}>
+            <Svg width={chartWidth} height={CHART_HEIGHT} viewBox={`0 0 ${chartWidth} ${CHART_HEIGHT}`}>
+              <Path
+                d={chartPath(geometry, chartWidth)}
+                fill="none"
+                stroke={theme.accent}
+                strokeWidth={2}
+              />
             </Svg>
+            {/* The span the line covers, so an empty stretch reads as «no data then» rather than
+                as a chart that failed to draw. */}
+            {model.historySpan ? (
+              <View style={styles.span}>
+                <ThemedText type="caption" themeColor="textMuted">
+                  {model.historySpan.first}
+                </ThemedText>
+                <ThemedText type="caption" themeColor="textMuted">
+                  {model.historySpan.last}
+                </ThemedText>
+              </View>
+            ) : null}
           </View>
           {model.changeText ? (
             <ThemedText type="small" themeColor="textSecondary">
@@ -149,7 +179,7 @@ export function NetWorthWidget({
           {pointsOpen ? (
             <View style={styles.pointsList}>
               {model.historyPoints.map((point) => (
-                <ThemedText key={point.date} type="small" themeColor="textSecondary">
+                <ThemedText key={point.key} type="small" themeColor="textSecondary">
                   {point.label}
                 </ThemedText>
               ))}
@@ -175,14 +205,20 @@ export function NetWorthWidget({
           </ThemedText>
           {model.explanation.map((line) => (
             <View key={line.accountId} style={styles.explanationRow}>
-              <ThemedText type="small" numberOfLines={1} style={styles.explanationName}>
-                {line.name}
-              </ThemedText>
+              {/* The basis under the name, not in a third column: most рахунки have none, and a
+                  column that is empty on most rows pushed every сума to a different edge. */}
+              <View style={styles.explanationName}>
+                <ThemedText type="small" numberOfLines={1}>
+                  {line.name}
+                </ThemedText>
+                {line.basis ? (
+                  <ThemedText type="caption" themeColor="textMuted">
+                    {line.basis}
+                  </ThemedText>
+                ) : null}
+              </View>
               <ThemedText type="small" tabular>
                 {line.amount}
-              </ThemedText>
-              <ThemedText type="small" themeColor="textMuted">
-                {line.basis}
               </ThemedText>
             </View>
           ))}
@@ -211,6 +247,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   pointsList: { gap: Spacing.half },
+  span: { flexDirection: 'row', justifyContent: 'space-between', marginTop: Spacing.one },
   explanation: { gap: Spacing.two - Spacing.half },
   explanationRow: { flexDirection: 'row', gap: Spacing.two, alignItems: 'baseline' },
   explanationName: { flex: 1 },

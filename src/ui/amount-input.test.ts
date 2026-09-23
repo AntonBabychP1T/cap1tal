@@ -4,6 +4,7 @@ import { money } from '../domain/money';
 import {
   formatMinorUnits,
   formatMoney,
+  splitMoney,
   formatSignedMoney,
   parseActualBalance,
   parseAmount,
@@ -227,5 +228,18 @@ describe('parseCurrentValue', () => {
   it("What is not a number is refused in the owner's own words", () => {
     expect(() => parseCurrentValue('десь тисяч п`ять', 'UAH')).toThrow(/це не сума/);
     expect(() => parseCurrentValue('5600,505', 'UAH')).toThrow(/після коми/);
+  });
+});
+
+describe('splitMoney', () => {
+  it('A six-digit month fits — the number and its currency apart', () => {
+    expect(splitMoney(money(6868249, 'UAH'))).toEqual({ number: '68\u00A0682,49', currency: 'UAH' });
+  });
+
+  it('Joined back it is exactly formatMoney, negative and zero included', () => {
+    for (const m of [money(-98231, 'UAH'), money(0, 'USD'), money(824, 'USD'), money(12042599, 'EUR')]) {
+      const { number, currency } = splitMoney(m);
+      expect(`${number} ${currency}`).toBe(formatMoney(m));
+    }
   });
 });

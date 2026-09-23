@@ -137,3 +137,24 @@ export function categoryPresentation(input: {
     ...(remainder ? { remainder } : {}),
   };
 }
+
+/**
+ * The ring's sector tones: sector 1 at full strength, each after it a step quieter, the last one
+ * held for everything past five and the remainder. One list for the ring and its legend swatches,
+ * so a legend row and its sector can never disagree (main-screen, "The ring's total stays inside
+ * the ring").
+ */
+const SECTOR_OPACITY = [1, 0.82, 0.64, 0.48, 0.34, 0.2] as const;
+
+export function sectorOpacity(index: number): number {
+  return SECTOR_OPACITY[Math.min(Math.max(index, 0), SECTOR_OPACITY.length - 1)]!;
+}
+
+/**
+ * The swatch a legend row carries: its sector's tone while the ring draws proportional sectors,
+ * and none on the neutral ring of a signed or empty breakdown, which has no sector for a row to
+ * match — a swatch there would claim a share the ring refuses to draw.
+ */
+export function legendSwatch(ringKind: 'positive' | 'neutral', index: number): number | undefined {
+  return ringKind === 'positive' ? sectorOpacity(index) : undefined;
+}

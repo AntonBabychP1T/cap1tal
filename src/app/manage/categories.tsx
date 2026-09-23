@@ -15,6 +15,7 @@ import type { CategoryIconKey } from '@/domain/category-icon';
 export default function CategoriesScreen() {
   return (
     <ManageListScreen
+      createLabel="Нова категорія"
       title="Категорії"
       where="categories"
       hint="Куди пішли гроші. Архівна категорія лишається на своїх транзакціях, але її більше не пропонують."

@@ -169,3 +169,23 @@ export function emptyMessage(input: {
     ? 'Нічого не знайдено. Спробуйте змінити пошук або звузження.'
     : 'Ще нічого не записано.';
 }
+
+/**
+ * The order of the рахунок row on «Транзакції» (transaction-search, "The filters leave the list on
+ * the first screen"): the рахунки the latest транзакції touched first, in the order of that use,
+ * then every other offered рахунок in the order it came in. The row scrolls sideways, and the
+ * рахунок of today's кава should not be the twenty-seventh chip of it. `recentIds` is
+ * `recentlyUsed(...).accounts`; an id it names that is not offered is ignored.
+ */
+export function accountFilterOrder<T extends { readonly id: string }>(
+  offered: readonly T[],
+  recentIds: readonly string[],
+): T[] {
+  const byId = new Map(offered.map((x) => [x.id, x]));
+  const lead: T[] = [];
+  for (const id of recentIds) {
+    const found = byId.get(id);
+    if (found && !lead.includes(found)) lead.push(found);
+  }
+  return [...lead, ...offered.filter((x) => !lead.includes(x))];
+}

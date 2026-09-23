@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { Card, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
+import { Card, Chevron, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { progress as progressRepo } from '@/db/repos';
 import { progressScreenData } from '@/hooks/progress-ports';
@@ -100,16 +100,17 @@ export default function ProgressScreen() {
           {model.inProgressEmpty}
         </ThemedText>
       ) : (
-        model.inProgress.map((row) => (
-          <Pressable key={row.key} onPress={() => router.push(row.route)}>
-            <Card style={styles.row}>
-              <ThemedText>{row.name}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {row.progress}
-              </ThemedText>
-            </Card>
-          </Pressable>
-        ))
+        <ListCard>
+          {model.inProgress.map((row, index) => (
+            <ProgressRow
+              key={row.key}
+              name={row.name}
+              note={row.progress}
+              last={index === model.inProgress.length - 1}
+              onPress={() => router.push(row.route)}
+            />
+          ))}
+        </ListCard>
       )}
 
       <SectionLabel>{model.earnedTitle}</SectionLabel>
@@ -118,22 +119,58 @@ export default function ProgressScreen() {
           {model.earnedEmpty}
         </ThemedText>
       ) : (
-        model.earned.map((row) => (
-          <Pressable key={row.key} onPress={() => router.push(row.route)}>
-            <Card style={styles.row}>
-              <ThemedText>{row.name}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {row.when}
-              </ThemedText>
-            </Card>
-          </Pressable>
-        ))
+        // One list, a row each: seventeen cards were four screens of scrolling for seventeen
+        // lines of information (progress-screen, "Earned досягнення read as a compact list").
+        <ListCard>
+          {model.earned.map((row, index) => (
+            <ProgressRow
+              key={row.key}
+              name={row.name}
+              note={row.when}
+              last={index === model.earned.length - 1}
+              onPress={() => router.push(row.route)}
+            />
+          ))}
+        </ListCard>
       )}
     </Screen>
   );
 }
 
+/** A досягнення as one row of a list: its name, the line under it, and the way into its detail. */
+function ProgressRow({
+  name,
+  note,
+  last,
+  onPress,
+}: {
+  name: string;
+  note: string;
+  last: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <ListRow last={last}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        style={({ pressed }) => [styles.listRow, pressed ? styles.pressed : null]}>
+        <View style={styles.listText}>
+          <ThemedText type="rowTitle">{name}</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {note}
+          </ThemedText>
+        </View>
+        <Chevron />
+      </Pressable>
+    </ListRow>
+  );
+}
+
 const styles = StyleSheet.create({
+  listRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  listText: { flex: 1, gap: Spacing.half },
+  pressed: { opacity: 0.75 },
   row: { gap: Spacing.half },
   line: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.one },
 });

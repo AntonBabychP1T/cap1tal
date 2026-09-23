@@ -1,8 +1,9 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
-import { Card, IconTile, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
+import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
+import { TransactionRow } from '@/components/transaction-row';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
@@ -67,6 +68,8 @@ export default function CategoryMonthScreen() {
     [categoryId, month, names, stored.limits, stored.transactions],
   );
 
+  // One clock for the whole list, so «сьогодні» cannot change halfway down it.
+  const now = new Date();
   return (
     <Screen>
       <ScreenHeader
@@ -115,20 +118,16 @@ export default function CategoryMonthScreen() {
             const line = transactionLine(t, byId, names, new Map(), new Map(), categoryIconKeys);
             return (
               <ListRow key={line.id} last={index === listed.length - 1}>
-                <Pressable
+                <TransactionRow
+                  icon={line.icon}
+                  iconTone={line.iconTone}
+                  title={feedTitle(line)}
+                  subtitle={feedSubtitle(line, now)}
+                  description={line.description}
+                  amount={line.amount}
+                  amountTone={line.amountTone}
                   onPress={() => router.push(`/transaction/${line.id}`)}
-                  style={styles.row}>
-                  <IconTile name={line.icon} tone={line.iconTone} />
-                  <View style={styles.label}>
-                    <ThemedText numberOfLines={1}>{feedTitle(line)}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {feedSubtitle(line)}
-                    </ThemedText>
-                  </View>
-                  <ThemedText tabular style={styles.amount} themeColor={line.amountTone}>
-                    {line.amount}
-                  </ThemedText>
-                </Pressable>
+                />
               </ListRow>
             );
           })}
@@ -146,12 +145,5 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
     gap: Spacing.two,
   },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: Spacing.three,
-  },
-  label: { flex: 1, gap: Spacing.half },
   amount: { fontWeight: 600 },
 });

@@ -13,6 +13,7 @@ import { manageSources } from '@/ui/list-management';
 export default function SourcesScreen() {
   return (
     <ManageListScreen
+      createLabel="Нове джерело"
       title="Джерела"
       where="sources"
       hint="Звідки прийшли гроші. Архівне джерело лишається на своїх доходах, але його більше не пропонують."

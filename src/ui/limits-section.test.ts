@@ -15,6 +15,7 @@ import {
   LIMIT_IS_A_SPENDING_GOAL,
   limitFromDraft,
   limitRows,
+  limitDraftFor,
 } from './limits-section';
 
 const category = (id: string, name: string, archived = false): Category => ({ id, name, archived });
@@ -252,5 +253,25 @@ describe('a ліміт and the ціль витрат of its категорія a
   it('The section says the two are one, so the owner is not left to discover it', () => {
     expect(LIMIT_IS_A_SPENDING_GOAL).toContain('ціль витрат');
     expect(LIMIT_IS_A_SPENDING_GOAL).toContain('Цілях');
+  });
+});
+
+describe('limitDraftFor', () => {
+  it('An existing ліміт opens filled in, and saving it unchanged stores the same ліміт', () => {
+    const existing: CategoryLimit = { categoryId: 'groceries', amount: money(250000, 'UAH') };
+    const draft = limitDraftFor(existing);
+    expect(draft).toEqual({ amount: '2500,00', currency: 'UAH' });
+    expect(limitFromDraft('groceries', draft)).toEqual(existing);
+  });
+
+  it('A ліміт in another currency opens in that currency', () => {
+    expect(limitDraftFor({ categoryId: 'travel', amount: money(10000, 'USD') })).toEqual({
+      amount: '100,00',
+      currency: 'USD',
+    });
+  });
+
+  it('No ліміт opens empty in UAH', () => {
+    expect(limitDraftFor(undefined)).toEqual({ amount: '', currency: 'UAH' });
   });
 });

@@ -154,23 +154,51 @@ function MonthStrip({ marked, children }: { marked?: string; children: React.Rea
   const viewport = useRef(0);
   const offset = useRef(0);
   const markedNow = useRef(marked);
+  /** The chart's own width, without the tail below. */
+  const chartWidth = useRef(0);
+  /**
+   * Room after the last column. The strip's furthest offset is its content less its window, and
+   * that almost never lands where a column begins — so a strip scrolled to its newest month came
+   * to rest with its leftmost month cut («ер 2026» for «Чер 2026»). The tail makes the offset that
+   * starts on a whole column reachable (reports-screen, "A month strip never opens on a half-drawn
+   * month").
+   */
+  const [tail, setTail] = useState(0);
+  const tailNow = useRef(0);
+  /** An offset waiting for the tail it needs to be laid out before it can be scrolled to. */
+  const pending = useRef<number | undefined>(undefined);
 
   const bring = useCallback(() => {
     const month = markedNow.current;
     const column = month === undefined ? undefined : columns.current.get(month);
     const width = viewport.current;
-    if (!column || width === 0) {
+    if (!column || width === 0 || chartWidth.current === 0) {
       return;
     }
     const whole = column.x >= offset.current && column.x + column.width <= offset.current + width;
     if (whole) {
       return;
     }
-    const x = Math.max(0, column.x + column.width / 2 - width / 2);
+    // Every offset at which a column begins (less the pill's breathing room), from which the
+    // marked column is still whole with its own breathing room; the smallest of them wins, so the
+    // marked month comes to rest near the right edge with as many whole months before it as fit.
+    const starts = [...columns.current.values()]
+      .map((c) => Math.max(0, c.x - Spacing.one))
+      .filter(
+        (start) => start <= column.x && start + width >= column.x + column.width + Spacing.one,
+      );
+    const x = starts.length > 0 ? Math.min(...starts) : Math.max(0, column.x - Spacing.one);
+    const needed = Math.max(0, Math.ceil(x + width - chartWidth.current));
     // Remembered here and not left to `onScroll`: a programmatic jump does not reliably raise a
     // scroll event on every platform, and the containment test above would then keep reading the
     // window the strip was at before this call and scroll again on the next measurement.
     offset.current = x;
+    if (needed !== tailNow.current) {
+      tailNow.current = needed;
+      pending.current = x;
+      setTail(needed);
+      return;
+    }
     scroller.current?.scrollTo({ x, animated: false });
   }, []);
 
@@ -200,11 +228,27 @@ function MonthStrip({ marked, children }: { marked?: string; children: React.Rea
         onScroll={({ nativeEvent }) => {
           offset.current = nativeEvent.contentOffset.x;
         }}
+        onContentSizeChange={() => {
+          // The tail has been laid out: the offset it was grown for is reachable now.
+          if (pending.current !== undefined) {
+            const x = pending.current;
+            pending.current = undefined;
+            scroller.current?.scrollTo({ x, animated: false });
+          }
+        }}
         onLayout={({ nativeEvent }) => {
           viewport.current = nativeEvent.layout.width;
           bring();
         }}>
-        <View style={styles.chart}>{children}</View>
+        <View
+          style={styles.chart}
+          onLayout={({ nativeEvent }) => {
+            chartWidth.current = nativeEvent.layout.width;
+            bring();
+          }}>
+          {children}
+        </View>
+        <View style={{ width: tail }} />
       </ScrollView>
     </MeasureColumn.Provider>
   );
@@ -395,6 +439,7 @@ export default function ReportsScreen() {
               choices={model.categoryChoices.map((c) => ({ value: c.id, label: c.label }))}
               selected={model.chosenCategoryId ?? undefined}
               onSelect={setChosenCategoryId}
+              scroll
             />
             {model.categoryChart.length === 0 ? (
               <ThemedText type="small" themeColor="textSecondary">
@@ -442,9 +487,20 @@ export default function ReportsScreen() {
       <Card style={styles.chartCard}>
         <ThemedText type="overline">Цілі</ThemedText>
         {model.emptyGoalsMessage ? (
-          <ThemedText type="small" themeColor="textSecondary">
-            {model.emptyGoalsMessage}
-          </ThemedText>
+          <>
+            <ThemedText type="small" themeColor="textSecondary">
+              {model.emptyGoalsMessage}
+            </ThemedText>
+            {/* Not a dead end: the sentence says there is none, this is where one is made
+                (reports-screen, "An empty цілі group leads to creating a ціль"). */}
+            <Pressable
+              onPress={() => router.push('/manage/goals')}
+              accessibilityRole="button"
+              style={styles.goalOffer}>
+              <ThemedText type="linkPrimary">Створити ціль</ThemedText>
+              <Chevron />
+            </Pressable>
+          </>
         ) : null}
 
         {/* Two named groups, never one list: a ціль-накопичення moves toward a сума the owner
@@ -607,6 +663,7 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   goal: { gap: Spacing.one },
+  goalOffer: { flexDirection: 'row', alignItems: 'center', gap: Spacing.half, minHeight: 44 },
   goalName: { flex: 1 },
   readout: { gap: Spacing.one },
   readoutRow: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.one },

@@ -1,10 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field, Picker, RowAction } from '@/components/form';
+import { Action, Choices, Picker, RowAction, SearchBar } from '@/components/form';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
-import { Card, IconTile, ListCard, ListRow, Mark, Screen, ScreenHeader } from '@/components/surfaces';
+import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
+import { TransactionRow } from '@/components/transaction-row';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
@@ -28,6 +29,7 @@ import { monthLabel, monthsOf } from '@/ui/months';
 import { recategorise } from '@/ui/retype';
 import { PICKER_SIZE } from '@/ui/shortlist';
 import {
+  accountFilterOrder,
   emptyMessage,
   monthFromRoute,
   ONLY_UNCATEGORISED,
@@ -181,6 +183,11 @@ export default function TransactionsScreen() {
     [stored.categories],
   );
   const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE + 1), [stored.latest]);
+  /** Every рахунок the latest транзакції touched, for the order of the рахунок row. */
+  const recentAccounts = useMemo(
+    () => recentlyUsed(stored.latest, stored.accounts.length).accounts,
+    [stored.latest, stored.accounts.length],
+  );
 
   /** The «Без категорії» line whose one-tap picker is open, if any. */
   const [categorising, setCategorising] = useState<string>();
@@ -237,7 +244,7 @@ export default function TransactionsScreen() {
 
   const accountChoices = [
     { value: ANY, label: 'Всі' },
-    ...activeAccounts(stored.accounts).map((a) => ({
+    ...accountFilterOrder(activeAccounts(stored.accounts), recentAccounts).map((a) => ({
       value: a.id,
       label: accountChoiceLabel(a),
     })),
@@ -251,6 +258,8 @@ export default function TransactionsScreen() {
     ...stored.months.map((m) => ({ value: m, label: monthLabel(m) })),
   ];
 
+  // One clock for the whole list, so «сьогодні» cannot change halfway down it.
+  const now = new Date();
   return (
     <Screen>
       <ScreenHeader
@@ -260,18 +269,17 @@ export default function TransactionsScreen() {
       />
 
       <Card style={styles.filters}>
-        <Field
-          label="Пошук"
+        <SearchBar
           value={query}
-          onChangeText={(typed: string) => ask(() => setQuery(typed))}
-          autoCapitalize="none"
-          placeholder="опис, категорія, джерело або сума"
+          onChange={(typed: string) => ask(() => setQuery(typed))}
+          placeholder="опис, категорія або сума"
         />
         <Choices
           label="Рахунок"
           choices={accountChoices}
           selected={accountId}
           onSelect={(picked: string) => ask(() => setAccountId(picked))}
+          scroll
         />
         <Choices
           label="Категорія"
@@ -280,6 +288,7 @@ export default function TransactionsScreen() {
           onSelect={(picked: string) =>
             ask(() => setUncategorisedOnly(picked === ONLY_UNCATEGORISED))
           }
+          scroll
         />
         {/* Only the місяці something is actually recorded in: a month the owner has nothing in
             could only ever produce «нічого не знайдено». */}
@@ -289,6 +298,7 @@ export default function TransactionsScreen() {
             choices={monthChoices}
             selected={month}
             onSelect={(picked: string) => ask(() => setMonth(picked))}
+            scroll
           />
         ) : null}
         {narrowed ? (
@@ -308,36 +318,24 @@ export default function TransactionsScreen() {
               const title = searchLineTitle(line, uncategorisedOnly);
               return (
                 <ListRow key={line.id} last={index === shown.transactions.length - 1}>
-                  <Pressable
+                  {/* Under «Без категорії» the опис already is the title; said once. */}
+                  <TransactionRow
+                    icon={line.icon}
+                    iconTone={line.iconTone}
+                    marked={line.uncategorised}
+                    title={title}
+                    titleTone={line.overLimit ? 'textDanger' : undefined}
+                    titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
+                    subtitle={feedSubtitle(line, now)}
+                    description={
+                      line.description && !(uncategorisedOnly && title === line.description)
+                        ? line.description
+                        : undefined
+                    }
+                    amount={line.amount}
+                    amountTone={line.amountTone}
                     onPress={() => router.push(`/transaction/${line.id}`)}
-                  style={styles.row}>
-                    <IconTile name={line.icon} tone={line.iconTone} />
-                    <View style={styles.label}>
-                      <View style={styles.rowTitle}>
-                        {line.uncategorised ? <Mark /> : null}
-                        <ThemedText
-                          numberOfLines={1}
-                          themeColor={line.overLimit ? 'textDanger' : undefined}>
-                          {title}
-                        </ThemedText>
-                      </View>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {feedSubtitle(line)}
-                      </ThemedText>
-                      {/* Under «Без категорії» the опис already is the title; said once. */}
-                      {line.description && !(uncategorisedOnly && title === line.description) ? (
-                        <ThemedText type="small" themeColor="textMuted">
-                          {line.description}
-                        </ThemedText>
-                      ) : null}
-                    </View>
-                    <ThemedText
-                      tabular
-                      style={styles.amount}
-                      themeColor={line.amountTone}>
-                      {line.amount}
-                    </ThemedText>
-                  </Pressable>
+                  />
 
                   {/* The one tap behind the mark, as on Головний: picking stores the категорія
                       without the editing screen ever opening. */}
@@ -394,15 +392,6 @@ export default function TransactionsScreen() {
 }
 
 const styles = StyleSheet.create({
-  filters: { gap: Spacing.three },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: Spacing.three,
-  },
-  label: { flex: 1, gap: Spacing.half },
-  rowTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two - Spacing.half },
+  filters: { gap: Spacing.two },
   rowActions: { flexDirection: 'row' },
-  amount: { fontWeight: 600 },
 });

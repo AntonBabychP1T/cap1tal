@@ -1090,3 +1090,36 @@ describe('proposedCategoryId', () => {
     ).toBe('bills');
   });
 });
+
+/**
+ * `verify` runs no JSX, so where the entry form draws two things is pinned by reading it — the
+ * same way the confirmation sentence itself is pinned above (ux-pass-2026-09-23, design D4/D5).
+ */
+describe('the entry form as drawn', () => {
+  const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+
+  it('The confirmation is seen where the button is — drawn directly above «Записати»', () => {
+    const screen = source('../app/transaction/new.tsx');
+    const confirmation = screen.indexOf('{confirmation ? (');
+    const button = screen.indexOf('<Action title="Записати"');
+    expect(confirmation).toBeGreaterThan(-1);
+    expect(button).toBeGreaterThan(confirmation);
+    // Nothing but the confirmation stands between the two.
+    expect(screen.slice(confirmation, button)).not.toMatch(/<(Field|Picker|Choices|DateField)\b/);
+  });
+
+  it('The дата is typed on a digit keyboard Android honours', () => {
+    const form = readFileSync(new URL('../components/form.tsx', import.meta.url), 'utf8');
+    // `numbers-and-punctuation` alone is iOS-only: Android shows letters for it.
+    expect(form).toMatch(/android: 'phone-pad'/);
+    expect(form).toContain('keyboardType={DATE_KEYBOARD}');
+  });
+
+  it('Both the entry form and editing set the дата through DateField, not a typed field of their own', () => {
+    for (const path of ['../app/transaction/new.tsx', '../app/transaction/[id].tsx']) {
+      const screen = source(path);
+      expect(screen).toContain('<DateField');
+      expect(screen).not.toContain('РРРР-ММ-ДД');
+    }
+  });
+});

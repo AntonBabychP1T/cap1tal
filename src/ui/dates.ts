@@ -84,6 +84,64 @@ export function calendarLabel(date: IsoDate, now: Date): string {
 }
 
 /**
+ * A транзакція's дата as a line of the стрічка says it: «сьогодні», «вчора», and otherwise
+ * `calendarLabel`'s «21 вересня» / «11 серпня 2025» (app-shell, "A транзакція's дата reads as a
+ * day"). No «завтра»: a future-dated транзакція is rare and deliberate, and its day is the honest
+ * name for it. Today is the local calendar day, as everywhere in this file.
+ */
+export function dayLabel(date: IsoDate, now: Date): string {
+  if (date === todayIso(now)) {
+    return 'сьогодні';
+  }
+  if (date === shiftIsoDate(todayIso(now), -1)) {
+    return 'вчора';
+  }
+  return calendarLabel(date, now);
+}
+
+/**
+ * The calendar date `days` away from `date` — month, year and leap-day boundaries included.
+ * Built through a local noon, so a daylight-saving change on the way can never land it a day off.
+ */
+export function shiftIsoDate(date: IsoDate, days: number): IsoDate {
+  const [year, month, day] = isoDate(date).split('-');
+  return todayIso(new Date(Number(year), Number(month) - 1, Number(day) + days, 12, 0, 0, 0));
+}
+
+/**
+ * What the дата field of the entry form offers beside itself (main-screen, "The дата of a
+ * транзакція is set without typing a date code"): «Сьогодні» and «Вчора» always; a day back and a
+ * day forward from the typed дата only when it is one, the forward step never past today; and the
+ * typed дата named as a day when it parses. Pure, so which offers stand is proven by `verify`.
+ */
+export interface DateStepOffers {
+  readonly today: IsoDate;
+  readonly yesterday: IsoDate;
+  readonly back?: IsoDate;
+  readonly forward?: IsoDate;
+  /** The typed дата as `dayLabel` says it; absent while what is typed is not a дата. */
+  readonly label?: string;
+}
+
+export function dateStepOffers(typed: string, now: Date): DateStepOffers {
+  const today = todayIso(now);
+  const yesterday = shiftIsoDate(today, -1);
+  let current: IsoDate;
+  try {
+    current = parseTypedDate(typed);
+  } catch {
+    return { today, yesterday };
+  }
+  return {
+    today,
+    yesterday,
+    back: shiftIsoDate(current, -1),
+    ...(current < today ? { forward: shiftIsoDate(current, 1) } : {}),
+    label: dayLabel(current, now),
+  };
+}
+
+/**
  * A past instant in the owner's words: «сьогодні о 09:30», «вчора о 18:05», «30 серпня о 09:00»,
  * and «30 серпня 2025 о 09:00» once the year is no longer this one.
  *

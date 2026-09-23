@@ -164,6 +164,17 @@ export function formatMoney(m: Money): string {
 }
 
 /**
+ * `formatMoney`'s two parts, for a place that draws the number and its currency on separate lines
+ * — the centre of the category ring, where one line is wider than the hole (main-screen, "The
+ * ring's total stays inside the ring"). Split from `formatMoney`'s own output, so the number can
+ * never be formatted any other way than the one every other screen shows.
+ */
+export function splitMoney(m: Money): { readonly number: string; readonly currency: string } {
+  const text = formatMoney(m);
+  return { number: text.slice(0, -(m.currency.length + 1)), currency: m.currency };
+}
+
+/**
  * The same amount with its sign always written out: "+30,00 UAH" as well as "−30,00 UAH". Used
  * where the amount *is* a difference — a коригування named before it is created — and where
  * reading "30,00 UAH" as "thirty more" rather than "thirty" is the whole question.

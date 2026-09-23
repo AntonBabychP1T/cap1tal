@@ -1,13 +1,14 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field, RowAction } from '@/components/form';
-import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
+import { Action, Choices, Field } from '@/components/form';
+import { Card, Chevron, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { accounts as accountsRepo, categories as categoriesRepo, rules as rulesRepo } from '@/db/repos';
 import { namesById } from '@/domain/category';
 import type { Rule } from '@/domain/rules';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountChoicesFor } from '@/ui/account-choices';
 import { expenseCategoryChoices } from '@/ui/category-choices';
@@ -58,6 +59,9 @@ export default function RulesScreen() {
 
   /** `undefined` — the form is closed; a draft with no id — a new rule; with one — an edit. */
   const [draft, setDraft] = useState<(RuleDraft & { id?: string }) | undefined>();
+  /** The phone's «назад» closes an open rule form before it leaves the section. */
+  const closeDraft = useCallback(() => setDraft(undefined), []);
+  useCloseOnBack(draft !== undefined, closeDraft);
 
   const names = useMemo(() => namesById(stored.categories), [stored.categories]);
   const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
@@ -110,12 +114,71 @@ export default function RulesScreen() {
           style: 'destructive',
           onPress: () => {
             rulesRepo.remove(rule.id);
+            // Closed only once the deletion is confirmed: «Скасувати» leaves the editor open.
+            setDraft(undefined);
             reload();
           },
         },
       ]);
     },
     [reload],
+  );
+
+  /**
+   * The rule form, drawn where the owner asked for it: above the list for a new rule, and inside
+   * the row for an edit — at the top of a list of twenty-two it opened off the screen from the row
+   * that was tapped (settings-screen, "A management list leads with its rows and edits a row from
+   * the row").
+   */
+  const renderForm = (editing: RuleDraft & { id?: string }, rule?: Rule) => (
+    <View style={styles.form}>
+      <Field
+        label="Продавець"
+        value={editing.merchant}
+        onChangeText={(merchant) => setDraft({ ...editing, merchant })}
+        autoCapitalize="none"
+        placeholder="частина опису, напр. сільпо"
+      />
+      <Field
+        label="MCC"
+        value={editing.mcc}
+        onChangeText={(mcc) => setDraft({ ...editing, mcc })}
+        keyboardType="number-pad"
+        placeholder="напр. 5411"
+      />
+      <Choices
+        label="Мета"
+        choices={TARGET_CHOICES}
+        selected={editing.target}
+        // Switching drops the other choice — a rule is never submitted naming both
+        // (categorisation-rules, "A rule naming both a category and a рахунок is rejected").
+        onSelect={(target) => setDraft({ ...editing, target })}
+      />
+      {editing.target === 'transfer' ? (
+        <Choices
+          label="Переказ на"
+          choices={accountChoices}
+          selected={editing.toAccountId}
+          onSelect={(toAccountId: string) => setDraft({ ...editing, toAccountId })}
+        />
+      ) : (
+        <Choices
+          label="Категорія"
+          choices={choices}
+          selected={editing.categoryId}
+          onSelect={(categoryId: string) => setDraft({ ...editing, categoryId })}
+        />
+      )}
+      <Action title="Зберегти" onPress={save} />
+      <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
+      {rule ? (
+        <Action
+          variant="destructive"
+          title="Видалити правило"
+          onPress={() => remove(rule)}
+        />
+      ) : null}
+    </View>
   );
 
   return (
@@ -126,48 +189,8 @@ export default function RulesScreen() {
         back={() => router.back()}
       />
 
-      {draft ? (
-        <Card style={styles.form}>
-          <Field
-            label="Продавець"
-            value={draft.merchant}
-            onChangeText={(merchant) => setDraft({ ...draft, merchant })}
-            autoCapitalize="none"
-            placeholder="частина опису, напр. сільпо"
-          />
-          <Field
-            label="MCC"
-            value={draft.mcc}
-            onChangeText={(mcc) => setDraft({ ...draft, mcc })}
-            keyboardType="number-pad"
-            placeholder="напр. 5411"
-          />
-          <Choices
-            label="Мета"
-            choices={TARGET_CHOICES}
-            selected={draft.target}
-            // Switching drops the other choice — a rule is never submitted naming both
-            // (categorisation-rules, "A rule naming both a category and a рахунок is rejected").
-            onSelect={(target) => setDraft({ ...draft, target })}
-          />
-          {draft.target === 'transfer' ? (
-            <Choices
-              label="Переказ на"
-              choices={accountChoices}
-              selected={draft.toAccountId}
-              onSelect={(toAccountId: string) => setDraft({ ...draft, toAccountId })}
-            />
-          ) : (
-            <Choices
-              label="Категорія"
-              choices={choices}
-              selected={draft.categoryId}
-              onSelect={(categoryId: string) => setDraft({ ...draft, categoryId })}
-            />
-          )}
-          <Action title="Зберегти" onPress={save} />
-          <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
-        </Card>
+      {draft && draft.id === undefined ? (
+        <Card>{renderForm(draft)}</Card>
       ) : (
         <Action
           title="Нове правило"
@@ -195,17 +218,13 @@ export default function RulesScreen() {
             const line = ruleLine(rule, names, accountNames);
             return (
               <ListRow key={line.id} last={index === stored.rules.length - 1} style={styles.row}>
-                <View style={styles.rowTop}>
-                  <ThemedText numberOfLines={1} style={styles.criteria}>
-                    {line.criteria}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    → {line.category}
-                  </ThemedText>
-                </View>
-                <View style={styles.actions}>
-                  <RowAction
-                    title="Змінити"
+                {draft?.id === rule.id ? (
+                  renderForm(draft, rule)
+                ) : (
+                  // The row is the way into its editor, where «Видалити» now lives too.
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityHint="Змінити або видалити правило"
                     onPress={() => {
                       setSweptMessage(undefined);
                       setDraft({
@@ -218,9 +237,16 @@ export default function RulesScreen() {
                           : { toAccountId: rule.target.toAccountId }),
                       });
                     }}
-                  />
-                  <RowAction tone="danger" title="Видалити" onPress={() => remove(rule)} />
-                </View>
+                    style={({ pressed }) => [styles.rowTop, pressed ? styles.pressed : null]}>
+                    <ThemedText numberOfLines={1} style={styles.criteria}>
+                      {line.criteria}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.target}>
+                      → {line.category}
+                    </ThemedText>
+                    <Chevron />
+                  </Pressable>
+                )}
               </ListRow>
             );
           })}
@@ -238,7 +264,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: Spacing.two,
+    minHeight: 40,
   },
   criteria: { flex: 1 },
-  actions: { flexDirection: 'row', gap: Spacing.two },
+  target: { flexShrink: 1, maxWidth: '55%' },
+  pressed: { opacity: 0.75 },
 });

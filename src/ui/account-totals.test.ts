@@ -146,9 +146,19 @@ describe('approximateTotals', () => {
 });
 
 describe('totalsLine', () => {
+  it('Three currencies of a total — a line may break between two сумі, never inside one', () => {
+    const line = totalsLine([money(18744916, 'UAH'), money(130022, 'EUR'), money(335352, 'USD')]);
+    // The only ordinary spaces left are the two around each « · »: everything else is no-break.
+    expect(line.split(' ').filter((part) => part !== '·')).toEqual([
+      '187 449,16 UAH',
+      '1 300,22 EUR',
+      '3 353,52 USD',
+    ]);
+  });
+
   it('Two currencies read as two amounts, never as one', () => {
     expect(totalsLine([money(705000, 'UAH'), money(20000, 'USD')])).toBe(
-      '7 050,00 UAH · 200,00 USD',
+      '7 050,00 UAH · 200,00 USD',
     );
   });
 
@@ -157,6 +167,6 @@ describe('totalsLine', () => {
   });
 
   it('A negative total keeps its sign', () => {
-    expect(totalsLine([money(-5000, 'UAH')])).toBe('−50,00 UAH');
+    expect(totalsLine([money(-5000, 'UAH')])).toBe('−50,00 UAH');
   });
 });

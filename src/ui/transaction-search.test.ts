@@ -15,6 +15,7 @@ import {
   searchLineTitle,
   showMore,
   uncategorisedFromRoute,
+  accountFilterOrder,
 } from './transaction-search';
 
 const categories: readonly Category[] = [
@@ -314,5 +315,29 @@ describe('categorising from «Транзакції»', () => {
     const categorise = screen.slice(screen.indexOf('const categorise = useCallback('));
     expect(categorise.slice(0, categorise.indexOf('],'))).toContain('reload();');
     expect(screen).toContain('const [shown, reload] = useReloadOnFocus(');
+  });
+});
+
+describe('accountFilterOrder', () => {
+  const a = (id: string) => account({ id, name: id, kind: 'spending', currency: 'UAH' });
+  const all = [a('Cash'), a('IBKR'), a('mono white'), a('РЕЗЕРВ'), a('гаманець')];
+
+  it('The рахунки in use lead the row', () => {
+    expect(accountFilterOrder(all, ['гаманець', 'РЕЗЕРВ', 'mono white']).map((x) => x.id)).toEqual([
+      'гаманець',
+      'РЕЗЕРВ',
+      'mono white',
+      'Cash',
+      'IBKR',
+    ]);
+  });
+
+  it('A recent id that is not offered is skipped, and nothing is lost or repeated', () => {
+    const ordered = accountFilterOrder(all, ['archived-one', 'IBKR', 'IBKR']).map((x) => x.id);
+    expect(ordered).toEqual(['IBKR', 'Cash', 'mono white', 'РЕЗЕРВ', 'гаманець']);
+  });
+
+  it('No history keeps the usual order', () => {
+    expect(accountFilterOrder(all, [])).toEqual(all);
   });
 });

@@ -9,7 +9,8 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import { categoryMonthRoute, currentMonthRoute, remainderRoute } from './home-navigation';
-import { categoryPresentation } from './home-categories';
+import { categoryPresentation, legendSwatch, sectorOpacity } from './home-categories';
+import { donutGeometry } from './dashboard-charts';
 
 const names = new Map<string, string>([
   ['groceries', 'Продукти'],
@@ -203,5 +204,41 @@ describe('categoryPresentation', () => {
     if (result.remainder) {
       expect(remainderRoute(now)).toBe(currentMonthRoute(now));
     }
+  });
+});
+
+describe('sectorOpacity', () => {
+  it('Legend rows match their sectors — one tone per index, quieter down the list', () => {
+    const tones = Array.from({ length: 11 }, (_, i) => sectorOpacity(i));
+    for (const tone of tones) {
+      expect(tone).toBeGreaterThan(0);
+      expect(tone).toBeLessThanOrEqual(1);
+    }
+    for (let i = 1; i < tones.length; i += 1) {
+      expect(tones[i]).toBeLessThanOrEqual(tones[i - 1]!);
+    }
+    expect(tones[0]).toBe(1);
+  });
+});
+
+describe('legendSwatch', () => {
+  it('Legend rows match their sectors', () => {
+    const ring = donutGeometry([
+      { categoryId: 'a', amount: 300 },
+      { categoryId: 'b', amount: 200 },
+    ]);
+    expect(ring.kind).toBe('positive');
+    expect(legendSwatch(ring.kind, 0)).toBe(sectorOpacity(0));
+    expect(legendSwatch(ring.kind, 1)).toBe(sectorOpacity(1));
+  });
+
+  it('A negative category draws no swatch', () => {
+    const ring = donutGeometry([
+      { categoryId: 'a', amount: 300 },
+      { categoryId: 'family', amount: -98231 },
+    ]);
+    expect(ring.kind).toBe('neutral');
+    expect(legendSwatch(ring.kind, 0)).toBeUndefined();
+    expect(legendSwatch(ring.kind, 1)).toBeUndefined();
   });
 });

@@ -14,6 +14,7 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import {
+  accountSideLine,
   accountsById,
   feedSubtitle,
   feedTitle,
@@ -450,6 +451,8 @@ describe('the feed marks a category over its ліміт', () => {
 
 
 describe('feedTitle / feedSubtitle', () => {
+  /** 2026-08-25 at noon: the 25th is «сьогодні» and the 24th «вчора». */
+  const NOW = new Date(2026, 7, 25, 12, 0, 0);
   const income = (sourceId: string): Income => ({
     id: 'i1',
     type: 'income',
@@ -477,14 +480,14 @@ describe('feedTitle / feedSubtitle', () => {
     );
 
     expect(feedTitle(line)).toBe('Groceries');
-    expect(feedSubtitle(line)).toBe('mono black · 2026-08-24');
+    expect(feedSubtitle(line, NOW)).toBe('mono black · вчора');
   });
 
   it('A дохід leads with its джерело', () => {
     const line = transactionLine(income('salary'), byId, names, sources);
 
     expect(feedTitle(line)).toBe('Зарплата');
-    expect(feedSubtitle(line)).toBe('mono black · 2026-08-25');
+    expect(feedSubtitle(line, NOW)).toBe('mono black · сьогодні');
   });
 
   it('A переказ leads with both рахунки and says what it is underneath, never twice', () => {
@@ -502,7 +505,7 @@ describe('feedTitle / feedSubtitle', () => {
     );
 
     expect(feedTitle(line)).toBe('mono black → банка');
-    expect(feedSubtitle(line)).toBe('переказ · 2026-08-24');
+    expect(feedSubtitle(line, NOW)).toBe('переказ · вчора');
   });
 
   it('A коригування has no label of its own and reads like a переказ does', () => {
@@ -519,6 +522,128 @@ describe('feedTitle / feedSubtitle', () => {
     );
 
     expect(feedTitle(line)).toBe('mono black');
-    expect(feedSubtitle(line)).toBe('коригування · 2026-08-24');
+    expect(feedSubtitle(line, NOW)).toBe('коригування · вчора');
+  });
+});
+
+describe('feedSubtitle — the дата as a day', () => {
+  it('An older транзакція reads its day and month, and its year only when not this one', () => {
+    const at = (date: string) =>
+      transactionLine(
+        expenseByDefault({ id: 'e', date, accountId: 'card', amount: money(100, 'UAH'), categoryId: 'groceries' }),
+        byId,
+        names,
+      );
+    const now = new Date(2026, 8, 23, 20, 0, 0);
+    expect(feedSubtitle(at('2026-09-21'), now)).toBe('mono black · 21 вересня');
+    expect(feedSubtitle(at('2025-08-11'), now)).toBe('mono black · 11 серпня 2025');
+  });
+});
+
+describe('accountSideLine', () => {
+  const NOW = new Date(2026, 8, 23, 20, 0, 0);
+  const wallet = account({ id: 'wallet', name: 'гаманець', kind: 'cash', currency: 'UAH' });
+  const platinum = account({ id: 'platinum', name: 'platinum ··6628', kind: 'spending', currency: 'UAH' });
+  const monoUsd = account({ id: 'mono-usd', name: 'валюта моно', kind: 'spending', currency: 'USD' });
+  const accounts = accountsById([card, wallet, platinum, monoUsd]);
+  const sources = namesById([{ id: UNSOURCED_SOURCE_ID, name: 'Без джерела' }]);
+  const side = (t: Transaction, accountId: string) =>
+    accountSideLine(t, transactionLine(t, accounts, names, sources), accountId, accounts, NOW);
+
+  it('A переказ arriving at гаманець', () => {
+    const t = transfer({
+      id: 't1',
+      date: '2026-09-15',
+      fromAccountId: 'platinum',
+      toAccountId: 'wallet',
+      left: money(10000, 'UAH'),
+      arrived: money(10000, 'UAH'),
+    });
+    expect(side(t, 'wallet')).toEqual({
+      title: 'з platinum ··6628',
+      subtitle: 'переказ · 15 вересня',
+      amount: '+100,00 UAH',
+      amountTone: 'text',
+    });
+  });
+
+  it('A переказ leaving гаманець', () => {
+    const t = transfer({
+      id: 't2',
+      date: '2026-09-08',
+      fromAccountId: 'wallet',
+      toAccountId: 'card',
+      left: money(1_000_000, 'UAH'),
+      arrived: money(1_000_000, 'UAH'),
+    });
+    expect(side(t, 'wallet')).toMatchObject({
+      title: 'на mono black',
+      amount: '−10 000,00 UAH',
+    });
+  });
+
+  it("A cross-currency переказ shows this рахунок's leg", () => {
+    const t = transfer({
+      id: 't3',
+      date: '2026-09-08',
+      fromAccountId: 'card',
+      toAccountId: 'mono-usd',
+      left: money(410000, 'UAH'),
+      arrived: money(10000, 'USD'),
+    });
+    expect(side(t, 'mono-usd')).toMatchObject({ title: 'з mono black', amount: '+100,00 USD' });
+    expect(side(t, 'card')).toMatchObject({ title: 'на валюта моно', amount: '−4 100,00 UAH' });
+  });
+
+  it("The рахунок's name is not repeated", () => {
+    const t = expenseByDefault({
+      id: 'e1',
+      date: '2026-09-23',
+      accountId: 'wallet',
+      amount: money(10000, 'UAH'),
+      categoryId: 'groceries',
+    });
+    expect(side(t, 'wallet')).toEqual({
+      title: 'Groceries',
+      subtitle: 'сьогодні',
+      amount: '−100,00 UAH',
+      amountTone: 'text',
+    });
+  });
+
+  it('A повернення and a коригування say what they are, without the рахунок', () => {
+    const r = refund({
+      id: 'r1',
+      date: '2026-09-22',
+      accountId: 'wallet',
+      amount: money(5000, 'UAH'),
+      categoryId: 'groceries',
+    });
+    expect(side(r, 'wallet')).toMatchObject({ title: 'Groceries', subtitle: 'повернення · вчора', amount: '+50,00 UAH' });
+    const c: Transaction = {
+      id: 'c1',
+      type: 'correction',
+      date: '2026-09-21',
+      accountId: 'wallet',
+      amount: money(-2000, 'UAH'),
+    };
+    expect(side(c, 'wallet')).toMatchObject({ title: 'Коригування', subtitle: '21 вересня', amount: '−20,00 UAH' });
+  });
+
+  it('A дохід keeps its джерело and its green', () => {
+    const i: Income = {
+      id: 'i1',
+      type: 'income',
+      date: '2026-09-16',
+      accountId: 'wallet',
+      amount: money(1_955_000, 'UAH'),
+      sourceId: UNSOURCED_SOURCE_ID,
+    };
+    expect(side(i, 'wallet')).toMatchObject({
+      title: 'Без джерела',
+      subtitle: '16 вересня',
+      amount: '+19 550,00 UAH',
+      amountTone: 'textPositive',
+    });
   });
 });

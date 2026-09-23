@@ -4,7 +4,7 @@ import type {
   AccountFirstDateMovement,
   AccountMonthMovement,
 } from '../db/net-worth-repo';
-import type { Account } from '../domain/account';
+import type { Account, AccountKind } from '../domain/account';
 import type { CurrentValue } from '../domain/investments';
 import type { CurrencyCode } from '../domain/money';
 import {
@@ -132,7 +132,10 @@ export interface AccountBasisLine {
    *  same way (`ruleTargetLabel`, `src/ui/list-management.ts`): resolved, never a bare id. */
   readonly name: string;
   readonly amount: string;
-  /** «вкладено» or «поточна вартість на <date>» — never a bare basis keyword. */
+  /**
+   * «вкладено» or «поточна вартість на <date>» for an інвестиційний рахунок — never a bare basis
+   * keyword — and empty for every other вид, which has no basis to name.
+   */
   readonly basis: string;
 }
 
@@ -146,12 +149,24 @@ export function accountBasisLines(
   contributions: readonly AccountContribution[],
   accountNames: ReadonlyMap<string, string>,
   now: Date,
+  /**
+   * Each рахунок's вид. «вкладено» is an інвестиційний рахунок's word and nothing else's — a card
+   * or a гаманець on the ledger basis is simply its balance, and writing «вкладено» after it
+   * claimed an investment the owner never made (main-screen, "Статок's explanation and history say
+   * only what holds"). A рахунок with no known вид claims no basis either.
+   */
+  accountKinds: ReadonlyMap<string, AccountKind>,
 ): AccountBasisLine[] {
   return contributions.map((c) => ({
     accountId: c.accountId,
     name: accountNames.get(c.accountId) ?? c.accountId,
     amount: formatMoney(c.amount),
-    basis: c.basis === 'currentValue' ? `поточна вартість на ${calendarLabel(c.asOf as IsoDate, now)}` : 'вкладено',
+    basis:
+      c.basis === 'currentValue'
+        ? `поточна вартість на ${calendarLabel(c.asOf as IsoDate, now)}`
+        : accountKinds.get(c.accountId) === 'investment'
+          ? 'вкладено'
+          : '',
   }));
 }
 
@@ -215,6 +230,55 @@ export function historyPointLabel(point: HistoryPoint, currency: CurrencyCode, n
   return `${date}: ${formatMoney(total.amount)}`;
 }
 
+/** One row of the accessible point list — a point, or a run of unknown points read once. */
+export interface HistoryPointRow {
+  /** The first date the row covers; unique across the rows of one list. */
+  readonly key: IsoDate;
+  readonly label: string;
+}
+
+/**
+ * The chronological point list the owner reads under «Показати точки», with every run of
+ * consecutive points that have no value *for the same reason* folded into one line naming the
+ * run's first and last date (main-screen, "Статок's explanation and history say only what
+ * holds"). Nothing is dropped: the run's dates and its reason are still read, only not fifteen
+ * times over before the first number. A single unknown point stays a single date.
+ */
+export function historyPointRows(
+  points: readonly HistoryPoint[],
+  currency: CurrencyCode,
+  now: Date,
+): HistoryPointRow[] {
+  const reasonOf = (point: HistoryPoint): string | undefined => {
+    const label = historyPointLabel(point, currency, now);
+    const total = point.totals.get(currency);
+    return total?.status === 'known' ? undefined : label.slice(label.indexOf(': ') + 2);
+  };
+  const rows: HistoryPointRow[] = [];
+  let i = 0;
+  while (i < points.length) {
+    const first = points[i]!;
+    const reason = reasonOf(first);
+    if (reason === undefined) {
+      rows.push({ key: first.date, label: historyPointLabel(first, currency, now) });
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < points.length && reasonOf(points[j + 1]!) === reason) {
+      j += 1;
+    }
+    const last = points[j]!;
+    const span =
+      j === i
+        ? calendarLabel(first.date, now)
+        : `${calendarLabel(first.date, now)} — ${calendarLabel(last.date, now)}`;
+    rows.push({ key: first.date, label: `${span}: ${reason}` });
+    i = j + 1;
+  }
+  return rows;
+}
+
 /**
  * History's own currency selection — independent of the category widget's (net-worth, "History
  * currency has a deterministic default… independently of the category widget selection"): UAH
@@ -253,7 +317,10 @@ export function changeLabel(change: ChangeResult, now: Date): string {
   const { absolute, percent, since } = change.change;
   const sign = absolute.amount >= 0 ? '+' : '';
   const percentText =
-    percent !== undefined ? ` · ${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%` : '';
+    // A decimal comma, as every other number the owner reads: «+62,4%», not «+62.4%».
+    percent !== undefined
+      ? ` · ${percent >= 0 ? '+' : ''}${percent.toFixed(1).replace('.', ',')}%`
+      : '';
   return `${sign}${formatMoney(absolute)}${percentText} · від ${calendarLabel(since, now)}`;
 }
 
@@ -296,6 +363,22 @@ export function buildHistoryInputs(
   }));
 }
 
+/**
+ * The first and the last date the history chart covers, as read under its two ends (main-screen,
+ * "Статок's explanation and history say only what holds") — so an empty stretch reads as «no data
+ * then» rather than as a chart that failed to draw. None for a single point, which has no span.
+ */
+export function historySpanOf(
+  points: readonly HistoryPoint[],
+  now: Date,
+): { readonly first: string; readonly last: string } | undefined {
+  const first = points[0];
+  const last = points.at(-1);
+  return first && last && points.length > 1
+    ? { first: calendarLabel(first.date, now), last: calendarLabel(last.date, now) }
+    : undefined;
+}
+
 export interface NetWorthWidgetModel {
   /** «Ще немає рахунків» — present exactly when there is no account at all. */
   readonly emptyMessage?: string;
@@ -307,7 +390,9 @@ export interface NetWorthWidgetModel {
   readonly historyCurrencies: readonly CurrencyCode[];
   readonly historyCurrency?: CurrencyCode;
   readonly historySeries: readonly HistorySeriesPoint[];
-  readonly historyPoints: readonly { readonly date: IsoDate; readonly label: string }[];
+  readonly historyPoints: readonly HistoryPointRow[];
+  /** The first and the last date the chart covers, as the owner reads them under it. */
+  readonly historySpan?: { readonly first: string; readonly last: string };
   readonly changeText?: string;
   /** No account anywhere has ever carried a транзакція on or before today. */
   readonly historyUnavailableMessage?: string;
@@ -355,8 +440,11 @@ export function netWorthWidgetModel(input: {
       ? approximateNetWorthUah(current.totals, input.rates)
       : { status: 'unavailable', reason: 'uah-only' };
   const accountNames = new Map(input.accounts.map((a) => [a.id, a.name]));
+  const accountKinds = new Map(input.accounts.map((a) => [a.id, a.kind]));
   const explanation =
-    current.status === 'ready' ? accountBasisLines(current.contributions, accountNames, input.now) : [];
+    current.status === 'ready'
+      ? accountBasisLines(current.contributions, accountNames, input.now, accountKinds)
+      : [];
 
   const historyInputs = buildHistoryInputs(
     input.accounts,
@@ -371,8 +459,9 @@ export function netWorthWidgetModel(input: {
 
   const historySeries = historyCurrency ? historySeriesFor(historyPointsAll, historyCurrency) : [];
   const historyPoints = historyCurrency
-    ? historyPointsAll.map((p) => ({ date: p.date, label: historyPointLabel(p, historyCurrency, input.now) }))
+    ? historyPointRows(historyPointsAll, historyCurrency, input.now)
     : [];
+  const historySpan = historySpanOf(historyPointsAll, input.now);
 
   let changeText: string | undefined;
   if (historyCurrency !== undefined && current.status === 'ready') {
@@ -412,6 +501,7 @@ export function netWorthWidgetModel(input: {
     ...(historyCurrency ? { historyCurrency } : {}),
     historySeries,
     historyPoints,
+    ...(historySpan ? { historySpan } : {}),
     ...(changeText ? { changeText } : {}),
     ...(historyPointsAll.length === 0 ? { historyUnavailableMessage: 'Історія поки недоступна.' } : {}),
   };

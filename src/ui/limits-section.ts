@@ -1,7 +1,7 @@
 import type { Category } from '../domain/category';
 import type { CategoryLimit } from '../domain/limits';
 import type { CurrencyCode } from '../domain/money';
-import { formatMoney, parseAmount } from './amount-input';
+import { formatMinorUnits, formatMoney, parseAmount } from './amount-input';
 import { byName, OFFERED_CURRENCIES } from './labels';
 
 /**
@@ -83,4 +83,16 @@ export function limitFromDraft(categoryId: string, draft: LimitDraft): CategoryL
     throw new Error(`валюта ліміту — одна з ${LIMIT_CURRENCIES.join(', ')}`);
   }
   return { categoryId, amount: parseAmount(draft.amount, draft.currency) };
+}
+
+/**
+ * What the editor opens on (settings-screen, "A management list leads with its rows and edits a
+ * row from the row"): the ліміт the категорія already carries, in the form it is typed in, so
+ * «Змінити» starts from the current ceiling instead of an empty field; UAH and nothing typed
+ * when there is none. What it holds round-trips through `limitFromDraft` to the same ліміт.
+ */
+export function limitDraftFor(existing: CategoryLimit | undefined): LimitDraft {
+  return existing
+    ? { amount: formatMinorUnits(existing.amount.amount), currency: existing.amount.currency }
+    : { amount: '', currency: DEFAULT_LIMIT_CURRENCY };
 }

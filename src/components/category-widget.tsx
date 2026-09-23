@@ -4,8 +4,8 @@ import { Path, Svg } from 'react-native-svg';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { donutGeometry } from '@/ui/dashboard-charts';
-import type { CategoryPresentation } from '@/ui/home-categories';
-import { formatMoney } from '@/ui/amount-input';
+import { legendSwatch, sectorOpacity, type CategoryPresentation } from '@/ui/home-categories';
+import { formatMoney, splitMoney } from '@/ui/amount-input';
 import { Card } from './surfaces';
 import { ThemedText } from './themed-text';
 
@@ -26,8 +26,13 @@ const OUTER_RADIUS = 72;
 const INNER_RADIUS = 44;
 const CENTER = SIZE / 2;
 const REMAINDER_ID = '__remainder__';
-/** Sector 1 full strength, each after it a step quieter — up to five rows plus the remainder. */
-const SECTOR_OPACITY = [1, 0.82, 0.64, 0.48, 0.34, 0.2];
+/**
+ * The widest the centre сума may be: the hole's diameter less a margin on each side. Without a
+ * bound `adjustsFontSizeToFit` has nothing to fit to — the overlay grew to the text, and
+ * «68 682,49 UAH» was drawn straight across the ring (main-screen, "The ring's total stays inside
+ * the ring").
+ */
+const CENTER_WIDTH = INNER_RADIUS * 2 - Spacing.two * 2;
 
 function polarPoint(radius: number, angleDeg: number): { x: number; y: number } {
   // -90 so 0° is 12 o'clock, matching `donutGeometry`'s own convention, sweeping clockwise.
@@ -84,6 +89,9 @@ export function CategoryWidget({
   ]);
 
   const centerText = presentation.center ? formatMoney(presentation.center) : '';
+  const centerParts = presentation.center ? splitMoney(presentation.center) : undefined;
+  /** Swatches only while the ring draws shares: a neutral ring has no sector to match. */
+  const swatches = legendSwatch(geometry.kind, 0) !== undefined;
   const neutralMessage = presentation.rows.some((r) => r.amount.amount < 0)
     ? 'Повернення перевищили витрати в окремих категоріях'
     : 'Витрати за вирахуванням повернень — 0';
@@ -125,7 +133,7 @@ export function CategoryWidget({
                   key={sector.categoryId}
                   d={sectorPath(sector.startAngle, sector.endAngle)}
                   fill={theme.accent}
-                  fillOpacity={SECTOR_OPACITY[i] ?? SECTOR_OPACITY.at(-1)}
+                  fillOpacity={sectorOpacity(i)}
                 />
               ))
             ) : (
@@ -141,24 +149,41 @@ export function CategoryWidget({
             )}
           </Svg>
           <View style={styles.donutCenter} pointerEvents="none">
-            <ThemedText type="title" tabular numberOfLines={1} adjustsFontSizeToFit>
-              {centerText}
+            <ThemedText
+              type="rowAmount"
+              tabular
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.5}
+              style={styles.centerNumber}>
+              {centerParts?.number ?? ''}
+            </ThemedText>
+            <ThemedText type="caption" themeColor="textSecondary">
+              {centerParts?.currency ?? ''}
             </ThemedText>
           </View>
         </View>
 
         <View style={styles.legend}>
-          {presentation.rows.map((row) => (
+          {presentation.rows.map((row, i) => (
             <Pressable
               key={row.categoryId}
               onPress={() => onOpenCategory(row.categoryId)}
               accessibilityRole="button"
               accessibilityLabel={row.accessibilityLabel}
               style={styles.legendRow}>
-              <ThemedText type="small" numberOfLines={1}>
-                {row.name}
-              </ThemedText>
-              <ThemedText type="small" tabular numberOfLines={1} themeColor="textSecondary">
+              <View style={styles.legendName}>
+                {swatches ? <Swatch color={theme.accent} opacity={legendSwatch(geometry.kind, i)!} /> : null}
+                <ThemedText type="small" numberOfLines={1} style={styles.legendNameText}>
+                  {row.name}
+                </ThemedText>
+              </View>
+              <ThemedText
+                type="small"
+                tabular
+                numberOfLines={1}
+                themeColor="textSecondary"
+                style={swatches ? styles.legendAmount : null}>
                 {formatMoney(row.amount)}
               </ThemedText>
             </Pressable>
@@ -169,10 +194,27 @@ export function CategoryWidget({
               accessibilityRole="button"
               accessibilityLabel={presentation.remainder.accessibilityLabel}
               style={styles.legendRow}>
-              <ThemedText type="small" numberOfLines={1} themeColor="textSecondary">
-                {presentation.remainder.label}
-              </ThemedText>
-              <ThemedText type="small" tabular numberOfLines={1} themeColor="textSecondary">
+              <View style={styles.legendName}>
+                {swatches ? (
+                  <Swatch
+                    color={theme.accent}
+                    opacity={legendSwatch(geometry.kind, presentation.rows.length)!}
+                  />
+                ) : null}
+                <ThemedText
+                  type="small"
+                  numberOfLines={1}
+                  themeColor="textSecondary"
+                  style={styles.legendNameText}>
+                  {presentation.remainder.label}
+                </ThemedText>
+              </View>
+              <ThemedText
+                type="small"
+                tabular
+                numberOfLines={1}
+                themeColor="textSecondary"
+                style={swatches ? styles.legendAmount : null}>
                 {formatMoney(presentation.remainder.amount)}
               </ThemedText>
             </Pressable>
@@ -186,6 +228,11 @@ export function CategoryWidget({
       ) : null}
     </Card>
   );
+}
+
+/** A legend row's key to its sector: the same accent at the same strength. */
+function Swatch({ color, opacity }: { color: string; opacity: number }) {
+  return <View style={[styles.swatch, { backgroundColor: color, opacity }]} />;
 }
 
 const styles = StyleSheet.create({
@@ -205,9 +252,15 @@ const styles = StyleSheet.create({
      chart rather than beside it. */
   body: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
   donutWrap: { width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' },
-  donutCenter: { position: 'absolute', alignItems: 'center', paddingHorizontal: Spacing.two },
+  donutCenter: { position: 'absolute', alignItems: 'center', width: CENTER_WIDTH },
+  centerNumber: { fontSize: 20, lineHeight: 24, textAlign: 'center', alignSelf: 'stretch' },
   legend: { flex: 1, minWidth: 0, gap: Spacing.two },
   /* Name over its amount, not beside it: beside the donut's fixed diameter, a row wide enough for
      a long Ukrainian category name AND a six-digit сума in one line does not exist on a phone. */
   legendRow: { gap: Spacing.half },
+  legendName: { flexDirection: 'row', alignItems: 'center', gap: Spacing.oneHalf },
+  legendNameText: { flexShrink: 1 },
+  swatch: { width: 10, height: 10, borderRadius: 3 },
+  /** Under the name, not under the swatch: the swatch's width plus the gap after it. */
+  legendAmount: { paddingLeft: 10 + Spacing.oneHalf },
 });

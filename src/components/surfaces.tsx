@@ -1,4 +1,5 @@
 import {
+  KeyboardAvoidingView,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -92,20 +93,27 @@ export function Screen({
   return (
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.screen} edges={['top']}>
-        <ScrollView
-          ref={scrollRef}
-          refreshControl={refreshControl}
-          // A screen with something floating over its corner ends its column above it, so the
-          // last row can always be read and tapped rather than sitting under the «+» — and clear
-          // of the report handle above it too, since that one floats over this screen regardless.
-          contentContainerStyle={[
-            styles.content,
-            overlay ? { paddingBottom: layout.scrollBottomPadding } : null,
-          ]}
-          keyboardShouldPersistTaps="handled">
-          {children}
-        </ScrollView>
-        {footer}
+        {/* The keyboard takes its height out of the column. Edge to edge — enforced from Android
+            15 — the window is no longer resized for it, so without this the field being typed
+            into sat under the keyboard and the column could not be scrolled to it (app-shell, "A
+            field being typed into is never under the keyboard"). The ScrollView shrinks, and
+            Android's own ScrollView brings the focused field back into view as it does. */}
+        <KeyboardAvoidingView style={styles.screen} behavior="padding">
+          <ScrollView
+            ref={scrollRef}
+            refreshControl={refreshControl}
+            // A screen with something floating over its corner ends its column above it, so the
+            // last row can always be read and tapped rather than sitting under the «+» — and clear
+            // of the report handle above it too, since that one floats over this screen regardless.
+            contentContainerStyle={[
+              styles.content,
+              overlay ? { paddingBottom: layout.scrollBottomPadding } : null,
+            ]}
+            keyboardShouldPersistTaps="handled">
+            {children}
+          </ScrollView>
+          {footer}
+        </KeyboardAvoidingView>
         {overlay}
       </SafeAreaView>
     </ThemedView>

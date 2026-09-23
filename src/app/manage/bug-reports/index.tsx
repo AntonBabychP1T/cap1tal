@@ -1,14 +1,13 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { StyleSheet, Switch, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
-import { Action } from '@/components/form';
+import { Action, ThemedSwitch } from '@/components/form';
 import { Card, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { reporting as reportingRepo } from '@/db/repos';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { useTheme } from '@/hooks/use-theme';
 import {
   CAPTURE_SECTION_LABEL,
   CAPTURE_SECTION_WARNING,
@@ -30,7 +29,6 @@ import {
  */
 export default function BugReportsScreen() {
   const router = useRouter();
-  const theme = useTheme();
   const [rows] = useReloadOnFocus(useCallback(() => listRows(reportingRepo.list()), []));
   // The row is written here and read by the shell when the owner navigates away, so a switch lands
   // without a restart (design D10).
@@ -48,10 +46,9 @@ export default function BugReportsScreen() {
       <Card style={styles.card}>
         <View style={styles.switchRow}>
           <ThemedText type="small">{GESTURE_SWITCH_LABEL}</ThemedText>
-          <Switch
+          <ThemedSwitch
             value={capture.gestureEnabled}
             onValueChange={(gestureEnabled) => set({ ...capture, gestureEnabled })}
-            trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
           />
         </View>
         <ThemedText type="small" themeColor="textSecondary">
@@ -60,10 +57,9 @@ export default function BugReportsScreen() {
 
         <View style={styles.switchRow}>
           <ThemedText type="small">{HANDLE_SWITCH_LABEL}</ThemedText>
-          <Switch
+          <ThemedSwitch
             value={capture.handleEnabled}
             onValueChange={(handleEnabled) => set({ ...capture, handleEnabled })}
-            trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
           />
         </View>
         <ThemedText type="small" themeColor="textSecondary">

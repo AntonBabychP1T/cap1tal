@@ -1,4 +1,4 @@
-import type { Account } from '../domain/account';
+import { transactionEffect, type Account } from '../domain/account';
 import { resolveCategoryIcon } from '../domain/category-icon';
 import { overLimitCategories, type CategoryLimit } from '../domain/limits';
 import { categoryBreakdown } from '../domain/monthly-picture';
@@ -14,9 +14,10 @@ import {
   type Transaction,
   type Transfer,
 } from '../domain/transaction';
-import { formatMoney } from './amount-input';
+import { formatMoney, formatSignedMoney } from './amount-input';
 import { categoryLabel, sourceLabel, transactionTypeLabel } from './labels';
 import { categoryIconDefinition } from './category-icons';
+import { dayLabel } from './dates';
 import type { IconName } from './icons';
 import type { ThemeColor } from '../constants/theme';
 
@@ -204,9 +205,63 @@ export function feedTitle(line: TransactionLine): string {
   return line.category ?? line.source ?? line.accounts;
 }
 
-export function feedSubtitle(line: TransactionLine): string {
+export function feedSubtitle(line: TransactionLine, now: Date): string {
   const labelled = line.category !== undefined || line.source !== undefined;
-  return `${line.type === 'повернення' ? 'повернення' : labelled ? line.accounts : line.type} · ${line.date}`;
+  return `${line.type === 'повернення' ? 'повернення' : labelled ? line.accounts : line.type} · ${dayLabel(line.date, now)}`;
+}
+
+/** What one line inside a рахунок's рухи reads — see `accountSideLine`. */
+export interface AccountSideLine {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly amount: string;
+  readonly amountTone: ThemeColor;
+}
+
+/**
+ * A line of a рахунок's рухи, told from that рахунок's side (accounts-screen, "Tapping a рахунок
+ * opens its рухи"): the screen already names the рахунок, so no line repeats it, and a переказ
+ * says whether money came *in* («з …», «+») or went *out* («на …», «−») with this рахунок's own
+ * leg — the feed's «A → B» arrow is the whole-app view and leaves the owner to work out which end
+ * they are standing on.
+ *
+ * A переказ keeps the plain text tone either way: money arriving from the owner's own рахунок is
+ * not дохід, and the green belongs to дохід. Everything else keeps the feed's own title, сума and
+ * tone; only the subtitle loses the рахунок — the day alone, or «повернення · …»/«переказ · …»
+ * where the type is not already the title.
+ */
+export function accountSideLine(
+  t: Transaction,
+  line: TransactionLine,
+  accountId: string,
+  byId: ReadonlyMap<string, Account>,
+  now: Date,
+): AccountSideLine {
+  const day = dayLabel(line.date, now);
+  if (t.type === 'transfer') {
+    // The leg and its sign are the balance rule's own — the same `transactionEffect` that folds
+    // this переказ into the рахунок's баланс — so a line can never read differently from the
+    // balance it moved.
+    const effect = transactionEffect(accountId, t);
+    const leaving = t.fromAccountId === accountId;
+    return {
+      title: leaving
+        ? `на ${accountNameOf(t.toAccountId, byId)}`
+        : `з ${accountNameOf(t.fromAccountId, byId)}`,
+      subtitle: `переказ · ${day}`,
+      amount: effect ? formatSignedMoney(effect) : line.amount,
+      amountTone: 'text',
+    };
+  }
+  if (t.type === 'correction') {
+    return { title: 'Коригування', subtitle: day, amount: line.amount, amountTone: line.amountTone };
+  }
+  return {
+    title: feedTitle(line),
+    subtitle: t.type === 'refund' ? `повернення · ${day}` : day,
+    amount: line.amount,
+    amountTone: line.amountTone,
+  };
 }
 
 export function accountsById(accounts: readonly Account[]): ReadonlyMap<string, Account> {

@@ -4,9 +4,12 @@ import { isoDate, monthOf } from '../domain/transaction';
 import { planWindows } from '../monobank/sync';
 import {
   dateOfEpochMs,
+  dateStepOffers,
+  dayLabel,
   freshnessLabel,
   momentLabel,
   parseTypedDate,
+  shiftIsoDate,
   startOfLocalDayMs,
   todayIso,
 } from './dates';
@@ -209,5 +212,79 @@ describe('freshnessLabel', () => {
     for (const minutes of [1, 2, 5, 11, 21, 44]) {
       expect(freshnessLabel(ago(minutes * MINUTE), now)).toBe(`${minutes} хв тому`);
     }
+  });
+});
+
+describe('dayLabel', () => {
+  const now = new Date(2026, 8, 23, 20, 0, 0);
+
+  it('Today and yesterday are named', () => {
+    expect(dayLabel(isoDate('2026-09-23'), now)).toBe('сьогодні');
+    expect(dayLabel(isoDate('2026-09-22'), now)).toBe('вчора');
+  });
+
+  it("This year's day carries no year", () => {
+    expect(dayLabel(isoDate('2026-09-21'), now)).toBe('21 вересня');
+  });
+
+  it("Another year's day carries its year", () => {
+    expect(dayLabel(isoDate('2025-08-11'), now)).toBe('11 серпня 2025');
+  });
+
+  it('Yesterday crosses a year boundary by the local calendar', () => {
+    expect(dayLabel(isoDate('2025-12-31'), new Date(2026, 0, 1, 0, 30))).toBe('вчора');
+  });
+
+  it('A future day is a day, not «завтра»', () => {
+    expect(dayLabel(isoDate('2026-09-24'), now)).toBe('24 вересня');
+  });
+});
+
+describe('shiftIsoDate', () => {
+  it('A day back from the дата shown', () => {
+    expect(shiftIsoDate(isoDate('2026-09-01'), -1)).toBe('2026-08-31');
+    expect(shiftIsoDate(isoDate('2026-01-01'), -1)).toBe('2025-12-31');
+  });
+
+  it('A day forward crosses month and leap-day boundaries', () => {
+    expect(shiftIsoDate(isoDate('2028-02-28'), 1)).toBe('2028-02-29');
+    expect(shiftIsoDate(isoDate('2026-02-28'), 1)).toBe('2026-03-01');
+    expect(shiftIsoDate(isoDate('2026-12-31'), 1)).toBe('2027-01-01');
+  });
+});
+
+describe('dateStepOffers', () => {
+  const now = new Date(2026, 8, 23, 20, 0, 0);
+
+  it('Yesterday in one tap', () => {
+    const offers = dateStepOffers('2026-09-10', now);
+    expect(offers.yesterday).toBe('2026-09-22');
+    expect(offers.today).toBe('2026-09-23');
+  });
+
+  it('A day back from the дата shown', () => {
+    expect(dateStepOffers('2026-09-01', now).back).toBe('2026-08-31');
+    expect(dateStepOffers('2026-09-01', now).forward).toBe('2026-09-02');
+  });
+
+  it('Stepping stops at today', () => {
+    expect(dateStepOffers('2026-09-23', now).forward).toBeUndefined();
+    expect(dateStepOffers('2026-09-30', now).forward).toBeUndefined();
+    expect(dateStepOffers('2026-09-22', now).forward).toBe('2026-09-23');
+  });
+
+  it('A half-typed дата offers only the two quick choices', () => {
+    for (const typed of ['', '2026-09', '31.12.2026', '2026-02-30']) {
+      const offers = dateStepOffers(typed, now);
+      expect(offers.back).toBeUndefined();
+      expect(offers.forward).toBeUndefined();
+      expect(offers.label).toBeUndefined();
+      expect(offers.today).toBe('2026-09-23');
+      expect(offers.yesterday).toBe('2026-09-22');
+    }
+  });
+
+  it('The typed дата is named as a day', () => {
+    expect(dateStepOffers(' 2026-09-22 ', now).label).toBe('вчора');
   });
 });

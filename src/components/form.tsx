@@ -1,11 +1,23 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View, type TextInputProps } from 'react-native';
+import { useRef, useState } from 'react';
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  TextInput,
+  View,
+  type KeyboardTypeOptions,
+  type SwitchProps,
+  type TextInputProps,
+} from 'react-native';
 
 import { Icon } from './icon';
 import { ThemedText } from './themed-text';
 
 import { Radius, Spacing, TouchTarget } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { dateStepOffers } from '@/ui/dates';
 import { type IconName } from '@/ui/icons';
 import {
   allOffer,
@@ -64,6 +76,102 @@ export function Field({ label, hint, ...rest }: TextInputProps & { label: string
         </ThemedText>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * The дата of a транзакція (main-screen, "The дата of a транзакція is set without typing a date
+ * code"): the typed field is still there — a date weeks back is typed as before, on the digit pad
+ * now — but «Сьогодні», «Вчора» and a day either way are one tap each, and the label names the
+ * typed дата as a day, so «2026-09-22» is also read as «вчора». Which offers stand, and what each
+ * sets, is `dateStepOffers`; this draws them. The forward step is never offered past today.
+ */
+/**
+ * Digits and the hyphen, and no letters. `numbers-and-punctuation` is iOS-only — Android ignores
+ * it and opens the full letter keyboard — so Android gets its phone pad, which carries «-».
+ */
+const DATE_KEYBOARD = Platform.select<KeyboardTypeOptions>({
+  android: 'phone-pad',
+  default: 'numbers-and-punctuation',
+});
+
+export function DateField({
+  value,
+  onChange,
+  now,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  /** The screen's clock — what «сьогодні» is. */
+  now: Date;
+}) {
+  const offers = dateStepOffers(value, now);
+  const set = (next: string) => {
+    if (next !== value.trim()) onChange(next);
+  };
+  return (
+    <View style={styles.field}>
+      <Field
+        label={offers.label ? `Дата · ${offers.label}` : 'Дата'}
+        value={value}
+        onChangeText={onChange}
+        autoCapitalize="none"
+        keyboardType={DATE_KEYBOARD}
+        placeholder="РРРР-ММ-ДД"
+      />
+      <View style={styles.dateSteps}>
+        {offers.back ? (
+          <DateStep label="‹ день" hint="На день раніше" onPress={() => set(offers.back!)} />
+        ) : null}
+        <DateStep
+          label="Вчора"
+          picked={value.trim() === offers.yesterday}
+          onPress={() => set(offers.yesterday)}
+        />
+        <DateStep
+          label="Сьогодні"
+          picked={value.trim() === offers.today}
+          onPress={() => set(offers.today)}
+        />
+        {offers.forward ? (
+          <DateStep label="день ›" hint="На день пізніше" onPress={() => set(offers.forward!)} />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function DateStep({
+  label,
+  hint,
+  picked = false,
+  onPress,
+}: {
+  label: string;
+  hint?: string;
+  picked?: boolean;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={hint ?? label}
+      accessibilityState={{ selected: picked }}
+      hitSlop={Spacing.one}
+      style={({ pressed }) => [
+        styles.dateStep,
+        {
+          backgroundColor: picked ? theme.accentSurface : theme.backgroundSelected,
+          borderColor: picked ? theme.accent : theme.cardEdge,
+          opacity: pressed ? 0.7 : 1,
+        },
+      ]}>
+      <ThemedText type={picked ? 'smallBold' : 'small'} themeColor={picked ? 'accent' : 'textSecondary'}>
+        {label}
+      </ThemedText>
+    </Pressable>
   );
 }
 
@@ -200,6 +308,7 @@ export function Choices<T extends string>({
   selected,
   onSelect,
   disabled,
+  scroll,
 }: {
   label: string;
   choices: readonly Choice<T>[];
@@ -207,7 +316,22 @@ export function Choices<T extends string>({
   onSelect: (value: T) => void;
   /** A вид and a валюта are fixed at creation, so editing shows them but cannot change them. */
   disabled?: boolean;
+  /**
+   * One row that scrolls sideways instead of wrapping. For a filter or a chooser whose choices are
+   * the owner's own history — 29 рахунки, 24 місяці — which wrapped into a wall that pushed the
+   * very list it filters off the first screen (transaction-search, "The filters leave the list on
+   * the first screen").
+   */
+  scroll?: boolean;
 }) {
+  if (scroll && choices.length > 0) {
+    return (
+      <View style={styles.field}>
+        <ThemedText type="overline">{label}</ThemedText>
+        <ScrollingChips choices={choices} selected={selected} onSelect={onSelect} disabled={disabled} />
+      </View>
+    );
+  }
   return (
     <View style={styles.field}>
       <ThemedText type="overline">{label}</ThemedText>
@@ -229,6 +353,77 @@ export function Choices<T extends string>({
         </View>
       )}
     </View>
+  );
+}
+
+/**
+ * `Choices`' sideways row. The chosen chip is brought into view once, when it is first laid out
+ * off the visible part — a month picked from «Показати в Транзакціях» may be the twentieth chip —
+ * and never again after that, so the row does not jump under a finger that is scrolling it.
+ */
+function ScrollingChips<T extends string>({
+  choices,
+  selected,
+  onSelect,
+  disabled,
+}: {
+  choices: readonly Choice<T>[];
+  selected: T | undefined;
+  onSelect: (value: T) => void;
+  disabled?: boolean;
+}) {
+  const scroller = useRef<ScrollView>(null);
+  const viewport = useRef(0);
+  const brought = useRef(false);
+  return (
+    <ScrollView
+      ref={scroller}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      onLayout={({ nativeEvent }) => {
+        viewport.current = nativeEvent.layout.width;
+      }}
+      contentContainerStyle={styles.scrollChoices}>
+      {choices.map((choice) => (
+        <View
+          key={choice.value}
+          onLayout={({ nativeEvent }) => {
+            if (brought.current || choice.value !== selected) return;
+            brought.current = true;
+            const { x, width } = nativeEvent.layout;
+            if (viewport.current > 0 && x + width > viewport.current) {
+              scroller.current?.scrollTo({ x: Math.max(0, x - Spacing.four), animated: false });
+            }
+          }}>
+          <Chip
+            label={choice.label}
+            picked={choice.value === selected}
+            disabled={disabled}
+            onPress={() => onSelect(choice.value)}
+          />
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+/**
+ * A switch in the app's own tones (app-shell, "A switch is drawn in the app's own tones"): on, an
+ * accent thumb on the accent's own tint — the pair a picked chip wears; off, a muted thumb on a
+ * quiet track. Not an `onAccent` thumb on an accent track: on the dark theme `onAccent` is nearly
+ * black and the thumb vanished into the card. Android's default thumb is teal — the one hue
+ * nothing else in the app uses — so every switch goes through here and none is drawn bare.
+ */
+export function ThemedSwitch(props: Omit<SwitchProps, 'trackColor' | 'thumbColor'>) {
+  const theme = useTheme();
+  return (
+    <Switch
+      {...props}
+      trackColor={{ true: theme.accentSurface, false: theme.backgroundSelected }}
+      thumbColor={props.value ? theme.accent : theme.textMuted}
+      ios_backgroundColor={theme.backgroundSelected}
+    />
   );
 }
 
@@ -454,6 +649,17 @@ const styles = StyleSheet.create({
     fontSize: 17,
   },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  dateSteps: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, paddingTop: Spacing.one },
+  dateStep: {
+    paddingHorizontal: Spacing.twoHalf,
+    paddingVertical: Spacing.oneHalf,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    minHeight: 34,
+    justifyContent: 'center',
+  },
+  // The vertical padding keeps the chips' own hit slop inside the scroller, which clips.
+  scrollChoices: { flexDirection: 'row', gap: Spacing.two, paddingVertical: Spacing.one },
   // The offer sits under its chips and only as wide as its own words, not across the column:
   // it is a way out of the picker, not the screen's action.
   offer: { flexDirection: 'row' },

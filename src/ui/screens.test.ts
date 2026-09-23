@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -273,7 +273,7 @@ describe('the screens that file a репорт from the screen the owner is on',
     // Drawn…
     expect(source).toContain('GESTURE_SWITCH_LABEL');
     expect(source).toContain('HANDLE_SWITCH_LABEL');
-    expect(source).toContain('<Switch');
+    expect(source).toContain('<ThemedSwitch');
     // …bound to the two fields…
     expect(source).toContain('gestureEnabled');
     expect(source).toContain('handleEnabled');
@@ -755,5 +755,86 @@ describe('the optional Прогрес widget on Головний', () => {
     // `src/ui/progress-screen.ts`), never a hardcoded string sitting beside it.
     expect(progressCase).toContain('progressPreview.nothingYet ?? progressPreview.leadLabel');
     expect(progressCase).not.toMatch(/leadLabel \?\? '[^']*немає/);
+  });
+});
+
+/**
+ * app-shell, "A switch is drawn in the app's own tones": Android's own thumb is teal, the one hue
+ * nothing else in the app uses. Every switch goes through `ThemedSwitch`, so a bare one is a bug.
+ */
+describe('every switch the app draws', () => {
+  it('A switched-on widget in «Налаштувати Головний» — no screen draws a bare Switch', () => {
+    const bare = screenFiles().filter(
+      (path) => !path.endsWith(`${sep}form.tsx`) && /<Switch\b/.test(readFileSync(path, 'utf8')),
+    );
+    expect(bare).toEqual([]);
+  });
+});
+
+/**
+ * settings-screen, "A management list leads with its rows and edits a row from the row", and
+ * accounts-screen, "Звірити opens when the owner asks for it" — where a thing is drawn, which
+ * `verify` can only hold a JSX file to by reading it.
+ */
+describe('lists that lead with their rows', () => {
+  const component = (name: string) => readFileSync(join(COMPONENTS, name), 'utf8');
+
+  it('Категорії opens on the list — the create form is behind one action, closed by default', () => {
+    const source = component('manage-list.tsx');
+    expect(source).toContain('useState(false)');
+    expect(source).toMatch(/\{creating \? \(/);
+    expect(source).toContain('title={createLabel}');
+  });
+
+  it('A row opens its editor — no row carries its verbs as buttons outside the editor', () => {
+    const source = component('manage-list.tsx');
+    expect(source).not.toContain('title="Перейменувати"');
+    // «В архів» and «З архіву» exist only inside the editing branch.
+    const editorEnd = source.indexOf(') : (', source.indexOf('{editing?.id === row.id ? ('));
+    for (const verb of ['title="В архів"', 'title="З архіву"']) {
+      const at = source.indexOf(verb);
+      expect(at).toBeGreaterThan(-1);
+      expect(at).toBeLessThan(editorEnd);
+    }
+  });
+
+  it('The back gesture closes an open create form or editor before it leaves the section', () => {
+    const source = component('manage-list.tsx');
+    expect(source).toContain('useCloseOnBack(creating, closeCreate)');
+    expect(source).toContain('useCloseOnBack(editing !== undefined, closeEditor)');
+  });
+
+  it('The history follows the balance — the фактичний залишок field is drawn only while Звірити is open', () => {
+    const source = read('account/[id].tsx');
+    const open = source.indexOf('{a.archived ? null : reconciling ? (');
+    const field = source.indexOf('label="Фактичний залишок"');
+    const closed = source.indexOf(') : null}', open);
+    expect(open).toBeGreaterThan(-1);
+    expect(field).toBeGreaterThan(open);
+    expect(field).toBeLessThan(closed);
+    expect(source).toContain('useCloseOnBack(reconciling, closeReconcile)');
+    // Closed, the one way in is the «Звірити» action beside «Редагувати».
+    expect(source).toContain('onPress={() => setReconciling(true)}');
+  });
+});
+
+/**
+ * main-screen, "A transaction line keeps its сума beside its title": the four lists of транзакції
+ * draw their lines through the one shared row, never a copy of their own — four copies are how the
+ * сума column came to be as tall as the row on all four at once.
+ */
+describe('every list of транзакції', () => {
+  it('Large text keeps the second row on one line — all four draw through TransactionRow', () => {
+    for (const file of [
+      '(tabs)/index.tsx',
+      'transactions.tsx',
+      'account/[id].tsx',
+      'category/[month]/[categoryId].tsx',
+    ]) {
+      const source = read(file);
+      expect(source, file).toContain('<TransactionRow');
+      // The old copies each drew their own leading tile; none is left.
+      expect(source, file).not.toContain('<IconTile');
+    }
   });
 });

@@ -35,7 +35,7 @@ import {
   reconcileConfirmation,
 } from '@/ui/account-groups';
 import { accountTotals, approximateTotals, totalsLine } from '@/ui/account-totals';
-import { parseCurrentValue } from '@/ui/amount-input';
+import { formatMoney, parseCurrentValue } from '@/ui/amount-input';
 import { todayIso } from '@/ui/dates';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
@@ -295,9 +295,14 @@ export default function AccountsScreen() {
       {totals.total.length > 0 ? (
         <Card style={styles.totals}>
           <ThemedText type="overline">Усього грошей</ThemedText>
-          <ThemedText type="subtitle" tabular>
-            {totalsLine(totals.total)}
-          </ThemedText>
+          {/* One currency per line, each whole: joined on one line, «1 300,22 EUR» broke between
+              its number and its code at the edge of the card (accounts-screen, "«Усього грошей»
+              reads one currency per line"). */}
+          {totals.total.map((m) => (
+            <ThemedText key={m.currency} type="subtitle" tabular numberOfLines={1} adjustsFontSizeToFit>
+              {formatMoney(m)}
+            </ThemedText>
+          ))}
           {approximate ? (
             <ThemedText type="small" themeColor="textSecondary" tabular>
               {approximate}

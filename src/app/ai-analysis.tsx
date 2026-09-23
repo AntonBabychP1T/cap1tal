@@ -1,9 +1,9 @@
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field } from '@/components/form';
+import { Action, Choices, Field, ThemedSwitch } from '@/components/form';
 import { Banner, Card, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -17,7 +17,6 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { useTheme } from '@/hooks/use-theme';
 import { analysisShare } from '@/platform/analysis-share-device';
 import {
   aiAnalysisModel,
@@ -58,7 +57,6 @@ import { Spacing } from '@/constants/theme';
  */
 export default function AiAnalysisScreen() {
   const router = useRouter();
-  const theme = useTheme();
 
   const [stored] = useReloadOnFocus(
     useCallback(
@@ -188,10 +186,9 @@ export default function AiAnalysisScreen() {
               Описи транзакцій — текст, який надіслав банк
             </ThemedText>
           </View>
-          <Switch
+          <ThemedSwitch
             value={choices.descriptions}
             onValueChange={(descriptions) => change({ descriptions })}
-            trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
           />
         </View>
         <View style={styles.row}>
@@ -201,10 +198,9 @@ export default function AiAnalysisScreen() {
               Кожна транзакція періоду, з датою і сумою
             </ThemedText>
           </View>
-          <Switch
+          <ThemedSwitch
             value={choices.transactions}
             onValueChange={(transactions) => change({ transactions })}
-            trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
           />
         </View>
       </Card>

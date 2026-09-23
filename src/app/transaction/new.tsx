@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet } from 'react-native';
 
-import { Action, Choices, Field, Picker } from '@/components/form';
+import { Action, Choices, DateField, Field, Picker } from '@/components/form';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { askAboutTransfer } from '@/components/transfer-dialog';
@@ -419,13 +419,7 @@ export default function NewTransactionScreen() {
               }
             />
           ) : null}
-          <Field
-            label="Дата"
-            value={date}
-            onChangeText={changing(setDate)}
-            autoCapitalize="none"
-            placeholder="РРРР-ММ-ДД"
-          />
+          <DateField value={date} onChange={changing(setDate)} now={new Date()} />
           {/* A витрата arrives carrying «Без категорії» and the owner may pick another; a
               повернення has no default and is not stored until one is picked. */}
           {entry === 'expense' || entry === 'refund' ? (
@@ -466,14 +460,16 @@ export default function NewTransactionScreen() {
             placeholder="напр. шини на зиму"
             hint="необовʼязково"
           />
-          <Action title="Записати" onPress={record} />
-          {/* Where the owner is already looking, without scrolling: what was just recorded, and
-              what was stored alongside it. A refusal shows its own words and no confirmation. */}
+          {/* Where the owner is already looking, without scrolling: directly above the button
+              they just pressed — under it, it sat below the fold on a 6.3" phone (main-screen,
+              "The recording confirmation stands above «Записати»"). What was just recorded, and
+              what was stored alongside it; a refusal shows its own words and no confirmation. */}
           {confirmation ? (
             <ThemedText type="small" themeColor="textPositive">
               {confirmation}
             </ThemedText>
           ) : null}
+          <Action title="Записати" onPress={record} />
         </Card>
       )}
     </Screen>

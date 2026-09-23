@@ -1,18 +1,17 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
 import { Action, Choices, Field } from '@/components/form';
 import {
   Card,
-  IconTile,
   ListCard,
   ListRow,
-  Mark,
   Screen,
   ScreenHeader,
   SectionLabel,
 } from '@/components/surfaces';
+import { TransactionRow } from '@/components/transaction-row';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
@@ -26,6 +25,7 @@ import { account } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import type { Money } from '@/domain/money';
 import { evaluateProgress } from '@/hooks/progress-ports';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountFromDraft, draftFrom, type AccountDraft } from '@/ui/account-form';
 import { accountMovements, reconcileTyped } from '@/ui/account-movements';
@@ -35,8 +35,7 @@ import { newId } from '@/ui/id';
 import { kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/ui/labels';
 import {
   accountsById,
-  feedSubtitle,
-  feedTitle,
+  accountSideLine,
   overLimitByMonth,
   transactionLine,
 } from '@/ui/transaction-line';
@@ -127,6 +126,13 @@ export default function AccountMovementsScreen() {
   const [draft, setDraft] = useState<AccountDraft | undefined>();
   /** What the owner counted, as typed. Only ever read by «Звірити». */
   const [actual, setActual] = useState('');
+  /** Whether the «Звірити» form is open. The phone's «назад» closes it before leaving. */
+  const [reconciling, setReconciling] = useState(false);
+  const closeReconcile = useCallback(() => {
+    setActual('');
+    setReconciling(false);
+  }, []);
+  useCloseOnBack(reconciling, closeReconcile);
 
   const save = useCallback(() => {
     if (!draft) return;
@@ -181,8 +187,8 @@ export default function AccountMovementsScreen() {
         newId,
       });
       if (answer.kind === 'agree') {
+        // Said, and left open with what was typed: the owner may have mistyped the count.
         Alert.alert('Звірити', answer.message);
-        setActual('');
         return;
       }
       Alert.alert('Звірити', answer.confirmation, [
@@ -194,6 +200,7 @@ export default function AccountMovementsScreen() {
               transactionsRepo.save(answer.correction, new Date());
               evaluateProgress();
               setActual('');
+              setReconciling(false);
               reload();
             } catch (error) {
               Alert.alert(
@@ -223,6 +230,8 @@ export default function AccountMovementsScreen() {
     );
   }
 
+  // One clock for the whole list, so «сьогодні» cannot change halfway down it.
+  const now = new Date();
   const a = stored.account;
 
   return (
@@ -250,18 +259,31 @@ export default function AccountMovementsScreen() {
             </ThemedText>
           </View>
         ) : null}
-        {draft ? null : (
-          <Action
-            variant="secondary"
-            title="Редагувати рахунок"
-            onPress={() => setDraft(draftFrom(a))}
-          />
+        {/* The two things done to a рахунок, side by side under its balance, so the рухи follow
+            directly. «Звірити» only for an unarchived one: a коригування is a транзакція. */}
+        {draft || reconciling ? null : (
+          <View style={styles.actions}>
+            {a.archived ? null : (
+              <View style={styles.action}>
+                <Action variant="secondary" title="Звірити" onPress={() => setReconciling(true)} />
+              </View>
+            )}
+            <View style={styles.action}>
+              <Action
+                variant="secondary"
+                title="Редагувати"
+                onPress={() => setDraft(draftFrom(a))}
+              />
+            </View>
+          </View>
         )}
       </Card>
 
       {/* Звірити, offered for every unarchived рахунок — готівка included. An archived one is
-          offered for no new транзакція, and a коригування is a транзакція like any other. */}
-      {a.archived ? null : (
+          offered for no new транзакція, and a коригування is a транзакція like any other. Closed
+          until asked for: it is the rare action here, and open it pushed the рухи the owner came
+          for a third of a screen down (accounts-screen, "Звірити opens when the owner asks"). */}
+      {a.archived ? null : reconciling ? (
         <Card style={styles.form}>
           <ThemedText type="overline">Звірити</ThemedText>
           <Field
@@ -271,10 +293,19 @@ export default function AccountMovementsScreen() {
             keyboardType="numbers-and-punctuation"
             placeholder="0,00"
             hint={`${a.currency} — скільки насправді на рахунку`}
+            autoFocus
           />
           <Action title="Звірити" onPress={confirmReconcile} />
+          <Action
+            variant="secondary"
+            title="Скасувати"
+            onPress={() => {
+              setActual('');
+              setReconciling(false);
+            }}
+          />
         </Card>
-      )}
+      ) : null}
 
       {draft ? (
         <Card style={styles.form}>
@@ -329,37 +360,23 @@ export default function AccountMovementsScreen() {
         <ListCard>
           {movements.transactions.map((t, index) => {
             const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
+            // Told from this рахунок's side: its own name is the screen's title, and a переказ
+            // says whether it brought money in or took it out (design D3).
+            const side = accountSideLine(t, line, a.id, byId, now);
             return (
               <ListRow key={line.id} last={index === movements.transactions.length - 1}>
-                <Pressable
+                <TransactionRow
+                  icon={line.icon}
+                  iconTone={line.iconTone}
+                  marked={line.uncategorised}
+                  title={side.title}
+                  titleTone={line.overLimit ? 'textDanger' : undefined}
+                  subtitle={side.subtitle}
+                  description={line.description}
+                  amount={side.amount}
+                  amountTone={side.amountTone}
                   onPress={() => router.push(`/transaction/${line.id}`)}
-                  style={styles.row}>
-                  <IconTile name={line.icon} tone={line.iconTone} />
-                  <View style={styles.label}>
-                    <View style={styles.rowTitle}>
-                      {line.uncategorised ? <Mark /> : null}
-                      <ThemedText
-                        numberOfLines={1}
-                        themeColor={line.overLimit ? 'textDanger' : undefined}>
-                        {feedTitle(line)}
-                      </ThemedText>
-                    </View>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {feedSubtitle(line)}
-                    </ThemedText>
-                    {line.description ? (
-                      <ThemedText type="small" themeColor="textMuted">
-                        {line.description}
-                      </ThemedText>
-                    ) : null}
-                  </View>
-                  <ThemedText
-                    tabular
-                    style={styles.amount}
-                    themeColor={line.amountTone}>
-                    {line.amount}
-                  </ThemedText>
-                </Pressable>
+                />
               </ListRow>
             );
           })}
@@ -372,19 +389,12 @@ export default function AccountMovementsScreen() {
 const styles = StyleSheet.create({
   balances: { gap: Spacing.two - Spacing.half },
   form: { gap: Spacing.three },
+  actions: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.one },
+  action: { flex: 1 },
   line: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: Spacing.two,
   },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: Spacing.three,
-  },
-  label: { flex: 1, gap: Spacing.half },
-  rowTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two - Spacing.half },
-  amount: { fontWeight: 600 },
 });

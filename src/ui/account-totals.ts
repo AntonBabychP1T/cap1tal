@@ -1,7 +1,7 @@
 import type { Account, AccountKind } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
 import type { MonobankRate } from '../monobank/currency';
-import { byCurrency, formatMinorUnitsGrouped, formatMoney } from './amount-input';
+import { byCurrency, formatMinorUnitsGrouped, splitMoney } from './amount-input';
 import { approximateUah } from './approx-uah';
 
 /**
@@ -111,5 +111,19 @@ export function approximateTotals(
  * is an empty string, which the screens use to show no total at all.
  */
 export function totalsLine(totals: readonly Money[]): string {
-  return totals.map(formatMoney).join(' · ');
+  return totals.map(wholeMoney).join(' · ');
 }
+
+/**
+ * A сума that cannot be broken across two lines: its number and its currency joined by a
+ * no-break space (app-shell, "A сума is never split across two lines"). A line of several
+ * currencies may still wrap — at « · », between two сумі, never inside one. `formatMoney` itself
+ * keeps its plain space, because every other place draws one сума per text and the space is what
+ * a search or a share of it reads.
+ */
+export function wholeMoney(m: Money): string {
+  const { number, currency } = splitMoney(m);
+  return `${number}${NO_BREAK}${currency}`;
+}
+
+const NO_BREAK = '\u00A0';
