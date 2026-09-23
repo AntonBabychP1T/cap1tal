@@ -65,3 +65,6 @@ __pycache__/
 # codedb-mcp index (scripts/codedb-mcp.sh); only the config is committed
 .codedb-mcp/*
 !.codedb-mcp/codedb-mcp.toml
+
+# /brag launch-video output (generated video and composition)
+brag-output/
