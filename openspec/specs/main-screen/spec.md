@@ -8,27 +8,34 @@ recorded account, active, archived and debt alike. Recording is behind the «+»
 a screen of its own, with the minimum of fields. It leads with the shorter of the app's two daily
 questions — where the money went — and answers it before anything else; how much of the month is
 left stays one tap away, on Місяць, which is where all six monthly numbers are read in full.
+
 ## Requirements
+
 ### Requirement: Головний presents the daily dashboard
 
-Головний SHALL present, in order, a compact cap1tal header, the current month's витрачено, the latest five stored транзакції, top categories and Статок, with recording available through «+» without scrolling and with no entry form, separate money-held card, large attention section or Progress widget in its default content.
+Головний SHALL present a compact cap1tal header, then the fixed service rail with any currently actionable item, then the known dashboard widgets in the owner's saved visible order. The fixed service rail SHALL appear directly below the header and before every widget regardless of widget order or which widget, if any, is first. With no saved preference the widgets SHALL present, in order, the current month's витрачено, the latest five stored транзакції, top categories and Статок, with recording available through «+» without scrolling and with no entry form, separate money-held card, large attention section or visible Progress widget.
 
 #### Scenario: The first screen is entry plus the feed
-- **GIVEN** recorded expenses, accounts, twelve unseen досягнення and pending чернетки
+- **GIVEN** recorded expenses, accounts, twelve unseen досягнення, pending чернетки and no saved dashboard preference
 - **WHEN** the owner opens Головний
-- **THEN** the month leads, the latest records immediately follow, categories and Статок follow them, and service/progress cards do not precede the feed
+- **THEN** the month leads, the latest records immediately follow, categories and Статок follow them, the fixed service rail sits directly below the header before every widget, and Progress does not precede the financial widgets
 - **AND** «+» opens the existing separate recording form with its existing validation and confirmation
+
+#### Scenario: A saved layout controls only known widgets
+- **GIVEN** the owner saved Статок before the month widget and hid top categories
+- **WHEN** Головний opens
+- **THEN** Статок appears before the month widget, top categories do not appear, and each visible known widget appears once
 
 #### Scenario: With no рахунок nothing can be recorded yet
 - **GIVEN** no account exists or every account is archived
 - **WHEN** Головний is opened
-- **THEN** a compact invitation leads to Рахунки, recording still requires an unarchived account, and the feed still shows stored records
+- **THEN** a compact invitation leads to Рахунки, recording still requires an unarchived account, and any visible feed still shows stored records
 - **AND** archived money is handled by net-worth rather than silently erased
 
 #### Scenario: A recorded transaction appears at the top of the feed
-- **GIVEN** no later-dated transaction exists
+- **GIVEN** no later-dated transaction exists and «Останні 5 транзакцій» is visible
 - **WHEN** the owner records an expense dated today and returns from the recording form
-- **THEN** it appears at the top of the feed, with the current monthly spent refreshed
+- **THEN** it appears at the top of the feed, with every visible financial widget refreshed
 
 ### Requirement: The primary month amount is витрачено
 
@@ -101,12 +108,17 @@ The latest-transactions section SHALL show at most five records across all histo
 
 ### Requirement: Uncategorised records are a compact feed banner
 
-A nonzero count of stored витрати and повернення carrying «Без категорії» SHALL appear as one compact actionable banner at the top of the latest-transactions section, counted over all history and opening the matching uncategorised filter, with no banner or reserved space at zero.
+A nonzero count of stored витрати and повернення carrying «Без категорії» SHALL appear as one compact actionable service banner, counted over all history and opening the matching uncategorised filter, with no banner or reserved space at zero. The banner SHALL remain visible outside the configurable widget list when «Останні 5 транзакцій» is hidden and SHALL NOT be hideable or reorderable as a dashboard widget.
 
 #### Scenario: Count and destination agree
 - **GIVEN** seven matching records across several months, only one in the latest five, plus an income «Без джерела»
 - **WHEN** the banner is shown and tapped
 - **THEN** it reads «7 транзакцій без категорії · Переглянути» and opens exactly those seven through the existing filter
+
+#### Scenario: Hiding the feed does not hide the required action
+- **GIVEN** seven matching records and «Останні 5 транзакцій» is hidden
+- **WHEN** Головний opens
+- **THEN** the compact uncategorised banner is still visible and opens those seven records
 
 #### Scenario: Answering the last record removes the banner
 - **GIVEN** one matching record
@@ -134,17 +146,17 @@ Configured linked monobank accounts SHALL expose existing coverage/freshness and
 
 ### Requirement: Operational alerts remain compact and actionable
 
-Pending чернетки and an existing actionable sync failure SHALL occupy at most one collapsed row each after the latest records and before categories, with draft expansion retaining existing in-place confirm/dismiss behavior and failure leading to existing details/retry.
+Pending чернетки and an existing actionable sync failure SHALL occupy at most one collapsed service row each in the fixed service rail directly below the header and before every widget, with draft expansion retaining existing in-place confirm/dismiss behavior and failure leading to existing details/retry. These rows SHALL remain outside the configurable widget list, SHALL NOT be hideable or reorderable, and SHALL take no space when absent.
 
 #### Scenario: Many drafts do not bury the dashboard
-- **GIVEN** fifty pending чернетки and a rejected token
+- **GIVEN** fifty pending чернетки, a rejected token and every configurable widget hidden
 - **WHEN** Головний opens
-- **THEN** two compact rows follow the feed and no draft bodies render before expansion; the failure action opens monobank details
+- **THEN** two compact service rows remain visible directly below the header, no draft bodies render before expansion, and the failure action opens monobank details
 
 #### Scenario: Draft confirmation updates the same record
 - **GIVEN** an expanded pending чернетка
 - **WHEN** the owner confirms its proposed amount or supplies the required amount
-- **THEN** existing rules create the transaction, feed and financial widgets refresh, and the draft no longer waits
+- **THEN** existing rules create the transaction, every visible financial widget refreshes, and the draft no longer waits
 - **AND** dismissal uses existing confirmation and creates no transaction
 
 #### Scenario: Routine postponement is not an error
@@ -1237,3 +1249,133 @@ account name, amount, currency, date or type.
 
 - **WHEN** the owner changes only the сума of a витрата carrying an imported опис
 - **THEN** the опис is still exactly what the import stored
+
+### Requirement: The header opens dashboard editing
+
+The compact Головний header SHALL offer an action named «Налаштувати Головний» with at least a 48 × 48 dp target, and invoking it SHALL open dashboard editing without starting sync or changing any widget preference by itself.
+
+#### Scenario: Header action opens the editor
+- **GIVEN** Головний is open
+- **WHEN** the owner invokes «Налаштувати Головний»
+- **THEN** dashboard editing opens with the current order and visibility of every known widget
+- **AND** no sync or network request starts
+
+### Requirement: The ring's total stays inside the ring
+
+The сума in the centre of «Топ категорій витрат» SHALL be drawn wholly inside the ring's hole,
+never across the ring or past it: the number SHALL shrink as far as it must to fit, with its
+currency on a line of its own under it. While the ring draws proportional sectors, each legend row
+SHALL carry a swatch in the tone of its sector, so a row and its sector can be matched without
+counting; the swatch SHALL NOT be the only thing that names the category — the row's name and exact
+сума stay beside it. While the ring is the neutral ring of a signed or empty breakdown, which draws
+no sectors, the legend SHALL carry no swatch, so no row claims a share.
+
+#### Scenario: A six-digit month fits
+
+- **WHEN** the month's UAH витрачено across categories is 68 682,49 UAH
+- **THEN** «68 682,49» is drawn inside the hole of the ring with «UAH» under it, and no digit
+  overlaps the ring
+
+#### Scenario: Legend rows match their sectors
+
+- **WHEN** the ring shows five categories and «Ще 14»
+- **THEN** every legend row, «Ще 14» included, carries a swatch in its own sector's tone
+
+#### Scenario: A negative category draws no swatch
+
+- **WHEN** a category's повернення exceed its витрати this month and the ring is neutral
+- **THEN** its legend rows show names and signed сумі and no swatch
+
+### Requirement: A transaction line keeps its сума beside its title
+
+On every line of транзакції — the feed, «Транзакції», a рахунок's рухи and a категорія's month —
+the сума SHALL stand beside the line's first row (its title) only; the line's second row and its
+опис SHALL use the whole width under the title. The title of a переказ SHALL be allowed a second
+row rather than cut both рахунки's names to a few letters.
+
+#### Scenario: Large text keeps the second row on one line
+
+- **WHEN** the system font is at 130% and a витрата on «гаманець» reads «Кава» with its дата
+- **THEN** «гаманець · сьогодні» reads on one row under the title and is not wrapped by the сума's
+  column
+
+#### Scenario: A переказ names both рахунки
+
+- **WHEN** a переказ goes from «platinum ··6628» to «інжур»
+- **THEN** its line shows «platinum ··6628 → інжур» whole, over up to two rows
+
+### Requirement: The recording confirmation stands above «Записати»
+
+WHEN a транзакція is stored from the entry form, its confirmation SHALL be drawn directly above
+«Записати», the control the owner just pressed, so it is on screen without scrolling wherever the
+form was scrolled to.
+
+#### Scenario: The confirmation is seen where the button is
+
+- **WHEN** the owner scrolls the entry form to «Записати» and records a витрата of "100" in Кава
+- **THEN** «Записано: витрата 100,00 UAH — Кава.» is visible directly above «Записати» without
+  any further scrolling
+
+### Requirement: The дата of a транзакція is set without typing a date code
+
+The entry form and transaction editing SHALL offer, beside the дата, «Сьогодні» and «Вчора», each
+setting the дата in one tap. While the typed дата is a real date, they SHALL also offer a step of
+one day back and — only while that дата is before today — one day forward, so no tap sets a
+future дата; while it is not a date, only «Сьогодні» and «Вчора» SHALL be offered. The дата SHALL
+be named as a day beside its label, and typing it SHALL offer the device's digit keyboard. Choices
+SHALL only change the дата field; nothing is stored until «Записати» or «Зберегти».
+
+#### Scenario: Yesterday in one tap
+
+- **WHEN** today is 2026-09-23 and the owner taps «Вчора» on the entry form
+- **THEN** the дата becomes 2026-09-22 and the form names it «вчора»
+
+#### Scenario: A day back from the дата shown
+
+- **WHEN** the дата is 2026-09-01 and the owner taps the one-day-back step
+- **THEN** the дата becomes 2026-08-31
+
+#### Scenario: Stepping stops at today
+
+- **WHEN** the дата is today
+- **THEN** no one-day-forward step is offered
+
+#### Scenario: A half-typed дата offers only the two quick choices
+
+- **WHEN** the owner has typed "2026-09" into the дата
+- **THEN** only «Сьогодні» and «Вчора» are offered and no day is named beside the label
+
+### Requirement: Статок's explanation and history say only what holds
+
+In Статок's account explanation, «вкладено» SHALL be written only beside an інвестиційний рахунок
+counted at its вкладено, and an інвестиційний рахунок counted at its поточна вартість SHALL keep
+«поточна вартість на <date>»; every рахунок of another вид SHALL show its сума with no basis word. A
+percentage in the change line SHALL use a decimal comma. In the list of history points, a run of
+consecutive points with no known value for the same reason SHALL read as one line naming the first
+and last date of the run and the reason, instead of one line per point. The history chart SHALL
+span the card's width and name the first and the last date it covers under it.
+
+#### Scenario: A card is not «вкладено»
+
+- **WHEN** the explanation lists «mono black» (витратний), «інжур» (інвестиційний, no поточна
+  вартість) and «облігація $» (інвестиційний, поточна вартість on 2026-09-21)
+- **THEN** «mono black» shows its сума alone, «інжур» shows its сума with «вкладено», and
+  «облігація $» shows its сума with «поточна вартість на 21 вересня»
+
+#### Scenario: The percent reads as Ukrainian
+
+- **WHEN** Статок grew by 72 028,07 UAH, 62,4 %, since 31 August
+- **THEN** the change line reads «+72 028,07 UAH · +62,4% · від 31 серпня»
+
+#### Scenario: Fifteen unknown month-ends read as one line
+
+- **WHEN** the UAH history is unknown from 28 жовтня 2024 to 31 січня 2026 for lack of data and
+  known afterwards
+- **THEN** the point list opens with one line «28 жовтня 2024 — 31 січня: невідомо — недостатньо
+  даних за цей період» followed by the known points one per line
+
+#### Scenario: The chart names its span
+
+- **WHEN** the UAH history runs from 28 жовтня 2024 to 23 вересня 2026
+- **THEN** the chart spans the card's width and reads «28 жовтня 2024» under its left end and
+  «23 вересня» under its right end
