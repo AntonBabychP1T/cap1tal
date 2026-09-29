@@ -8,6 +8,7 @@ import {
   type Correction,
   type Income,
   type IsoDate,
+  type Month,
   type Transaction,
 } from '../domain/transaction';
 import {
@@ -72,13 +73,82 @@ export interface PlannedTransaction {
   readonly saldoIds: readonly string[];
 }
 
-export type UnexplainedReason =
-  | 'unpaired-in-transit'
-  | 'merged-account-move'
-  | 'unrecognised-shape'
-  | 'dropped-original-amount'
-  | 'zero-only-pair'
-  | 'accrual-month-divergence';
+/**
+ * Which of the shapes the import has no rule for a row turned out to be. A code and not a
+ * sentence, for the reason `UnexplainedFacts` gives: the words are the screen's.
+ */
+export type UnrecognisedShape =
+  /** The domain's own factory refused the транзакція — a zero переказ, a zero повернення. */
+  | 'domain-rejected'
+  | 'in-transit-without-account'
+  | 'in-transit-unknown-direction'
+  /** A departure and an arrival paired, but one of their ends resolves to no рахунок. */
+  | 'in-transit-pair-unresolved'
+  | 'opening-without-account'
+  | 'debt-without-single-account'
+  | 'debt-on-unknown-account'
+  /** A «Борг» row whose real leg is the «Борги» рахунок itself. */
+  | 'debt-onto-itself'
+  | 'move-unresolved'
+  | 'no-rule'
+  | 'unknown-account'
+  /** A витрата or повернення whose Saldo name no категорія answers — `name` says which. */
+  | 'unmapped-category'
+  /** A дохід whose Saldo name no джерело answers — `name` says which. */
+  | 'unmapped-source';
+
+/**
+ * Why a row moves no money, and the facts that say so — as data, never as prose.
+ *
+ * The «Імпорт Saldo» screen words every one of these for the owner (`src/ui/saldo-import.ts`,
+ * `unexplainedLine`), and it has to be there: a сума is read through `formatMoney` and a day
+ * through `calendarLabel`, both of which are `src/ui`, which the engine never reads. A sentence
+ * built here could only print `542575 UAH` and `2025-09-08` — which is exactly what QA found on
+ * the звірка — so the engine hands over the kind of row and its numbers, and nothing to read.
+ */
+export type UnexplainedFacts =
+  | {
+      readonly reason: 'unpaired-in-transit';
+      /** Which half is present: the money that left (`departure`) or the money that arrived. */
+      readonly side: 'departure' | 'arrival';
+      /** The Saldo names of the two ends, as the export writes them. */
+      readonly from: string;
+      readonly to: string;
+    }
+  | {
+      readonly reason: 'merged-account-move';
+      /** The one рахунок both ends of the move were merged onto. */
+      readonly accountName: string;
+    }
+  | {
+      readonly reason: 'unrecognised-shape';
+      readonly shape: UnrecognisedShape;
+      /** The Saldo name nothing is mapped for, on `unmapped-category` and `unmapped-source`. */
+      readonly name?: string;
+      /** The domain's own refusal on `domain-rejected` — a diagnostic for the dry run only. */
+      readonly why?: string;
+    }
+  | {
+      readonly reason: 'dropped-original-amount';
+      /** What the повернення keeps: the рахунок-currency amount. */
+      readonly kept: Money;
+      /** The other currency's amount, which a повернення has no field for. */
+      readonly dropped: Money;
+    }
+  | {
+      readonly reason: 'zero-only-pair';
+      readonly saldoAccount: string;
+      readonly currency: CurrencyCode;
+    }
+  | {
+      readonly reason: 'accrual-month-divergence';
+      /** The month the export's Accrual Month names. */
+      readonly accruedTo: Month;
+      /** The Transaction Date as the export writes it — a UTC instant, normalised. */
+      readonly exportDatetime: string;
+    };
+
+export type UnexplainedReason = UnexplainedFacts['reason'];
 
 /**
  * A row the plan does not turn into money moving. `effect` is what the рахунок named by
@@ -86,15 +156,14 @@ export type UnexplainedReason =
  * the difference the verification report will show. An informational row carries neither, and a
  * move both of whose ends were merged onto one рахунок carries both halves, which cancel.
  */
-export interface UnexplainedRow {
-  readonly reason: UnexplainedReason;
+export type UnexplainedRow = UnexplainedFacts & {
   readonly transactionId: string;
   readonly row: number;
+  /** The phone's calendar date of the row — the one its транзакція would have had. */
   readonly date: IsoDate | '';
-  readonly detail: string;
   readonly accountId?: string;
   readonly effect?: Money;
-}
+};
 
 export interface ImportPlan {
   readonly accounts: readonly PlannedAccount[];
@@ -199,37 +268,34 @@ export function interpret(input: {
   const accountOf = (leg: SaldoLeg): ResolvedAccount | undefined =>
     accountMap.byKey.get(accountKey(leg.account, leg.amount.currency));
 
-  const note = (
-    reason: UnexplainedReason,
-    leg: SaldoLeg,
-    detail: string,
-    account?: ResolvedAccount,
-  ): void => {
+  const note = (facts: UnexplainedFacts, leg: SaldoLeg, account?: ResolvedAccount): void => {
     unexplained.push({
-      reason,
+      ...facts,
       transactionId: leg.transactionId,
       row: leg.row,
       date: leg.date,
-      detail,
       ...(account ? { accountId: account.id, effect: legEffect(leg) } : {}),
     });
   };
 
   /** Every real leg of a transaction the plan gives up on still has to show up somewhere. */
-  const giveUp = (
-    transaction: SaldoTransaction,
-    reason: UnexplainedReason,
-    detail: string,
-  ): void => {
+  const giveUp = (transaction: SaldoTransaction, facts: UnexplainedFacts): void => {
     const realLegs = transaction.legs.filter((leg) => isRealAccountType(leg.accountType));
     if (realLegs.length === 0) {
-      note(reason, transaction.legs[0] as SaldoLeg, detail);
+      note(facts, transaction.legs[0] as SaldoLeg);
       return;
     }
     for (const leg of realLegs) {
-      note(reason, leg, detail, accountOf(leg));
+      note(facts, leg, accountOf(leg));
     }
   };
+
+  /** The commonest give-up: a shape with no rule, named by its code. */
+  const unrecognised = (
+    transaction: SaldoTransaction,
+    shape: UnrecognisedShape,
+    extra: { name?: string; why?: string } = {},
+  ): void => giveUp(transaction, { reason: 'unrecognised-shape', shape, ...extra });
 
   /**
    * Build a транзакція through the domain's own factory. The domain owns invariants this module
@@ -245,7 +311,7 @@ export function interpret(input: {
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
       for (const transaction of source) {
-        giveUp(transaction, 'unrecognised-shape', `the domain rejects this shape: ${why}`);
+        unrecognised(transaction, 'domain-rejected', { why });
       }
       return undefined;
     }
@@ -273,7 +339,7 @@ export function interpret(input: {
     }
     const real = transaction.legs.find((leg) => isRealAccountType(leg.accountType));
     if (!real) {
-      giveUp(transaction, 'unrecognised-shape', 'an in-transit transaction with no real leg');
+      unrecognised(transaction, 'in-transit-without-account');
       continue;
     }
     if (inTransit.journalType === 'DEBIT' && real.journalType === 'CREDIT') {
@@ -298,11 +364,7 @@ export function interpret(input: {
         destinationName: real.account,
       });
     } else {
-      giveUp(
-        transaction,
-        'unrecognised-shape',
-        'an in-transit transaction of an unknown direction',
-      );
+      unrecognised(transaction, 'in-transit-unknown-direction');
     }
   }
 
@@ -355,31 +417,24 @@ export function interpret(input: {
   for (const departure of departures) {
     const arrival = pairedWith.get(departure);
     if (!arrival) {
-      giveUp(
-        departure.transaction,
-        'unpaired-in-transit',
-        `money left ${departure.sourceName} for ${departure.destinationName} and no arrival matches it`,
-      );
+      giveUp(departure.transaction, {
+        reason: 'unpaired-in-transit',
+        side: 'departure',
+        from: departure.sourceName,
+        to: departure.destinationName,
+      });
       continue;
     }
     const from = accountOf(departure.real);
     const to = accountOf(arrival.real);
     if (!from || !to) {
-      giveUp(departure.transaction, 'unrecognised-shape', 'an in-transit pair with no two рахунки');
-      giveUp(arrival.transaction, 'unrecognised-shape', 'an in-transit pair with no two рахунки');
+      unrecognised(departure.transaction, 'in-transit-pair-unresolved');
+      unrecognised(arrival.transaction, 'in-transit-pair-unresolved');
       continue;
     }
     if (from.id === to.id) {
-      giveUp(
-        departure.transaction,
-        'merged-account-move',
-        `both ends of this in-transit move are the рахунок "${from.name}"`,
-      );
-      giveUp(
-        arrival.transaction,
-        'merged-account-move',
-        `both ends of this in-transit move are the рахунок "${from.name}"`,
-      );
+      giveUp(departure.transaction, { reason: 'merged-account-move', accountName: from.name });
+      giveUp(arrival.transaction, { reason: 'merged-account-move', accountName: from.name });
       continue;
     }
     const ids = [departure.transaction.id, arrival.transaction.id];
@@ -418,11 +473,12 @@ export function interpret(input: {
   }
   for (const arrival of arrivals) {
     if (!matched.has(arrival)) {
-      giveUp(
-        arrival.transaction,
-        'unpaired-in-transit',
-        `money arrived at ${arrival.destinationName} from ${arrival.sourceName} and no departure matches it`,
-      );
+      giveUp(arrival.transaction, {
+        reason: 'unpaired-in-transit',
+        side: 'arrival',
+        from: arrival.sourceName,
+        to: arrival.destinationName,
+      });
     }
   }
 
@@ -432,7 +488,7 @@ export function interpret(input: {
 
     if (isInitialBalance(transaction)) {
       if (realLegs.length === 0) {
-        giveUp(transaction, 'unrecognised-shape', 'an opening entry with no real leg');
+        unrecognised(transaction, 'opening-without-account');
         continue;
       }
       for (const leg of realLegs) {
@@ -452,17 +508,17 @@ export function interpret(input: {
     if (debt) {
       const real = realLegs[0];
       if (!real || realLegs.length !== 1) {
-        giveUp(transaction, 'unrecognised-shape', 'a «Борг» transaction with no single real leg');
+        unrecognised(transaction, 'debt-without-single-account');
         continue;
       }
       const account = accountOf(real);
       if (!account) {
-        giveUp(transaction, 'unrecognised-shape', 'a «Борг» transaction on no known рахунок');
+        unrecognised(transaction, 'debt-on-unknown-account');
         continue;
       }
       const debts = debtAccountFor(real.amount.currency, debtAccounts);
       if (debts.id === account.id) {
-        giveUp(transaction, 'unrecognised-shape', 'a «Борг» transaction onto its own рахунок');
+        unrecognised(transaction, 'debt-onto-itself');
         continue;
       }
       // The «Борг» leg debited means money went out on loan; credited means it came back.
@@ -493,17 +549,13 @@ export function interpret(input: {
       const from = credited ? accountOf(credited) : undefined;
       const to = debited ? accountOf(debited) : undefined;
       if (!credited || !debited || !from || !to) {
-        giveUp(transaction, 'unrecognised-shape', 'a move between two рахунки that do not resolve');
+        unrecognised(transaction, 'move-unresolved');
         continue;
       }
       if (from.id === to.id) {
         // The owner merged both ends. A транзакція connects two distinct рахунки, so this becomes
         // none — and its two legs cancel, so the рахунок still reconciles exactly.
-        giveUp(
-          transaction,
-          'merged-account-move',
-          `both ends of this move are the рахунок "${from.name}"`,
-        );
+        giveUp(transaction, { reason: 'merged-account-move', accountName: from.name });
         continue;
       }
       const переказ = built([transaction], () =>
@@ -529,12 +581,12 @@ export function interpret(input: {
       (leg) => leg.accountType === EXPENSES || leg.accountType === INCOME,
     );
     if (!real || realLegs.length !== 1 || !counterpart || transaction.legs.length !== 2) {
-      giveUp(transaction, 'unrecognised-shape', 'a shape the import has no rule for');
+      unrecognised(transaction, 'no-rule');
       continue;
     }
     const account = accountOf(real);
     if (!account) {
-      giveUp(transaction, 'unrecognised-shape', 'a transaction on no known рахунок');
+      unrecognised(transaction, 'unknown-account');
       continue;
     }
     const saldoName = flattenName(counterpart.parentAccount, counterpart.account);
@@ -560,7 +612,7 @@ export function interpret(input: {
       // moment the plan is committed, so it is reported instead.
       const sourceId = sourceIds.get(saldoName);
       if (sourceId === undefined) {
-        giveUp(transaction, 'unrecognised-shape', `no джерело is mapped for "${saldoName}"`);
+        unrecognised(transaction, 'unmapped-source', { name: saldoName });
         continue;
       }
       const дохід: Income = {
@@ -579,7 +631,7 @@ export function interpret(input: {
 
     const categoryId = reservedCategoryFor(counterpart.account) ?? categoryIds.get(saldoName);
     if (categoryId === undefined) {
-      giveUp(transaction, 'unrecognised-shape', `no категорія is mapped for "${saldoName}"`);
+      unrecognised(transaction, 'unmapped-category', { name: saldoName });
       continue;
     }
 
@@ -601,9 +653,8 @@ export function interpret(input: {
       if (counterpart.amount.currency !== real.amount.currency) {
         // A повернення carries no original-currency amount; the dropped figure is counted.
         note(
-          'dropped-original-amount',
+          { reason: 'dropped-original-amount', kept: real.amount, dropped: counterpart.amount },
           counterpart,
-          `the повернення keeps only ${real.amount.amount} ${real.amount.currency}; ${counterpart.amount.amount} ${counterpart.amount.currency} is dropped`,
         );
       }
       continue;
@@ -656,23 +707,32 @@ export function interpret(input: {
     for (const row of dropped.rows) {
       unexplained.push({
         reason: 'zero-only-pair',
+        saldoAccount: dropped.saldoAccount,
+        currency: dropped.currency,
         transactionId: '',
         row,
         date: '',
-        detail: `"${dropped.saldoAccount}" carries only zero ${dropped.currency} opening rows, so it becomes no рахунок`,
       });
     }
   }
   for (const transaction of transactions) {
     for (const leg of transaction.legs) {
-      // Saldo writes a date here; the spec speaks of a month, so only the month is compared.
-      if (leg.accrualMonth !== '' && leg.accrualMonth.slice(0, 7) !== leg.date.slice(0, 7)) {
+      // Saldo writes a date here; the spec speaks of a month, so only the month is compared. It
+      // fills it from the same UTC text as Transaction Date, so it is compared with that — not
+      // with the phone's date, which crosses into the next month on a month-end evening.
+      if (
+        leg.accrualMonth !== '' &&
+        leg.accrualMonth.slice(0, 7) !== leg.datetime.slice(0, 7)
+      ) {
         unexplained.push({
           reason: 'accrual-month-divergence',
           transactionId: transaction.id,
           row: leg.row,
           date: leg.date,
-          detail: `the row is accrued to ${leg.accrualMonth.slice(0, 7)} and dated ${leg.date}; the import keeps the date`,
+          accruedTo: leg.accrualMonth.slice(0, 7),
+          // Quoted as the export writes it (the spec's scenario): the screen says both days only
+          // when this UTC text and the phone's date fall on different ones.
+          exportDatetime: leg.datetime,
         });
       }
     }

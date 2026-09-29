@@ -9,14 +9,16 @@ import {
   INTEREST_SOURCE_ID,
   type Expense,
   type Income,
+  type IsoDate,
   type Transaction,
   type TransactionType,
   type Transfer,
 } from '../domain/transaction';
 import { formatMoney, parseAmount } from './amount-input';
-import { parseTypedDate } from './dates';
+import { calendarLabel, parseTypedDate, todayIso } from './dates';
 import { categoryLabel, sourceLabel, transactionTypeLabel } from './labels';
 import { accountNameOf } from './transaction-line';
+import { Refusal } from '../domain/refusal';
 
 /**
  * What the Головний entry form decides, with none of its JSX: the four-way type switch turned
@@ -97,11 +99,17 @@ export function normaliseDescription(typed: string | undefined): string | undefi
  * A remembered рахунок that has since been archived (or deleted, which nothing does) pre-chooses
  * nothing rather than quietly picking a neighbour: recording then refuses until the owner picks
  * one, which is exactly what it does on a device that has never recorded by hand.
+ *
+ * `asked` is the рахунок the route names — the form opened from that рахунок's own screen.
  */
 export function defaultAccountId(
   remembered: string | undefined,
   offered: readonly Account[],
+  asked?: string,
 ): string | undefined {
+  // The «+» on a рахунок's own screen names that рахунок, and it wins over the remembered one —
+  // but only while it is still offered, exactly like the remembered one.
+  if (offered.some((a) => a.id === asked)) return asked;
   return offered.some((a) => a.id === remembered) ? remembered : undefined;
 }
 
@@ -155,7 +163,7 @@ export function buildEntry(
   // (`account-choices.ts` owns that); an id that is not in it was never a choice.
   const from = context.accounts.find((a) => a.id === draft.accountId);
   if (!from) {
-    throw new Error('оберіть рахунок');
+    throw new Refusal('оберіть рахунок');
   }
   const date = parseTypedDate(draft.date);
 
@@ -173,7 +181,7 @@ export function buildEntry(
 
     case 'income': {
       if (!draft.sourceId) {
-        throw new Error('оберіть джерело');
+        throw new Refusal('оберіть джерело');
       }
       // The domain has no factory for a дохід, and it asks nothing an Expense does not: a
       // calendar date and a positive сума, which `parseTypedDate` and `parseAmount` already are.
@@ -191,7 +199,7 @@ export function buildEntry(
 
     case 'refund':
       if (!draft.categoryId) {
-        throw new Error('оберіть категорію');
+        throw new Refusal('оберіть категорію');
       }
       // Typed positive like a витрата's: `refund` is the negative expense, not a negative number.
       return refund({
@@ -206,12 +214,12 @@ export function buildEntry(
     case 'transfer': {
       const to = context.accounts.find((a) => a.id === draft.toAccountId);
       if (!to) {
-        throw new Error('оберіть рахунок, куди прийшли гроші');
+        throw new Refusal('оберіть рахунок, куди прийшли гроші');
       }
       // `transfer` refuses this too, and in the English of an invariant. Named here for the same
       // reason the cross-currency leg below is: the owner reads this sentence.
       if (to.id === from.id) {
-        throw new Error('переказ зʼєднує два різні рахунки — оберіть інший рахунок');
+        throw new Refusal('переказ зʼєднує два різні рахунки — оберіть інший рахунок');
       }
       const left = parseAmount(draft.amount, from.currency);
       const typedArrived = draft.arrived?.trim() ?? '';
@@ -221,7 +229,7 @@ export function buildEntry(
       if (typedArrived === '' && !sameCurrency) {
         // Across currencies nothing may be inferred — there is no rate — so the leg is required,
         // and it is named here rather than left to `parseAmount`'s English "is not an amount".
-        throw new Error('вкажіть, скільки прийшло — валюти різні, тож нічого не перераховується');
+        throw new Refusal('вкажіть, скільки прийшло — валюти різні, тож нічого не перераховується');
       }
       const arrived =
         typedArrived === '' && sameCurrency ? left : parseAmount(typedArrived, to.currency);
@@ -236,6 +244,68 @@ export function buildEntry(
       });
     }
   }
+}
+
+/**
+ * The earliest дата a транзакція may carry. Nothing the owner records predates the app's own
+ * world by decades; a дата before this is a mistyped year, not a memory.
+ */
+const EARLIEST_ENTRY_DATE = '2000-01-01';
+
+/**
+ * What a filled form's дата means before anything is stored: fine as it is, or a question the
+ * owner answers first. A дата outside the window is not answered at all — it throws, in the
+ * owner's language and naming the day, exactly like every refusal `buildEntry` makes, so the
+ * screens' existing catch shows it and nothing is stored.
+ *
+ * The window, and why it is one (QA 2026-09-29): «2099-01-01» and «1900-01-01» used to be stored as
+ * typed. The first then sat on top of «Останні транзакції» for good and lay beyond anything Місяць
+ * could step to; the second silently moved every balance it touched. So:
+ *
+ * - before 2000-01-01 — refused;
+ * - more than a year after today — refused: a planned payment is days or months ahead, never
+ *   years, and a year is wide enough for the one that is;
+ * - after today, within that year — asked. A future-dated транзакція is legitimate (Головний
+ *   already counts them apart — `accountsWithFutureRecords`) but rare enough that one typed by
+ *   accident is likelier than one meant, and the question costs one tap when it was meant;
+ * - today or earlier — nothing to say.
+ *
+ * `stored` is the дата the транзакція already carries when it is being edited. Leaving it untouched
+ * is never re-judged: a record made before this rule existed, or imported with an older дата,
+ * stays editable — its категорія, its сума — without the owner being made to change a дата they
+ * did not touch. Changing it is judged exactly like recording.
+ *
+ * "Today" is the local calendar day of `now` (`todayIso`), so the question starts at local
+ * midnight rather than at UTC's; a year after today is built through a local noon, the same way
+ * `shiftIsoDate` steps days, and a 29 лютого lands on 1 березня of the next year.
+ */
+export type EntryDateVerdict =
+  | { readonly kind: 'ok' }
+  | { readonly kind: 'confirm'; readonly title: string; readonly message: string };
+
+export function entryDateCheck(date: IsoDate, now: Date, stored?: IsoDate): EntryDateVerdict {
+  if (stored !== undefined && date === stored) {
+    return { kind: 'ok' };
+  }
+  const named = calendarLabel(date, now);
+  if (date < EARLIEST_ENTRY_DATE) {
+    throw new Refusal(`дата «${named}» — раніше 2000 року; перевірте рік`);
+  }
+  const today = todayIso(now);
+  const yearAhead = todayIso(
+    new Date(now.getFullYear() + 1, now.getMonth(), now.getDate(), 12, 0, 0, 0),
+  );
+  if (date > yearAhead) {
+    throw new Refusal(`дата «${named}» — більше ніж за рік від сьогодні; перевірте рік`);
+  }
+  if (date > today) {
+    return {
+      kind: 'confirm',
+      title: 'Дата в майбутньому',
+      message: `«${named}» ще не настала. Записати транзакцію цією датою?`,
+    };
+  }
+  return { kind: 'ok' };
 }
 
 /**

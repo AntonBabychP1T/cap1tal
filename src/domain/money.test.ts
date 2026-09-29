@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { add, money, subtract } from './money';
+import { add, MAX_AMOUNT_MINOR, money, subtract } from './money';
 
 describe('money', () => {
   it('Creating a valid amount', () => {
@@ -26,5 +26,19 @@ describe('money', () => {
   it('Cross-currency sum is rejected', () => {
     expect(() => add(money(100, 'UAH'), money(100, 'USD'))).toThrow();
     expect(() => subtract(money(100, 'UAH'), money(100, 'USD'))).toThrow();
+  });
+});
+
+describe('MAX_AMOUNT_MINOR', () => {
+  it('Sums of any realistic number of rows at the ceiling stay exact integers', () => {
+    // Ninety thousand rows, every one at the largest сума the app admits, still add up inside the
+    // safe-integer range `money` insists on — so no total, balance or month can overflow it.
+    expect(Number.isSafeInteger(MAX_AMOUNT_MINOR * 90_000)).toBe(true);
+    expect(MAX_AMOUNT_MINOR * 90_000).toBeLessThan(Number.MAX_SAFE_INTEGER);
+  });
+
+  it('Is itself a valid amount', () => {
+    expect(money(MAX_AMOUNT_MINOR, 'UAH').amount).toBe(99_999_999_999);
+    expect(money(-MAX_AMOUNT_MINOR, 'UAH').amount).toBe(-99_999_999_999);
   });
 });

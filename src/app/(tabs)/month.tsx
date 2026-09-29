@@ -23,14 +23,32 @@ import { namesById } from '@/domain/category';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { monthViewModel } from '@/ui/month-screen';
-import { currentMonth, prevMonth, stepForward } from '@/ui/months';
+import { currentMonth, prevMonth, reachableMonths, stepBack, stepForward } from '@/ui/months';
 
-import { Spacing } from '@/constants/theme';
+import { Spacing, TouchTarget } from '@/constants/theme';
 
-/** The step arrows. Drawn, never removed: at the edge the disabled one keeps the title centred. */
-function Step({ arrow, onPress }: { arrow: string; onPress?: () => void }) {
+/**
+ * The step arrows. Drawn, never removed: at the edge the disabled one keeps the title centred, and
+ * says it is spent both ways — muted to the eye, `disabled` to TalkBack. The box itself is the
+ * touch target, `TouchTarget` square, rather than a glyph widened by `hitSlop`.
+ */
+function Step({
+  arrow,
+  label,
+  onPress,
+}: {
+  arrow: string;
+  label: string;
+  onPress?: () => void;
+}) {
   return (
-    <Pressable onPress={onPress} disabled={!onPress} hitSlop={Spacing.three}>
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: !onPress }}
+      style={styles.step}>
       <ThemedText type="subtitle" themeColor={onPress ? 'text' : 'textMuted'}>
         {arrow}
       </ThemedText>
@@ -80,12 +98,18 @@ export default function MonthScreen() {
         categories: categoriesRepo.list(),
         // Every ліміт, so the breakdown can mark the categories this month went over.
         limits: limitsRepo.list(),
+        // The first and last recorded дата — two values off the date index, never the history —
+        // which bound the arrows. Re-read with the rest on focus, so a транзакція recorded or
+        // deleted elsewhere moves the bounds the next time Місяць is looked at.
+        recorded: transactionsRepo.recordedSpan(),
       }),
       [shown],
     ),
   );
 
   useCurrentRates(reload);
+
+  const reach = useMemo(() => reachableMonths(stored.recorded, new Date()), [stored.recorded]);
 
   const model = useMemo(
     () =>
@@ -99,20 +123,38 @@ export default function MonthScreen() {
         limits: stored.limits,
         previousTransactions: stored.previousTransactions,
         now: new Date(),
+        reach,
       }),
-    [shown, stored],
+    [reach, shown, stored],
   );
 
   return (
     <Screen>
       <View style={styles.stepper}>
-        <Step arrow="←" onPress={() => setShown(prevMonth(shown))} />
-        <ThemedText type="subtitle">{model.title}</ThemedText>
-        {/* The current month is the far edge: forward is shown spent rather than offered. */}
+        {/* Back as far as the month of the first record; forward as far as the current month, or
+            the month of a record dated after it. Both bounds are `reachableMonths`'. */}
+        <Step
+          arrow="←"
+          label="Попередній місяць"
+          onPress={model.canStepBack ? () => setShown(stepBack(shown, reach)) : undefined}
+        />
+        <View style={styles.heading}>
+          <ThemedText type="subtitle">{model.title}</ThemedText>
+          {/* One tap home from wherever stepping led — drawn only away from the current month. */}
+          {model.currentMonth ? (
+            <Pressable
+              onPress={() => setShown(model.currentMonth ?? shown)}
+              accessibilityRole="button"
+              style={styles.today}>
+              <ThemedText type="link">Сьогодні</ThemedText>
+            </Pressable>
+          ) : null}
+        </View>
         <Step
           arrow="→"
+          label="Наступний місяць"
           onPress={
-            model.canStepForward ? () => setShown(stepForward(shown, new Date())) : undefined
+            model.canStepForward ? () => setShown(stepForward(shown, new Date(), reach)) : undefined
           }
         />
       </View>
@@ -141,7 +183,7 @@ export default function MonthScreen() {
               <View style={styles.previousAction}>
                 <RowAction
                   title={`Показати ${model.previous.label}`}
-                  onPress={() => setShown(prevMonth(shown))}
+                  onPress={() => setShown(stepBack(shown, reach))}
                 />
               </View>
             </>
@@ -261,6 +303,21 @@ export default function MonthScreen() {
 
 const styles = StyleSheet.create({
   stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  step: {
+    minWidth: TouchTarget,
+    minHeight: TouchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heading: { flex: 1, alignItems: 'center' },
+  // A link's weight with a button's target, like the other quiet actions (`receiptLink`).
+  today: {
+    minHeight: TouchTarget,
+    minWidth: TouchTarget,
+    paddingHorizontal: Spacing.three,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   empty: { gap: Spacing.two },
   previousAction: { flexDirection: 'row' },
   numbers: { gap: Spacing.three },

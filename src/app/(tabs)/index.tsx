@@ -40,7 +40,7 @@ import {
   sources as sourcesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
-import { computeBalance } from '@/domain/account';
+import { computeBalances } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
@@ -69,7 +69,7 @@ import { manualRefresh } from '@/ui/home-refresh';
 import { homeViewModel } from '@/ui/home-screen';
 import { syncCoverage } from '@/ui/monobank-screen';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
-import { failureAlert } from '@/ui/failure-alert';
+import { failureAlert, refusalAlert } from '@/ui/failure-alert';
 import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
 import {
   PROGRESS_ROUTE,
@@ -163,6 +163,9 @@ export default function MainScreen() {
       // and a newly introduced one is simply not among `plan.visibleIds` yet (design D6).
       const layout = dashboardLayoutRepo.read();
       const plan = homeDashboardReadPlan(layout.items);
+      // Read once and shared: every balance below and Статок both need the whole history, and a
+      // query per рахунок made every return to Головний stall (bug report 2026-09-29).
+      const allTransactions = transactionsRepo.listAll();
 
       return {
         month,
@@ -173,15 +176,13 @@ export default function MainScreen() {
         // The розрахунковий баланс of each рахунок — computed from транзакції, never stored —
         // still decides whether an unarchived one exists at all, for the invitation below. Not
         // gated by any widget: the invitation is fixed, not a widget (design D5).
-        balances: new Map(
-          accounts.map((a) => [a.id, computeBalance(a, transactionsRepo.listByAccount(a.id))]),
-        ),
+        balances: computeBalances(accounts, allTransactions),
         // The month behind «Витрачено» and «Топ категорій» — the same bounded read Місяць does
         // for the same month, shared by both widgets and read once between them.
         monthTransactions: plan.needsMonthTransactions ? transactionsRepo.listMonth(month) : [],
-        // Статок's current reading needs every transaction ever recorded — the one read this
-        // screen skips whenever «Статок» itself is hidden.
-        allTransactions: plan.needsNetWorth ? transactionsRepo.listAll() : [],
+        // Статок's current reading needs every transaction ever recorded — the same read the
+        // balances above already made.
+        allTransactions: plan.needsNetWorth ? allTransactions : [],
         investmentValues: plan.needsNetWorth ? investmentsRepo.all() : new Map(),
         // Статок's bounded history reads — O(accounts x months), never O(transactions).
         netWorthMonthly: plan.needsNetWorth ? netWorthRepo.monthlyMovement(today) : [],
@@ -496,7 +497,8 @@ export default function MainScreen() {
    * (design D6) — there is nothing correct this could compute from an empty history it never
    * asked for.
    */
-  const [requestedHistoryCurrency, setRequestedHistoryCurrency] = useState<string>();
+  // A currency code, or the combined «Усе ≈ грн» (`TOTAL_HISTORY`) — one selection, one state.
+  const [requestedHistory, setRequestedHistory] = useState<string>();
   const netWorth = useMemo(
     () =>
       stored.plan.needsNetWorth
@@ -509,13 +511,13 @@ export default function MainScreen() {
             firstDateMovement: stored.netWorthFirstDateMovement,
             accountsWithFutureRecords: stored.netWorthFutureRecords,
             rates: stored.rates,
-            ...(requestedHistoryCurrency ? { requestedHistoryCurrency } : {}),
+            ...(requestedHistory ? { requestedHistory } : {}),
             now: new Date(),
             today: stored.today,
           })
         : undefined,
     [
-      requestedHistoryCurrency,
+      requestedHistory,
       stored.accounts,
       stored.allTransactions,
       stored.investmentValues,
@@ -596,10 +598,11 @@ export default function MainScreen() {
   const settleDraft = useCallback(
     (draftId: string, answer: DraftAnswer) => {
       if (answer.kind === 'amount-required' || answer.kind === 'rejected') {
-        // Nothing was stored and the чернетка still awaits — the parser's own words say why, and
-        // they go into the журнал as the failure they are, offer to report included.
+        // Nothing was stored and the чернетка still awaits — the parser's own words say why. A
+        // missing or mistyped сума is the owner's to fix, so it is a refusal: journaled like any
+        // other, but with «Зрозуміло» alone and no offer to report a bug that is not one.
         Alert.alert(
-          ...failureAlert({ title: 'Не підтверджено', where: 'draft-confirm', error: answer.message, report: reportBug }),
+          ...refusalAlert({ title: 'Не підтверджено', where: 'draft-confirm', message: answer.message }),
         );
         return;
       }
@@ -608,7 +611,7 @@ export default function MainScreen() {
       evaluateProgress();
       reload();
     },
-    [reload, reportBug],
+    [reload],
   );
 
   const confirmDraftLine = useCallback(
@@ -754,12 +757,20 @@ export default function MainScreen() {
                           {offersTransferMark(t) ? (
                             <RowAction
                               title="Це переказ"
-                              onPress={() => router.push(`/transaction/${line.id}?as=transfer`)}
+                              onPress={() => {
+                                // Its picker would be stale by the time Головний is back.
+                                setCategorising(undefined);
+                                setCategoryListOpen(false);
+                                router.push(`/transaction/${line.id}?as=transfer`);
+                              }}
                             />
                           ) : null}
                         </View>
                       ) : null}
-                      {categorising === line.id ? (
+                      {/* Only while the line is still «Без категорії»: the picker is keyed by id, and a line
+                          retyped elsewhere (a переказ, a дохід) keeps its id — its stale picker then refused
+                          the next tap with «категорію має лише витрата або повернення» (2026-09-22). */}
+                      {line.uncategorised && categorising === line.id ? (
                         <Picker
                           label="Категорія"
                           rows={categoryRows}
@@ -803,7 +814,7 @@ export default function MainScreen() {
           <NetWorthWidget
             key={id}
             model={netWorth}
-            onSelectHistoryCurrency={setRequestedHistoryCurrency}
+            onSelectHistory={setRequestedHistory}
             onOpenAccounts={() => router.push('/accounts')}
           />
         ) : null;
@@ -1022,11 +1033,21 @@ export default function MainScreen() {
 
       {/* Every widget hidden: the header, the customise action and any service item above still
           stand; this is the compact explanation that takes their place (dashboard-layout, "Every
-          widget may be hidden"). */}
+          widget may be hidden"). It carries its own button to the editor — a sentence pointing
+          at a small link «вище» was the only way back, and QA read the screen as broken. The
+          same plain push as the header action; `secondary`, because the «+» stays this screen's
+          one filled action. */}
       {stored.plan.visibleIds.length === 0 ? (
-        <ThemedText type="small" themeColor="textSecondary">
-          Усі віджети приховано. «Налаштувати» вище поверне будь-який з них.
-        </ThemedText>
+        <Card style={styles.allHidden}>
+          <ThemedText type="small" themeColor="textSecondary">
+            Усі віджети приховано. Поверніть будь-який з них у налаштуваннях Головного.
+          </ThemedText>
+          <Action
+            title="Налаштувати Головний"
+            variant="secondary"
+            onPress={() => router.push('/manage/home-dashboard')}
+          />
+        </Card>
       ) : null}
 
       <RuleOfferSheet
@@ -1053,6 +1074,7 @@ const styles = StyleSheet.create({
   // shrink it well under that on a short label like «Налаштувати» (main-screen, "Reordering is
   // understandable and accessible").
   customiseButton: { minHeight: TouchTarget, minWidth: TouchTarget, alignItems: 'center', justifyContent: 'center' },
+  allHidden: { gap: Spacing.three },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1084,6 +1106,8 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   rowLabel: { flex: 1, gap: Spacing.half },
-  rowActions: { flexDirection: 'row' },
+  // «Обрати категорію» and «Це переказ» side by side, wrapping on a narrow screen. `three`, not
+  // `two`: each `RowAction` carries `hitSlop` of `two`, and with no gap the two pills touched.
+  rowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.three },
   amount: { fontWeight: 600 },
 });

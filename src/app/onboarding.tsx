@@ -10,8 +10,14 @@ import { notificationAccess } from '@/platform/notification-access-device';
 import type { NotificationAccess } from '@/platform/notification-access';
 import { tokenKept } from '@/platform/monobank-token';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { onboardingSteps, onboardingSummary, type OnboardingStep } from '@/ui/onboarding';
+import {
+  leaveOnboarding,
+  onboardingSteps,
+  onboardingSummary,
+  type OnboardingStep,
+} from '@/ui/onboarding';
 
 import { Spacing } from '@/constants/theme';
 
@@ -85,9 +91,25 @@ export default function OnboardingScreen() {
     [router],
   );
 
+  /** «До застосунку»: Головний, replacing the checklist rather than stacking over it. */
+  const toApp = useCallback(() => router.replace('/'), [router]);
+  /** «←»: back where the checklist was opened from, or — on a first launch — into the app. */
+  const leave = useCallback(() => {
+    if (leaveOnboarding({ canGoBack: router.canGoBack() }) === 'back') {
+      router.back();
+      return;
+    }
+    toApp();
+  }, [router, toApp]);
+  // The phone's back press, for the same first launch: with nothing under the checklist it would
+  // otherwise close the app. `useCloseOnBack` answers the press whenever its condition holds and
+  // lets it through otherwise — here the condition is "no history", and the closer is «До
+  // застосунку», so a pushed checklist still pops the ordinary way.
+  useCloseOnBack(!router.canGoBack(), toApp);
+
   return (
     <Screen>
-      <ScreenHeader title="Перші кроки" back={() => router.back()} />
+      <ScreenHeader title="Перші кроки" back={leave} />
 
       <ThemedText type="small" themeColor="textSecondary">
         Усе, що потрібно застосунку, щоб бути корисним. Порядок довільний, пропустити можна будь-що
@@ -114,7 +136,7 @@ export default function OnboardingScreen() {
         </Card>
       ))}
 
-      <Action variant="secondary" title="До застосунку" onPress={() => router.replace('/')} />
+      <Action variant="secondary" title="До застосунку" onPress={toApp} />
       {/* Coming back from a system screen or a management screen re-reads everything. */}
       <Action variant="secondary" title="Оновити стан" onPress={reload} />
     </Screen>

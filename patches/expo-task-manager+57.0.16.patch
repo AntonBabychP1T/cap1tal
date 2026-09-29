@@ -1,0 +1,45 @@
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
+index de829ca..e1b9afb 100644
+--- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
+@@ -29,6 +29,7 @@ import com.facebook.react.ReactInstanceEventListener;
+ import com.facebook.react.bridge.ReactContext;
+ import com.facebook.react.bridge.UiThreadUtil;
+ import com.facebook.react.bridge.WritableNativeMap;
++import com.facebook.react.common.LifecycleState;
+ import com.facebook.react.jstasks.HeadlessJsTaskConfig;
+ import com.facebook.react.jstasks.HeadlessJsTaskContext;
+ import expo.modules.apploader.AppLoaderProvider;
+@@ -612,11 +613,31 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+     HeadlessAppLoader appLoader = getAppLoader();
+     if (appLoader != null) {
+       if (getAppLoader().invalidateApp(appScopeKey)) {
+-        sHeadlessTaskManagers.remove(appScopeKey);
++        WeakReference<TaskManagerInterface> headless = sHeadlessTaskManagers.remove(appScopeKey);
++        // cap1tal patch: when an Activity has taken over the app the headless loader started (a
++        // chance that arrived during a cold launch), the loader keeps that React instance alive,
++        // and its task manager is the only one this process will ever have. Dropping it left
++        // getTaskManager() answering null for the rest of the process: every later event was
++        // queued for a setTaskManager() call that never came, and each worker hung until
++        // WorkManager stopped it.
++        TaskManagerInterface taskManager = headless == null ? null : headless.get();
++        if (taskManager != null && getTaskManager(appScopeKey) == null && isOwnedByActivity()) {
++          sTaskManagers.put(appScopeKey, headless);
++        }
+       }
+     }
+   }
+ 
++  /** The same test RNHeadlessAppLoader.invalidateApp uses to decide not to destroy the host. */
++  private boolean isOwnedByActivity() {
++    Context context = mContextRef.get();
++    if (context == null) {
++      return false;
++    }
++    ReactContext reactContext = getReactContext(context);
++    return reactContext != null && reactContext.getLifecycleState() != LifecycleState.BEFORE_CREATE;
++  }
++
+   private void finishJobAfterTimeout(final JobService jobService, final JobParameters params, long timeout) {
+     Handler handler = new Handler();
+     handler.postDelayed(() -> jobService.jobFinished(params, false), timeout);

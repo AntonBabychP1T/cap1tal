@@ -451,10 +451,26 @@ export function backgroundNote(links: readonly MonobankLink[]): string | null {
   return links.length === 0 ? null : BACKGROUND_SYNC_NOTE;
 }
 
+/** Why nothing went to the bank: there is no token to send. Said by both of the screen's asks. */
+const TOKEN_NEEDED = 'Спершу введіть токен monobank';
+
+/**
+ * What «Оновити з monobank» says when there is no token to refresh with.
+ *
+ * The same sentence «Синхронізувати» answers with, because it is the same reason: a tap that
+ * silently did nothing read as a broken button, right next to one that explained itself. Only when
+ * the owner `asked` — the refresh that runs on opening the screen stays quiet, since the overline
+ * above the buttons already says «Токен ще не введено» and a banner repeating it on every visit
+ * would be noise.
+ */
+export function notConfiguredStatus(input: { readonly asked: boolean }): string | undefined {
+  return input.asked ? TOKEN_NEEDED : undefined;
+}
+
 const RUN_HEADLINES: Readonly<
   Record<'not-configured' | 'storage-unavailable' | 'no-links', string>
 > = {
-  'not-configured': 'Спершу введіть токен monobank',
+  'not-configured': TOKEN_NEEDED,
   'storage-unavailable': 'Не вдалося прочитати збережений токен',
   'no-links': 'Жоден рахунок monobank не приєднано',
 };

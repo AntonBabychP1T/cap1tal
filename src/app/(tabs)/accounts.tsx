@@ -20,13 +20,13 @@ import {
   rates as ratesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
-import { computeBalance, reconcile, type Account } from '@/domain/account';
-import { contributed } from '@/domain/investments';
+import { computeBalances, reconcile, type Account } from '@/domain/account';
 import type { Money } from '@/domain/money';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useTheme } from '@/hooks/use-theme';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { useSinglePush } from '@/hooks/use-single-push';
 import { accountFromDraft, blankDraft, type AccountDraft } from '@/ui/account-form';
 import {
   accountRows,
@@ -61,6 +61,8 @@ const CURRENCY_CHOICES = OFFERED_CURRENCIES.map((c) => ({ value: c, label: c }))
 
 export default function AccountsScreen() {
   const router = useRouter();
+  /** A рахунок opens once, however many rows are tapped while its screen is opening. */
+  const push = useSinglePush();
   const theme = useTheme();
 
   /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
@@ -73,14 +75,10 @@ export default function AccountsScreen() {
   const [stored, reload] = useReloadOnFocus(
     useCallback(() => {
       const all = accountsRepo.list();
-      const balances = new Map(
-        all.map((a) => {
-          const own = transactionsRepo.listByAccount(a.id);
-          // The same number either way — an інвестиційний рахунок's розрахунковий баланс **is** its
-          // вкладено — asked for by the name this screen shows it under.
-          return [a.id, a.kind === 'investment' ? contributed(a, own) : computeBalance(a, own)];
-        }),
-      );
+      // One read and one pass for every рахунок, not a query per рахунок: 27 of them made every
+      // return to this tab stall (bug report 2026-09-29). An інвестиційний рахунок's розрахунковий
+      // баланс **is** its вкладено (`contributed`), so the one number serves both.
+      const balances = computeBalances(all, transactionsRepo.listAll());
       // The bank's own side, joined at the screen and not on the `Account`: a link keyed by
       // рахунок id, and the last known баланс банку of the monobank account it names.
       const bankBalances = new Map<string, Money>();
@@ -276,7 +274,8 @@ export default function AccountsScreen() {
             <Pressable
               onPress={() => setDraft(blankDraft())}
               accessibilityLabel="Створити рахунок"
-              style={({ pressed }) => (pressed ? styles.pressed : undefined)}>
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.addTarget, pressed ? styles.pressed : null]}>
               {/* The edge, not just the fill: after the retone a `backgroundElement` square on
                   the page is #0F0D0B on #000000, and the «+» would be floating on nothing. A
                   surface on the page is held by its `cardEdge`, exactly as a card is. */}
@@ -341,10 +340,13 @@ export default function AccountsScreen() {
                   {/* The tap opens the рахунок's рухи — what the owner is reaching for. Renaming
                       and archiving are actions on that screen, not consequences of this gesture. */}
                   <Pressable
-                    onPress={() => router.push(`/account/${a.id}`)}
+                    onPress={() => push(`/account/${a.id}`)}
                     style={styles.accountBody}>
                     <View style={styles.line}>
-                      <ThemedText numberOfLines={1} style={styles.name}>
+                      {/* Two lines, not one: at a large system font three рахунки whose names
+                          start alike all cut to «Monobank U…» and read as one (QA, 2026-09-29).
+                          The tail is what tells them apart, so it has to show. */}
+                      <ThemedText numberOfLines={2} style={styles.name}>
                         {a.name}
                       </ThemedText>
                       <ThemedText tabular style={styles.amount}>
@@ -489,6 +491,18 @@ export default function AccountsScreen() {
 }
 
 const styles = StyleSheet.create({
+  /**
+   * The tap target around the square: a full `TouchTarget`, where the square alone is 40 and an
+   * accessibility check measured the control at 40. The negative vertical margin hands the extra
+   * back, so the square sits exactly where it did and the header is no taller.
+   */
+  addTarget: {
+    minWidth: TouchTarget,
+    minHeight: TouchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: -Spacing.one,
+  },
   add: {
     width: TouchTarget - Spacing.two,
     height: TouchTarget - Spacing.two,

@@ -2,6 +2,7 @@ import { transactionEffect, type Account } from '../domain/account';
 import { resolveCategoryIcon } from '../domain/category-icon';
 import { overLimitCategories, type CategoryLimit } from '../domain/limits';
 import { categoryBreakdown } from '../domain/monthly-picture';
+import { MAX_AMOUNT_MINOR } from '../domain/money';
 import {
   monthOf,
   UNCATEGORISED_CATEGORY_ID,
@@ -87,10 +88,24 @@ export function overLimitByMonth(input: {
     return marked;
   }
   for (const month of new Set(input.feed.map((t) => monthOf(t.date)))) {
-    const breakdown = categoryBreakdown({ month, transactions: input.monthTransactions(month) });
+    const transactions = input.monthTransactions(month);
+    // A row above `MAX_AMOUNT_MINOR` predates the ceiling (QA: one at MAX_SAFE_INTEGER kopiykas),
+    // and adding it to anything leaves the safe-integer range `money` insists on. The feed is where
+    // the owner opens and deletes such a row, so its month goes unjudged rather than crashing the
+    // one screen that can fix it. Below the ceiling no month's sum can overflow, so this is exact.
+    if (transactions.some(aboveCeiling)) {
+      continue;
+    }
+    const breakdown = categoryBreakdown({ month, transactions });
     marked.set(month, new Set(overLimitCategories({ breakdown, limits: input.limits }).keys()));
   }
   return marked;
+}
+
+/** Any сума of the транзакція beyond the ceiling every ingress now keeps, either side of zero. */
+function aboveCeiling(t: Transaction): boolean {
+  const amounts = t.type === 'transfer' ? [t.left.amount, t.arrived.amount] : [t.amount.amount];
+  return amounts.some((amount) => Math.abs(amount) > MAX_AMOUNT_MINOR);
 }
 
 /**

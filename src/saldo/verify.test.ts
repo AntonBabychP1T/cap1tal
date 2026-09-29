@@ -136,8 +136,11 @@ describe('verify', () => {
     const built = report(rows);
     const noted = built.droppedRows.filter((row) => row.reason === 'accrual-month-divergence');
     expect(noted).toHaveLength(2);
-    expect(noted[0]?.detail).toContain('2025-07');
-    expect(noted[0]?.detail).toContain('2025-08-02');
+    // Quoting the Transaction Date as the export writes it — as data; the screen words it.
+    expect(noted[0]).toMatchObject({
+      accruedTo: '2025-07',
+      exportDatetime: '2025-08-02T10:00:00.000',
+    });
     // Noted, not obeyed: the транзакція keeps the transaction date, and the рахунок still balances.
     expect(planFrom(rows).transactions[0]?.transaction.date).toBe('2025-08-02');
     expect(reconciliationOf(rows, 'гаманець').reconciles).toBe(true);

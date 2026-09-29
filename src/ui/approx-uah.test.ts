@@ -231,6 +231,7 @@ describe('staleCurrencies / shouldRefreshRates', () => {
     const rates = [
       { currency: 'USD', obtainedAt: minutesAgo(5) },
       { currency: 'EUR', obtainedAt: minutesAgo(12) },
+      { currency: 'PLN', obtainedAt: minutesAgo(7) },
     ];
 
     expect(staleCurrencies(rates, now)).toEqual([]);
@@ -241,6 +242,7 @@ describe('staleCurrencies / shouldRefreshRates', () => {
     const rates = [
       { currency: 'USD', obtainedAt: minutesAgo(3) },
       { currency: 'EUR', obtainedAt: minutesAgo(60 * 24) },
+      { currency: 'PLN', obtainedAt: minutesAgo(3) },
     ];
 
     expect(staleCurrencies(rates, now)).toEqual(['EUR']);
@@ -248,7 +250,7 @@ describe('staleCurrencies / shouldRefreshRates', () => {
   });
 
   it('A fresh install, with nothing stored at all, asks', () => {
-    expect(staleCurrencies([], now)).toEqual(['EUR', 'USD']);
+    expect(staleCurrencies([], now)).toEqual(['EUR', 'PLN', 'USD']);
     expect(shouldRefreshRates([], now)).toBe(true);
   });
 
@@ -256,6 +258,7 @@ describe('staleCurrencies / shouldRefreshRates', () => {
     const both = (obtainedAt: Date) => [
       { currency: 'USD', obtainedAt },
       { currency: 'EUR', obtainedAt },
+      { currency: 'PLN', obtainedAt },
     ];
 
     expect(shouldRefreshRates(both(new Date(now.getTime() - RATE_MAX_AGE_MS)), now)).toBe(false);
@@ -270,14 +273,15 @@ describe('staleCurrencies / shouldRefreshRates', () => {
         [
           { currency: 'USD', obtainedAt: ahead },
           { currency: 'EUR', obtainedAt: ahead },
+          { currency: 'PLN', obtainedAt: ahead },
         ],
         now,
       ),
     ).toBe(false);
   });
 
-  it('A partial answer leaves the other currency stale, however fresh what arrived is', () => {
-    // monobank answered with USD alone — the endpoint dropped EUR, or the parser skipped a
+  it('A partial answer leaves the other currencies stale, however fresh what arrived is', () => {
+    // monobank answered with USD alone — the endpoint dropped EUR and PLN, or the parser skipped a
     // malformed row. What was stored is as fresh as it gets, and the month is still not covered.
     //
     // This is why the month screen must not decide whether to ask from the cache it has just
@@ -285,7 +289,7 @@ describe('staleCurrencies / shouldRefreshRates', () => {
     // reads storage inside the effect and keeps this value out of its dependencies.
     const justStored = [{ currency: 'USD', obtainedAt: now }];
 
-    expect(staleCurrencies(justStored, now)).toEqual(['EUR']);
+    expect(staleCurrencies(justStored, now)).toEqual(['EUR', 'PLN']);
     expect(shouldRefreshRates(justStored, now)).toBe(true);
   });
 
@@ -294,6 +298,7 @@ describe('staleCurrencies / shouldRefreshRates', () => {
     const rates = [
       { currency: 'USD', obtainedAt: minutesAgo(1) },
       { currency: 'EUR', obtainedAt: minutesAgo(1) },
+      { currency: 'PLN', obtainedAt: minutesAgo(1) },
       { currency: 'GBP', obtainedAt: minutesAgo(60 * 24 * 30) },
     ];
 

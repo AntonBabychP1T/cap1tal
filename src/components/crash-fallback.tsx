@@ -71,6 +71,23 @@ export function CrashFallback({
     }, 0);
   };
 
+  /**
+   * «Повернутися» goes to Головний — which is no way out when Головний is what threw. A crash
+   * there that comes from stored data (QA: one сума of MAX_SAFE_INTEGER kopiykas, stored before
+   * the ceiling existed, overflowed every total on the screen) crashes again on every return and
+   * every restart, and the owner never reaches the record to delete it. So a crash on Головний
+   * also offers the list of all транзакції, a separate screen that sums nothing it cannot
+   * (`overLimitByMonth` leaves such a month unjudged), where the bad record can be opened and
+   * deleted. Same sequencing as `goBack`, for the reason in the comment at the top.
+   */
+  const crashedOnHome = pathname === '/';
+  const openTransactions = () => {
+    router.replace('/transactions');
+    setTimeout(() => {
+      void retry();
+    }, 0);
+  };
+
   /** The device's own «назад» is the same as «Повернутися» — never a second dead end. */
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -138,6 +155,17 @@ export function CrashFallback({
               ]}>
               Повернутися
             </Text>
+            {crashedOnHome ? (
+              <Text
+                accessibilityRole="button"
+                onPress={openTransactions}
+                style={[
+                  styles.action,
+                  { color: theme.text, borderColor: theme.cardEdge, borderWidth: 1 },
+                ]}>
+                Відкрити всі транзакції
+              </Text>
+            ) : null}
           </View>
         )}
       </ScrollView>

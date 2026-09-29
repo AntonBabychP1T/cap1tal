@@ -2,6 +2,7 @@ import { and, asc, eq } from 'drizzle-orm';
 
 import { categories, sources } from './schema';
 import type { Storage } from './storage';
+import { Refusal } from '../domain/refusal';
 
 /**
  * The one implementation of a категорії/джерела list in storage. The categories capability states
@@ -57,7 +58,7 @@ export interface ListWords {
 export function listName(name: string): string {
   const trimmed = name.trim();
   if (trimmed === '') {
-    throw new Error('назва не може бути порожньою');
+    throw new Refusal('назва не може бути порожньою');
   }
   return trimmed;
 }
@@ -101,13 +102,13 @@ export function namedListRepo<Row extends NamedRow>(
       .all()
       .some((row) => row.id !== exceptId);
     if (taken) {
-      throw new Error(`${words.nominative} «${name}» вже існує`);
+      throw new Refusal(`${words.nominative} «${name}» вже існує`);
     }
   }
 
   function refuseReserved(row: Row, verb: string): void {
     if (isReserved(row.id)) {
-      throw new Error(words.refusal(row.name, verb));
+      throw new Refusal(words.refusal(row.name, verb));
     }
   }
 

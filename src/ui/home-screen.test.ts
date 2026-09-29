@@ -500,6 +500,18 @@ describe('Головний as the overview', () => {
     expect(main).toContain('accessibilityLabel="Налаштувати Головний"');
   });
 
+  it('Every widget hidden offers a real button to the editor, not only a sentence pointing up', () => {
+    // QA: the empty dashboard read only «… «Налаштувати» вище …» — the way back was a sentence
+    // about a small link elsewhere on the screen. The explanation now carries its own button,
+    // wired exactly like the header action: plain navigation to the editor, nothing else.
+    const sentence = main.slice(main.indexOf('{stored.plan.visibleIds.length === 0 ? ('));
+    const guarded = sentence.slice(0, sentence.indexOf(') : null}'));
+    expect(guarded).toContain('<Action');
+    expect(guarded).toContain('title="Налаштувати Головний"');
+    expect(guarded).toContain("onPress={() => router.push('/manage/home-dashboard')}");
+    expect(guarded).not.toContain('вище');
+  });
+
   it('Scenario: No large attention section and no entry form remain', () => {
     expect(main).not.toContain('Потребує уваги');
     expect(main).not.toContain('ATTENTION_TITLE');
@@ -520,11 +532,19 @@ describe('Головний as the overview', () => {
     expect(categoriseAction).toContain('setCategorising(categorising === line.id ? undefined : line.id)');
     expect(categoriseAction).not.toContain('router.push');
 
-    const picker = main.slice(main.indexOf('{categorising === line.id ? ('));
+    // Gated on the line still being «Без категорії» too: the picker is keyed by id, and a line
+    // retyped elsewhere keeps its id — its stale picker refused the next tap with «категорію має
+    // лише витрата або повернення» (owner's journal, 2026-09-22).
+    const picker = main.slice(main.indexOf('{line.uncategorised && categorising === line.id ? ('));
     const pickerBlock = picker.slice(0, picker.indexOf(') : null}'));
     expect(pickerBlock).toContain('<Picker');
     expect(pickerBlock).toContain('onSelect={(picked: string) => categorise(t, picked)}');
     expect(pickerBlock).not.toContain('router.push');
+    // «Це переказ» leaves Головний for the editor; the picker it leaves behind is closed first.
+    const transferMark = main.slice(main.indexOf('title="Це переказ"'));
+    expect(transferMark.slice(0, transferMark.indexOf('router.push'))).toContain(
+      'setCategorising(undefined)',
+    );
 
     // `categorise` itself: stores, closes the picker, refreshes and — for a витрата or
     // повернення only — raises the rule offer, all without ever routing anywhere.
@@ -535,6 +555,12 @@ describe('Головний as the overview', () => {
     expect(categoriseBody).toContain('reload()');
     expect(categoriseBody).toContain('ruleOffer.raise(');
     expect(categoriseBody).not.toContain('router.push');
+  });
+
+  it('The «Усі транзакції» picker is gated on «Без категорії» the same way as Головний', () => {
+    const search = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+    expect(search).toContain('{line.uncategorised && categorising === line.id ? (');
+    expect(search).not.toContain('{categorising === line.id ? (');
   });
 
   it('Scenario: Draft confirmation updates the same record — Scenario: Confirming the last чернетка into «Без категорії» hands off between both alerts', () => {

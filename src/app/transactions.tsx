@@ -350,7 +350,10 @@ export default function TransactionsScreen() {
                       />
                     </View>
                   ) : null}
-                  {categorising === line.id ? (
+                  {/* Only while the line is still «Без категорії»: the picker is keyed by id, and a line
+                      retyped elsewhere (a переказ, a дохід) keeps its id — its stale picker then refused
+                      the next tap with «категорію має лише витрата або повернення» (2026-09-22). */}
+                  {line.uncategorised && categorising === line.id ? (
                     <Picker
                       label="Категорія"
                       rows={categoryRows}
@@ -393,5 +396,8 @@ export default function TransactionsScreen() {
 
 const styles = StyleSheet.create({
   filters: { gap: Spacing.two },
-  rowActions: { flexDirection: 'row' },
+  // A row's verbs side by side, wrapping on a narrow screen — spaced as on Головний, where
+  // «Обрати категорію» and «Це переказ» touched with no gap. `three`, not `two`: each
+  // `RowAction` carries `hitSlop` of `two`, and eight apart their hit areas would meet.
+  rowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.three },
 });

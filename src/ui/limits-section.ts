@@ -3,6 +3,7 @@ import type { CategoryLimit } from '../domain/limits';
 import type { CurrencyCode } from '../domain/money';
 import { formatMinorUnits, formatMoney, parseAmount } from './amount-input';
 import { byName, OFFERED_CURRENCIES } from './labels';
+import { Refusal } from '../domain/refusal';
 
 /**
  * What the «Ліміти» section of Налаштування shows and accepts. Pure, because the section itself is
@@ -80,7 +81,7 @@ export const DEFAULT_LIMIT_CURRENCY: CurrencyCode = 'UAH';
  */
 export function limitFromDraft(categoryId: string, draft: LimitDraft): CategoryLimit {
   if (!LIMIT_CURRENCIES.includes(draft.currency as (typeof LIMIT_CURRENCIES)[number])) {
-    throw new Error(`валюта ліміту — одна з ${LIMIT_CURRENCIES.join(', ')}`);
+    throw new Refusal(`валюта ліміту — одна з ${LIMIT_CURRENCIES.join(', ')}`);
   }
   return { categoryId, amount: parseAmount(draft.amount, draft.currency) };
 }

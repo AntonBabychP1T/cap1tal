@@ -298,6 +298,32 @@ describe('a run that yields', () => {
     expect(repo.linkOf('mono-2')?.lastAttemptedAtMs).toBeNull();
   });
 
+  it('A chance whose kept client-info is stale buys it and still sends one statement', async () => {
+    // The owner's репорт of 2026-09-27: when the kept answer was older than an hour, a chance spent
+    // its only request on client-info and imported nothing — on a phone granting chances less often
+    // than hourly, the background never imported anything at all.
+    const { clientInfo } = linkAccounts(3);
+    const script = scriptedFetch({ clientInfo });
+    const timers = fakeTimers(RUN_AT);
+    // `linkAccounts` keeps an answer a day old, and the last statement request is long past.
+    repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
+
+    const run = ran(
+      await drive(
+        syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...chanceRun() }),
+        timers,
+      ),
+    );
+
+    expect(run.accounts.map((result) => result.outcome)).toEqual([
+      'complete',
+      'postponed',
+      'postponed',
+    ]);
+    expect(script.requests()).toBe(2);
+    expect(asked(script.statements())).toEqual(['mono-0']);
+  });
+
   it('Scenario: A chance that owes the gap sends nothing', async () => {
     const { clientInfo } = linkAccounts(3);
     const script = scriptedFetch({ clientInfo });
@@ -416,10 +442,10 @@ describe('a run that yields', () => {
       'postponed',
     ]);
     expect(asked(script.statements())).toEqual(['mono-0']);
-    // One timer fired — the gap before the first statement. The second wait ended on the
-    // foreground event, and its timer was cancelled rather than left to a paused JS thread that
-    // would never run it.
-    expect(timers.fired()).toBe(1);
+    // No timer fired. The first statement owed no gap — client-info is not paced against it — and
+    // the second wait ended on the foreground event, its timer cancelled rather than left to a
+    // paused JS thread that would never run it.
+    expect(timers.fired()).toBe(0);
     expect(timers.pending()).toBe(0);
     // And the event the wait subscribed to was let go with it.
     expect(foreground.listening()).toBe(0);
@@ -446,19 +472,19 @@ describe('a run that yields', () => {
       await drive(syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...ports }), timers),
     );
 
-    // The first request went out and what it answered is kept — the run cost one request, not all
-    // of it. Only from the second request on does «away» stop it, which is why the first рахунок
-    // is postponed rather than complete: its own statement request is the second the run makes.
-    expect(script.requests()).toBe(1);
-    expect(script.statements()).toHaveLength(0);
-    expect(run.accounts.map((result) => result.outcome)).toEqual(['postponed', 'postponed']);
+    // What the run could send without waiting went out and what it answered is kept: client-info,
+    // and the first statement, which owed no gap. Only at the first wait does «away» stop it, so
+    // the first рахунок is complete and the second postponed.
+    expect(script.requests()).toBe(2);
+    expect(asked(script.statements())).toEqual(['mono-0']);
+    expect(run.accounts.map((result) => result.outcome)).toEqual(['complete', 'postponed']);
     // The client-info answer it did get was kept: the balances it carried are stored.
     expect(repo.getAccount('mono-0')?.obtainedAt).toEqual(new Date(RUN_AT));
   });
 
   it('Scenario: A run that owes the bank a minute sends nothing while the app is away', async () => {
-    // The device sent a request ten seconds ago — the run before this one — so the pace owes the
-    // bank the rest of the minute before anything may go out.
+    // The device sent a statement request ten seconds ago — the run before this one — so the pace
+    // owes the bank the rest of the minute before another statement may go out.
     const { clientInfo } = linkAccounts(2);
     repo.noteRequest(new Date(RUN_AT - 10_000));
     const script = scriptedFetch({
@@ -478,10 +504,12 @@ describe('a run that yields', () => {
       await drive(syncLinkedAccounts({ ...portsWith(script.fetchImpl, timers), ...ports }), timers),
     );
 
-    // Nothing was sent, and nothing was lost by it: the wait owed is the pace's, no timer will run
-    // it out with the app away, and a request sent regardless would come back refused. The request
-    // this run did not spend is the one the run before it just spent.
-    expect(script.requests()).toBe(0);
+    // No statement was sent, and nothing was lost by it: the wait owed is the pace's, no timer will
+    // run it out with the app away, and a request sent regardless would come back refused. The
+    // statement this run did not send is the one the run before it just spent. Its client-info
+    // request, limited separately, did go out.
+    expect(script.statements()).toHaveLength(0);
+    expect(script.requests()).toBe(1);
     expect(run.accounts.map((result) => result.outcome)).toEqual(['postponed', 'postponed']);
     // And it is postponed, not a failure: the next run continues from the same cursors.
     expect(repo.linkOf('mono-0')?.cursorMs).toBe(boundary);
@@ -624,9 +652,9 @@ describe('a run that yields', () => {
     expect(run.accounts.map((result) => result.outcome)).toEqual(['complete']);
     expect(run.imported).toBe(1);
     expect(txs.listAll()).toHaveLength(1);
-    // Nothing about the timeout is left behind: both requests cancelled theirs on answering, so
-    // the only timer that ever fired was the gap between them.
+    // Nothing about the timeout is left behind: both requests cancelled theirs on answering, and
+    // no gap was owed between client-info and the statement, so no timer ever fired.
     expect(timers.pending()).toBe(0);
-    expect(timers.fired()).toBe(1);
+    expect(timers.fired()).toBe(0);
   });
 });

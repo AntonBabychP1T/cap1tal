@@ -1,9 +1,9 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Path, Svg } from 'react-native-svg';
 
-import { Spacing } from '@/constants/theme';
+import { Spacing, TouchTarget } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { donutGeometry } from '@/ui/dashboard-charts';
+import { donutGeometry, donutSectorPath, type DonutRing } from '@/ui/dashboard-charts';
 import { legendSwatch, sectorOpacity, type CategoryPresentation } from '@/ui/home-categories';
 import { formatMoney, splitMoney } from '@/ui/amount-input';
 import { Card } from './surfaces';
@@ -34,27 +34,8 @@ const REMAINDER_ID = '__remainder__';
  */
 const CENTER_WIDTH = INNER_RADIUS * 2 - Spacing.two * 2;
 
-function polarPoint(radius: number, angleDeg: number): { x: number; y: number } {
-  // -90 so 0° is 12 o'clock, matching `donutGeometry`'s own convention, sweeping clockwise.
-  const rad = ((angleDeg - 90) * Math.PI) / 180;
-  return { x: CENTER + radius * Math.cos(rad), y: CENTER + radius * Math.sin(rad) };
-}
-
-/** One annular wedge from `startAngle` to `endAngle`, both degrees, clockwise from 12 o'clock. */
-function sectorPath(startAngle: number, endAngle: number): string {
-  const largeArc = endAngle - startAngle > 180 ? 1 : 0;
-  const outerStart = polarPoint(OUTER_RADIUS, startAngle);
-  const outerEnd = polarPoint(OUTER_RADIUS, endAngle);
-  const innerEnd = polarPoint(INNER_RADIUS, endAngle);
-  const innerStart = polarPoint(INNER_RADIUS, startAngle);
-  return [
-    `M ${outerStart.x} ${outerStart.y}`,
-    `A ${OUTER_RADIUS} ${OUTER_RADIUS} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
-    `L ${innerEnd.x} ${innerEnd.y}`,
-    `A ${INNER_RADIUS} ${INNER_RADIUS} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
-    'Z',
-  ].join(' ');
-}
+/** The donut's place in its viewBox, for `donutSectorPath` (`src/ui/dashboard-charts.ts`). */
+const RING: DonutRing = { center: CENTER, outerRadius: OUTER_RADIUS, innerRadius: INNER_RADIUS };
 
 export function CategoryWidget({
   presentation,
@@ -103,16 +84,22 @@ export function CategoryWidget({
         {presentation.currencyChips.length > 0 ? (
           <View style={styles.chips}>
             {presentation.currencyChips.map((chip) => (
+              // The Pressable is the 48 dp touch target; the pill inside it is what is drawn. QA
+              // measured the chip itself as the whole target (42×16 dp) — a `hitSlop` is not in
+              // the view's bounds, so the pill alone is what a scanner and a thumb both found.
               <Pressable
                 key={chip.currency}
                 onPress={() => onSelectCurrency(chip.currency)}
                 accessibilityRole="button"
                 accessibilityLabel={chip.accessibilityLabel}
                 accessibilityState={{ selected: chip.selected }}
-                style={[styles.chip, chip.selected ? { backgroundColor: theme.accentSurface } : null]}>
-                <ThemedText type="small" themeColor={chip.selected ? 'accent' : 'textSecondary'}>
-                  {chip.currency}
-                </ThemedText>
+                style={styles.chipTarget}>
+                <View
+                  style={[styles.chip, chip.selected ? { backgroundColor: theme.accentSurface } : null]}>
+                  <ThemedText type="small" themeColor={chip.selected ? 'accent' : 'textSecondary'}>
+                    {chip.currency}
+                  </ThemedText>
+                </View>
               </Pressable>
             ))}
           </View>
@@ -131,7 +118,9 @@ export function CategoryWidget({
               geometry.sectors.map((sector, i) => (
                 <Path
                   key={sector.categoryId}
-                  d={sectorPath(sector.startAngle, sector.endAngle)}
+                  // One category at 100% is (0, 360): `donutSectorPath` draws that as the whole
+                  // ring rather than an arc whose start is its own end, which draws nothing.
+                  d={donutSectorPath(sector.startAngle, sector.endAngle, RING)}
                   fill={theme.accent}
                   fillOpacity={sectorOpacity(i)}
                 />
@@ -140,12 +129,10 @@ export function CategoryWidget({
               // Neutral ring: no proportional sectors at all — a negative or all-zero total is
               // mathematically misleading as a share-of-total pie (main-screen, "Signed or empty
               // breakdowns never claim false shares").
-              <Path
-                d={sectorPath(0, 359.999)}
-                fill="none"
-                stroke={theme.border}
-                strokeWidth={OUTER_RADIUS - INNER_RADIUS}
-              />
+              // The same full ring a 100% sector draws, filled in the border tone. It used to stroke
+              // the outline of a 359.999° wedge at the ring's width, which painted a band from
+              // radius 30 to 86 — past the 80 of the viewBox — rather than the ring itself.
+              <Path d={donutSectorPath(0, 360, RING)} fill={theme.border} />
             )}
           </Svg>
           <View style={styles.donutCenter} pointerEvents="none">
@@ -239,6 +226,8 @@ const styles = StyleSheet.create({
   card: { gap: Spacing.two },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   chips: { flexDirection: 'row', gap: Spacing.one },
+  /* A full-size target, the pill centred in it: the row grows to 48 rather than the pill. */
+  chipTarget: { minHeight: TouchTarget, minWidth: TouchTarget, justifyContent: 'center', alignItems: 'center' },
   chip: {
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.half,

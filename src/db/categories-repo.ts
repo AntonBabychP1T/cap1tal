@@ -10,6 +10,7 @@ import {
 import { listName } from './named-list-repo';
 import { categories } from './schema';
 import type { Storage } from './storage';
+import { Refusal } from '../domain/refusal';
 
 /** Category storage differs from sources only in its persisted app-owned icon key. */
 export function categoriesRepo(db: Storage) {
@@ -29,13 +30,13 @@ export function categoriesRepo(db: Storage) {
   function rejectDuplicate(name: string, exceptId?: string): void {
     const duplicate = db.select().from(categories).where(and(eq(categories.archived, false), eq(categories.name, name))).all()
       .some((row) => row.id !== exceptId);
-    if (duplicate) throw new Error(`категорія «${name}» вже існує`);
+    if (duplicate) throw new Refusal(`категорія «${name}» вже існує`);
   }
 
   function checkedIcon(id: string, name: string, value?: string): CategoryIconKey {
     const fixed = RESERVED_CATEGORY_ICONS[id];
     if (fixed) {
-      if (value !== undefined && value !== fixed) throw new Error('службову категорію не можна змінити');
+      if (value !== undefined && value !== fixed) throw new Refusal('службову категорію не можна змінити');
       return fixed;
     }
     const icon = value ?? startingCategoryIcon({ id, name });
@@ -45,7 +46,7 @@ export function categoriesRepo(db: Storage) {
 
   function update(id: string, input: { name: string; iconKey?: string }): void {
     const row = load(id);
-    if (isReservedCategory(id)) throw new Error(`«${row.name}» — службова категорія, її не можна змінити`);
+    if (isReservedCategory(id)) throw new Refusal(`«${row.name}» — службова категорія, її не можна змінити`);
     const name = listName(input.name);
     rejectDuplicate(name, id);
     const iconKey = checkedIcon(id, name, input.iconKey ?? row.iconKey ?? startingCategoryIcon(row));
@@ -77,7 +78,7 @@ export function categoriesRepo(db: Storage) {
     },
     archive(id: string): void {
       const row = load(id);
-      if (isReservedCategory(id)) throw new Error(`«${row.name}» — службова категорія, її не можна архівувати`);
+      if (isReservedCategory(id)) throw new Refusal(`«${row.name}» — службова категорія, її не можна архівувати`);
       db.update(categories).set({ archived: true }).where(eq(categories.id, id)).run();
     },
     unarchive(id: string): void {

@@ -14,6 +14,7 @@ import { formatMoney, parseAmount } from './amount-input';
 import { parseTypedDate } from './dates';
 import { byName, categoryLabel, OFFERED_CURRENCIES } from './labels';
 import { limitFromDraft } from './limits-section';
+import { Refusal } from '../domain/refusal';
 
 /**
  * What the «Цілі» section of Налаштування shows and accepts. Pure, because the section itself is
@@ -253,22 +254,22 @@ export function accumulationFromDraft(
 ): AccumulationGoal {
   const name = draft.name.trim();
   if (name === '') {
-    throw new Error('Ціль потребує назви');
+    throw new Refusal('Ціль потребує назви');
   }
   if (!GOAL_CURRENCIES.includes(draft.currency as (typeof GOAL_CURRENCIES)[number])) {
-    throw new Error(`валюта цілі — одна з ${GOAL_CURRENCIES.join(', ')}`);
+    throw new Refusal(`валюта цілі — одна з ${GOAL_CURRENCIES.join(', ')}`);
   }
   const accountIds = composition(draft.accountIds);
   const held = accountIds.map((id) => {
     const account = context.accounts.find((a) => a.id === id);
     if (!account) {
-      throw new Error('Такого рахунку немає');
+      throw new Refusal('Такого рахунку немає');
     }
     return account;
   });
   const problem = compositionProblem(draft.currency, held);
   if (problem) {
-    throw new Error(compositionRefusal(problem));
+    throw new Refusal(compositionRefusal(problem));
   }
   const trimmedDate = draft.deadline.trim();
   return {
@@ -292,7 +293,7 @@ export function accumulationFromDraft(
  */
 export function spendingFromDraft(draft: SpendingDraft): CategoryLimit {
   if (draft.categoryId === undefined || draft.categoryId === '') {
-    throw new Error('Ціль витрат потребує категорії');
+    throw new Refusal('Ціль витрат потребує категорії');
   }
   return limitFromDraft(draft.categoryId, { amount: draft.amount, currency: draft.currency });
 }

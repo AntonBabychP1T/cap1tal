@@ -430,12 +430,14 @@ describe('one chance the phone gives', () => {
       repo.markSynced('mono-1', new Date(CHANCE_AT - 40 * HOUR));
       const bankPorts = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
 
-      // The whole of the bank's minute still owed: the chance stops before its first request.
+      // The whole of the statement minute still owed: the chance buys the stale balances, which
+      // the bank limits separately, and stops before its first statement request.
       repo.noteRequest(new Date(CHANCE_AT - 1));
       const turn = await runBackgroundTurn(turnPorts(bankPorts.fetchImpl, { gapMs: MINUTE }));
 
       expect(turn).toMatchObject({ kind: 'ran', outcome: 'postponed' });
-      expect(bankPorts.requests()).toBe(0);
+      expect(bankPorts.calls.filter((url) => url.includes('/statement/'))).toEqual([]);
+      expect(bankPorts.requests()).toBe(1);
       expect(phone.posted()).toEqual([]);
       expect(reminders.outstandingKinds()).toEqual([]);
       // Nothing announced: a run that merely stopped is not a run that failed. The run's own

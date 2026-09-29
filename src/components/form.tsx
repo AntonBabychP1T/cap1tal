@@ -12,12 +12,14 @@ import {
   type TextInputProps,
 } from 'react-native';
 
+import { DateTimePicker } from '@expo/ui/community/datetime-picker';
+
 import { Icon } from './icon';
 import { ThemedText } from './themed-text';
 
 import { Radius, Spacing, TouchTarget } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { dateStepOffers } from '@/ui/dates';
+import { dateStepOffers, parseTypedDate, pickedDate, pickerInstant, todayIso } from '@/ui/dates';
 import { type IconName } from '@/ui/icons';
 import {
   allOffer,
@@ -36,7 +38,21 @@ import {
  * accent-filled action per screen. Layout beyond that stays unspecced — see design.md "Non-Goals".
  */
 
-export function Field({ label, hint, ...rest }: TextInputProps & { label: string; hint?: string }) {
+export function Field({
+  label,
+  hint,
+  reserveHint = false,
+  ...rest
+}: TextInputProps & {
+  label: string;
+  hint?: string;
+  /**
+   * Keep the hint's line even while there is no hint to draw. A form whose hint arrives later —
+   * the сума's currency appears once a рахунок is chosen — otherwise grows by a line under the
+   * owner's thumb, and every field below it jumps as they go to tap it.
+   */
+  reserveHint?: boolean;
+}) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
 
@@ -74,6 +90,15 @@ export function Field({ label, hint, ...rest }: TextInputProps & { label: string
         <ThemedText type="small" themeColor="textSecondary">
           {hint}
         </ThemedText>
+      ) : reserveHint ? (
+        // A blank line of the same type, so it is exactly the hint's height at any font scale —
+        // and hidden from a screen reader, which has nothing to read in it.
+        <ThemedText
+          type="small"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants">
+          {' '}
+        </ThemedText>
       ) : null}
     </View>
   );
@@ -81,10 +106,12 @@ export function Field({ label, hint, ...rest }: TextInputProps & { label: string
 
 /**
  * The дата of a транзакція (main-screen, "The дата of a транзакція is set without typing a date
- * code"): the typed field is still there — a date weeks back is typed as before, on the digit pad
- * now — but «Сьогодні», «Вчора» and a day either way are one tap each, and the label names the
- * typed дата as a day, so «2026-09-22» is also read as «вчора». Which offers stand, and what each
- * sets, is `dateStepOffers`; this draws them. The forward step is never offered past today.
+ * code"): «Календар» opens the platform's own date picker — Android's Material dialog, iOS's
+ * calendar under the field — and «Сьогодні», «Вчора» and a day either way are one tap each. The
+ * typed field stays for whoever prefers it and takes any usual shape (`parseTypedDate`), and the
+ * label names the typed дата as a day, so «2026-09-22» is also read as «вчора». Which offers stand,
+ * and what each sets, is `dateStepOffers`; this draws them. The forward step is never offered past
+ * today.
  */
 /**
  * Digits and the hyphen, and no letters. `numbers-and-punctuation` is iOS-only — Android ignores
@@ -105,9 +132,23 @@ export function DateField({
   /** The screen's clock — what «сьогодні» is. */
   now: Date;
 }) {
+  const theme = useTheme();
+  const [picking, setPicking] = useState(false);
   const offers = dateStepOffers(value, now);
   const set = (next: string) => {
     if (next !== value.trim()) onChange(next);
+  };
+  // The picker opens on the typed дата when it is one, on today otherwise.
+  const opened = (() => {
+    try {
+      return parseTypedDate(value);
+    } catch {
+      return todayIso(now);
+    }
+  })();
+  const picked = (date: Date) => {
+    setPicking(false);
+    set(pickedDate(date, Platform.OS === 'android' ? 'utc' : 'local'));
   };
   return (
     <View style={styles.field}>
@@ -136,7 +177,28 @@ export function DateField({
         {offers.forward ? (
           <DateStep label="день ›" hint="На день пізніше" onPress={() => set(offers.forward!)} />
         ) : null}
+        <DateStep
+          label="Календар"
+          hint="Вибрати дату в календарі"
+          picked={picking}
+          onPress={() => setPicking(!picking)}
+        />
       </View>
+      {picking ? (
+        // Android: a dialog that opens on mount and answers once, so it is unmounted after.
+        // iOS: always inline, drawn as the graphical calendar under the chips.
+        <DateTimePicker
+          value={pickerInstant(opened)}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'inline' : 'default'}
+          accentColor={theme.accent}
+          locale="uk_UA"
+          positiveButton={{ label: 'Готово' }}
+          negativeButton={{ label: 'Скасувати' }}
+          onValueChange={(_event, date) => picked(date)}
+          onDismiss={() => setPicking(false)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -475,11 +537,18 @@ export function Action({
         // longest verbs («Так, імпортувати ще раз», «Створити новий рахунок») would ellipsize
         // where they used to wrap. Shrinking the word beats losing it, and losing it is what the
         // line above exists to prevent. The same pair is on Місяць's leading сума.
+        //
+        // `actionLabelBox` stretches the label to the button's whole inner width. Shrink-wrapped
+        // inside `alignItems: 'center'` — as it was — the label's box is Android's own measure of
+        // the text, and when that measure comes out a hair short (a re-measure after the keyboard,
+        // a font-scale change) the one line breaks at the last space and the rest is simply not
+        // drawn: «До архіву» on a рахунок's edit form reached the owner as «До», reproducibly,
+        // with the whole card's width to spare. A box as wide as the button cannot come out short.
         numberOfLines={1}
         adjustsFontSizeToFit
         // The filled action is the loudest thing on its screen; the outline and the destructive
         // verb beside it are a weight quieter.
-        style={filled ? styles.actionFilledLabel : styles.actionLabel}
+        style={[styles.actionLabelBox, filled ? styles.actionFilledLabel : styles.actionLabel]}
         themeColor={
           disabled
             ? 'textMuted'
@@ -693,6 +762,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: TouchTarget,
   },
+  actionLabelBox: { alignSelf: 'stretch', textAlign: 'center' },
   actionFilledLabel: { fontWeight: 700 },
   actionLabel: { fontWeight: 600 },
   rowAction: {

@@ -5,6 +5,7 @@ import {
   activeAccounts,
   classifyTransfer,
   computeBalance,
+  computeBalances,
   reconcile,
   transactionEffect,
 } from './account';
@@ -229,6 +230,49 @@ describe('computeBalance', () => {
       arrived: money(5000, 'UAH'),
     });
     expect(computeBalance(uahCard, [elsewhere, between])).toEqual(money(100000, 'UAH'));
+  });
+});
+
+describe('computeBalances', () => {
+  it('gives every рахунок exactly what computeBalance gives it, in one pass', () => {
+    const cardOpened = account({
+      id: 'card',
+      name: 'mono black',
+      kind: 'spending',
+      currency: 'UAH',
+      openingBalance: money(100000, 'UAH'),
+    });
+    const wallet = account({ id: 'wallet', name: 'гаманець', kind: 'cash', currency: 'UAH' });
+    const idle = account({ id: 'idle', name: 'порожній', kind: 'savings', currency: 'UAH' });
+    const transactions = [
+      income('card', 50000, 'UAH', 'salary'),
+      expenseByDefault({
+        id: 'e1',
+        date: '2026-03-10',
+        accountId: 'card',
+        amount: money(30000, 'UAH'),
+        categoryId: 'food',
+      }),
+      transfer({
+        id: 't1',
+        date: '2026-03-11',
+        fromAccountId: 'card',
+        toAccountId: 'wallet',
+        left: money(20000, 'UAH'),
+        arrived: money(20000, 'UAH'),
+      }),
+      correction('wallet', -3000, 'UAH'),
+      // A рахунок not asked about moves nothing and is not invented.
+      income('elsewhere', 999, 'UAH', 'salary'),
+    ];
+    const balances = computeBalances([cardOpened, wallet, idle], transactions);
+    for (const a of [cardOpened, wallet, idle]) {
+      expect(balances.get(a.id)).toEqual(computeBalance(a, transactions));
+    }
+    expect(balances.get('card')).toEqual(money(100000, 'UAH'));
+    expect(balances.get('wallet')).toEqual(money(17000, 'UAH'));
+    expect(balances.get('idle')).toEqual(money(0, 'UAH'));
+    expect(balances.has('elsewhere')).toBe(false);
   });
 });
 

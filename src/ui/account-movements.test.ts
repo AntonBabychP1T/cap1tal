@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { account, computeBalance } from '../domain/account';
 import { money } from '../domain/money';
 import type { Transaction } from '../domain/transaction';
-import { accountMovements, reconcileTyped } from './account-movements';
+import {
+  accountMovements,
+  MOVEMENTS_PAGE,
+  reconcileTyped,
+  shownMovements,
+} from './account-movements';
 
 const wallet = account({
   id: 'wallet',
@@ -221,5 +226,32 @@ describe('reconcileTyped', () => {
     expect(answer.kind).toBe('correction');
     if (answer.kind !== 'correction') return;
     expect(answer.correction.amount).toEqual(money(-5000, 'USD'));
+  });
+});
+
+describe('shownMovements', () => {
+  const many: Transaction[] = Array.from({ length: MOVEMENTS_PAGE * 2 + 3 }, (_, i) => ({
+    ...expense,
+    id: `e${i}`,
+  }));
+
+  it('draws one page first and says more is left', () => {
+    const page = shownMovements(many, 1);
+    expect(page.shown).toEqual(many.slice(0, MOVEMENTS_PAGE));
+    expect(page.more).toBe(true);
+  });
+
+  it('keeps the rows already shown in place as pages are added, and ends with the last one', () => {
+    const two = shownMovements(many, 2);
+    expect(two.shown.slice(0, MOVEMENTS_PAGE)).toEqual(shownMovements(many, 1).shown);
+    expect(two.more).toBe(true);
+    const three = shownMovements(many, 3);
+    expect(three.shown).toEqual(many);
+    expect(three.more).toBe(false);
+  });
+
+  it('shows a short history whole, with nothing more to ask for', () => {
+    expect(shownMovements([expense], 1)).toEqual({ shown: [expense], more: false });
+    expect(shownMovements([], 1)).toEqual({ shown: [], more: false });
   });
 });

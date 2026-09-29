@@ -643,9 +643,13 @@ describe('syncLinkedAccounts', () => {
       }),
     });
 
+    // The device sent a statement request half a second ago, so this run's statement waits out the
+    // rest of the gap — client-info, limited separately, goes at once.
+    repo.noteRequest(new Date(RUN_AT - 500));
+
     await syncLinkedAccounts(portsWith(fetchImpl));
 
-    // client-info was answered at RUN_AT; the statement page was committed a paced second later,
+    // client-info was answered at RUN_AT; the statement page was committed after a paced wait,
     // and the balance still carries the moment it was actually obtained.
     expect(repo.getAccount('mono-card')?.obtainedAt).toEqual(new Date(RUN_AT));
     expect(clockMs).toBeGreaterThan(RUN_AT);
@@ -688,6 +692,8 @@ describe('syncLinkedAccounts', () => {
 
     // Nothing has synced yet — the state of a link the owner has only just made.
     expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBeNull();
+    // A statement request half a second ago: the run's statement waits, its client-info does not.
+    repo.noteRequest(new Date(RUN_AT - 500));
 
     const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
 
@@ -695,7 +701,7 @@ describe('syncLinkedAccounts', () => {
     // Dated by the client-info answer the run covered, not by the clock when it happened to
     // finish: a sync is as recent as the span it reached, and the pages committed beside it carry
     // that same moment. Here the answer was fetched, so it is the run's own start to within the
-    // round trip — and, unlike the clock, it does not include the minute the run then waited.
+    // round trip — and, unlike the clock, it does not include the gap the statement then waited.
     // Asserted absolutely, not against a value this same run wrote: the answer is fetched before
     // the run's only wait, so its moment is `RUN_AT` exactly — and the clock at the end is not.
     expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(RUN_AT);
@@ -936,15 +942,49 @@ describe('syncLinkedAccounts', () => {
     expect(statements()).toHaveLength(1);
   });
 
-  it('Requests are paced, and the waiting is visible', async () => {
+  it('Statement requests are paced, and the waiting is visible', async () => {
     link('mono-card', 'card');
-    const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+    repo.upsertAccounts(
+      [
+        {
+          id: 'mono-white',
+          kind: 'card',
+          name: 'white ··9999',
+          currency: 'UAH',
+          bankBalance: money(15_000, 'UAH'),
+        },
+      ],
+      NO_FRESH_ANSWER,
+    );
+    link('mono-white', 'jar');
+    const { fetchImpl, calls } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
 
     await syncLinkedAccounts(portsWith(fetchImpl));
 
-    // client-info goes first with no wait; the statement request waits out the gap.
+    // client-info, then the first statement at once — the bank limits the two separately — and
+    // the second statement only after the gap.
+    expect(calls.map((url) => (url.includes('/client-info') ? 'client-info' : 'statement'))).toEqual([
+      'client-info',
+      'statement',
+      'statement',
+    ]);
     expect(waits).toEqual([1_000]);
     expect(progress.filter((p) => p.kind === 'waiting')).toEqual([{ kind: 'waiting', ms: 1_000 }]);
+  });
+
+  it('A client-info request neither waits for a statement gap nor starts one', async () => {
+    link('mono-card', 'card');
+    // A statement request this very instant: the next one owes a whole gap.
+    repo.noteRequest(new Date(RUN_AT));
+    const { fetchImpl, calls } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+
+    await syncLinkedAccounts(portsWith(fetchImpl));
+
+    // The client-info request went out without waiting; only the statement sat out the gap, and
+    // it was a gap measured from the earlier statement, not from the client-info request.
+    expect(calls[0]).toContain('/client-info');
+    expect(waits).toEqual([1_000]);
+    expect(repo.lastRequestAtMs()).toBe(RUN_AT + 1_000);
   });
 
   /**
@@ -1054,8 +1094,10 @@ describe('syncLinkedAccounts', () => {
   it('Scenario: A run stopped while it waits spends no request and takes no turn', async () => {
     link('mono-card', 'card');
     const { fetchImpl, statements } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
-    // «Зупинити» pressed while the run sits out the gap before the statement request. A gap is a
-    // whole minute, which is long enough to leave the screen.
+    // The device sent a statement request a moment ago, so this run's statement owes the gap…
+    repo.noteRequest(new Date(RUN_AT - 500));
+    // …and «Зупинити» is pressed while the run sits out that gap. A gap is a whole minute, which is
+    // long enough to leave the screen.
     const run = ran(
       await syncLinkedAccounts(portsWith(fetchImpl, { cancelled: () => waits.length >= 1 })),
     );
@@ -1076,6 +1118,8 @@ describe('syncLinkedAccounts', () => {
     );
     link('mono-white', 'jar');
     const { fetchImpl } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
+    // A statement request a moment ago, so the run's first statement already owes the gap.
+    repo.noteRequest(new Date(RUN_AT - 500));
 
     // Both would answer: the owner pressed «Зупинити» on a run that is also out of the time it was
     // given. Their own decision is the more informative word, so it is the one asked first.
@@ -1098,7 +1142,9 @@ describe('syncLinkedAccounts', () => {
     repo.markSynced('mono-card', new Date(yesterday));
     const { fetchImpl, statements } = scriptedFetch({ statement: () => ({ status: 200, body: [] }) });
 
-    // Out of time while it sits out the gap before the statement request.
+    // Out of time while it sits out the gap before the statement request — owed because the device
+    // sent one a moment ago.
+    repo.noteRequest(new Date(RUN_AT - 500));
     const run = ran(
       await syncLinkedAccounts(portsWith(fetchImpl, { postponed: () => waits.length >= 1 })),
     );
@@ -1239,9 +1285,9 @@ describe('syncLinkedAccounts', () => {
 
     await syncLinkedAccounts(portsWith(fetchImpl));
 
-    // One wait, for the statement request — the client-info request went out at once, because
-    // this device had never sent one.
-    expect(waits).toEqual([1_000]);
+    // No wait at all: this device has never sent a statement request, and client-info is not paced
+    // against one.
+    expect(waits).toEqual([]);
   });
 
   it('Scenario: A run started immediately after another waits', async () => {
@@ -1252,14 +1298,15 @@ describe('syncLinkedAccounts', () => {
 
     await syncLinkedAccounts(portsWith(fetchImpl));
 
-    // The client-info request waits too, instead of firing at once and being refused with a 429
-    // that would be remembered as rate-limited on every рахунок of the run.
-    expect(waits).toEqual([1_000, 1_000]);
+    // The statement request waits out the rest of the gap instead of firing at once and being
+    // refused with a 429 that would cost the рахунок its turn. The client-info request before it
+    // does not wait: the bank limits it separately.
+    expect(waits).toEqual([1_000]);
     // And the wait is announced before anything else happens, so a screen watching the run can
     // say a sync is going on rather than looking frozen — main-screen's «A pull that must wait
     // out the request gap says a sync is going on».
     expect(progress[0]).toEqual({ kind: 'started', accounts: 1 });
-    expect(progress[1]).toEqual({ kind: 'waiting', ms: 1_000 });
+    expect(progress.find((p) => p.kind === 'waiting')).toEqual({ kind: 'waiting', ms: 1_000 });
   });
 
   it('Scenario: A run started long after another does not wait', async () => {
@@ -1269,7 +1316,7 @@ describe('syncLinkedAccounts', () => {
 
     await syncLinkedAccounts(portsWith(fetchImpl));
 
-    expect(waits).toEqual([1_000]);
+    expect(waits).toEqual([]);
   });
 
   it('Scenario: A clock moved forward does not stall sync', async () => {
@@ -1282,7 +1329,7 @@ describe('syncLinkedAccounts', () => {
 
     // One gap, not a year. Waiting out the difference would disable sync until the phone's own
     // clock caught up, which for a year-ahead clock is forever.
-    expect(waits).toEqual([1_000, 1_000]);
+    expect(waits).toEqual([1_000]);
   });
 
   it('Scenario: A failed run still moves the remembered moment', async () => {

@@ -1,6 +1,6 @@
 import type { CommitSummary } from '../db/import-repo';
-import type { ImportPlan } from '../saldo/interpret';
-import { parseSaldoExport, type SaldoTransaction } from '../saldo/parse';
+import type { ImportPlan, UnexplainedRow, UnrecognisedShape } from '../saldo/interpret';
+import { parseSaldoExport, type DateOf, type SaldoTransaction } from '../saldo/parse';
 import {
   survey,
   EMPTY_EXISTING,
@@ -11,8 +11,11 @@ import {
   type Survey,
 } from '../saldo/survey';
 import { interpret } from '../saldo/interpret';
-import { verify, type Report } from '../saldo/verify';
+import { verify, type Explanation, type Report } from '../saldo/verify';
+import { formatMoney } from './amount-input';
+import { calendarLabel } from './dates';
 import { journal } from './journal';
+import { monthLabel } from './months';
 import type { AccountKind } from '../domain/account';
 import {
   accountChoiceLabel,
@@ -97,9 +100,10 @@ export function startFlow(
 /**
  * The chosen export's text. A file the import cannot read leaves the flow where it was, carrying
  * the reason and no plan — the owner picks another file. Nothing is imported from a refused file.
+ * `dateOf` is the phone's calendar (`dateOfEpochMs`): Saldo's datetimes are UTC instants.
  */
-export function startWithText(state: FlowState, text: string): FlowState {
-  const parsed = parseSaldoExport(text);
+export function startWithText(state: FlowState, text: string, dateOf: DateOf): FlowState {
+  const parsed = parseSaldoExport(text, dateOf);
   if (!parsed.ok) {
     return {
       ...state,
@@ -726,4 +730,102 @@ function counts(
     categoryCount(categories),
     sourceCount(sources),
   ].join(', ');
+}
+
+/**
+ * The sentences the rest of an unrecognised shape reads as — one per code, so no two shapes share
+ * a sentence the owner cannot tell apart. The two that name a Saldo name are worded in
+ * `unexplainedLine`, which has the name to hand.
+ */
+type NamelessShape = Exclude<UnrecognisedShape, 'unmapped-category' | 'unmapped-source'>;
+
+const SHAPE_LINES: Readonly<Record<NamelessShape, string>> = {
+  'domain-rejected':
+    'Такого запису застосунок не приймає — наприклад, переказу чи повернення на нуль.',
+  'in-transit-without-account': 'Переказ «у дорозі» без жодного рахунку.',
+  'in-transit-unknown-direction': 'Переказ «у дорозі», у якого не видно, куди йдуть гроші.',
+  'in-transit-pair-unresolved': 'Переказ «у дорозі», один із кінців якого не став рахунком.',
+  'opening-without-account': 'Початковий залишок без рахунку.',
+  'debt-without-single-account': 'Запис «Борг», у якому не один рахунок.',
+  'debt-on-unknown-account': 'Запис «Борг» на рахунку, якого немає в імпорті.',
+  'debt-onto-itself': 'Запис «Борг» на самі «Борги».',
+  'move-unresolved': 'Переказ між рахунками, які не вдалося визначити.',
+  'no-rule': 'Запис такого вигляду імпорт перенести не вміє.',
+  'unknown-account': 'Запис на рахунку, якого немає в імпорті.',
+};
+
+/**
+ * One row the plan moves no money for, as the owner reads it in the звірка — what happened to
+ * it, in Ukrainian, with every сума through `formatMoney` and every day through `calendarLabel`.
+ *
+ * Here and not in the engine, which hands over only the kind of row and its facts
+ * (`UnexplainedFacts`): the engine reads no `src/ui`, so a sentence built there printed
+ * `542575 UAH` and `2025-09-08`, and it printed them in English under a machine code — the QA
+ * finding this function exists to close. `now` is the clock `calendarLabel` needs to leave this
+ * year's year off, passed like every other clock in this layer.
+ */
+export function unexplainedLine(row: UnexplainedRow, now: Date): string {
+  switch (row.reason) {
+    case 'dropped-original-amount':
+      return (
+        `Повернення збережено як ${formatMoney(row.kept)}; ` +
+        `суму ${formatMoney(row.dropped)} не збережено.`
+      );
+    case 'zero-only-pair':
+      return (
+        `«${row.saldoAccount}» у ${row.currency} має лише нульові початкові залишки — ` +
+        'такого рахунку не буде.'
+      );
+    case 'accrual-month-divergence': {
+      const month = `Saldo відносить запис до місяця «${monthLabel(row.accruedTo)}»`;
+      const exportDay = row.exportDatetime.slice(0, 10);
+      // Almost always the same day, and then one day is all there is to say. They part only on an
+      // evening near midnight, when the export's UTC text is still the day before the phone's —
+      // and that is exactly when the owner needs both, or the line contradicts the стрічка.
+      if (row.date === '' || exportDay === row.date) {
+        return `${month}, хоча його дата — ${calendarLabel(exportDay, now)}; імпорт залишає дату.`;
+      }
+      return (
+        `${month}, хоча його дата в експорті — ${calendarLabel(exportDay, now)} ` +
+        `(${row.exportDatetime.slice(11, 16)} за UTC); ` +
+        `імпорт ставить дату за часом телефону — ${calendarLabel(row.date, now)}.`
+      );
+    }
+    case 'unpaired-in-transit':
+      return row.side === 'departure'
+        ? `Гроші пішли з «${row.from}» на «${row.to}», але їхнього зарахування немає.`
+        : `Гроші прийшли на «${row.to}» з «${row.from}», але їхнього списання немає.`;
+    case 'merged-account-move':
+      return `Обидва кінці переказу — рахунок «${row.accountName}», тож переказу не буде.`;
+    case 'unrecognised-shape':
+      if (row.shape === 'unmapped-category') {
+        return `Для «${row.name ?? ''}» не вибрано категорію.`;
+      }
+      if (row.shape === 'unmapped-source') {
+        return `Для «${row.name ?? ''}» не вибрано джерело.`;
+      }
+      return SHAPE_LINES[row.shape];
+  }
+}
+
+/**
+ * A line of «Рядки, які нічого не рухають»: the day and the row of the export it came from, then
+ * what happened to it. The reason's code is never part of it. A zero-only map entry has no day of
+ * its own — it is a pair, not a транзакція — so it is placed by its row alone.
+ */
+export function droppedRowLine(row: UnexplainedRow, now: Date): string {
+  const where =
+    row.date === '' ? `Рядок ${row.row}` : `${calendarLabel(row.date, now)}, рядок ${row.row}`;
+  return `${where}: ${unexplainedLine(row, now)}`;
+}
+
+/**
+ * One part of a рахунок's розбіжність, sum first: either an export row (worded by
+ * `unexplainedLine`) or the транзакції the owner had already recorded on that рахунок by hand.
+ */
+export function explanationLine(explanation: Explanation, now: Date): string {
+  const amount = formatMoney(explanation.amount);
+  return explanation.kind === 'export-row'
+    ? `${amount} — ${unexplainedLine(explanation.row, now)}`
+    : `${amount} — вже записано вручну (${explanation.count})`;
 }

@@ -26,7 +26,7 @@ import { failureAlert } from '@/ui/failure-alert';
 import { accountChoicesFor, legsOf } from '@/ui/account-choices';
 import { formatMinorUnits } from '@/ui/amount-input';
 import { categoryChoicesFor, recentlyUsed, sourceChoicesFor } from '@/ui/category-choices';
-import { buildEntry, normaliseDescription, type EntryType } from '@/ui/entry-form';
+import { buildEntry, entryDateCheck, normaliseDescription, type EntryType } from '@/ui/entry-form';
 import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
 import { ruleTargetLabel } from '@/ui/list-management';
 import { receiptOffer } from '@/ui/receipt-screen';
@@ -233,68 +233,87 @@ export default function EditTransactionScreen() {
 
   const apply = useCallback(() => {
     if (!form || !original) return;
-    try {
-      // The original's id is what makes this an edit: same transaction, whatever shape it takes.
-      const built = buildEntry(
-        {
-          type: form.shape,
-          accountId: form.fromId,
-          toAccountId: form.toId,
-          amount: form.amount,
-          arrived: form.arrived,
-          date: form.date,
-          categoryId: form.categoryId,
-          sourceId: form.sourceId,
-          // The опис as the form now holds it — the owner's correction, or the bank's text
-          // untouched when they left it alone. Every shape the транзакція is retyped into keeps
-          // whatever it says, and an emptied field clears it rather than storing «».
-          description: normaliseDescription(form.description),
-        },
-        { id: original.id, accounts: stored.accounts },
-      );
-      if (built.type === 'transfer') {
-        // The рахунок the money left decides what may be proposed, and its stored транзакції are
-        // what says how much that person still owed before this переказ. `storeTransfer` offers a
-        // правило-переказ only when the original was a витрата — editing an already-переказ offers
-        // none, whatever the опис says.
-        askAboutTransfer(
-          built,
+    /**
+     * One attempt at the form as it stands. The date question's «Зберегти все одно» runs it again
+     * with the answer, from the top — the same form rebuilt, through the same catch — rather than
+     * storing something it closed over.
+     */
+    const attempt = (dateConfirmed: boolean) => {
+      try {
+        // The original's id is what makes this an edit: same transaction, whatever shape it takes.
+        const built = buildEntry(
           {
-            accounts: stored.accounts,
-            sourceTransactions: transactionsRepo.listByAccount(built.fromAccountId),
+            type: form.shape,
+            accountId: form.fromId,
+            toAccountId: form.toId,
+            amount: form.amount,
+            arrived: form.arrived,
+            date: form.date,
+            categoryId: form.categoryId,
+            sourceId: form.sourceId,
+            // The опис as the form now holds it — the owner's correction, or the bank's text
+            // untouched when they left it alone. Every shape the транзакція is retyped into keeps
+            // whatever it says, and an emptied field clears it rather than storing «».
+            description: normaliseDescription(form.description),
           },
-          storeTransfer,
+          { id: original.id, accounts: stored.accounts },
         );
-        return;
+        // The дата is judged only when it moved: the stored one is passed, so a транзакція dated
+        // before this rule existed stays editable as it is. A moved one outside 2000…a year from
+        // today throws into the catch below; one after today is asked about first (`entryDateCheck`).
+        const verdict = entryDateCheck(built.date, new Date(), original.date);
+        if (verdict.kind === 'confirm' && !dateConfirmed) {
+          Alert.alert(verdict.title, verdict.message, [
+            { text: 'Скасувати', style: 'cancel' },
+            { text: 'Зберегти все одно', onPress: () => attempt(true) },
+          ]);
+          return;
+        }
+        if (built.type === 'transfer') {
+          // The рахунок the money left decides what may be proposed, and its stored транзакції are
+          // what says how much that person still owed before this переказ. `storeTransfer` offers a
+          // правило-переказ only when the original was a витрата — editing an already-переказ offers
+          // none, whatever the опис says.
+          askAboutTransfer(
+            built,
+            {
+              accounts: stored.accounts,
+              sourceTransactions: transactionsRepo.listByAccount(built.fromAccountId),
+            },
+            storeTransfer,
+          );
+          return;
+        }
+        persist(built);
+        // The категорія is already stored by the time the offer could show, exactly as design D5
+        // requires — leaving this screen (accepting, declining, or the back gesture) can never lose
+        // it. Offered only when saving actually changed the категорія of a витрата or повернення
+        // that carries an опис — never for a дохід's джерело, and never when nothing moved.
+        const before =
+          (original.type === 'expense' || original.type === 'refund') ? original.categoryId : undefined;
+        const offered =
+          (built.type === 'expense' || built.type === 'refund') &&
+          built.description &&
+          built.categoryId !== before
+            ? ruleOffer.raise({
+                description: built.description,
+                target: { kind: 'category', categoryId: built.categoryId },
+              })
+            : undefined;
+        // `ruleOffer.raise` legitimately answers "no offer" too — «Без категорії», a правило that
+        // already covers this опис — and only a real offer keeps the screen open for the sheet;
+        // anything else leaves exactly where saving always left before this offer existed.
+        if (offered) {
+          return;
+        }
+        router.back();
+      } catch (error) {
+        Alert.alert(
+          ...failureAlert({ title: 'Не збережено', where: 'transaction-save', error, report: reportBug }),
+        );
       }
-      persist(built);
-      // The категорія is already stored by the time the offer could show, exactly as design D5
-      // requires — leaving this screen (accepting, declining, or the back gesture) can never lose
-      // it. Offered only when saving actually changed the категорія of a витрата or повернення
-      // that carries an опис — never for a дохід's джерело, and never when nothing moved.
-      const before =
-        (original.type === 'expense' || original.type === 'refund') ? original.categoryId : undefined;
-      const offered =
-        (built.type === 'expense' || built.type === 'refund') &&
-        built.description &&
-        built.categoryId !== before
-          ? ruleOffer.raise({
-              description: built.description,
-              target: { kind: 'category', categoryId: built.categoryId },
-            })
-          : undefined;
-      // `ruleOffer.raise` legitimately answers "no offer" too — «Без категорії», a правило that
-      // already covers this опис — and only a real offer keeps the screen open for the sheet;
-      // anything else leaves exactly where saving always left before this offer existed.
-      if (offered) {
-        return;
-      }
-      router.back();
-    } catch (error) {
-      Alert.alert(
-        ...failureAlert({ title: 'Не збережено', where: 'transaction-save', error, report: reportBug }),
-      );
-    }
+    };
+    attempt(false);
   }, [form, original, persist, reportBug, router, ruleOffer, storeTransfer, stored.accounts]);
 
   const remove = useCallback(() => {

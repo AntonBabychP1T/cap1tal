@@ -129,7 +129,7 @@ describe('accumulationFromDraft', () => {
     const at = { id: 'g', accounts: ACCOUNTS };
     expect(() => accumulationFromDraft(draft({ name: '   ' }), at)).toThrow('Ціль потребує назви');
     expect(() => accumulationFromDraft(draft({ target: '0' }), at)).toThrow();
-    expect(() => accumulationFromDraft(draft({ deadline: '30.06.2027' }), at)).toThrow(/РРРР-ММ-ДД/);
+    expect(() => accumulationFromDraft(draft({ deadline: '30 червня' }), at)).toThrow(/РРРР-ММ-ДД/);
     expect(() => accumulationFromDraft(draft({ accountIds: ['ghost'] }), at)).toThrow(
       'Такого рахунку немає',
     );

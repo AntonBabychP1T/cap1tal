@@ -15,10 +15,10 @@ import {
   type Decisions,
   type ExistingState,
 } from './survey';
-import { csv, leg, pair, type FixtureRow } from './test-fixtures';
+import { csv, kyivDateOf, leg, pair, type FixtureRow } from './test-fixtures';
 
 const parse = (rows: readonly FixtureRow[]): readonly SaldoTransaction[] => {
-  const result = parseSaldoExport(csv(rows));
+  const result = parseSaldoExport(csv(rows), kyivDateOf);
   if (!result.ok) {
     throw new Error(result.reason);
   }
@@ -227,6 +227,10 @@ describe('survey — the account map', () => {
     expect(map.byKey.get(accountKey('OTP', 'UAH'))).toMatchObject({ name: 'OTP', currency: 'UAH' });
     expect(map.byKey.get(accountKey('OTP', 'UAH'))?.existingId).toBeUndefined();
     expect(map.rejectedRedirects[0]?.reason).toContain('USD');
+    // Shown on the row as it stands, so it is written for the owner.
+    expect(map.rejectedRedirects[0]?.reason).toBe(
+      'Не можна об’єднати: «OTP» — у UAH, а «Долари» — у USD.',
+    );
   });
 
   it('rejects a redirect onto a рахунок that does not exist, and a cycle', () => {
@@ -248,6 +252,11 @@ describe('survey — the account map', () => {
       [accountKey('A', 'UAH'), accountKey('B', 'UAH'), accountKey('C', 'UAH')].sort(),
     );
     expect(map.accounts).toHaveLength(3);
+    expect(map.rejectedRedirects.map((r) => r.reason).sort()).toEqual([
+      'Рахунку, з яким треба об’єднати, вже немає.',
+      'Ці об’єднання замикаються в коло.',
+      'Ці об’єднання замикаються в коло.',
+    ]);
   });
 
   it('Scenario: The owner sets вид savings on a jar account', () => {

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { appendBounded, type JournalEntry } from '../reporting/journal';
-import { CLOSE_LABEL, failureAlert, REPORT_LABEL } from './failure-alert';
+import { Refusal } from '../domain/refusal';
+import { CLOSE_LABEL, failureAlert, REFUSAL_LABEL, refusalAlert, REPORT_LABEL } from './failure-alert';
 import { bindJournal, journal, resetJournalForTests, type JournalStorage } from './journal';
 
 function inMemoryJournal(): JournalStorage & { rows: () => readonly JournalEntry[] } {
@@ -33,16 +34,18 @@ describe('the dialog a refused action shows', () => {
   it('Scenario: A refused save offers the репорт', () => {
     const opened: string[] = [];
 
+    // A genuine failure — the storage broke — not a validation message the owner can fix: those
+    // are `Refusal`s and offer no репорт (below).
     const [title, message, buttons] = failureAlert({
       title: 'Не записано',
       where: 'local-save',
-      error: new Error('Оберіть рахунок'),
+      error: new Error('database is locked'),
       report: (id) => opened.push(id),
     });
 
     // The dialog says exactly what it said before this change.
     expect(title).toBe('Не записано');
-    expect(message).toBe('Оберіть рахунок');
+    expect(message).toBe('database is locked');
     // Beside «Закрити», the offer.
     expect(buttons.map((b) => b.text)).toEqual([CLOSE_LABEL, REPORT_LABEL]);
     expect(buttons[0]?.style).toBe('cancel');
@@ -56,7 +59,7 @@ describe('the dialog a refused action shows', () => {
       at: AT,
       kind: 'failure',
       name: 'local-save',
-      detail: 'Оберіть рахунок',
+      detail: 'database is locked',
     });
   });
 
@@ -101,5 +104,55 @@ describe('the dialog a refused action shows', () => {
     });
 
     expect(message).toBe('просто рядок');
+  });
+
+  it('A validation refusal says why and offers only «Зрозуміло» — no репорт', () => {
+    // QA: «оберіть рахунок» came with «Повідомити про помилку», which reads as "the app broke".
+    // The owner fixes a refusal by changing what they typed; there is nothing to report.
+    const opened: string[] = [];
+
+    const [title, message, buttons] = failureAlert({
+      title: 'Не записано',
+      where: 'transaction-record',
+      error: new Refusal('оберіть рахунок'),
+      report: (id) => opened.push(id),
+    });
+
+    expect(title).toBe('Не записано');
+    expect(message).toBe('оберіть рахунок');
+    expect(buttons.map((b) => b.text)).toEqual([REFUSAL_LABEL]);
+    expect(buttons.map((b) => b.text)).not.toContain(REPORT_LABEL);
+    expect(buttons[0]?.style).toBe('cancel');
+    expect(buttons[0]?.onPress).toBeUndefined();
+    expect(opened).toEqual([]);
+  });
+
+  it('A refusal is still in the журнал, so a later репорт carries what the owner was told', () => {
+    failureAlert({
+      title: 'Не збережено',
+      where: 'account-save',
+      error: new Refusal('рахунок потребує назви'),
+      report: () => undefined,
+    });
+
+    expect(journal.tail().map((e) => [e.kind, e.name, e.detail])).toEqual([
+      ['failure', 'account-save', 'рахунок потребує назви'],
+    ]);
+  });
+
+  it('refusalAlert is the same dialog for a refusal that was never thrown', () => {
+    // A screen that decides the refusal itself — «Не обʼєднано», a чернетка without a сума — has a
+    // sentence rather than an Error, and shows it the same way.
+    const [title, message, buttons] = refusalAlert({
+      title: 'Не обʼєднано',
+      where: 'account-merge',
+      message: 'рахунки в різних валютах',
+    });
+
+    expect([title, message]).toEqual(['Не обʼєднано', 'рахунки в різних валютах']);
+    expect(buttons.map((b) => b.text)).toEqual([REFUSAL_LABEL]);
+    expect(journal.tail().map((e) => [e.name, e.detail])).toEqual([
+      ['account-merge', 'рахунки в різних валютах'],
+    ]);
   });
 });

@@ -30,13 +30,14 @@ const UAH_NUMERIC = 980;
 
 /**
  * The currencies the app offers accounts in, minus UAH itself. The whitelist is also the guard
- * that keeps the converter correct: UAH, USD and EUR all have two minor digits, so
+ * that keeps the converter correct: UAH, USD, EUR and PLN all have two minor digits, so
  * minor-units-in / minor-units-out needs no exponent. A currency with another exponent (JPY has
  * none) must extend `src/ui/approx-uah.ts`, not just this table.
  */
 const OFFERED_BY_NUMERIC: Readonly<Record<number, CurrencyCode>> = {
   840: 'USD',
   978: 'EUR',
+  985: 'PLN',
 };
 
 /**

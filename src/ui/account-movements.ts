@@ -66,6 +66,23 @@ export function accountMovements(input: {
 }
 
 /**
+ * How many рухи one page of a рахунок's screen draws. A рахунок the bank feeds holds well over a
+ * thousand транзакції, and drawing them all at once froze the phone for seconds on every open and
+ * every return to the screen (bug report 2026-09-29). The balance is still computed from all of
+ * them; only the drawing is paged, exactly as «Транзакції» pages with «Показати ще».
+ */
+export const MOVEMENTS_PAGE = 50;
+
+/** The first `pages` pages of `transactions`, and whether anything is left after them. */
+export function shownMovements(
+  transactions: readonly Transaction[],
+  pages: number,
+): { readonly shown: readonly Transaction[]; readonly more: boolean } {
+  const count = Math.max(1, Math.floor(pages)) * MOVEMENTS_PAGE;
+  return { shown: transactions.slice(0, count), more: transactions.length > count };
+}
+
+/**
  * What «Звірити» answers for a typed фактичний залишок: either the коригування the domain built,
  * named in full before anything is written, or the news that the two balances already agree.
  *

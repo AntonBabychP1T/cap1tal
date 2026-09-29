@@ -31,3 +31,27 @@ export const TABS: readonly Tab[] = [
   { routeName: 'reports', href: '/reports', label: 'Звіти', iconKey: 'reports' },
   { routeName: 'settings', href: '/settings', label: 'Налаштування', iconKey: 'settings' },
 ] as const;
+
+/**
+ * The size, in the platform's scaled units, a вкладка's label is handed so that at any system font
+ * scale it still fits the fifth of the bar it sits in — the whole word, never «Головн…».
+ *
+ * Android's bar takes the label size in sp and multiplies it by the system font scale itself; at
+ * 2× «Головний» became 20dp across a fifth of a phone and was cut. A label is allowed to grow with
+ * the scale for as long as it has room: `base` is what fits «Налаштування», the longest of the
+ * five, so a label of n letters has `base × longest ÷ n` to spend. Past that it stops growing —
+ * the number returned is divided back by the scale the platform is about to multiply it by.
+ *
+ * At a scale of 1 or less every label is `base`, exactly as before, so nothing changes for the
+ * owner's default font. Letter count stands in for width — rough, but the five words share one
+ * alphabet and one weight, and the longest is the widest.
+ */
+export function fittedTabLabelSize(label: string, base: number, fontScale: number): number {
+  if (!Number.isFinite(fontScale) || fontScale <= 0 || label.length === 0) {
+    return base;
+  }
+  const longest = Math.max(...TABS.map((tab) => tab.label.length));
+  const room = Math.max(base, (base * longest) / label.length);
+  const drawn = Math.min(base * fontScale, room);
+  return drawn / fontScale;
+}

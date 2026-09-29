@@ -7,6 +7,7 @@ import {
   type Transaction,
   type TransactionType,
 } from '../domain/transaction';
+import { Refusal } from '../domain/refusal';
 
 /**
  * The three decisions a retype needs, all pure so the MODIFIED "A transaction's type can be
@@ -27,14 +28,16 @@ import {
 export type RetypeShape = Exclude<TransactionType, 'correction'>;
 
 /**
- * What this transaction may become — exactly the moves the retype requirement names, and no more.
- * витрата is the hub: it goes to переказ, дохід or повернення and back from each.
+ * What this transaction may become. витрата is the hub: it goes to переказ, дохід or повернення
+ * and back from each.
  *
- * повернення ↔ дохід is absent though the shapes would allow it: a повернення is a negative
- * витрата in the category it came out of, and `.claude/rules/domain.md` is explicit that it is
- * never modelled as income. That one tap would raise дохід and stop the month's spent shrinking
- * at once — two numbers wrong from one gesture. витрата is the way between them, and going
- * through it makes the owner say what the money actually was.
+ * дохід ↔ повернення goes straight across too. It was withheld once — a повернення is a negative
+ * витрата in the category it came out of and never income (`.claude/rules/domain.md`), and the tap
+ * across moves two numbers at once. But the money that most often arrives looking like a дохід is
+ * exactly a повернення: a friend paying back their share of a підписка lands on the card as
+ * «Від: …». The owner reported (2026-09-23) having no way to say so short of deleting it. Moving
+ * two numbers is the point here — дохід down, the категорія's spent down — and the move cannot
+ * be made carelessly: a повернення is not stored until its категорія is picked.
  *
  * A коригування gets an empty list: nothing can record one until «звірити» arrives, so the
  * editing screen shows it rather than editing it and never asks what it could become.
@@ -46,9 +49,9 @@ export function shapesFor(t: Transaction): RetypeShape[] {
     case 'expense':
       return ['expense', 'transfer', 'income', 'refund'];
     case 'income':
-      return ['expense', 'income'];
+      return ['expense', 'income', 'refund'];
     case 'refund':
-      return ['expense', 'refund'];
+      return ['expense', 'income', 'refund'];
     case 'correction':
       return [];
   }
@@ -136,10 +139,10 @@ export function transferWriteNeedsPairing(
  */
 export function recategorise(t: Transaction, categoryId: string): Expense | Refund {
   if (t.type !== 'expense' && t.type !== 'refund') {
-    throw new Error('категорію має лише витрата або повернення');
+    throw new Refusal('категорію має лише витрата або повернення');
   }
   if (!categoryId) {
-    throw new Error('оберіть категорію');
+    throw new Refusal('оберіть категорію');
   }
   return t.type === 'refund'
     ? refund({

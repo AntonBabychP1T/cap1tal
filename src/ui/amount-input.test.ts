@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { money } from '../domain/money';
+import { MAX_AMOUNT_MINOR, money } from '../domain/money';
 import {
   formatMinorUnits,
+  formatMinorUnitsGrouped,
   formatMoney,
   splitMoney,
   formatSignedMoney,
@@ -36,7 +37,7 @@ describe('parseAmount', () => {
   });
 
   it('What is not a number is not an amount', () => {
-    for (const typed of ['', ' ', 'abc', '12.', '1.2.3', '1 000', '12,', '.5']) {
+    for (const typed of ['', ' ', 'abc', '12.', '1.2.3', '12,', '.', ',', '1 00', '10 00', '1  000', ' 000']) {
       expect(() => parseAmount(typed, 'UAH'), `"${typed}" was accepted`).toThrow();
     }
   });
@@ -48,6 +49,62 @@ describe('parseAmount', () => {
 
   it('Large amounts stay exact — no float ever touches them', () => {
     expect(parseAmount('99999999.99', 'UAH')).toEqual(money(9999999999, 'UAH'));
+    expect(parseAmount('999999999,99', 'UAH')).toEqual(money(MAX_AMOUNT_MINOR, 'UAH'));
+  });
+
+  it('A fraction with no whole part is a fraction of one', () => {
+    expect(parseAmount('.5', 'UAH')).toEqual(money(50, 'UAH'));
+    expect(parseAmount(',5', 'UAH')).toEqual(money(50, 'UAH'));
+    expect(parseAmount(',05', 'UAH')).toEqual(money(5, 'UAH'));
+  });
+
+  it('Thousands may be grouped with a space, the way Ukrainian writes them', () => {
+    // A plain space, the no-break space the app itself prints, and the narrow no-break space
+    // a pasted number may carry.
+    expect(parseAmount('1 000', 'UAH')).toEqual(money(100000, 'UAH'));
+    expect(parseAmount('1 000,50', 'UAH')).toEqual(money(100050, 'UAH'));
+    expect(parseAmount('1\u00A0000,50', 'UAH')).toEqual(money(100050, 'UAH'));
+    expect(parseAmount('12\u202F345\u202F678.9', 'UAH')).toEqual(money(1234567890, 'UAH'));
+    // What the app displays is what it takes back.
+    expect(parseAmount(formatMinorUnitsGrouped(120425990), 'UAH')).toEqual(money(120425990, 'UAH'));
+  });
+});
+
+describe('parseAmount — the ceiling', () => {
+  it('A сума above the ceiling is refused in Ukrainian', () => {
+    // 90071992547409,91 is Number.MAX_SAFE_INTEGER kopiykas: it used to be stored, and every sum
+    // over it then broke Головний for good.
+    for (const typed of ['1000000000', '999999999,991', '90071992547409,91', '1 000 000 000,00']) {
+      const refusal = refusalOf(() => parseAmount(typed, 'UAH'));
+      expect(refusal, `"${typed}"`).toMatch(/^(сума завелика|у сумі в UAH)/);
+    }
+    expect(refusalOf(() => parseAmount('1000000000', 'UAH'))).toBe(
+      'сума завелика: щонайбільше 999\u00A0999\u00A0999,99, а не «1000000000»',
+    );
+  });
+
+  it('A сума too long for a number is refused in Ukrainian, not in the domain\'s English', () => {
+    const refusal = refusalOf(() => parseAmount('99999999999999999999', 'UAH'));
+    expect(refusal).toBe(
+      'сума завелика: щонайбільше 999\u00A0999\u00A0999,99, а не «99999999999999999999»',
+    );
+    // Leading zeros are not size: this is 5,00.
+    expect(parseAmount('00000000000000000000005', 'UAH')).toEqual(money(500, 'UAH'));
+  });
+
+  it('Every parser that takes a сума keeps to the ceiling, below zero as well', () => {
+    for (const parse of [parseAmount, parseOpeningBalance, parseActualBalance, parseCurrentValue]) {
+      expect(parse('999999999,99', 'UAH')).toEqual(money(MAX_AMOUNT_MINOR, 'UAH'));
+      expect(() => parse('1000000000', 'UAH')).toThrow(/сума завелика/);
+      expect(() => parse('99999999999999999999', 'UAH')).toThrow(/сума завелика/);
+    }
+    for (const parse of [parseOpeningBalance, parseActualBalance]) {
+      expect(parse('-999999999,99', 'UAH')).toEqual(money(-MAX_AMOUNT_MINOR, 'UAH'));
+      expect(refusalOf(() => parse('-1000000000', 'UAH'))).toBe(
+        'сума завелика: щонайбільше 999\u00A0999\u00A0999,99, а не «-1000000000»',
+      );
+      expect(() => parse('-99999999999999999999', 'UAH')).toThrow(/сума завелика/);
+    }
   });
 });
 
@@ -69,8 +126,10 @@ const withoutCurrencyCodes = (message: string) => message.replace(/UAH|EUR|USD/g
 
 describe('parseAmount — the refusal is in the owner\'s language', () => {
   it('Scenario: A сума that is not a number is refused in Ukrainian', () => {
-    const refusal = refusalOf(() => parseAmount('12 000', 'UAH'));
-    expect(refusal).toBe('«12 000» — це не сума; напишіть число, напр. 125,50');
+    // «12 000» itself is a сума now — a thousands group — so the refusal is shown on a space that
+    // groups nothing.
+    const refusal = refusalOf(() => parseAmount('12 00', 'UAH'));
+    expect(refusal).toBe('«12 00» — це не сума; напишіть число, напр. 125,50');
     expect(withoutCurrencyCodes(refusal)).not.toMatch(/[A-Za-z]/);
   });
 
@@ -88,7 +147,7 @@ describe('parseAmount — the refusal is in the owner\'s language', () => {
   });
 
   it('Every refusal of a typed сума is in Ukrainian, whatever was typed', () => {
-    for (const typed of ['', ' ', 'abc', '12.', '1.2.3', '1 000', '12,', '.5', '0', '0,00', '-5']) {
+    for (const typed of ['', ' ', 'abc', '12.', '1.2.3', '1 00', '12,', ',', '0', '0,00', '-5', '1000000000']) {
       const refusal = withoutCurrencyCodes(refusalOf(() => parseAmount(typed, 'EUR')));
       // The typed text is quoted back, so its own letters are stripped before the check.
       expect(refusal.replace(typed, ''), `"${typed}" was refused in English`).not.toMatch(
@@ -104,6 +163,21 @@ describe('parseAmount — the refusal is in the owner\'s language', () => {
     expect(refusalOf(() => parseOpeningBalance('abc', 'UAH'))).toBe(
       '«abc» — це не сума; напишіть число, напр. 125,50',
     );
+  });
+
+  it('A signed field quotes exactly what the owner typed, sign and all', () => {
+    // The sign used to be sliced off first, so «--5» was refused as «-5».
+    for (const parse of [parseOpeningBalance, parseActualBalance]) {
+      expect(refusalOf(() => parse('--5', 'UAH'))).toBe(
+        '«--5» — це не сума; напишіть число, напр. 125,50',
+      );
+      expect(refusalOf(() => parse('-12,345', 'UAH'))).toBe(
+        'у сумі в UAH щонайбільше 2 цифри після коми, а «-12,345» має 3',
+      );
+      expect(refusalOf(() => parse('-', 'UAH'))).toBe(
+        '«-» — це не сума; напишіть число, напр. 125,50',
+      );
+    }
   });
 });
 
@@ -134,6 +208,13 @@ describe('parseOpeningBalance', () => {
     expect(parseOpeningBalance('0', 'UAH')).toEqual(money(0, 'UAH'));
     expect(parseOpeningBalance('0,00', 'UAH')).toEqual(money(0, 'UAH'));
     expect(parseOpeningBalance('-0,00', 'UAH')).toEqual(money(0, 'UAH'));
+    expect(parseOpeningBalance(',00', 'UAH')).toEqual(money(0, 'UAH'));
+    expect(parseOpeningBalance('-.0', 'UAH')).toEqual(money(0, 'UAH'));
+  });
+
+  it('A signed balance takes the same fractions and thousands groups', () => {
+    expect(parseOpeningBalance('-,5', 'UAH')).toEqual(money(-50, 'UAH'));
+    expect(parseOpeningBalance('-1 250,75', 'UAH')).toEqual(money(-125075, 'UAH'));
   });
 
   it('An opening balance may be negative — a card can be in overdraft', () => {

@@ -163,6 +163,36 @@ export function computeBalance(
 }
 
 /**
+ * `computeBalance` for every рахунок at once, in one pass over the транзакції: the same number per
+ * рахунок, without reading storage once per рахунок. Рахунки and Головний need every balance on
+ * each focus, and one query per рахунок (27 of them on the owner's phone) was what made returning
+ * to those screens stall. A транзакція naming a рахунок not among `accounts` moves nothing.
+ */
+export function computeBalances(
+  accounts: readonly Account[],
+  transactions: readonly Transaction[],
+): Map<string, Money> {
+  const balances = new Map(accounts.map((a) => [a.id, a.openingBalance]));
+  const apply = (accountId: string, t: Transaction) => {
+    const current = balances.get(accountId);
+    const effect = current === undefined ? undefined : transactionEffect(accountId, t);
+    if (current !== undefined && effect !== undefined) {
+      balances.set(accountId, add(current, effect));
+    }
+  };
+  for (const t of transactions) {
+    if (t.type === 'transfer') {
+      apply(t.fromAccountId, t);
+      // A переказ onto the same рахунок it left is counted once, as `transactionEffect` does.
+      if (t.toAccountId !== t.fromAccountId) apply(t.toAccountId, t);
+    } else {
+      apply(t.accountId, t);
+    }
+  }
+  return balances;
+}
+
+/**
  * Звірити: the коригування that makes a рахунок's розрахунковий баланс agree with what is
  * actually there — the баланс банку of a linked рахунок, or the notes the owner just counted.
  *

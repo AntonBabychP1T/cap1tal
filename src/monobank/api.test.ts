@@ -136,11 +136,12 @@ describe('parseClientInfo', () => {
       ...CLIENT_INFO,
       accounts: [
         CLIENT_INFO.accounts[0],
-        { ...CLIENT_INFO.accounts[0], id: 'pln', currencyCode: 985, type: 'white' },
+        { ...CLIENT_INFO.accounts[0], id: 'gbp', currencyCode: 826, type: 'white' },
       ],
       jars: [],
     });
-    // Left out, not a failure: a PLN card is a perfectly good row the app has no рахунок for.
+    // Left out, not a failure: a GBP card is a perfectly good row the app has no рахунок for.
+    // (This was a PLN card until PLN joined the offer.)
     expect(accounts?.map((a) => a.currency)).toEqual(['UAH']);
   });
 
@@ -162,7 +163,7 @@ describe('parseClientInfo', () => {
     // itself. Holding the two together here is what stops a currency being added to the app's
     // offer, linking fine, and then silently never having an approximate-UAH figure.
     const parsed = parseClientInfo({
-      accounts: [840, 978, 980].map((currencyCode, i) => ({
+      accounts: [840, 978, 980, 985].map((currencyCode, i) => ({
         ...CLIENT_INFO.accounts[0],
         id: `a${i}`,
         currencyCode,
@@ -249,9 +250,9 @@ describe('parseStatement', () => {
   });
 
   it('Scenario: A row naming a currency the app does not offer still parses', () => {
-    // 985 is PLN — no рахунок can be opened in it, which says nothing about where the owner may
+    // 826 is GBP — no рахунок can be opened in it, which says nothing about where the owner may
     // spend. The сума the bank charged is still hryvnia.
-    expect(parseStatement([{ ...ITEM, currencyCode: 985 }], uahStatement)).toEqual([
+    expect(parseStatement([{ ...ITEM, currencyCode: 826 }], uahStatement)).toEqual([
       expect.objectContaining({ amount: money(-12550, 'UAH') }),
     ]);
   });

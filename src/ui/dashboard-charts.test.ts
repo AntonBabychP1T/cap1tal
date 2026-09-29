@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   donutGeometry,
+  donutSectorPath,
   historyGeometry,
   MAX_PLOTTED_POINTS,
   type HistorySeriesPoint,
@@ -174,5 +175,56 @@ describe('historyGeometry', () => {
       maxValue: 0,
       segments: [],
     });
+  });
+});
+
+describe('donutSectorPath', () => {
+  const ring = { center: 80, outerRadius: 72, innerRadius: 44 };
+  /** Every arc command's end point, as `[x, y]` — what decides whether an arc draws anything. */
+  const arcEnds = (d: string): [number, number][] =>
+    [...d.matchAll(/A [\d.]+ [\d.]+ 0 [01] [01] (-?[\d.e-]+) (-?[\d.e-]+)/g)].map((m) => [
+      Number(m[1]),
+      Number(m[2]),
+    ]);
+  const moveTo = (d: string): [number, number][] =>
+    [...d.matchAll(/M (-?[\d.e-]+) (-?[\d.e-]+)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+
+  it('A category at 100% draws a full ring, not an arc whose start is its end', () => {
+    // QA: one category at 100% gave `sectorPath(0, 360)` — start == end, and an SVG arc between
+    // two equal points draws nothing, leaving the number alone in an empty block.
+    const d = donutSectorPath(0, 360, ring);
+    for (const [x, y] of arcEnds(d)) {
+      // Each half-circle ends at 12 or 6 o'clock — never back at its own start in one command.
+      expect(Math.abs(x - 80)).toBeLessThan(1e-9);
+      expect([8, 152, 36, 124].some((end) => Math.abs(y - end) < 1e-9)).toBe(true);
+    }
+    // Two closed circles: the outer one clockwise, the inner one counter-clockwise, so the
+    // default non-zero fill leaves the hole empty.
+    expect(arcEnds(d)).toHaveLength(4);
+    expect(moveTo(d)).toHaveLength(2);
+    expect(d).toContain('A 72 72 0 1 1');
+    expect(d).toContain('A 44 44 0 1 0');
+  });
+
+  it('A sweep within an epsilon of the full circle is the full ring too', () => {
+    expect(donutSectorPath(0, 359.9999, ring)).toBe(donutSectorPath(0, 360, ring));
+    expect(donutSectorPath(12, 372, ring)).toBe(donutSectorPath(0, 360, ring));
+  });
+
+  it('A partial sector is one annular wedge between its two angles', () => {
+    const d = donutSectorPath(0, 90, ring);
+    expect(moveTo(d)).toEqual([[80, 8]]);
+    const ends = arcEnds(d);
+    expect(ends).toHaveLength(2);
+    // Outer arc ends at 3 o'clock, inner arc back at 12 o'clock.
+    expect(ends[0]![0]).toBeCloseTo(152);
+    expect(ends[0]![1]).toBeCloseTo(80);
+    expect(ends[1]![0]).toBeCloseTo(80);
+    expect(ends[1]![1]).toBeCloseTo(36);
+    expect(d).toContain('A 72 72 0 0 1');
+  });
+
+  it('A sector over half the circle takes the large arc', () => {
+    expect(donutSectorPath(0, 270, ring)).toContain('A 72 72 0 1 1');
   });
 });

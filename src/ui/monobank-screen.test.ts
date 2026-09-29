@@ -30,6 +30,7 @@ import {
   syncSummary,
   tokenCandidate,
   tokenStateLabel,
+  notConfiguredStatus,
   unlinkConfirmation,
   type MonobankAccountView,
 } from './monobank-screen';
@@ -564,6 +565,21 @@ describe('tokenStateLabel', () => {
   });
 });
 
+describe('notConfiguredStatus', () => {
+  it('«Оновити з monobank» without a token says what «Синхронізувати» says', () => {
+    // QA: the button used to answer a tap with nothing at all while its neighbour said the
+    // sentence below. Asked for, the refresh owes the owner the same reason in the same words.
+    expect(notConfiguredStatus({ asked: true })).toBe('Спершу введіть токен monobank');
+    expect(notConfiguredStatus({ asked: true })).toBe(
+      syncSummary({ kind: 'not-configured' }, new Map()).headline,
+    );
+  });
+
+  it('Opening the screen without a token stays quiet — the overline already says so', () => {
+    expect(notConfiguredStatus({ asked: false })).toBeUndefined();
+  });
+});
+
 describe('the рахунок plural', () => {
   it('Follows Ukrainian, teens included', () => {
     expect(accountCount(1)).toBe('1 рахунок');
@@ -837,11 +853,11 @@ describe('the clipboard is read only when the owner asks', () => {
 
 describe('the sync boundary is a typed дата like any other', () => {
   it('Scenario: A дата in the wrong shape is refused in Ukrainian', () => {
-    // The шлях this closes: «31.12.2026» used to reach `startOfLocalDayMs` and answer
-    // `date must be YYYY-MM-DD, got "31.12.2026"` inside a «Не приєднано» alert.
-    expect(() => syncBoundary('31.12.2026')).toThrow(/дата пишеться як РРРР-ММ-ДД/);
-    expect(() => syncBoundary('31.12.2026')).toThrow(/«31\.12\.2026»/);
-    expect(() => syncBoundary('31.12.2026')).not.toThrow(/YYYY-MM-DD/);
+    // The шлях this closes: a mistyped дата used to reach `startOfLocalDayMs` and answer
+    // `date must be YYYY-MM-DD, got "…"` inside a «Не приєднано» alert.
+    expect(() => syncBoundary('31 грудня')).toThrow(/дата пишеться як ДД\.ММ\.РРРР або РРРР-ММ-ДД/);
+    expect(() => syncBoundary('31 грудня')).toThrow(/«31 грудня»/);
+    expect(() => syncBoundary('31 грудня')).not.toThrow(/YYYY-MM-DD/);
   });
 
   it('Scenario: A day that does not exist is refused in Ukrainian', () => {

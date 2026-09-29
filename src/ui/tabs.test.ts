@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { TABS } from './tabs';
+import { fittedTabLabelSize, TABS } from './tabs';
 
 /**
  * The five вкладки, as one list.
@@ -79,5 +79,33 @@ describe('the tab set', () => {
       const values = TABS.map((tab) => tab[field]);
       expect(new Set(values).size, field).toBe(TABS.length);
     }
+  });
+});
+
+describe('fittedTabLabelSize — a label that fits its fifth at any font scale', () => {
+  // What the platform draws is the returned size × the scale; that product is what must fit.
+  const drawn = (label: string, scale: number) => fittedTabLabelSize(label, 10, scale) * scale;
+
+  it('changes nothing at the default font scale', () => {
+    for (const tab of TABS) {
+      expect(fittedTabLabelSize(tab.label, 10, 1)).toBe(10);
+    }
+  });
+
+  it('keeps «Налаштування» — the longest — at the size that fits it, however large the font', () => {
+    expect(drawn('Налаштування', 2)).toBeCloseTo(10);
+  });
+
+  it('lets a shorter label grow with the font only as far as its fifth has room (QA: «Головн…» at 2×)', () => {
+    // 8 letters against 12: room for 15, where 2× asked for 20.
+    expect(drawn('Головний', 2)).toBeCloseTo(15);
+    // A modest scale that still fits is honoured whole.
+    expect(drawn('Звіти', 1.3)).toBeCloseTo(13);
+  });
+
+  it('never enlarges a label past what the owner asked for, and survives a nonsense scale', () => {
+    expect(drawn('Звіти', 0.85)).toBeCloseTo(8.5);
+    expect(fittedTabLabelSize('Звіти', 10, 0)).toBe(10);
+    expect(fittedTabLabelSize('Звіти', 10, Number.NaN)).toBe(10);
   });
 });

@@ -5,7 +5,7 @@ import { SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, it } from 'vitest';
 
 import * as schema from '../db/schema';
-import { money } from '../domain/money';
+import { MAX_AMOUNT_MINOR, money } from '../domain/money';
 import {
   BACKUP_SCHEMA_VERSION,
   BACKUP_TABLES,
@@ -806,6 +806,35 @@ describe('what a бекап holding поточні вартості may not cont
     expect(parsed.investmentValues).toEqual([
       { accountId: 'bonds', amount: money(560000, 'UAH'), asOf: '2026-08-28' },
     ]);
+  });
+});
+
+describe('the largest сума a бекап may hold', () => {
+  const account = (openingBalance: number) => ({
+    id: 'card',
+    name: 'Картка',
+    kind: 'spending',
+    currency: 'UAH',
+    openingBalance: { amount: openingBalance, currency: 'UAH' },
+    archived: false,
+  });
+
+  it('A сума above the ceiling is refused while reading, either side of zero', () => {
+    // A row at Number.MAX_SAFE_INTEGER kopiykas is a valid `money` and breaks every sum it enters;
+    // a бекап must not carry one back onto the phone (MAX_AMOUNT_MINOR).
+    for (const amount of [MAX_AMOUNT_MINOR + 1, -(MAX_AMOUNT_MINOR + 1), Number.MAX_SAFE_INTEGER]) {
+      expect(() => parseState({ accounts: [account(amount)] }), String(amount)).toThrow(
+        /accounts\[0\]\.openingBalance.*сума завелика/,
+      );
+    }
+  });
+
+  it('The ceiling itself restores, either side of zero', () => {
+    for (const amount of [MAX_AMOUNT_MINOR, -MAX_AMOUNT_MINOR]) {
+      expect(parseState({ accounts: [account(amount)] }).accounts[0]?.openingBalance).toEqual(
+        money(amount, 'UAH'),
+      );
+    }
   });
 });
 

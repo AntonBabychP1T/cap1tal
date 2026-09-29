@@ -1,3 +1,4 @@
+import { isoDate, type IsoDate } from '../domain/transaction';
 import { parseSaldoExport, type SaldoTransaction } from './parse';
 import { interpret, type ImportPlan } from './interpret';
 import { survey, type Decisions, type ExistingState } from './survey';
@@ -26,6 +27,22 @@ export const SALDO_COLUMNS: readonly string[] = [
 ];
 
 export type FixtureRow = Partial<Record<string, string>>;
+
+const KYIV_DAY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Kyiv',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/**
+ * The calendar date of an instant on a phone in Kyiv — what `dateOfEpochMs` answers on the
+ * owner's phone, pinned to one zone so no test depends on the machine's `TZ`. A real zone, not a
+ * fixed offset, so both the summer (UTC+3) and the winter (UTC+2) midnight are exercised.
+ */
+export function kyivDateOf(epochMs: number): IsoDate {
+  return isoDate(KYIV_DAY.format(epochMs));
+}
 
 const quote = (value: string): string => `"${value.replace(/"/g, '""')}"`;
 
@@ -114,7 +131,7 @@ export function pair(input: {
 
 /** Parse fixture rows, or fail loudly with the reason — a fixture is never allowed to be wrong. */
 export function parseRows(rows: readonly FixtureRow[]): readonly SaldoTransaction[] {
-  const result = parseSaldoExport(csv(rows));
+  const result = parseSaldoExport(csv(rows), kyivDateOf);
   if (!result.ok) {
     throw new Error(`the fixture does not parse: ${result.reason}`);
   }

@@ -1,4 +1,5 @@
 import { isoDate, type IsoDate } from '../domain/transaction';
+import { Refusal } from '../domain/refusal';
 
 /**
  * The device clock's calendar date. Built from the LOCAL parts, never from `toISOString()`: a
@@ -208,27 +209,103 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
-/** The shape a дата is typed in, and the shape the placeholder «РРРР-ММ-ДД» asks for. */
-const TYPED_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * The shapes a дата may be typed in. Any of «-», «.», «/» or a space separates the parts, and a
+ * month or day may drop its leading zero, so «2026-9-5», «05.09.2026», «5/9/26» and «5 9 2026»
+ * are all the same day. Year first is РРРР-ММ-ДД; day first is how a Ukrainian writes a date by
+ * hand, and a two-digit year there is this century's.
+ */
+const SEPARATOR = '[-./\\s]+';
+const YEAR_FIRST = new RegExp(`^(\\d{4})${SEPARATOR}(\\d{1,2})${SEPARATOR}(\\d{1,2})$`);
+const DAY_FIRST = new RegExp(`^(\\d{1,2})${SEPARATOR}(\\d{1,2})${SEPARATOR}(\\d{4}|\\d{2})$`);
+/** Eight digits and nothing else: «20260905» or «05092026», for a pad without a separator. */
+const DIGITS_ONLY = /^\d{8}$/;
+
+/** The typed parts as `РРРР-ММ-ДД`, zero-padded; the calendar is not asked yet. */
+function isoShape(year: string, month: string, day: string): string {
+  const fullYear = year.length === 2 ? `20${year}` : year;
+  return `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+}
+
+function isCalendarDay(shaped: string): boolean {
+  try {
+    isoDate(shaped);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The typed дата in `РРРР-ММ-ДД` shape, or undefined when it is in none of the shapes above. */
+function shapeOf(trimmed: string): string | undefined {
+  const yearFirst = YEAR_FIRST.exec(trimmed);
+  if (yearFirst) {
+    const [, year = '', month = '', day = ''] = yearFirst;
+    return isoShape(year, month, day);
+  }
+  const dayFirst = DAY_FIRST.exec(trimmed);
+  if (dayFirst) {
+    const [, day = '', month = '', year = ''] = dayFirst;
+    return isoShape(year, month, day);
+  }
+  if (DIGITS_ONLY.test(trimmed)) {
+    // Year first when that is a real day of this or the last century, day first otherwise:
+    // «20260905» is 5 вересня 2026, «05092026» cannot start with a year.
+    const yearFirstDigits = isoShape(trimmed.slice(0, 4), trimmed.slice(4, 6), trimmed.slice(6));
+    if (/^(19|20)/.test(trimmed) && isCalendarDay(yearFirstDigits)) {
+      return yearFirstDigits;
+    }
+    return isoShape(trimmed.slice(4), trimmed.slice(2, 4), trimmed.slice(0, 2));
+  }
+  return undefined;
+}
 
 /**
  * The one place a typed дата becomes an `IsoDate`, and the one place a wrong one is refused in the
  * owner's own language. The domain's `isoDate` decides what a calendar date *is* — this wraps it so
- * that a form never shows its invariant text: «date must be YYYY-MM-DD, got "31.12.2026"» is a
- * sentence for whoever is debugging, not for someone who has just mistyped a ціль's дата.
+ * that a form never shows its invariant text: «date must be YYYY-MM-DD, got "…"» is a sentence for
+ * whoever is debugging, not for someone who has just mistyped a ціль's дата.
  *
  * The shape is checked here and the calendar is left to `isoDate`, so the two refusals stay two:
  * "that is not how a дата is written" and "there is no such day".
  */
 export function parseTypedDate(typed: string): IsoDate {
   const trimmed = typed.trim();
-  if (!TYPED_DATE.test(trimmed)) {
-    throw new Error(`дата пишеться як РРРР-ММ-ДД, напр. 2026-08-31, а не «${typed}»`);
+  const shaped = shapeOf(trimmed);
+  if (shaped === undefined) {
+    throw new Refusal(`дата пишеться як ДД.ММ.РРРР або РРРР-ММ-ДД, напр. 31.08.2026, а не «${typed}»`);
   }
   try {
-    return isoDate(trimmed);
+    return isoDate(shaped);
   } catch {
     // The shape is already right, so the only thing `isoDate` can be refusing is the calendar.
-    throw new Error(`такого дня немає в календарі: «${trimmed}»`);
+    throw new Refusal(`такого дня немає в календарі: «${trimmed}»`);
   }
+}
+
+/**
+ * The instant a native date picker is opened on for a calendar date: its noon in UTC. Android's
+ * Material picker reads the instant as a UTC day and iOS's reads it as a local one; noon UTC is
+ * the same calendar day in both for every time zone within ±11 h, Kyiv included.
+ */
+export function pickerInstant(date: IsoDate): Date {
+  const checked = isoDate(date);
+  const year = Number(checked.slice(0, 4));
+  const month = Number(checked.slice(5, 7));
+  const day = Number(checked.slice(8, 10));
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
+}
+
+/**
+ * The calendar date a native picker answered with. Android's Material picker answers with the
+ * picked day's UTC midnight, so it is read in UTC; iOS answers with a local instant, read locally.
+ */
+export function pickedDate(picked: Date, reading: 'utc' | 'local'): IsoDate {
+  if (reading === 'local') {
+    return todayIso(picked);
+  }
+  const year = String(picked.getUTCFullYear()).padStart(4, '0');
+  const month = String(picked.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(picked.getUTCDate()).padStart(2, '0');
+  return isoDate(`${year}-${month}-${day}`);
 }

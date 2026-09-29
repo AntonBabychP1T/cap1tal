@@ -82,8 +82,8 @@ describe('kindLabel', () => {
 });
 
 describe('OFFERED_CURRENCIES', () => {
-  it('An account can be opened in UAH, EUR or USD', () => {
-    expect([...OFFERED_CURRENCIES]).toEqual(['UAH', 'EUR', 'USD']);
+  it('An account can be opened in UAH, EUR, PLN or USD — UAH first, the rest alphabetical', () => {
+    expect([...OFFERED_CURRENCIES]).toEqual(['UAH', 'EUR', 'PLN', 'USD']);
   });
 });
 

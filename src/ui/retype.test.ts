@@ -95,15 +95,12 @@ function retypedTo(
 }
 
 describe('shapesFor — what a stored transaction may become', () => {
-  it('Scenario: A повернення is not retyped into a дохід', () => {
-    // Neither direction is offered. A повернення is a negative витрата in the category it came
-    // out of and is never income; the one tap across would raise дохід and stop the month's
-    // spent shrinking at the same time.
-    expect(shapesFor(storedRefund)).not.toContain('income');
-    expect(shapesFor(storedIncome)).not.toContain('refund');
-    // And each still offers the way back to витрата, which is the route between them.
-    expect(shapesFor(storedRefund)).toEqual(['expense', 'refund']);
-    expect(shapesFor(storedIncome)).toEqual(['expense', 'income']);
+  it('A дохід that was really money coming back becomes a повернення, and back', () => {
+    // Owner's bug report 2026-09-23: a friend's share of a підписка arrived as a дохід, and the
+    // only way to make it lower the month's «Підписки» was to delete it and record it again. The
+    // move goes straight across now; a повернення still has to name its категорія (below).
+    expect(shapesFor(storedIncome)).toEqual(['expense', 'income', 'refund']);
+    expect(shapesFor(storedRefund)).toEqual(['expense', 'income', 'refund']);
   });
 
   it('A витрата is the hub: it becomes any of the other three', () => {
@@ -121,8 +118,8 @@ describe('shapesFor — what a stored transaction may become', () => {
   });
 
   it('Every offered shape is one the requirement names, in both directions', () => {
-    // The move list, read off the requirement: витрата ↔ переказ, витрата ↔ повернення,
-    // витрата ↔ дохід. Anything else appearing here would be behaviour no spec asked for.
+    // The move list: витрата ↔ переказ, витрата ↔ повернення, витрата ↔ дохід, and дохід ↔
+    // повернення. Anything else appearing here would be behaviour nobody asked for.
     const offered = new Set<string>();
     for (const t of [storedExpense, storedIncome, storedRefund, storedTransfer, storedCorrection]) {
       for (const to of shapesFor(t)) {
@@ -134,7 +131,9 @@ describe('shapesFor — what a stored transaction may become', () => {
       'expense→refund',
       'expense→transfer',
       'income→expense',
+      'income→refund',
       'refund→expense',
+      'refund→income',
       'transfer→expense',
     ]);
   });
@@ -242,6 +241,26 @@ describe('a retype keeps the transaction and moves only what the shape allows', 
       type: 'refund',
       categoryId: 'clothing',
     });
+  });
+
+  it('A дохід becoming a повернення asks for the категорія and drops the джерело', () => {
+    // A дохід carries no категорія to bring along, and a повернення takes no default.
+    expect(labelsAfterRetype(storedIncome, 'refund')).toEqual({});
+    expect(() => retypedTo(storedIncome, 'refund')).toThrow('оберіть категорію');
+    const retyped = retypedTo(storedIncome, 'refund', { categoryId: 'digital' });
+    expect(retyped).toMatchObject({
+      type: 'refund',
+      id: storedIncome.id,
+      accountId: storedIncome.accountId,
+      amount: storedIncome.amount,
+      categoryId: 'digital',
+    });
+    expect(retyped).not.toHaveProperty('sourceId');
+  });
+
+  it('A повернення becoming a дохід asks for the джерело', () => {
+    expect(labelsAfterRetype(storedRefund, 'income')).toEqual({});
+    expect(() => retypedTo(storedRefund, 'income')).toThrow('оберіть джерело');
   });
 
   it('A витрата does not become a дохід without a picked джерело', () => {

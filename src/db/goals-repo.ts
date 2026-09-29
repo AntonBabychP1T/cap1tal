@@ -5,6 +5,7 @@ import { money } from '../domain/money';
 import { isoDate } from '../domain/transaction';
 import { accounts, goalAccounts, goals } from './schema';
 import type { Storage } from './storage';
+import { Refusal } from '../domain/refusal';
 
 /**
  * Цілі-накопичення in storage, each with its склад. Speaks domain `AccumulationGoal`s only — rows
@@ -93,7 +94,7 @@ export function goalsRepo(db: Storage) {
       }));
       const problem = compositionProblem(goal.target.currency, composition);
       if (problem) {
-        throw new Error(refusal(problem, goal, composition));
+        throw new Refusal(refusal(problem, goal, composition));
       }
 
       const row = {

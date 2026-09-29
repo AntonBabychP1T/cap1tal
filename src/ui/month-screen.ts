@@ -12,7 +12,14 @@ import type { Month, Transaction } from '../domain/transaction';
 import { byCurrency, formatMinorUnitsGrouped, formatMoney } from './amount-input';
 import { approximatePicture } from './approx-uah';
 import { categoryLabel } from './labels';
-import { canStepForward, monthLabel, prevMonth } from './months';
+import {
+  canStepBack,
+  canStepForward,
+  currentMonth,
+  monthLabel,
+  prevMonth,
+  type ReachableMonths,
+} from './months';
 import type { MonobankRate } from '../monobank/currency';
 import { categoryIconDefinition } from './category-icons';
 import type { IconName } from './icons';
@@ -117,7 +124,14 @@ export interface MonthViewModel {
   readonly month: Month;
   /** «Серпень 2026». */
   readonly title: string;
+  /** Both arrows are always drawn; these say which one is live (`reachableMonths`). */
+  readonly canStepBack: boolean;
   readonly canStepForward: boolean;
+  /**
+   * The month «Сьогодні» jumps to — the current one — or `null` while it is the one shown, when
+   * the control is not drawn at all: a jump to where the owner already stands is no offer.
+   */
+  readonly currentMonth: Month | null;
   readonly groups: readonly MonthCurrencyGroup[];
   /**
    * `null` when the month is UAH-only or a needed rate is unknown. Its absence changes nothing
@@ -180,6 +194,12 @@ export function monthViewModel(input: {
    */
   previousTransactions: readonly Transaction[];
   now: Date;
+  /**
+   * The months the arrows may reach, from what is recorded (`reachableMonths`). Optional to keep
+   * old pure callers compatible: without it back is unbounded and forward stops at the current
+   * month, as both did before the bounds existed.
+   */
+  reach?: ReachableMonths;
 }): MonthViewModel {
   const picture = monthlyPicture({
     month: input.month,
@@ -245,7 +265,9 @@ export function monthViewModel(input: {
   return {
     month: input.month,
     title: monthLabel(input.month),
-    canStepForward: canStepForward(input.month, input.now),
+    canStepBack: input.reach ? canStepBack(input.month, input.reach) : true,
+    canStepForward: canStepForward(input.month, input.now, input.reach),
+    currentMonth: input.month === currentMonth(input.now) ? null : currentMonth(input.now),
     groups,
     approximate,
     emptyMessage: emptyMessageFor(groups.length, inMonth),

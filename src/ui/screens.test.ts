@@ -60,11 +60,13 @@ describe('every failure a screen shows', () => {
 
   it('routes the two dialogs that carry a text of their own through the same door', () => {
     // Neither of these built its message from an `Error`, so neither was caught by the sweep
-    // above — and both are refusals the owner sees, so both belong in the журнал with an offer.
+    // above — and both belong in the журнал. A receipt that could not be stored is a failure and
+    // carries the offer; a чернетка's missing or mistyped сума is the owner's to fix, so it is a
+    // refusal — journaled through `refusalAlert`, with «Зрозуміло» and no bug report (QA).
     expect(read('transaction/scan.tsx')).toContain('failureAlert(');
     expect(read('transaction/scan.tsx')).toContain("title: 'Не прикріплено'");
-    expect(read('(tabs)/index.tsx')).toContain('failureAlert(');
-    expect(read('(tabs)/index.tsx')).toContain("error: answer.message");
+    expect(read('(tabs)/index.tsx')).toContain('refusalAlert(');
+    expect(read('(tabs)/index.tsx')).toContain('message: answer.message');
   });
 
   it('journals the two failures that are shown in place rather than in a dialog', () => {
@@ -238,6 +240,17 @@ describe('the crash fallback', () => {
     // And the device's own «назад» is the same way out, not a second dead end.
     expect(fallback).toContain('BackHandler.addEventListener');
     expect(fallback).not.toContain('useCloseOnBack(');
+  });
+
+  it('A crash on Головний also offers all транзакції, so stored data cannot trap the owner', () => {
+    // QA: a сума stored before the ceiling overflowed every total on Головний, and «Повернутися»
+    // led straight back into the same crash. The second way out is offered on Головний only, and
+    // leaves the same way — navigate first, retry after.
+    expect(fallback).toContain("pathname === '/'");
+    expect(fallback).toContain('Відкрити всі транзакції');
+    const navigate = fallback.indexOf("router.replace('/transactions')");
+    expect(navigate).toBeGreaterThan(-1);
+    expect(fallback.indexOf('void retry();', navigate)).toBeGreaterThan(navigate);
   });
 
   it('ships the crash lever guarded, and links to it from nowhere', () => {

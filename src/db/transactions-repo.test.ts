@@ -490,6 +490,26 @@ describe('transactionsRepo listings', () => {
     storage.close();
   });
 
+  it('The recorded span is the earliest and the latest дата stored, and nothing when empty', () => {
+    // What Місяць bounds its arrows by: one indexed MIN/MAX, never the whole history.
+    expect(repo.recordedSpan()).toBeUndefined();
+
+    repo.save(april1, storedAt);
+    expect(repo.recordedSpan()).toEqual({ earliest: '2026-04-01', latest: '2026-04-01' });
+
+    repo.save(march31, storedAt);
+    repo.save(
+      expenseByDefault({
+        id: 'e-future',
+        date: '2027-01-15',
+        accountId: 'card',
+        amount: money(500, 'UAH'),
+      }),
+      storedAt,
+    );
+    expect(repo.recordedSpan()).toEqual({ earliest: '2026-03-31', latest: '2027-01-15' });
+  });
+
   it('Scenario: Month boundaries are respected', () => {
     repo.save(march31, storedAt);
     repo.save(april1, storedAt);

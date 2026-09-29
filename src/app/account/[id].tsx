@@ -2,9 +2,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field } from '@/components/form';
+import { Action, Choices, Field, Picker } from '@/components/form';
 import {
   Card,
+  Fab,
   ListCard,
   ListRow,
   Screen,
@@ -17,22 +18,26 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   limits as limitsRepo,
+  mergeAccounts,
   monobank as monobankRepo,
   sources as sourcesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { account } from '@/domain/account';
+import { mergePreview, mergeRefusal } from '@/domain/account-merge';
 import { namesById } from '@/domain/category';
 import type { Money } from '@/domain/money';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { useSinglePush } from '@/hooks/use-single-push';
 import { accountFromDraft, draftFrom, type AccountDraft } from '@/ui/account-form';
-import { accountMovements, reconcileTyped } from '@/ui/account-movements';
+import { mergeConfirmation, mergeTargets } from '@/ui/account-merge';
+import { accountMovements, reconcileTyped, shownMovements } from '@/ui/account-movements';
 import { todayIso } from '@/ui/dates';
-import { failureAlert } from '@/ui/failure-alert';
+import { failureAlert, refusalAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
-import { kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/ui/labels';
+import { accountChoiceLabel, kindLabel, KIND_CHOICES, OFFERED_CURRENCIES } from '@/ui/labels';
 import {
   accountsById,
   accountSideLine,
@@ -58,6 +63,8 @@ const CURRENCY_CHOICES = OFFERED_CURRENCIES.map((c) => ({ value: c, label: c }))
 
 export default function AccountMovementsScreen() {
   const router = useRouter();
+  /** Rows and «+» open one screen per tap, however many taps land while it opens. */
+  const push = useSinglePush();
 
   /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
   const reportBug = useCallback(
@@ -112,15 +119,26 @@ export default function AccountMovementsScreen() {
     [stored.account, stored.bankBalance, stored.transactions],
   );
 
-  /** The same marks the стрічка carries, judged per month of the транзакції shown here. */
+  /**
+   * How many pages of рухи the owner has asked for. Only these are drawn — the balance above is
+   * still every транзакція's — so a рахунок with a thousand of them opens at once
+   * (`shownMovements`).
+   */
+  const [pages, setPages] = useState(1);
+  const page = useMemo(
+    () => shownMovements(movements?.transactions ?? [], pages),
+    [movements, pages],
+  );
+
+  /** The same marks the стрічка carries, judged per month of the транзакції drawn here. */
   const overLimit = useMemo(
     () =>
       overLimitByMonth({
-        feed: stored.transactions,
+        feed: page.shown,
         limits: stored.limits,
         monthTransactions: (month) => transactionsRepo.listMonth(month),
       }),
-    [stored.limits, stored.transactions],
+    [page.shown, stored.limits],
   );
 
   const [draft, setDraft] = useState<AccountDraft | undefined>();
@@ -133,6 +151,21 @@ export default function AccountMovementsScreen() {
     setReconciling(false);
   }, []);
   useCloseOnBack(reconciling, closeReconcile);
+
+  /**
+   * «Обʼєднати з іншим рахунком»: whether the picker of рахунки to fold this one into is shown, and
+   * whether its full list is open — «назад» closes the list first, then the picker.
+   */
+  const [merging, setMerging] = useState(false);
+  const [mergeListOpen, setMergeListOpen] = useState(false);
+  const closeMerge = useCallback(() => {
+    if (mergeListOpen) {
+      setMergeListOpen(false);
+      return;
+    }
+    setMerging(false);
+  }, [mergeListOpen]);
+  useCloseOnBack(merging, closeMerge);
 
   const save = useCallback(() => {
     if (!draft) return;
@@ -217,6 +250,58 @@ export default function AccountMovementsScreen() {
     }
   }, [actual, movements, reload, reportBug, stored.account]);
 
+  /**
+   * Folds this рахунок into the one picked: the confirmation names what moves and the balance the
+   * picked one will then show, and only «Обʼєднати» writes (`src/ui/account-merge.ts`). This
+   * рахунок is gone afterwards, so the screen becomes the one it was folded into.
+   */
+  const confirmMerge = useCallback(
+    (intoId: string) => {
+      const from = stored.account;
+      const into = stored.accounts.find((one) => one.id === intoId);
+      if (!from || !into) return;
+      const fromLinked = monobankRepo.linkForAccount(from.id) !== undefined;
+      const refusal = mergeRefusal({
+        from,
+        into,
+        fromLinked,
+        intoLinked: monobankRepo.linkForAccount(into.id) !== undefined,
+      });
+      if (refusal) {
+        // Decided here, before anything is written: a refusal the owner reads and accepts, not a
+        // failure to report.
+        Alert.alert(...refusalAlert({ title: 'Не обʼєднано', where: 'account-merge', message: refusal }));
+        return;
+      }
+      const preview = mergePreview({
+        from,
+        into,
+        fromTransactions: stored.transactions,
+        intoTransactions: transactionsRepo.listByAccount(into.id),
+      });
+      const merge = (dropCorrections: boolean) => () => {
+        try {
+          mergeAccounts({ fromId: from.id, intoId: into.id, dropCorrections });
+          evaluateProgress();
+          router.replace(`/account/${into.id}`);
+        } catch (error) {
+          Alert.alert(
+            ...failureAlert({ title: 'Не обʼєднано', where: 'account-merge', error, report: reportBug }),
+          );
+        }
+      };
+      Alert.alert('Обʼєднати рахунки?', mergeConfirmation({ from, into, preview, linkMoves: fromLinked }), [
+        { text: 'Скасувати', style: 'cancel' },
+        // Offered only when there is a коригування to leave behind; otherwise it is the same merge.
+        ...(preview.corrections > 0
+          ? [{ text: 'Без коригувань', onPress: merge(true) }]
+          : []),
+        { text: 'Обʼєднати', style: 'destructive', onPress: merge(false) },
+      ]);
+    },
+    [reportBug, router, stored.account, stored.accounts, stored.transactions],
+  );
+
   // A рахунок that has been deleted from under the screen — or an id that never named one — says
   // so rather than rendering a blank list of someone else's money.
   if (!stored.account || !movements) {
@@ -235,7 +320,17 @@ export default function AccountMovementsScreen() {
   const a = stored.account;
 
   return (
-    <Screen>
+    <Screen
+      // The same «+» Головний has, opening the form on this рахунок. An archived one is offered
+      // for no new транзакція, so it has none — and neither does the screen while one of its own
+      // forms is open: editing, звірка or обʼєднання end in a column of full-width buttons, and
+      // the «+» floating over their right edge covered «Обʼєднати з іншим рахунком» and
+      // «Скасувати» (QA, 2026-09-29). Recording a транзакція is not what that moment is for.
+      overlay={
+        a.archived || draft || reconciling || merging ? undefined : (
+          <Fab onPress={() => push({ pathname: '/transaction/new', params: { account: a.id } })} />
+        )
+      }>
       <ScreenHeader
         title={movements.name}
         subtitle={a.archived ? `${kindLabel(a.kind)} · в архіві` : kindLabel(a.kind)}
@@ -347,7 +442,53 @@ export default function AccountMovementsScreen() {
             title={a.archived ? 'Повернути з архіву' : 'До архіву'}
             onPress={() => setArchived(!a.archived)}
           />
+          <Action
+            variant="secondary"
+            title="Обʼєднати з іншим рахунком"
+            onPress={() => {
+              setDraft(undefined);
+              setMerging(true);
+            }}
+          />
           <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
+        </Card>
+      ) : null}
+
+      {/* Two рахунки that are the same money — a monobank банка linked on its own рахунок beside
+          the one the owner kept by hand — become the one picked here. */}
+      {merging ? (
+        <Card style={styles.form}>
+          <ThemedText type="overline">Обʼєднати з іншим рахунком</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {`Усе з «${a.name}» — транзакції, привʼязка monobank — перейде в обраний рахунок, а «${a.name}» зникне.`}
+          </ThemedText>
+          {mergeTargets(a, stored.accounts).length === 0 ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              {`Немає іншого рахунку в ${a.currency}.`}
+            </ThemedText>
+          ) : (
+            <Picker
+              label="У який рахунок"
+              rows={mergeTargets(a, stored.accounts).map((one) => ({
+                id: one.id,
+                name: accountChoiceLabel(one),
+              }))}
+              recentIds={[]}
+              selected={undefined}
+              onSelect={confirmMerge}
+              noun="accounts"
+              expanded={mergeListOpen}
+              onExpandedChange={setMergeListOpen}
+            />
+          )}
+          <Action
+            variant="secondary"
+            title="Скасувати"
+            onPress={() => {
+              setMergeListOpen(false);
+              setMerging(false);
+            }}
+          />
         </Card>
       ) : null}
 
@@ -357,30 +498,39 @@ export default function AccountMovementsScreen() {
           {movements.emptyMessage}
         </ThemedText>
       ) : (
-        <ListCard>
-          {movements.transactions.map((t, index) => {
-            const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
-            // Told from this рахунок's side: its own name is the screen's title, and a переказ
-            // says whether it brought money in or took it out (design D3).
-            const side = accountSideLine(t, line, a.id, byId, now);
-            return (
-              <ListRow key={line.id} last={index === movements.transactions.length - 1}>
-                <TransactionRow
-                  icon={line.icon}
-                  iconTone={line.iconTone}
-                  marked={line.uncategorised}
-                  title={side.title}
-                  titleTone={line.overLimit ? 'textDanger' : undefined}
-                  subtitle={side.subtitle}
-                  description={line.description}
-                  amount={side.amount}
-                  amountTone={side.amountTone}
-                  onPress={() => router.push(`/transaction/${line.id}`)}
-                />
-              </ListRow>
-            );
-          })}
-        </ListCard>
+        <>
+          <ListCard>
+            {page.shown.map((t, index) => {
+              const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
+              // Told from this рахунок's side: its own name is the screen's title, and a переказ
+              // says whether it brought money in or took it out (design D3).
+              const side = accountSideLine(t, line, a.id, byId, now);
+              return (
+                <ListRow key={line.id} last={index === page.shown.length - 1}>
+                  <TransactionRow
+                    icon={line.icon}
+                    iconTone={line.iconTone}
+                    marked={line.uncategorised}
+                    title={side.title}
+                    titleTone={line.overLimit ? 'textDanger' : undefined}
+                    subtitle={side.subtitle}
+                    description={line.description}
+                    amount={side.amount}
+                    amountTone={side.amountTone}
+                    onPress={() => push(`/transaction/${line.id}`)}
+                  />
+                </ListRow>
+              );
+            })}
+          </ListCard>
+          {page.more ? (
+            <Action
+              variant="secondary"
+              title="Показати ще"
+              onPress={() => setPages((asked) => asked + 1)}
+            />
+          ) : null}
+        </>
       )}
     </Screen>
   );

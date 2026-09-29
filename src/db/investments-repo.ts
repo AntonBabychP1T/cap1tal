@@ -5,6 +5,7 @@ import { money, type Money } from '../domain/money';
 import { isoDate } from '../domain/transaction';
 import { accounts, investmentValues } from './schema';
 import type { Storage } from './storage';
+import { Refusal } from '../domain/refusal';
 
 /**
  * Поточні вартості in storage — what the owner last said each інвестиційний рахунок is worth, and
@@ -49,18 +50,18 @@ export function investmentsRepo(db: Storage) {
         throw new Error(`рахунку «${accountId}» не існує`);
       }
       if (account.kind !== 'investment') {
-        throw new Error(
+        throw new Refusal(
           `поточна вартість буває тільки в інвестиційного рахунку, а «${account.name}» — це інший вид`,
         );
       }
       if (value.amount.currency !== account.currency) {
-        throw new Error(
+        throw new Refusal(
           `рахунок «${account.name}» — у ${account.currency}, ` +
             `тож його поточна вартість не може бути в ${value.amount.currency}`,
         );
       }
       if (value.amount.amount < 0) {
-        throw new Error(
+        throw new Refusal(
           `поточна вартість «${account.name}» не може бути меншою за нуль — ` +
             'інвестиція може коштувати нічого, але не менше',
         );

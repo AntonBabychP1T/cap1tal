@@ -6,6 +6,7 @@ import { storeTransferPairing } from './counterpart-income-repo';
 import { accounts, rules, type NewRuleRow, type RuleRow } from './schema';
 import type { Storage } from './storage';
 import { transactionsRepo } from './transactions-repo';
+import { Refusal } from '../domain/refusal';
 
 /**
  * What a розбір did: the «Без категорії» витрати it looked at, how many it moved onto a
@@ -144,13 +145,13 @@ function toRuleRow(rule: Rule): NewRuleRow {
   if (mcc !== null && !Number.isInteger(mcc)) {
     // The column would take 54.11 happily, and the rule would then never match anything: an MCC
     // is compared for equality against an integer the bank sends.
-    throw new Error('MCC — це ціле число, напр. 5411');
+    throw new Refusal('MCC — це ціле число, напр. 5411');
   }
   if (merchant === '' && mcc === null) {
     // The table has a CHECK for this too, but this is the one mistake the owner can actually make
     // in the «Правила» form, and `failureMessage` puts whatever is thrown straight into an Alert —
     // so it says a sentence rather than SQLITE_CONSTRAINT_CHECK.
-    throw new Error('Правило потребує продавця або MCC');
+    throw new Refusal('Правило потребує продавця або MCC');
   }
   // `Rule.target` is a discriminated union above storage, so an ordinary caller cannot build one
   // naming both — but a hand-crafted value (a restore writes `rules` directly, and could carry a
@@ -158,19 +159,19 @@ function toRuleRow(rule: Rule): NewRuleRow {
   // constraint name rather than a sentence the owner reads.
   const rawTarget = rule.target as unknown as { categoryId?: string; toAccountId?: string };
   if (rawTarget.categoryId !== undefined && rawTarget.toAccountId !== undefined) {
-    throw new Error('Правило не може мати одразу і категорію, і рахунок призначення');
+    throw new Refusal('Правило не може мати одразу і категорію, і рахунок призначення');
   }
   if (rule.target.kind === 'category') {
     if (rule.target.categoryId === CORRECTION_CATEGORY_ID) {
       // «Коригування» is carried only by коригування the app itself creates; a rule targeting it
       // would categorise an imported витрата as one, which is a different transaction type.
-      throw new Error('«Коригування» не може бути метою правила');
+      throw new Refusal('«Коригування» не може бути метою правила');
     }
     if (rule.target.categoryId === UNCATEGORISED_CATEGORY_ID) {
       // «Без категорії» is the absence of a категорія, not one. A rule aiming at it would pin a
       // merchant to the very gap the rules exist to fill: it would outrank shorter rules naming a
       // real категорія, and survive every розбір, since a витрата it "moved" never left the gap.
-      throw new Error('«Без категорії» не може бути метою правила — це відсутність категорії');
+      throw new Refusal('«Без категорії» не може бути метою правила — це відсутність категорії');
     }
   }
   return {

@@ -19,6 +19,8 @@ import { parseSaldoExport } from '../src/saldo/parse';
 import { survey, NO_DECISIONS } from '../src/saldo/survey';
 import { verify } from '../src/saldo/verify';
 import { formatMoney } from '../src/ui/amount-input';
+import { dateOfEpochMs } from '../src/ui/dates';
+import { droppedRowLine } from '../src/ui/saldo-import';
 
 const path = process.argv[2];
 if (!path) {
@@ -26,7 +28,8 @@ if (!path) {
   process.exit(2);
 }
 
-const parsed = parseSaldoExport(readFileSync(path, 'utf8'));
+// The machine's own zone stands in for the phone's: Saldo's datetimes are UTC instants.
+const parsed = parseSaldoExport(readFileSync(path, 'utf8'), dateOfEpochMs);
 if (!parsed.ok) {
   console.error(`the export does not parse: ${parsed.reason}`);
   process.exit(1);
@@ -86,7 +89,10 @@ for (const [reason, count] of [...byReason].sort()) {
   console.log(`  ${reason}: ${count}`);
 }
 for (const row of report.droppedRows) {
-  console.log(`  row ${row.row} (${row.reason}) ${row.date} — ${row.detail}`);
+  // The owner's own sentence, the one the звірка shows — plus the domain's refusal where there is
+  // one, which is a diagnostic the screen deliberately leaves out.
+  const why = row.reason === 'unrecognised-shape' && row.why ? ` [${row.why}]` : '';
+  console.log(`  row ${row.row} (${row.reason}) — ${droppedRowLine(row, new Date())}${why}`);
 }
 console.log('');
 

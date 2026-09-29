@@ -19,6 +19,10 @@ paths:
   a detail. If a change truly needs a hand edit under `android/`, stop and ask the owner.
 - Do not add or upgrade a native module (anything that needs prebuild or a new Gradle dependency)
   outside an OpenSpec change that names it in `design.md`.
+- `patches/` holds `patch-package` patches to native dependencies, applied by `postinstall`.
+  Today one: `expo-task-manager` (`TaskService.invalidateAppRecord`), without which a chance that
+  arrives during a cold launch leaves every later chance in that process undelivered to JS. A patch
+  reaches the phone only through a rebuilt APK; re-check it whenever the package is upgraded.
 - Nothing in shared code may assume Android: platform-specific code goes behind one adapter
   module with `Platform.select`/`.android.ts` files, so an iOS build stays possible.
 

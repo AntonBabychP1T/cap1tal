@@ -9,6 +9,8 @@ import {
   freshnessLabel,
   momentLabel,
   parseTypedDate,
+  pickedDate,
+  pickerInstant,
   shiftIsoDate,
   startOfLocalDayMs,
   todayIso,
@@ -94,12 +96,33 @@ describe('parseTypedDate', () => {
     expect(parseTypedDate('  2026-08-31 ')).toBe(isoDate('2026-08-31'));
   });
 
+  it('A дата is read in any usual shape: any separator, day first, no leading zeros', () => {
+    const day = isoDate('2026-08-05');
+    for (const typed of [
+      '2026-08-05',
+      '2026.08.05',
+      '2026/8/5',
+      '2026 8 5',
+      '05.08.2026',
+      '5.8.2026',
+      '05-08-2026',
+      '05/08/2026',
+      '5 8 2026',
+      '05.08.26',
+      '20260805',
+      '05082026',
+    ]) {
+      expect(parseTypedDate(typed), `"${typed}"`).toBe(day);
+    }
+  });
+
   it('Scenario: A дата in the wrong shape is refused in Ukrainian', () => {
     // What the smoke found on «Цілі»: this used to answer `date must be YYYY-MM-DD, got "…"`.
-    expect(() => parseTypedDate('31.12.2026')).toThrow(
-      'дата пишеться як РРРР-ММ-ДД, напр. 2026-08-31, а не «31.12.2026»',
+    expect(() => parseTypedDate('31 грудня')).toThrow(
+      'дата пишеться як ДД.ММ.РРРР або РРРР-ММ-ДД, напр. 31.08.2026, а не «31 грудня»',
     );
-    for (const typed of ['', '2026-8-31', '31-12-2026', 'вчора', '2026/08/31']) {
+    for (const typed of ['', '2026-08', '31.12', 'вчора', '2026-08-31-1', '123.12.2026']) {
+      expect(() => parseTypedDate(typed), `"${typed}"`).toThrow(/дата пишеться як/);
       expect(refusalOf(() => parseTypedDate(typed)), `"${typed}" was refused in English`).not.toMatch(
         /[A-Za-z]/,
       );
@@ -109,7 +132,30 @@ describe('parseTypedDate', () => {
   it('Scenario: A day that does not exist is refused in Ukrainian', () => {
     expect(() => parseTypedDate('2026-02-31')).toThrow('такого дня немає в календарі: «2026-02-31»');
     expect(() => parseTypedDate('2026-13-01')).toThrow('такого дня немає в календарі: «2026-13-01»');
+    expect(() => parseTypedDate('31.02.2026')).toThrow('такого дня немає в календарі: «31.02.2026»');
+    expect(() => parseTypedDate('31022026')).toThrow('такого дня немає в календарі: «31022026»');
     expect(refusalOf(() => parseTypedDate('2026-02-31'))).not.toMatch(/[A-Za-z]/);
+  });
+});
+
+describe('the native date picker', () => {
+  it('Opens on the дата itself, whichever way the platform reads the instant', () => {
+    for (const date of ['2026-01-01', '2026-02-28', '2024-02-29', '2026-12-31'].map(isoDate)) {
+      const instant = pickerInstant(date);
+      // Android's Material picker reads the instant as a UTC day…
+      expect(pickedDate(instant, 'utc')).toBe(date);
+      // …iOS's as a local one; noon UTC is the same day here as well.
+      expect(pickedDate(instant, 'local')).toBe(date);
+    }
+  });
+
+  it('Android answers with the UTC midnight of the picked day, read as that day', () => {
+    expect(pickedDate(new Date(Date.UTC(2026, 8, 30)), 'utc')).toBe('2026-09-30');
+  });
+
+  it('iOS answers with a local instant, read as the local day', () => {
+    expect(pickedDate(new Date(2026, 8, 30, 23, 59), 'local')).toBe('2026-09-30');
+    expect(pickedDate(new Date(2026, 8, 30, 0, 1), 'local')).toBe('2026-09-30');
   });
 });
 
@@ -274,7 +320,7 @@ describe('dateStepOffers', () => {
   });
 
   it('A half-typed дата offers only the two quick choices', () => {
-    for (const typed of ['', '2026-09', '31.12.2026', '2026-02-30']) {
+    for (const typed of ['', '2026-09', '31.12', '2026-02-30']) {
       const offers = dateStepOffers(typed, now);
       expect(offers.back).toBeUndefined();
       expect(offers.forward).toBeUndefined();
@@ -286,5 +332,8 @@ describe('dateStepOffers', () => {
 
   it('The typed дата is named as a day', () => {
     expect(dateStepOffers(' 2026-09-22 ', now).label).toBe('вчора');
+    // Typed day first with dots, it is the same day and steps the same way.
+    expect(dateStepOffers('22.09.2026', now).label).toBe('вчора');
+    expect(dateStepOffers('22.09.2026', now).back).toBe('2026-09-21');
   });
 });

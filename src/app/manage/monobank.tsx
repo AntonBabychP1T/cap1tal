@@ -51,6 +51,7 @@ import {
   lastSyncLine,
   monobankAccountRows,
   newAccountDraft,
+  notConfiguredStatus,
   outcomeLabel,
   progressLabel,
   proposalRows,
@@ -91,10 +92,9 @@ const connection = monobankConnection({
   ),
   cacheAccounts: (fetched, obtainedAt) => monobankRepo.upsertAccounts(fetched, obtainedAt),
   now: () => new Date(),
-  // The same moment a прогін writes, because the bank's minute is the device's and not one
-  // caller's. Without it, «Синхронізувати» pressed just after this screen refreshed would send a
-  // statement request the bank refuses — and spend a рахунок's хід on the refusal.
-  noteRequest: (at) => monobankRepo.noteRequest(at),
+  // No `noteRequest`: this screen only ever asks client-info, which the bank limits separately
+  // from the statement minute a прогін paces itself by. Counting it made the прогін started from
+  // this very screen wait a minute it did not owe.
 });
 
 /** A рахунок being created for a monobank account, before the owner has confirmed it. */
@@ -238,13 +238,22 @@ export default function MonobankScreen() {
     }
   }, []);
 
-  const refresh = useCallback(async () => {
+  /**
+   * `asked` is whether the owner tapped «Оновити з monobank» rather than merely opened the screen:
+   * only then does a missing token earn a sentence of its own (see `notConfiguredStatus`).
+   */
+  const refresh = useCallback(async (options: { readonly asked: boolean }) => {
     setBusy(true);
     try {
       const state = await connection.state();
       setConfigured(state.kind === 'configured');
       if (state.kind !== 'configured') {
         applyResult(state.kind === 'not-configured' ? { kind: 'not-configured' } : state);
+        if (state.kind === 'not-configured') {
+          // After `applyResult`, which clears the banner for this state: the tap is answered with
+          // the same words «Синхронізувати» gives, instead of with nothing.
+          setStatus(notConfiguredStatus(options));
+        }
         return;
       }
       applyResult(await connection.refresh());
@@ -568,7 +577,7 @@ export default function MonobankScreen() {
    */
   useFocusEffect(
     useCallback(() => {
-      void refresh();
+      void refresh({ asked: false });
     }, [refresh]),
   );
 
@@ -638,7 +647,7 @@ export default function MonobankScreen() {
             <Action
               variant="secondary"
               title={busy ? 'Оновлюємо…' : 'Оновити з monobank'}
-              onPress={refresh}
+              onPress={() => void refresh({ asked: true })}
               disabled={busy}
             />
             {configured ? (

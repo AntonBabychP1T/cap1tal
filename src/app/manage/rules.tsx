@@ -15,7 +15,7 @@ import { expenseCategoryChoices } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
 import { accountChoiceLabel } from '@/ui/labels';
-import { ruleFromDraft, ruleLine, storeRule, type RuleDraft } from '@/ui/list-management';
+import { mccText, ruleFromDraft, ruleLine, storeRule, type RuleDraft } from '@/ui/list-management';
 
 import { Spacing } from '@/constants/theme';
 
@@ -230,7 +230,7 @@ export default function RulesScreen() {
                       setDraft({
                         id: rule.id,
                         merchant: rule.merchant ?? '',
-                        mcc: rule.mcc === undefined ? '' : String(rule.mcc),
+                        mcc: rule.mcc === undefined ? '' : mccText(rule.mcc),
                         target: rule.target.kind,
                         ...(rule.target.kind === 'category'
                           ? { categoryId: rule.target.categoryId }

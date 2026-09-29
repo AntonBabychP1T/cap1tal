@@ -447,6 +447,26 @@ describe('the feed marks a category over its ліміт', () => {
 
     expect(asked.sort()).toEqual(['2026-07', '2026-08']);
   });
+
+  it('A month whose spent cannot be summed marks nothing, and the feed still draws', () => {
+    // A row stored before the сума ceiling existed (QA: 90071992547409,91 is MAX_SAFE_INTEGER
+    // kopiykas) overflows `money` the moment it is added to anything. The feed is where the owner
+    // goes to open and delete that row, so it must not crash on it; the month simply goes unjudged.
+    const august = [
+      spend('e1', '2026-08-10', Number.MAX_SAFE_INTEGER),
+      spend('e2', '2026-08-11', 686_824_900),
+    ];
+    const july = [spend('e3', '2026-07-10', 260000)];
+    const feed = [...august, ...july];
+    const over = marks({ '2026-08': august, '2026-07': july }, feed);
+
+    expect(transactionLine(august[0]!, byId, names, new Map(), over).overLimit).toBe(false);
+    expect(transactionLine(august[0]!, byId, names, new Map(), over).amount).toBe(
+      '−90\u00A0071\u00A0992\u00A0547\u00A0409,91 UAH',
+    );
+    // The other months are judged as ever.
+    expect(transactionLine(july[0]!, byId, names, new Map(), over).overLimit).toBe(true);
+  });
 });
 
 

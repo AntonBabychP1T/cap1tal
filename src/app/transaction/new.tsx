@@ -15,7 +15,6 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 
-import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { ALERT_PORTS, attended } from '@/hooks/use-alerting';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
@@ -28,9 +27,9 @@ import {
   entryFromRoute,
   buildEntry,
   defaultAccountId,
+  entryDateCheck,
   normaliseDescription,
   proposedCategoryId,
-  recordedConfirmation,
   type EntryType,
 } from '@/ui/entry-form';
 import { failureAlert } from '@/ui/failure-alert';
@@ -38,7 +37,6 @@ import { evaluateProgress } from '@/hooks/progress-ports';
 import { newId } from '@/ui/id';
 import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
 import { PICKER_SIZE } from '@/ui/shortlist';
-import { accountsById } from '@/ui/transaction-line';
 
 import { Spacing } from '@/constants/theme';
 
@@ -46,8 +44,12 @@ import { Spacing } from '@/constants/theme';
  * «Нова транзакція» — the entry form, pushed over Головний from its «+». It was Головний's own
  * content until this screen existed; nothing about what it records has changed, only where it
  * stands. Everything it decides is still `src/ui/entry-form.ts` — `buildEntry` decides what a
- * filled form stores, `proposeForTransfer` what a переказ may propose, `recordedConfirmation` what
- * the owner is told was stored — and this file is the wiring. See design.md §D1, §D7.
+ * filled form stores, `proposeForTransfer` what a переказ may propose — and this file is the
+ * wiring. See design.md §D1, §D7.
+ *
+ * A successful «Записати» leaves the screen for wherever the owner came from (Головний, as a
+ * rule), whose стрічка now opens on what was just recorded. It used to clear the form and stay,
+ * which the owner reported (2026-09-23) as the form refusing to let go after every витрата.
  */
 
 /**
@@ -81,7 +83,7 @@ export default function NewTransactionScreen() {
     [router],
   );
 
-  const [stored, reload] = useReloadOnFocus(
+  const [stored] = useReloadOnFocus(
     useCallback(() => {
       const accounts = accountsRepo.list();
       return {
@@ -111,9 +113,6 @@ export default function NewTransactionScreen() {
    * picker in real Ukrainian order.
    */
   const offered = useMemo(() => accountChoicesFor(stored.accounts, undefined), [stored.accounts]);
-  const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
-  const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
-  const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
   /**
    * What each picker offers, in the order it already has. A рахунок wears its currency, which is
    * also what a search inside «Всі рахунки» then matches — «USD» finds the USD ones.
@@ -140,16 +139,20 @@ export default function NewTransactionScreen() {
    * onto a рахунок of вид `savings`» opens the work it actually names rather than a витрата form.
    * `entryFromRoute` is what decides whether the route's text is a type at all, under `verify`.
    */
-  const asked = useLocalSearchParams<{ type?: string; to?: string }>();
+  const asked = useLocalSearchParams<{ type?: string; to?: string; account?: string }>();
   const [entry, setEntry] = useState<EntryType>(() => entryFromRoute(asked.type));
   /**
-   * The form opens on the рахунок last recorded on by hand — an offer, freely changed before
-   * recording. A remembered рахунок that has since been archived pre-chooses nothing, and
+   * The form opens on the рахунок the route names (the «+» on a рахунок's own screen), else on the
+   * one last recorded on by hand — an offer, freely changed before recording. A remembered рахунок that has since been archived pre-chooses nothing, and
    * `defaultAccountId` is what decides that; read once, at mount, because only `store()` moves it
    * and `store()` is recording on this very screen.
    */
   const [fromId, setFromId] = useState<string | undefined>(() =>
-    defaultAccountId(stored.rememberedAccountId, accountChoicesFor(stored.accounts, undefined)),
+    defaultAccountId(
+      stored.rememberedAccountId,
+      accountChoicesFor(stored.accounts, undefined),
+      asked.account,
+    ),
   );
   // The destination a route may name, and nothing pre-chosen otherwise. It is an offer like every
   // other on this form: the picker below changes it freely.
@@ -169,13 +172,6 @@ export default function NewTransactionScreen() {
   const [pickedByOwner, setPickedByOwner] = useState(false);
   /** The опис, optional for every type. Empty is the normal case and stores nothing. */
   const [description, setDescription] = useState('');
-  /**
-   * What the last recording stored, in the owner's words, where they are already looking. Cleared
-   * by the next recording and by the next change to any field, so it can never describe a form
-   * that has since moved on. No timer: nothing to race in a smoke test, and nothing that
-   * disappears before the owner looks up (design D11).
-   */
-  const [confirmation, setConfirmation] = useState<string>();
   /**
    * Which picker has its full list open. One at a time, and held here rather than inside each
    * picker, because the phone's «назад» has to close it before it leaves the screen and only the
@@ -202,7 +198,6 @@ export default function NewTransactionScreen() {
         setAmount('');
       }
       setFromId(nextId);
-      setConfirmation(undefined);
     },
     [from, offered],
   );
@@ -214,7 +209,6 @@ export default function NewTransactionScreen() {
         setArrived('');
       }
       setToId(nextId);
-      setConfirmation(undefined);
     },
     [offered, to],
   );
@@ -229,31 +223,12 @@ export default function NewTransactionScreen() {
     setCategoryId(undefined);
     setSourceId(undefined);
     setPickedByOwner(false);
-    setConfirmation(undefined);
     // «Тип» sits above the pickers and stays tappable while one has its full list open. Switching
     // unmounts that picker, so the open state has to go with it — otherwise `useCloseOnBack` keeps
     // swallowing the back press for a list that is no longer on the screen, which is the opposite
     // of what `backGesture` promises.
     setOpen(undefined);
   }, []);
-
-  /**
-   * What a store leaves behind: the сума, the сума that arrived and the опис cleared, the picked
-   * label dropped and the дата back to today, while the type and the рахунок stay as they were —
-   * the рахунок being the one this recording has just remembered. So the next транзакція of the
-   * same day costs no navigation and no re-picking.
-   */
-  const clear = useCallback(() => {
-    setAmount('');
-    setArrived('');
-    setDate(todayIso(new Date()));
-    setCategoryId(undefined);
-    setSourceId(undefined);
-    setPickedByOwner(false);
-    setDescription('');
-    setOpen(undefined);
-    reload();
-  }, [reload]);
 
   /**
    * The категорія shown as chosen and the one «Записати» stores — one computation for both, so
@@ -272,7 +247,6 @@ export default function NewTransactionScreen() {
   const chooseCategory = useCallback((picked: string) => {
     setPickedByOwner(true);
     setCategoryId(picked);
-    setConfirmation(undefined);
   }, []);
 
   const store = useCallback(
@@ -288,57 +262,73 @@ export default function NewTransactionScreen() {
       if (fromId) {
         entryDefaultsRepo.remember(fromId);
       }
-      clear();
-      setConfirmation(
-        recordedConfirmation(written, { accounts: byId, categoryNames, sourceNames }),
-      );
       // Storing worked, so whatever the last failure to store was is no longer true.
       void clearAlert('local-save', ALERT_PORTS);
+      router.back();
     },
-    [byId, categoryNames, clear, fromId, sourceNames],
+    [fromId, router],
   );
 
   const record = useCallback(() => {
-    try {
-      const built = buildEntry(
-        {
-          type: entry,
-          accountId: fromId,
-          toAccountId: toId,
-          amount,
-          arrived,
-          date,
-          categoryId: displayedCategoryId,
-          sourceId,
-          description: normaliseDescription(description),
-        },
-        { id: newId(), accounts: offered },
-      );
-      // Only a переказ can propose anything on top of itself, and the owner decides whether it is.
-      if (built.type === 'transfer') {
-        // The рахунок the money left decides what may be proposed, and its stored транзакції are
-        // what says how much that person still owed before this переказ.
-        askAboutTransfer(
-          built,
+    /**
+     * One attempt at the form as it stands. The date question's «Записати все одно» runs it again
+     * with the answer, from the top — the same form rebuilt, through the same catch — rather than
+     * storing something it closed over.
+     */
+    const attempt = (dateConfirmed: boolean) => {
+      try {
+        const built = buildEntry(
           {
-            accounts: offered,
-            sourceTransactions: transactionsRepo.listByAccount(built.fromAccountId),
+            type: entry,
+            accountId: fromId,
+            toAccountId: toId,
+            amount,
+            arrived,
+            date,
+            categoryId: displayedCategoryId,
+            sourceId,
+            description: normaliseDescription(description),
           },
-          store,
+          { id: newId(), accounts: offered },
         );
-        return;
+        // A дата outside 2000…a year from today throws here, into the catch below, and nothing is
+        // stored; one after today but within that year is asked about first (`entryDateCheck`).
+        // Asked before the переказ question, so the owner is never asked about a комісія of a
+        // транзакція they are about to cancel.
+        const verdict = entryDateCheck(built.date, new Date());
+        if (verdict.kind === 'confirm' && !dateConfirmed) {
+          Alert.alert(verdict.title, verdict.message, [
+            { text: 'Скасувати', style: 'cancel' },
+            { text: 'Записати все одно', onPress: () => attempt(true) },
+          ]);
+          return;
+        }
+        // Only a переказ can propose anything on top of itself, and the owner decides whether it is.
+        if (built.type === 'transfer') {
+          // The рахунок the money left decides what may be proposed, and its stored транзакції are
+          // what says how much that person still owed before this переказ.
+          askAboutTransfer(
+            built,
+            {
+              accounts: offered,
+              sourceTransactions: transactionsRepo.listByAccount(built.fromAccountId),
+            },
+            store,
+          );
+          return;
+        }
+        store(built);
+      } catch (error) {
+        Alert.alert(
+          ...failureAlert({ title: 'Не записано', where: 'transaction-record', error, report: reportBug }),
+        );
+        // The Alert above is the report, and it is on the screen the owner is standing on — so this
+        // almost always answers «attended» and posts nothing. It is here for the case that is not:
+        // a store that fails as they leave (design D5).
+        void raiseAlert('local-save', { attended: attended() }, ALERT_PORTS);
       }
-      store(built);
-    } catch (error) {
-      setConfirmation(undefined);
-      Alert.alert(
-        ...failureAlert({ title: 'Не записано', where: 'transaction-record', error, report: reportBug }),
-      );
-      // The Alert above is the report, and it is on the screen the owner is standing on — so this
-      // almost always answers «attended» and posts nothing. It is here for the case that is not:
-      // a store that fails as they leave (design D5).
-      void raiseAlert('local-save', { attended: attended() }, ALERT_PORTS);
-    }
+    };
+    attempt(false);
   }, [
     amount,
     arrived,
@@ -353,17 +343,6 @@ export default function NewTransactionScreen() {
     store,
     toId,
   ]);
-
-  /**
-   * Any change to any field ends the confirmation: it named what was recorded from the form as it
-   * then stood, and a form that has moved on must not still be wearing that sentence.
-   */
-  const changing =
-    <T,>(set: (value: T) => void) =>
-    (value: T) => {
-      setConfirmation(undefined);
-      set(value);
-    };
 
   return (
     <Screen>
@@ -402,16 +381,19 @@ export default function NewTransactionScreen() {
           <Field
             label={entry === 'transfer' ? 'Скільки пішло' : 'Сума'}
             value={amount}
-            onChangeText={changing(setAmount)}
+            onChangeText={setAmount}
             keyboardType="decimal-pad"
             placeholder="0,00"
             hint={from ? from.currency : undefined}
+            // The currency arrives with the рахунок; its line is held until then so the form
+            // does not jump by a line under the owner's thumb when it does.
+            reserveHint
           />
           {entry === 'transfer' && from && to ? (
             <Field
               label="Скільки прийшло"
               value={arrived}
-              onChangeText={changing(setArrived)}
+              onChangeText={setArrived}
               keyboardType="decimal-pad"
               placeholder={crossCurrency ? '0,00' : 'стільки ж'}
               hint={
@@ -419,7 +401,7 @@ export default function NewTransactionScreen() {
               }
             />
           ) : null}
-          <DateField value={date} onChange={changing(setDate)} now={new Date()} />
+          <DateField value={date} onChange={setDate} now={new Date()} />
           {/* A витрата arrives carrying «Без категорії» and the owner may pick another; a
               повернення has no default and is not stored until one is picked. */}
           {entry === 'expense' || entry === 'refund' ? (
@@ -432,7 +414,7 @@ export default function NewTransactionScreen() {
                   ? (displayedCategoryId ?? UNCATEGORISED_CATEGORY_ID)
                   : categoryId
               }
-              onSelect={entry === 'expense' ? chooseCategory : changing(setCategoryId)}
+              onSelect={entry === 'expense' ? chooseCategory : setCategoryId}
               noun="categories"
               expanded={open === 'category'}
               onExpandedChange={opening('category')}
@@ -444,7 +426,7 @@ export default function NewTransactionScreen() {
               rows={sourceRows}
               recentIds={recent.sources}
               selected={sourceId}
-              onSelect={changing(setSourceId)}
+              onSelect={setSourceId}
               noun="sources"
               expanded={open === 'source'}
               onExpandedChange={opening('source')}
@@ -456,19 +438,10 @@ export default function NewTransactionScreen() {
           <Field
             label="Опис"
             value={description}
-            onChangeText={changing(setDescription)}
+            onChangeText={setDescription}
             placeholder="напр. шини на зиму"
             hint="необовʼязково"
           />
-          {/* Where the owner is already looking, without scrolling: directly above the button
-              they just pressed — under it, it sat below the fold on a 6.3" phone (main-screen,
-              "The recording confirmation stands above «Записати»"). What was just recorded, and
-              what was stored alongside it; a refusal shows its own words and no confirmation. */}
-          {confirmation ? (
-            <ThemedText type="small" themeColor="textPositive">
-              {confirmation}
-            </ThemedText>
-          ) : null}
           <Action title="Записати" onPress={record} />
         </Card>
       )}

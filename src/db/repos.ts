@@ -1,3 +1,4 @@
+import { mergeAccounts as mergeAccountsImpl } from './account-merge-repo';
 import { accountsRepo } from './accounts-repo';
 import { backupRepo } from './backup-repo';
 import { driveBackupRepo } from './drive-backup-repo';
@@ -28,6 +29,9 @@ import { transactionsRepo } from './transactions-repo';
  * synchronous SQLite makes trivial. See design.md §6.
  */
 export const accounts = accountsRepo(db);
+/** Folds one рахунок into another of the same money, atomically — see `account-merge-repo.ts`. */
+export const mergeAccounts = (input: Parameters<typeof mergeAccountsImpl>[1]) =>
+  mergeAccountsImpl(db, input);
 export const transactions = transactionsRepo(db);
 /** A retype or edit's whole write, atomically — see `counterpart-income-repo.ts`'s own doc. */
 export const persistRetyped = (

@@ -14,6 +14,7 @@ import { journal } from './journal';
 import { accountLabel, byName, categoryLabel, expenseCount } from './labels';
 import { categoryIconDefinition } from './category-icons';
 import type { IconName } from './icons';
+import { Refusal } from '../domain/refusal';
 
 /**
  * What the «Категорії», «Джерела» and «Правила» sections of Налаштування show, and what the rule
@@ -114,24 +115,26 @@ export function ruleFromDraft(
   // A merchant pattern is what is left of it after trimming, so spaces alone are no criterion.
   const merchant = draft.merchant.trim();
   const typed = draft.mcc.trim();
-  // Digits and nothing else: `Number` would take '0x15', '1e3' and '-5' for whole numbers, and an
-  // MCC that is not the one the owner typed is a rule that never matches what they meant.
-  if (typed !== '' && !/^\d+$/.test(typed)) {
-    throw new Error('MCC — це число з цифр, напр. 5411');
+  // Exactly four digits and nothing else: `Number` would take '0x15', '1e3' and '-5' for whole
+  // numbers, and a merchant category code is four digits (ISO 18245) — '999999' or '541' is no
+  // code the bank ever sends. An MCC that is not one the bank can send is a rule that never
+  // matches what the owner meant, so it is refused rather than saved.
+  if (typed !== '' && !/^\d{4}$/.test(typed)) {
+    throw new Refusal('MCC — це чотири цифри, напр. 5411');
   }
   const mcc = typed === '' ? undefined : Number(typed);
   if (merchant === '' && mcc === undefined) {
-    throw new Error('Правило потребує продавця або MCC');
+    throw new Refusal('Правило потребує продавця або MCC');
   }
   let target: RuleTarget;
   if (draft.target === 'transfer') {
     if (draft.toAccountId === undefined || draft.toAccountId === '') {
-      throw new Error('Правило потребує рахунку призначення');
+      throw new Refusal('Правило потребує рахунку призначення');
     }
     target = { kind: 'transfer', toAccountId: draft.toAccountId };
   } else {
     if (draft.categoryId === undefined || draft.categoryId === '') {
-      throw new Error('Правило потребує категорії');
+      throw new Refusal('Правило потребує категорії');
     }
     target = { kind: 'category', categoryId: draft.categoryId };
   }
@@ -159,6 +162,16 @@ export function ruleTargetLabel(
     : `переказ на ${accountLabel(target.toAccountId, accountNames)}`;
 }
 
+/**
+ * A stored MCC as the owner reads and types it: four digits, the leading zero put back. The rule
+ * keeps the bank's number (0742 is stored as 742, the way monobank sends it), so the text is
+ * padded wherever it is shown — the list line and the edit form alike; an edit form refilled with
+ * «742» would refuse its own untouched правило.
+ */
+export function mccText(mcc: number): string {
+  return String(mcc).padStart(4, '0');
+}
+
 /** How the «Правила» list shows one rule: its criteria and the target's own label. */
 export function ruleLine(
   rule: Rule,
@@ -170,7 +183,7 @@ export function ruleLine(
     criteria.push(rule.merchant);
   }
   if (rule.mcc !== undefined) {
-    criteria.push(`MCC ${rule.mcc}`);
+    criteria.push(`MCC ${mccText(rule.mcc)}`);
   }
   return {
     id: rule.id,

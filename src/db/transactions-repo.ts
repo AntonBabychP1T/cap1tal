@@ -12,7 +12,13 @@ import {
   type SQL,
 } from 'drizzle-orm';
 
-import { isoDate, UNCATEGORISED_CATEGORY_ID, type Month, type Transaction } from '../domain/transaction';
+import {
+  isoDate,
+  UNCATEGORISED_CATEGORY_ID,
+  type IsoDate,
+  type Month,
+  type Transaction,
+} from '../domain/transaction';
 import { toTransaction, toTransactionRow } from './mappers';
 import { counterpartIncomeAwaits, transactions, type TransactionRow } from './schema';
 import type { Storage } from './storage';
@@ -139,6 +145,26 @@ export function transactionsRepo(db: Storage) {
           .orderBy(asc(transactions.date), asc(transactions.id))
           .all(),
       );
+    },
+
+    /**
+     * The earliest and the latest дата any stored транзакція carries, or nothing when none is
+     * stored — what Місяць bounds its arrows by: back no further than the first month holding a
+     * record, forward as far as the last one when that lies past the current month.
+     *
+     * One aggregate over `transactions_date_idx`, so SQLite answers MIN and MAX from the ends of
+     * the index instead of reading the history. Every row counts, коригування included: a month
+     * holding only one still has something to show.
+     */
+    recordedSpan(): { readonly earliest: IsoDate; readonly latest: IsoDate } | undefined {
+      // A raw `db.get`, the way the counts in `reporting-repo.ts` are read: the typed builder's
+      // partial select is not callable on the union `Storage` of both drivers.
+      const row = db.get<{ earliest: string | null; latest: string | null }>(
+        sql`select min(${transactions.date}) as earliest, max(${transactions.date}) as latest from ${transactions}`,
+      );
+      return row?.earliest && row.latest
+        ? { earliest: isoDate(row.earliest), latest: isoDate(row.latest) }
+        : undefined;
     },
 
     /**

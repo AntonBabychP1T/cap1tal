@@ -1,8 +1,8 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
-import { useColorScheme, type ImageSourcePropType } from 'react-native';
+import { Platform, useColorScheme, useWindowDimensions, type ImageSourcePropType } from 'react-native';
 
 import { Colors } from '@/constants/theme';
-import { TABS, type TabIconKey } from '@/ui/tabs';
+import { fittedTabLabelSize, TABS, type TabIconKey } from '@/ui/tabs';
 
 /**
  * What fits «Налаштування» across a fifth of a phone; proven on the emulator, not by `verify`.
@@ -31,6 +31,16 @@ const ICONS: Record<TabIconKey, ImageSourcePropType> = {
 export default function AppTabs() {
   const scheme = useColorScheme();
   const colors = Colors[scheme === 'unspecified' ? 'light' : scheme];
+  // Android multiplies the label size by the system font scale on its own; at 2× «Головний» was
+  // cut to «Головн…». `fittedTabLabelSize` lets each label grow only as far as its fifth has room
+  // and hands back the size in the units the platform then scales. Elsewhere the size is given
+  // as is — no other platform here scales it behind our back.
+  const { fontScale: systemFontScale } = useWindowDimensions();
+  const fontScale = Platform.OS === 'android' ? systemFontScale : 1;
+  const labelSize = (label: string) => fittedTabLabelSize(label, TAB_LABEL_SIZE, fontScale);
+  // The longest label's fitted size fits every label, so the shared style — the one any bar that
+  // labels all five would draw — uses it.
+  const sharedLabelSize = Math.min(...TABS.map((tab) => labelSize(tab.label)));
 
   return (
     // The вкладка being read is marked by **tone** — `text` against `textMuted`, on both the icon
@@ -68,14 +78,20 @@ export default function AppTabs() {
       indicatorColor="transparent"
       rippleColor={colors.backgroundSelected}
       labelStyle={{
-        default: { color: colors.textMuted, fontSize: TAB_LABEL_SIZE, fontWeight: '600' },
-        selected: { color: colors.text, fontSize: TAB_LABEL_SIZE, fontWeight: '700' },
+        default: { color: colors.textMuted, fontSize: sharedLabelSize, fontWeight: '600' },
+        selected: { color: colors.text, fontSize: sharedLabelSize, fontWeight: '700' },
       }}
       iconColor={colors.textMuted}
       tintColor={colors.text}>
       {TABS.map((tab) => (
         <NativeTabs.Trigger key={tab.routeName} name={tab.routeName}>
-          <NativeTabs.Trigger.Label>{tab.label}</NativeTabs.Trigger.Label>
+          {/* The open tab's own label, sized to its own word: Android draws only this one, so
+              a short name may grow with the font where «Налаштування» cannot. The per-tab
+              selected style replaces the shared one whole, so it repeats its tone and weight. */}
+          <NativeTabs.Trigger.Label
+            selectedStyle={{ color: colors.text, fontSize: labelSize(tab.label), fontWeight: '700' }}>
+            {tab.label}
+          </NativeTabs.Trigger.Label>
           <NativeTabs.Trigger.Icon src={ICONS[tab.iconKey]} renderingMode="template" />
         </NativeTabs.Trigger>
       ))}

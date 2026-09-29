@@ -128,6 +128,6 @@ describe('currency selection sends no requests', () => {
     // Wired straight to `useState`'s own setter — no wrapping function that could reach a repo, a
     // reload or a network call between the tap and the state it changes.
     expect(screen).toContain('onSelectCurrency={setRequestedCategoryCurrency}');
-    expect(screen).toContain('onSelectHistoryCurrency={setRequestedHistoryCurrency}');
+    expect(screen).toContain('onSelectHistory={setRequestedHistory}');
   });
 });

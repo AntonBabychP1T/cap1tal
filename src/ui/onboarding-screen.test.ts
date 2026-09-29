@@ -58,3 +58,14 @@ describe('the setup view writes nothing', () => {
     expect(source).not.toContain('seedStarterSet');
   });
 });
+
+describe('the way off the checklist', () => {
+  it('Neither «←» nor the phone back dead-ends on a fresh install', () => {
+    // Both ask the one rule, so the arrow and the hardware press can never disagree: with no
+    // history under the checklist, each does what «До застосунку» does.
+    expect(source).toContain('leaveOnboarding({ canGoBack: router.canGoBack() })');
+    expect(source).toContain('back={leave}');
+    expect(source).not.toContain('back={() => router.back()}');
+    expect(source).toContain('useCloseOnBack(!router.canGoBack(), toApp)');
+  });
+});

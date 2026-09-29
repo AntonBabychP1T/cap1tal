@@ -134,6 +134,34 @@ describe('monthViewModel', () => {
     expect(view([], [], '2026-07').canStepForward).toBe(true);
   });
 
+  it('The arrows follow the reachable months, and «Сьогодні» appears only away from now', () => {
+    const at = (month: string, reach?: { first: string; last: string }) =>
+      monthViewModel({
+        month,
+        accounts,
+        transactions: [],
+        rates: [],
+        categoryNames,
+        limits: [],
+        previousTransactions: [],
+        now: august,
+        ...(reach ? { reach } : {}),
+      });
+    const reach = { first: '2026-06', last: '2026-10' };
+
+    // On the current month: both ways open inside the bounds, and nothing to jump back to.
+    expect(at('2026-08', reach)).toMatchObject({
+      canStepBack: true,
+      canStepForward: true,
+      currentMonth: null,
+    });
+    // At the first recorded month back is spent; at the last recorded one forward is.
+    expect(at('2026-06', reach)).toMatchObject({ canStepBack: false, currentMonth: '2026-08' });
+    expect(at('2026-10', reach)).toMatchObject({ canStepForward: false, currentMonth: '2026-08' });
+    // No bounds given: back as before, forward to the current month.
+    expect(at('2026-08')).toMatchObject({ canStepBack: true, canStepForward: false });
+  });
+
   it('Scenario: An empty month says it is empty', () => {
     const model = view([]);
 
@@ -369,8 +397,11 @@ describe('an empty month and the month before it', () => {
     expect(screen).toContain('model.previous.label');
     expect(screen).toContain('model.previous.spent.map');
     // One action, writing the same `shown` the back step writes — counted, so a second way to be
-    // on the previous month fails here rather than on a device.
-    expect([...screen.matchAll(/setShown\(prevMonth\(shown\)\)/g)]).toHaveLength(2);
+    // on the previous month fails here rather than on a device. The back step is clamped at the
+    // first recorded month (`stepBack`); the offer only exists when that month holds a транзакція,
+    // so the clamp never bites it, and both write the one expression.
+    expect([...screen.matchAll(/setShown\(stepBack\(shown, reach\)\)/g)]).toHaveLength(2);
+    expect(screen).not.toMatch(/setShown\(prevMonth\(/);
     // And the month it reads is loaded beside the shown one, not derived on the screen.
     expect(screen).toContain('transactionsRepo.listMonth(prevMonth(shown))');
   });

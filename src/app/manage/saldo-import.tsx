@@ -15,8 +15,10 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { formatMoney } from '@/ui/amount-input';
+import { dateOfEpochMs } from '@/ui/dates';
 import { failureAlert } from '@/ui/failure-alert';
 import { reportFailure } from '@/ui/journal';
+import { debtsNote } from '@/ui/saldo-debts';
 import { KIND_CHOICES, kindLabel } from '@/ui/labels';
 import {
   canCommit,
@@ -25,6 +27,8 @@ import {
   committed,
   confirmSecondImport,
   dismissHint,
+  droppedRowLine,
+  explanationLine,
   mapSections,
   mapSummary,
   mergeTargets,
@@ -88,13 +92,15 @@ export default function SaldoImportScreen() {
   const sections = useMemo(() => mapSections(flow), [flow]);
   const opening = useMemo(() => mapSummary(flow), [flow]);
   const summary = useMemo(() => planSummary(flow), [flow]);
+  /** The звірка's days leave this year's year off, as every day in the app does; read per render. */
+  const now = new Date();
 
   const choose = useCallback(async () => {
     try {
       const picked = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
       if (picked.canceled || !picked.assets?.[0]) return;
       const text = await new File(picked.assets[0].uri).text();
-      setFlow((current) => startWithText(current, text));
+      setFlow((current) => startWithText(current, text, dateOfEpochMs));
     } catch (error) {
       Alert.alert(
         ...failureAlert({ title: 'Не вдалося прочитати файл', where: 'saldo-file-read', error, report: reportBug }),
@@ -393,9 +399,7 @@ export default function SaldoImportScreen() {
               </ThemedText>
               {reconciliation.explanations.map((explanation, index) => (
                 <ThemedText key={index} type="small" themeColor="textSecondary">
-                  {explanation.kind === 'export-row'
-                    ? `${formatMoney(explanation.amount)} — ${explanation.row.detail}`
-                    : `${formatMoney(explanation.amount)} — вже записано вручну (${explanation.count})`}
+                  {explanationLine(explanation, now)}
                 </ThemedText>
               ))}
             </Card>
@@ -404,10 +408,10 @@ export default function SaldoImportScreen() {
           {flow.report.debts.length > 0 ? (
             <>
               <SectionLabel>Борги після імпорту</SectionLabel>
-              {/* Every debt the export carries is closed, so 0 is what this should read; anything
-                  else is a «Борг» row whose other half did not pair. */}
+              {/* Every debt the export carries should close to 0; `debtsNote` says «закриті» only
+                  when every balance below does, and otherwise counts the ones that did not. */}
               <ThemedText type="small" themeColor="textSecondary">
-                Усі борги з експорту закриті — тут має бути 0.
+                {debtsNote(flow.report.debts)}
               </ThemedText>
               {flow.report.debts.map((debt) => (
                 <ThemedText key={debt.accountId} type="small" themeColor="textSecondary">
@@ -424,7 +428,7 @@ export default function SaldoImportScreen() {
               </SectionLabel>
               {flow.report.droppedRows.slice(0, 50).map((row, index) => (
                 <ThemedText key={index} type="small" themeColor="textSecondary">
-                  {`${row.reason}: ${row.detail}`}
+                  {droppedRowLine(row, now)}
                 </ThemedText>
               ))}
             </>

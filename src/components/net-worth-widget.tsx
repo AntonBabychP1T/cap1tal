@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Path, Svg } from 'react-native-svg';
 
-import { Spacing } from '@/constants/theme';
+import { Spacing, TouchTarget } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { historyGeometry } from '@/ui/dashboard-charts';
 import type { NetWorthWidgetModel } from '@/ui/net-worth';
@@ -35,13 +35,28 @@ function chartPath(series: ReturnType<typeof historyGeometry>, width: number): s
     .join(' ');
 }
 
+/**
+ * The chevron beside a show/hide toggle, pointing where the list will go: down while it is shut,
+ * up once it is open. A fixed `›` read the same in both states — QA found «Сховати точки» with the
+ * same glyph as «Показати точки», so only the words said the list was open. `Chevron` itself is
+ * the navigation `›` every row on Рахунки ends in; turned, it is the same glyph at the same weight.
+ */
+function DisclosureChevron({ open }: { readonly open: boolean }) {
+  return (
+    <View style={{ transform: [{ rotate: open ? '-90deg' : '90deg' }] }}>
+      <Chevron />
+    </View>
+  );
+}
+
 export function NetWorthWidget({
   model,
-  onSelectHistoryCurrency,
+  onSelectHistory,
   onOpenAccounts,
 }: {
   readonly model: NetWorthWidgetModel;
-  readonly onSelectHistoryCurrency: (currency: string) => void;
+  /** A currency code or the combined «Усе ≈ грн» id — the model's `historyChoices` say which. */
+  readonly onSelectHistory: (choice: string) => void;
   readonly onOpenAccounts: () => void;
 }) {
   const theme = useTheme();
@@ -94,24 +109,23 @@ export function NetWorthWidget({
         </ThemedText>
       ) : null}
 
-      {model.historyCurrencies.length > 1 ? (
+      {model.historyChoices.length > 1 ? (
         <View style={styles.chips}>
-          {model.historyCurrencies.map((currency) => (
+          {model.historyChoices.map((choice) => (
+            // The Pressable is the 48 dp touch target, the pill inside it is what is drawn — the
+            // same split as the category widget's chips (`chipTarget` there).
             <Pressable
-              key={currency}
-              onPress={() => onSelectHistoryCurrency(currency)}
+              key={choice.id}
+              onPress={() => onSelectHistory(choice.id)}
               accessibilityRole="button"
-              accessibilityLabel={currency === model.historyCurrency ? `${currency}, обрано` : currency}
-              accessibilityState={{ selected: currency === model.historyCurrency }}
-              style={[
-                styles.chip,
-                currency === model.historyCurrency ? { backgroundColor: theme.accentSurface } : null,
-              ]}>
-              <ThemedText
-                type="small"
-                themeColor={currency === model.historyCurrency ? 'accent' : 'textSecondary'}>
-                {currency}
-              </ThemedText>
+              accessibilityLabel={choice.accessibilityLabel}
+              accessibilityState={{ selected: choice.selected }}
+              style={styles.chipTarget}>
+              <View style={[styles.chip, choice.selected ? { backgroundColor: theme.accentSurface } : null]}>
+                <ThemedText type="small" themeColor={choice.selected ? 'accent' : 'textSecondary'}>
+                  {choice.label}
+                </ThemedText>
+              </View>
             </Pressable>
           ))}
         </View>
@@ -121,21 +135,28 @@ export function NetWorthWidget({
         <ThemedText type="small" themeColor="textSecondary">
           {model.historyUnavailableMessage}
         </ThemedText>
+      ) : model.historyWithheldMessage ? (
+        // The combined history has no rate to convert at: nothing else of it is drawn, and the
+        // currency choices above still read their own histories.
+        <ThemedText type="small" themeColor="textSecondary">
+          {model.historyWithheldMessage}
+        </ThemedText>
       ) : (
         <>
           <ThemedText
             type="small"
             themeColor="textSecondary"
-            accessibilityLabel="Історія розрахункових балансів, інвестиції за вкладеним">
-            Історія розрахункових балансів · інвестиції за вкладеним
+            accessibilityLabel={model.historyCaptionAccessibilityLabel}>
+            {model.historyCaption}
           </ThemedText>
+          {model.historyRateFreshness ? (
+            <ThemedText type="caption" themeColor="textMuted">
+              {model.historyRateFreshness}
+            </ThemedText>
+          ) : null}
           <View
             accessible
-            accessibilityLabel={
-              model.historySpan
-                ? `Графік історії статку, з ${model.historySpan.first} по ${model.historySpan.last}`
-                : 'Графік історії статку'
-            }
+            accessibilityLabel={model.historyChartLabel}
             onLayout={({ nativeEvent }) => {
               const width = Math.round(nativeEvent.layout.width);
               if (width > 0 && width !== chartWidth) setChartWidth(width);
@@ -170,11 +191,12 @@ export function NetWorthWidget({
           <Pressable
             onPress={() => setPointsOpen((open) => !open)}
             accessibilityRole="button"
+            accessibilityState={{ expanded: pointsOpen }}
             style={styles.toggleRow}>
             <ThemedText type="small" themeColor="accent">
               {pointsOpen ? 'Сховати точки' : 'Показати точки'}
             </ThemedText>
-            <Chevron />
+            <DisclosureChevron open={pointsOpen} />
           </Pressable>
           {pointsOpen ? (
             <View style={styles.pointsList}>
@@ -192,11 +214,12 @@ export function NetWorthWidget({
       <Pressable
         onPress={() => setExplanationOpen((open) => !open)}
         accessibilityRole="button"
+        accessibilityState={{ expanded: explanationOpen }}
         style={styles.toggleRow}>
         <ThemedText type="small" themeColor="accent">
           {explanationOpen ? 'Сховати пояснення' : 'Пояснення'}
         </ThemedText>
-        <Chevron />
+        <DisclosureChevron open={explanationOpen} />
       </Pressable>
       {explanationOpen ? (
         <View style={styles.explanation}>
@@ -208,7 +231,8 @@ export function NetWorthWidget({
               {/* The basis under the name, not in a third column: most рахунки have none, and a
                   column that is empty on most rows pushed every сума to a different edge. */}
               <View style={styles.explanationName}>
-                <ThemedText type="small" numberOfLines={1}>
+                {/* Two lines: at a large font a рахунок's name cut to one reads as its neighbour's. */}
+                <ThemedText type="small" numberOfLines={2}>
                   {line.name}
                 </ThemedText>
                 {line.basis ? (
@@ -231,8 +255,10 @@ export function NetWorthWidget({
 const styles = StyleSheet.create({
   card: { gap: Spacing.two },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  accountsLink: { flexDirection: 'row', alignItems: 'center', gap: Spacing.half },
+  // «Рахунки ›» is a link, but still a 48 dp target (the row grows to it, the text does not).
+  accountsLink: { flexDirection: 'row', alignItems: 'center', gap: Spacing.half, minHeight: TouchTarget },
   chips: { flexDirection: 'row', gap: Spacing.one },
+  chipTarget: { minHeight: TouchTarget, minWidth: TouchTarget, justifyContent: 'center', alignItems: 'center' },
   chip: {
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.half,
@@ -244,7 +270,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.half,
-    minHeight: 44,
+    minHeight: TouchTarget,
   },
   pointsList: { gap: Spacing.half },
   span: { flexDirection: 'row', justifyContent: 'space-between', marginTop: Spacing.one },

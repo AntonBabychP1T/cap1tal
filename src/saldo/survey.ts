@@ -294,7 +294,24 @@ export interface ResolvedAccount {
 
 export interface RejectedRedirect {
   readonly key: string;
+  /**
+   * Why, as the account-map row shows it under the entry — so in Ukrainian, for the owner. The
+   * screen's merge targets already leave out another currency and an archived рахунок, so the owner
+   * reaches these only through a decision the export or the рахунки changed under; they still have
+   * to read as a sentence and not as a diagnostic when they do.
+   */
   readonly reason: string;
+}
+
+/** A redirect onto something no longer there — a рахунок or an entry, the owner cannot tell apart. */
+const GONE = 'Рахунку, з яким треба об’єднати, вже немає.';
+
+/** Amounts of two currencies never combine, which is the whole of this refusal. */
+function crossCurrency(
+  from: { name: string; currency: string },
+  onto: { name: string; currency: string },
+): string {
+  return `Не можна об’єднати: «${from.name}» — у ${from.currency}, а «${onto.name}» — у ${onto.currency}.`;
 }
 
 export interface AccountMap {
@@ -349,16 +366,13 @@ export function resolveAccountMap(
       if (redirect.to === 'account') {
         const target = existingById.get(redirect.accountId);
         if (!target) {
-          rejectedRedirects.push({
-            key: current.key,
-            reason: `no рахунок "${redirect.accountId}" to redirect onto`,
-          });
+          rejectedRedirects.push({ key: current.key, reason: GONE });
           return { entry: current };
         }
         if (target.currency !== current.currency) {
           rejectedRedirects.push({
             key: current.key,
-            reason: `cannot redirect a ${current.currency} entry onto the ${target.currency} рахунок "${target.name}"`,
+            reason: crossCurrency({ name: current.saldoAccount, currency: current.currency }, target),
           });
           return { entry: current };
         }
@@ -366,21 +380,21 @@ export function resolveAccountMap(
       }
       const next = entryByKey.get(redirect.key);
       if (!next) {
-        rejectedRedirects.push({
-          key: current.key,
-          reason: `no entry "${redirect.key}" to redirect onto`,
-        });
+        rejectedRedirects.push({ key: current.key, reason: GONE });
         return { entry: current };
       }
       if (next.currency !== current.currency) {
         rejectedRedirects.push({
           key: current.key,
-          reason: `cannot redirect a ${current.currency} entry onto the ${next.currency} entry "${next.saldoAccount}"`,
+          reason: crossCurrency(
+            { name: current.saldoAccount, currency: current.currency },
+            { name: next.saldoAccount, currency: next.currency },
+          ),
         });
         return { entry: current };
       }
       if (seen.has(next.key)) {
-        rejectedRedirects.push({ key: current.key, reason: 'the redirects form a cycle' });
+        rejectedRedirects.push({ key: current.key, reason: 'Ці об’єднання замикаються в коло.' });
         return { entry: current };
       }
       seen.add(next.key);

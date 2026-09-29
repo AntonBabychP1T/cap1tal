@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { NotificationAccess } from '../platform/notification-access';
 import { SETTINGS_SECTIONS } from './settings-sections';
-import { firstRun, onboardingSteps, onboardingSummary, type OnboardingStep } from './onboarding';
+import {
+  firstRun,
+  leaveOnboarding,
+  onboardingSteps,
+  onboardingSummary,
+  type OnboardingStep,
+} from './onboarding';
 
 /**
  * «Перші кроки» without its JSX. Nothing here loads a screen, a repository or a native module —
@@ -150,5 +156,17 @@ describe('the notification permission step', () => {
     for (const access of ['granted', 'denied', 'unsupported'] as NotificationAccess[]) {
       expect(notifications(access).hint).toContain('не залишає пристрій');
     }
+  });
+});
+
+describe('leaving the checklist', () => {
+  it('The «←» on a fresh install leaves for the app instead of doing nothing', () => {
+    // QA: a first launch *replaces* Головний with «Перші кроки», so there is nothing under it and
+    // `router.back()` was an unhandled GO_BACK — a dead arrow on the very first screen.
+    expect(leaveOnboarding({ canGoBack: false })).toBe('to-app');
+  });
+
+  it('Opened from Налаштування, the «←» goes back where it came from', () => {
+    expect(leaveOnboarding({ canGoBack: true })).toBe('back');
   });
 });

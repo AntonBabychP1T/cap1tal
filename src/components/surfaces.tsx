@@ -175,7 +175,14 @@ export function ScreenHeader({
   return (
     <View style={styles.header}>
       {back ? (
-        <Pressable onPress={back} accessibilityLabel="Назад" hitSlop={Spacing.two}>
+        // `backButton` makes the arrow's own box a full touch target — hitSlop alone left the
+        // view 26×32, which is what an accessibility check measures and what a finger misses.
+        <Pressable
+          onPress={back}
+          accessibilityRole="button"
+          accessibilityLabel="Назад"
+          hitSlop={Spacing.two}
+          style={styles.backButton}>
           <ThemedText type="subtitle">←</ThemedText>
         </Pressable>
       ) : null}
@@ -208,6 +215,11 @@ export function ScreenHeader({
 /**
  * The way out of a section, as a pill on its heading: outlined rather than filled, so it never
  * competes with the screen's own action — the «+» — and never reads as a second one.
+ *
+ * The Pressable is a full `TouchTarget` tall and the outlined pill sits centred inside it. It used
+ * to be the pill itself with a `hitSlop` — 32 dp of bounds, which is what QA's scanner measured
+ * and what Android reports to accessibility services; `hitSlop` is outside the view's bounds, so
+ * nothing that inspects the layout ever sees it. The heading row grows to 48; the pill does not.
  */
 function SectionAction({ label, onPress }: { label: string; onPress: () => void }) {
   const theme = useTheme();
@@ -215,15 +227,12 @@ function SectionAction({ label, onPress }: { label: string; onPress: () => void 
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      hitSlop={Spacing.two}
-      style={({ pressed }) => [
-        styles.sectionAction,
-        { borderColor: theme.accent },
-        pressed && styles.pressed,
-      ]}>
-      <ThemedText type="linkPrimary" numberOfLines={1}>
-        {label}
-      </ThemedText>
+      style={({ pressed }) => [styles.sectionActionTarget, pressed && styles.pressed]}>
+      <View style={[styles.sectionAction, { borderColor: theme.accent }]}>
+        <ThemedText type="linkPrimary" numberOfLines={1}>
+          {label}
+        </ThemedText>
+      </View>
     </Pressable>
   );
 }
@@ -799,6 +808,20 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: Spacing.three,
   },
+  /**
+   * The «←» as a `TouchTarget` square without moving it or growing the header: the glyph stays at
+   * the column's left edge and top (`flex-start`, the same line as the title), and the negative
+   * bottom margin hands back the height the target adds over the glyph's own 32 — so a screen
+   * whose title is one line is exactly as tall as before, and the extra target reaches down into
+   * the gap under the header rather than pushing the column down.
+   */
+  backButton: {
+    minWidth: TouchTarget,
+    minHeight: TouchTarget,
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    marginBottom: -(TouchTarget - 32),
+  },
   headerText: { flex: 1, gap: Spacing.half },
   card: {
     borderRadius: Radius.card,
@@ -860,6 +883,7 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     alignSelf: 'flex-end',
   },
+  sectionActionTarget: { minHeight: TouchTarget, justifyContent: 'center' },
   sectionAction: {
     borderRadius: Radius.pill,
     borderWidth: StyleSheet.hairlineWidth,

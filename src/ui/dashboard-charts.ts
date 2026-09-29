@@ -47,6 +47,65 @@ export function donutGeometry(rows: readonly { categoryId: string; amount: numbe
   return { kind: 'positive', sectors };
 }
 
+/** Where a donut sits in its viewBox: its centre (both axes) and its two radii. */
+export interface DonutRing {
+  readonly center: number;
+  readonly outerRadius: number;
+  readonly innerRadius: number;
+}
+
+/**
+ * How close to 360° a sweep must come to be drawn as the whole ring. Floating sums of fractions
+ * land a hair off 360 (0.1 + 0.2 + 0.7 of it), and the neutral ring asks for 359.999 — both are the
+ * full circle, and a 0.01° sliver missing from 12 o'clock is not something anyone could see.
+ */
+const FULL_SWEEP_EPSILON = 0.01;
+
+function polarPoint(ring: DonutRing, radius: number, angleDeg: number): { x: number; y: number } {
+  // -90 so 0° is 12 o'clock, matching `donutGeometry`'s own convention, sweeping clockwise.
+  const rad = ((angleDeg - 90) * Math.PI) / 180;
+  return { x: ring.center + radius * Math.cos(rad), y: ring.center + radius * Math.sin(rad) };
+}
+
+/**
+ * One donut sector as an SVG path `d`: an annular wedge from `startAngle` to `endAngle`, both
+ * degrees clockwise from 12 o'clock, between the ring's two radii.
+ *
+ * A sweep of (nearly) the full circle is drawn as the whole ring instead — one category at 100%
+ * is `(0, 360)`, whose start and end are the *same point*, and an SVG arc between two equal points
+ * draws nothing at all: the widget showed its number alone in an empty block. The ring is two
+ * closed circles, each as two half-circle arcs (12 → 6 → 12 o'clock, so no single arc ever ends
+ * where it began): the outer clockwise, the inner counter-clockwise, so the default non-zero fill
+ * rule leaves the hole unpainted without needing `fillRule="evenodd"` at the call site.
+ */
+export function donutSectorPath(startAngle: number, endAngle: number, ring: DonutRing): string {
+  const { center: c, outerRadius: R, innerRadius: r } = ring;
+  if (endAngle - startAngle >= 360 - FULL_SWEEP_EPSILON) {
+    return [
+      `M ${c} ${c - R}`,
+      `A ${R} ${R} 0 1 1 ${c} ${c + R}`,
+      `A ${R} ${R} 0 1 1 ${c} ${c - R}`,
+      'Z',
+      `M ${c} ${c - r}`,
+      `A ${r} ${r} 0 1 0 ${c} ${c + r}`,
+      `A ${r} ${r} 0 1 0 ${c} ${c - r}`,
+      'Z',
+    ].join(' ');
+  }
+  const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+  const outerStart = polarPoint(ring, R, startAngle);
+  const outerEnd = polarPoint(ring, R, endAngle);
+  const innerEnd = polarPoint(ring, r, endAngle);
+  const innerStart = polarPoint(ring, r, startAngle);
+  return [
+    `M ${outerStart.x} ${outerStart.y}`,
+    `A ${R} ${R} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+    `L ${innerEnd.x} ${innerEnd.y}`,
+    `A ${r} ${r} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
+    'Z',
+  ].join(' ');
+}
+
 /** One dated reading on the history axis — `value` absent is a gap (net-worth, "coverage gaps"). */
 export interface HistorySeriesPoint {
   /** Position along the time axis, 0 (earliest) to 1 (latest) — the caller's own date mapping. */

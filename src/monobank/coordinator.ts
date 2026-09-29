@@ -39,7 +39,10 @@ import {
  * same rejected secret to every remaining account.
  */
 
-/** monobank's personal API allows one request a minute; the run paces itself to that. */
+/**
+ * monobank's personal API allows one statement request a minute; the run paces its statement
+ * requests to that. Client-info is limited separately and is not paced against it (`unpaced`).
+ */
 export const MIN_REQUEST_GAP_MS = 60_000;
 
 /**
@@ -102,11 +105,11 @@ export interface SyncStorage {
    */
   rememberedAccounts(): readonly RememberedAccount[];
   /**
-   * The moment this device last sent a request to the personal API, or `undefined` if it never
-   * has. Seeds the pacing, so the minute between requests belongs to the phone and not to one run.
+   * The moment this device last sent a statement request, or `undefined` if it never has. Seeds
+   * the pacing, so the minute between statement requests belongs to the phone and not to one run.
    */
   lastRequestAtMs(): number | undefined;
-  /** A request was sent. Called for every request, ok or refused alike. */
+  /** A statement request was sent. Called for every one, ok or refused alike. */
   noteRequest(at: Date): void;
 }
 
@@ -148,9 +151,8 @@ export interface SyncPorts {
    *
    * A run they asked for always fetches client-info, however fresh the answer this phone holds:
    * both triggers are the owner saying «now», and answering «now» with balances up to an hour old
-   * would take away the one control they have for exactly that. It can afford the request — they
-   * are watching it, it may wait out the minute, and one client-info request is a tenth of a
-   * nine-рахунок sweep rather than the whole of a chance.
+   * would take away the one control they have for exactly that. It can afford the request: the bank
+   * limits client-info separately from the statement minute, so it delays no statement.
    */
   readonly asked?: boolean;
   /** Overridden in tests, which must never wait a real minute. */
@@ -335,6 +337,26 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     return request();
   }
 
+  /**
+   * The client-info request: asked whether the run may still go on, and then sent without waiting
+   * and without being counted against the statement gap.
+   *
+   * The bank limits the two endpoints separately. The owner's репорт of 2026-09-27 shows it both
+   * ways round — a client-info request answered 200 five seconds before a statement request that
+   * also answered 200, and another answered 200 forty-two seconds after one — so a gap shared between them
+   * only cost every run that fetched balances its first minute. For a chance, which never waits,
+   * that minute was the whole chance: whenever the kept answer was older than an hour, the chance
+   * bought balances and imported nothing, and on a phone that grants chances less often than
+   * hourly the background never imported anything at all.
+   */
+  async function unpaced<T>(request: () => Promise<T>): Promise<T | Stopped> {
+    const stop = stopping();
+    if (stop) {
+      return stoppedWith(stop);
+    }
+    return request();
+  }
+
   const results: AccountResult[] = [];
   const finish = (
     link: StoredMonobankLink,
@@ -375,11 +397,9 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
   /**
    * The client-info answer this run works from — the one it already holds, or the one it fetches.
    *
-   * A run nobody asked for does not buy balances it has. The bank allows one request a minute and
-   * there is one of that allowance on the device, so a client-info request at the head of every run
-   * is a run that owes a whole minute before the statement request that actually imports — a
-   * minute a chance cannot sit out and an opening rarely can. Reusing what the phone already knows
-   * is what turns «one request, nothing imported» into «one request, транзакції».
+   * A run nobody asked for does not buy balances it has: a request is still a request. Client-info
+   * is not paced against the statement minute (`unpaced`), so when the kept answer is stale the
+   * run pays the round trip and nothing else.
    *
    * A run the owner asked for skips this and asks the bank; `asked` says why.
    */
@@ -401,7 +421,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     fetched = held.accounts;
     obtainedAt = held.obtainedAt;
   } else {
-    const info = await paced(() => fetchClientInfo(ports.fetch, token));
+    const info = await unpaced(() => fetchClientInfo(ports.fetch, token));
     if (isStopped(info)) {
       // Stopped before a single request went out: nothing was asked, no turn was taken by anybody,
       // and nothing is blamed on the bank for a decision that was not the bank's. Every рахунок
@@ -424,9 +444,8 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     // paced at one request a minute would otherwise stamp a figure from half an hour ago as fresh,
     // which is exactly what `obtained_at` exists to prevent.
     obtainedAt = ports.now();
-    // Stored before the first рахунок is worked, and that ordering is the whole cadence: a run
-    // that spends its entire allowance on this request leaves the run after it able to send a
-    // statement request instead of buying the same balances again.
+    // Stored before the first рахунок is worked, so a run stopped right after this request leaves
+    // the run after it holding fresh balances instead of buying the same ones again.
     try {
       ports.storage.upsertAccounts(info.value, obtainedAt);
     } catch {

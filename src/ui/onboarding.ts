@@ -61,6 +61,20 @@ export function firstRun(input: {
 }
 
 /**
+ * Where «←» takes the owner off «Перші кроки».
+ *
+ * The checklist is reached two ways, and they leave different things underneath it. From
+ * Налаштування it is pushed, so going back is going back. On a first launch Головний *replaces*
+ * itself with it (`firstRun`), so there is no history at all — `router.back()` there is an
+ * unhandled GO_BACK and the arrow did nothing. With nothing to return to, the arrow does what
+ * «До застосунку» does: the checklist is skippable by design, and the arrow is the obvious way to
+ * skip it. The phone's back press asks the same question, so it cannot exit the app instead.
+ */
+export function leaveOnboarding(input: { readonly canGoBack: boolean }): 'back' | 'to-app' {
+  return input.canGoBack ? 'back' : 'to-app';
+}
+
+/**
  * The steps and their state. In the order they are worth doing: a рахунок first, because nothing
  * can be recorded without one; then the bank that fills itself in; then the history; then the
  * permission that is not available yet.

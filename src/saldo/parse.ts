@@ -1,11 +1,11 @@
-import { money, type Money } from '../domain/money';
+import { MAX_AMOUNT_MINOR, money, type Money } from '../domain/money';
 import { isoDate, type IsoDate } from '../domain/transaction';
 
 /**
  * The Saldo export is a double-entry ledger: every transaction is a set of legs whose debits and
  * credits balance. This module is the boundary where its text stops being text — decimal amounts
- * become integer minor units and datetimes become calendar dates, exactly as `src/monobank/`
- * turns JSON floats into integer millionths. Nothing downstream of `parseSaldoExport` ever sees a
+ * become integer minor units and UTC datetimes become the phone's calendar dates, exactly as
+ * `src/monobank/` turns JSON floats into integer millionths. Nothing downstream of `parseSaldoExport` ever sees a
  * decimal string, which is what `.claude/rules/domain.md` forbids inside `src/domain/**`.
  *
  * The parser is strict, not forgiving: a header that is not a Saldo export, or a row whose amount
@@ -76,9 +76,24 @@ export function legEffect(leg: SaldoLeg): Money {
   );
 }
 
+/**
+ * `reason` is the sentence the «Імпорт Saldo» screen shows as it stands, so it is written in
+ * Ukrainian for the owner, in the tone `src/ui/backup-screen.ts` refuses a бекап in: what is wrong
+ * with the file and, where it helps, what to do. It quotes the export's own column names and cell
+ * text verbatim — those are what the owner will find when they open the file.
+ */
 export type ParseResult =
   | { readonly ok: true; readonly transactions: readonly SaldoTransaction[] }
   | { readonly ok: false; readonly reason: string };
+
+/** A refusal of one row: which row, of which transaction when it has one, and what is wrong. */
+function rowRefusal(rowNumber: number, transactionId: string, problem: string): ParseResult {
+  const which = transactionId === '' ? '' : ` (транзакція ${transactionId})`;
+  return {
+    ok: false,
+    reason: `Файл не вдалося прочитати: у рядку ${rowNumber}${which} ${problem}.`,
+  };
+}
 
 /**
  * The columns the interpretation actually reads. A file missing any of them is not a Saldo
@@ -174,32 +189,69 @@ export function parseCsv(text: string): string[][] {
  * Minor units from the decimal text alone: the whole part times a hundred plus the fraction, all
  * on integers read out of digit characters. No `parseFloat` ever touches an amount — every
  * currency in the export carries two decimals and the exponent comes from the text, not a table.
+ *
+ * `'too large'` is an amount above `MAX_AMOUNT_MINOR`, the ceiling every ingress keeps: one leg at
+ * the edge of the safe-integer range is a valid `money` and breaks every sum it enters. The digits
+ * are counted before `Number` sees them, so a whole part too long to read exactly is too large
+ * rather than a float rounded to something else.
  */
-function minorUnits(text: string): number | null {
+function minorUnits(text: string): number | null | 'too large' {
   const match = AMOUNT.exec(text);
   if (!match) {
     return null;
   }
-  const whole = Number(match[1]);
-  const fraction = Number(match[2]);
-  const total = whole * 100 + fraction;
-  return Number.isSafeInteger(total) ? total : null;
+  const wholeDigits = (match[1] as string).replace(/^0+/, '');
+  if (wholeDigits.length > String(MAX_AMOUNT_MINOR).length - 2) {
+    return 'too large';
+  }
+  const total = Number(wholeDigits || '0') * 100 + Number(match[2]);
+  return total > MAX_AMOUNT_MINOR ? 'too large' : total;
 }
 
-function normaliseDatetime(text: string): { datetime: string; date: IsoDate } | null {
+/**
+ * The calendar date of an instant on this phone — `dateOfEpochMs` at runtime, a pinned zone in
+ * tests. Passed in, as `src/monobank/api.ts` takes it, so a Saldo leg and a monobank item at the
+ * same instant can never land on different days.
+ */
+export type DateOf = (epochMs: number) => IsoDate;
+
+/**
+ * Saldo writes Transaction Date as a UTC instant with no zone marker: a date-only entry for
+ * 26 August is `2025-08-25T21:00`, Kyiv midnight. So `datetime` keeps the export's UTC text — an
+ * ordering key, nothing more — and `date` is the phone's calendar date of that instant, never
+ * the text's first ten characters, which is the owner's day minus one for every such entry.
+ */
+function normaliseDatetime(
+  text: string,
+  dateOf: DateOf,
+): { datetime: string; date: IsoDate } | null {
   const match = DATETIME.exec(text);
   if (!match) {
     return null;
   }
   const [, day, hour = '00', minute = '00', second = '00', millis = '0'] = match;
+  const paddedMillis = millis.padEnd(3, '0');
   let date: IsoDate;
   try {
-    date = isoDate(day as string);
+    // The calendar check first: `Date.UTC` would roll 2024-02-30 over into March.
+    const utcDay = isoDate(day as string);
+    const [year, month, dayOfMonth] = utcDay.split('-').map(Number);
+    date = dateOf(
+      Date.UTC(
+        year as number,
+        (month as number) - 1,
+        dayOfMonth as number,
+        Number(hour),
+        Number(minute),
+        Number(second),
+        Number(paddedMillis),
+      ),
+    );
   } catch {
     return null;
   }
   return {
-    datetime: `${date}T${hour}:${minute}:${second}.${millis.padEnd(3, '0')}`,
+    datetime: `${day}T${hour}:${minute}:${second}.${paddedMillis}`,
     date,
   };
 }
@@ -209,11 +261,11 @@ function normaliseDatetime(text: string): { datetime: string; date: IsoDate } | 
  * order the file lists them, and the transactions themselves in the order their first leg
  * appears, so the export's own order survives into the plan (see the determinism requirement).
  */
-export function parseSaldoExport(text: string): ParseResult {
+export function parseSaldoExport(text: string, dateOf: DateOf): ParseResult {
   const rows = parseCsv(text).filter((row) => !(row.length === 1 && row[0] === ''));
   const header = rows[0];
   if (!header) {
-    return { ok: false, reason: 'the file is empty' };
+    return { ok: false, reason: 'Файл порожній. Оберіть експорт Saldo.' };
   }
   const columnAt = new Map<string, number>();
   header.forEach((name, index) => {
@@ -223,7 +275,14 @@ export function parseSaldoExport(text: string): ParseResult {
   });
   const missing = REQUIRED_COLUMNS.filter((name) => !columnAt.has(name));
   if (missing.length > 0) {
-    return { ok: false, reason: `the header is missing the column ${missing.join(', ')}` };
+    // «стовпця» for one, «стовпців» for several: the genitive of «бракує» declines with the count.
+    const columns = missing.length === 1 ? 'стовпця' : 'стовпців';
+    return {
+      ok: false,
+      reason:
+        `Це не схоже на експорт Saldo: у заголовку бракує ${columns} ${missing.join(', ')}. ` +
+        'Оберіть інший файл.',
+    };
   }
 
   const at = (row: readonly string[], column: string): string =>
@@ -237,37 +296,36 @@ export function parseSaldoExport(text: string): ParseResult {
     const rowNumber = i;
     const transactionId = at(cells, 'Transaction ID');
     if (transactionId === '') {
-      return { ok: false, reason: `row ${rowNumber} carries no Transaction ID` };
+      return rowRefusal(rowNumber, '', 'немає Transaction ID');
     }
     const journalType = at(cells, 'Journal Type');
     if (journalType !== 'DEBIT' && journalType !== 'CREDIT') {
-      return {
-        ok: false,
-        reason: `row ${rowNumber} of transaction ${transactionId} carries the journal type "${journalType}", which is neither DEBIT nor CREDIT`,
-      };
+      return rowRefusal(rowNumber, transactionId, `тип «${journalType}» — ні DEBIT, ні CREDIT`);
     }
     const amountText = at(cells, 'Amount');
     const amount = minorUnits(amountText);
     if (amount === null) {
-      return {
-        ok: false,
-        reason: `row ${rowNumber} of transaction ${transactionId} carries the amount "${amountText}", which is not a plain two-decimal number`,
-      };
+      return rowRefusal(
+        rowNumber,
+        transactionId,
+        `сума «${amountText}» — не число з двома знаками після крапки`,
+      );
+    }
+    if (amount === 'too large') {
+      return rowRefusal(
+        rowNumber,
+        transactionId,
+        `сума «${amountText}» більша за найбільшу, яку приймає застосунок (999 999 999,99)`,
+      );
     }
     const currency = at(cells, 'Currency');
     if (!CURRENCY_CODE.test(currency)) {
-      return {
-        ok: false,
-        reason: `row ${rowNumber} of transaction ${transactionId} carries the currency "${currency}", which is not an ISO-4217 code`,
-      };
+      return rowRefusal(rowNumber, transactionId, `валюта «${currency}» — не код ISO 4217`);
     }
     const datetimeText = at(cells, 'Transaction Date');
-    const when = normaliseDatetime(datetimeText);
+    const when = normaliseDatetime(datetimeText, dateOf);
     if (!when) {
-      return {
-        ok: false,
-        reason: `row ${rowNumber} of transaction ${transactionId} carries the transaction date "${datetimeText}", which is not a calendar datetime`,
-      };
+      return rowRefusal(rowNumber, transactionId, `дата «${datetimeText}» — такої дати немає`);
     }
 
     const leg: SaldoLeg = {

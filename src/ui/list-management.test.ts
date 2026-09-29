@@ -14,6 +14,7 @@ import { bindTestJournal } from './journal';
 import {
   manageCategories,
   manageSources,
+  mccText,
   ruleFromDraft,
   ruleLine,
   ruleOffer,
@@ -203,7 +204,7 @@ describe('ruleFromDraft', () => {
     for (const mcc of ['54.11', '5411 грн', 'MCC', '0x15', '1e3', '-5', '+5411']) {
       expect(() =>
         ruleFromDraft({ merchant: 'сільпо', mcc, target: 'category', categoryId: 'groceries' }, context),
-      ).toThrow('MCC — це число з цифр');
+      ).toThrow('MCC — це чотири цифри, напр. 5411');
     }
     // A whole number is taken as the integer it is, beside the merchant.
     expect(
@@ -212,6 +213,39 @@ describe('ruleFromDraft', () => {
         context,
       ),
     ).toMatchObject({ merchant: 'сільпо', mcc: 5411 });
+  });
+
+  it('An MCC is exactly four digits', () => {
+    // ISO 18245: a merchant category code is four digits. `999999` used to be saved — a правило
+    // that can never match anything the bank sends, with nothing on the form saying so.
+    for (const mcc of ['999999', '54110', '541', '1']) {
+      expect(
+        () => ruleFromDraft({ merchant: 'сільпо', mcc, target: 'category', categoryId: 'groceries' }, context),
+        `"${mcc}" was accepted`,
+      ).toThrow('MCC — це чотири цифри, напр. 5411');
+    }
+    // A leading zero is part of the code (0742 — ветеринари), and the stored number is still it.
+    expect(
+      ruleFromDraft({ merchant: '', mcc: '0742', target: 'category', categoryId: 'groceries' }, context),
+    ).toMatchObject({ mcc: 742 });
+  });
+
+  it('A stored MCC is shown as its four digits, so the edit form takes it back', () => {
+    // The number keeps no leading zero; the text the form is refilled with must, or re-saving an
+    // untouched 0742 правило would be refused as «742».
+    expect(mccText(742)).toBe('0742');
+    expect(mccText(5411)).toBe('5411');
+    const stored = ruleFromDraft(
+      { merchant: '', mcc: '0742', target: 'category', categoryId: 'groceries' },
+      context,
+    );
+    expect(
+      ruleFromDraft(
+        { merchant: '', mcc: mccText(stored.mcc ?? 0), target: 'category', categoryId: 'groceries' },
+        context,
+      ),
+    ).toEqual(stored);
+    expect(ruleLine(stored, groceries, accountNames).criteria).toBe('MCC 0742');
   });
 
   it('A rule with no category is rejected', () => {

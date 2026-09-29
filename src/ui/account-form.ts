@@ -1,5 +1,6 @@
 import { account, type Account, type AccountKind } from '../domain/account';
 import { formatMinorUnits, parseOpeningBalance } from './amount-input';
+import { Refusal } from '../domain/refusal';
 
 /**
  * The рахунок form's own rules, pure so both screens that render it obey one set. Creating happens
@@ -46,7 +47,7 @@ export function draftFrom(a: Account): AccountDraft {
  */
 export function accountFromDraft(draft: AccountDraft, id: string): Account {
   if (draft.name.trim() === '') {
-    throw new Error('рахунок потребує назви');
+    throw new Refusal('рахунок потребує назви');
   }
   return account({
     id: draft.editing?.id ?? id,

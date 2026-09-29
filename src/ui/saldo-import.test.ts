@@ -10,8 +10,9 @@ import { sourcesRepo } from '../db/sources-repo';
 import { openTestDb } from '../db/test-db';
 import { transactionsRepo } from '../db/transactions-repo';
 import { accountKey } from '../saldo/survey';
-import { csv, pair, existingAccount, existingState, SALDO_COLUMNS } from '../saldo/test-fixtures';
-import type { ImportPlan } from '../saldo/interpret';
+import { csv, pair, existingAccount, existingState, kyivDateOf, SALDO_COLUMNS } from '../saldo/test-fixtures';
+import type { ImportPlan, UnexplainedRow } from '../saldo/interpret';
+import { formatMoney } from './amount-input';
 import type { JournalEntry } from '../reporting/journal';
 import { bindTestJournal, resetJournalForTests } from './journal';
 import { narrow, PICKER_SIZE } from './shortlist';
@@ -23,7 +24,9 @@ import {
   committed,
   confirmSecondImport,
   dismissHint,
+  droppedRowLine,
   duplicateHints,
+  explanationLine,
   mapSections,
   mapSummary,
   mergeTargets,
@@ -39,6 +42,7 @@ import {
   stateLine,
   targetOf,
   toStep,
+  unexplainedLine,
   writtenLine,
   SEPARATE_TARGET,
 } from './saldo-import';
@@ -73,7 +77,7 @@ const ORDINARY = csv([
   }),
 ]);
 
-const started = () => startWithText(startFlow(), ORDINARY);
+const started = () => startWithText(startFlow(), ORDINARY, kyivDateOf);
 
 describe('the import flow — choosing the export', () => {
   it('Scenario: A file with an alien header is refused with the reason', () => {
@@ -90,7 +94,7 @@ describe('the import flow — choosing the export', () => {
       withoutJournalType,
     );
 
-    const state = startWithText(startFlow(), alien);
+    const state = startWithText(startFlow(), alien, kyivDateOf);
 
     expect(state.step).toBe('file');
     expect(state.refusal).toMatch(/Journal Type/);
@@ -111,7 +115,7 @@ describe('the import flow — choosing the export', () => {
       }),
     );
 
-    expect(startWithText(startFlow(), malformed).refusal).toMatch(/1,234\.5/);
+    expect(startWithText(startFlow(), malformed, kyivDateOf).refusal).toMatch(/1,234\.5/);
   });
 
   it('Scenario: A readable export moves the flow on', () => {
@@ -128,7 +132,7 @@ describe('the import flow — choosing the export', () => {
   it('A refused file after a good one leaves no stale plan behind', () => {
     const good = started();
 
-    const refused = startWithText(good, 'Nonsense,Header\n1,2');
+    const refused = startWithText(good, 'Nonsense,Header\n1,2', kyivDateOf);
 
     expect(refused.plan).toBeUndefined();
     expect(refused.report).toBeUndefined();
@@ -156,7 +160,7 @@ describe('the import flow — the account map', () => {
         otherType: 'EXPENSES',
       }),
     ]);
-    const state = startWithText(startFlow(), twoCards);
+    const state = startWithText(startFlow(), twoCards, kyivDateOf);
     expect(state.plan!.accounts).toHaveLength(2);
 
     const merged = redirectAccount(state, accountKey('mono black', 'UAH'), {
@@ -208,7 +212,7 @@ describe('the import flow — the account map', () => {
         { ...existingAccount({ id: 'old', name: 'закритий' }), archived: true },
       ],
     });
-    const state = startWithText(startFlow({ existing }), threeCards);
+    const state = startWithText(startFlow({ existing }), threeCards, kyivDateOf);
     const mono = accountKey('mono black', 'UAH');
 
     const offered = mergeTargets(state, mono);
@@ -254,7 +258,7 @@ describe('the import flow — the account map', () => {
         otherType: 'EQUITY',
       }),
     ]);
-    const state = startWithText(startFlow(), reserve);
+    const state = startWithText(startFlow(), reserve, kyivDateOf);
     expect(accountRows(state)[0]!.becomes.kind).toBe('spending');
 
     const saved = setAccountKind(state, accountKey('РЕЗЕРВ', 'UAH'), 'savings');
@@ -267,7 +271,7 @@ describe('the import flow — the account map', () => {
     const existing = existingState({
       accounts: [existingAccount({ id: 'card', name: 'mono black', openingAmount: 5000 })],
     });
-    const state = startWithText(startFlow({ existing }), ORDINARY);
+    const state = startWithText(startFlow({ existing }), ORDINARY, kyivDateOf);
 
     const merged = redirectAccount(state, accountKey('mono black', 'UAH'), {
       to: 'account',
@@ -290,7 +294,7 @@ describe('the import flow — the account map', () => {
     const existing = existingState({
       accounts: [existingAccount({ id: 'usd', name: 'долари', currency: 'USD' })],
     });
-    const state = startWithText(startFlow({ existing }), ORDINARY);
+    const state = startWithText(startFlow({ existing }), ORDINARY, kyivDateOf);
 
     const rejected = redirectAccount(state, accountKey('mono black', 'UAH'), {
       to: 'account',
@@ -323,7 +327,7 @@ describe('the import flow — proposed категорії and джерела', (
     const existing = existingState({
       categories: [{ id: 'groceries', name: 'Продукти', archived: false }],
     });
-    const state = startWithText(startFlow({ existing }), ORDINARY);
+    const state = startWithText(startFlow({ existing }), ORDINARY, kyivDateOf);
     const redirected = redirectName(state, 'categories', 'булка', 'groceries');
     expect(redirected.plan!.categories.map((p) => p.saldoName)).not.toContain('булка');
 
@@ -337,7 +341,7 @@ describe('the import flow — proposed категорії and джерела', (
     const existing = existingState({
       categories: [{ id: 'groceries', name: 'Продукти', archived: false }],
     });
-    const state = startWithText(startFlow({ existing }), ORDINARY);
+    const state = startWithText(startFlow({ existing }), ORDINARY, kyivDateOf);
     // Nothing matched «булка» by name, so the plan would create it.
     expect(state.plan!.categories.map((p) => p.saldoName)).toContain('булка');
 
@@ -382,14 +386,14 @@ describe('the import flow — «Борг»', () => {
   it('Scenario: The map step leads straight to the звірка', () => {
     // An export whose only rows are «Борг» ones: nothing is asked about them, and the commit is
     // offered off the report itself.
-    const state = toStep(startWithText(startFlow(), DEBTS), 'report');
+    const state = toStep(startWithText(startFlow(), DEBTS, kyivDateOf), 'report');
 
     expect(canCommit(state)).toBe(true);
     expect(state.step).toBe('report');
   });
 
   it('puts every «Борг» transaction on one рахунок-борг «Борги», asking nothing', () => {
-    const state = startWithText(startFlow(), DEBTS);
+    const state = startWithText(startFlow(), DEBTS, kyivDateOf);
 
     // Lent 1000 out, 400 came back — one рахунок-борг, and the decisions record is still empty.
     expect(state.plan!.accounts.filter((a) => a.kind === 'debt')).toEqual([
@@ -403,7 +407,7 @@ describe('the import flow — «Борг»', () => {
 
   it('A рахунок the owner made a вид `debt` is not «Борги»', () => {
     // The ordinary export: a витрата and a переказ, no «Борг» leg anywhere in it.
-    const state = startWithText(startFlow(), ORDINARY);
+    const state = startWithText(startFlow(), ORDINARY, kyivDateOf);
 
     const asDebt = setAccountKind(state, accountKey('готівка', 'UAH'), 'debt');
 
@@ -484,7 +488,7 @@ describe('the import flow — the report and the pre-commit summary', () => {
       }),
     ]);
 
-    const report = startWithText(startFlow(), unpaired).report!;
+    const report = startWithText(startFlow(), unpaired, kyivDateOf).report!;
 
     const white = report.accounts.find((a) => a.name === 'Monobank UAH, White')!;
     expect(white.reconciles).toBe(false);
@@ -517,7 +521,7 @@ describe('the import flow — the report and the pre-commit summary', () => {
         otherType: 'EXPENSES',
       }),
     ]);
-    const state = toStep(startWithText(startFlow(), overRepaid), 'report');
+    const state = toStep(startWithText(startFlow(), overRepaid, kyivDateOf), 'report');
 
     expect(state.report!.debts).toEqual([
       expect.objectContaining({ name: 'Борги', balance: money(-10000, 'UAH') }),
@@ -548,7 +552,7 @@ describe('the import flow — the commit gate', () => {
     const first = new Date('2026-08-25T12:00:00.000Z');
 
     const state = toStep(
-      startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY),
+      startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY, kyivDateOf),
       'report',
     );
 
@@ -559,7 +563,7 @@ describe('the import flow — the commit gate', () => {
     const first = new Date('2026-08-25T12:00:00.000Z');
 
     const state = toStep(
-      startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY),
+      startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY, kyivDateOf),
       'report',
     );
 
@@ -570,7 +574,7 @@ describe('the import flow — the commit gate', () => {
   it('Scenario: Accepting the extra confirmation stores the second plan', () => {
     const first = new Date('2026-08-25T12:00:00.000Z');
     const state = toStep(
-      startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY),
+      startWithText(startFlow({ previouslyCommittedAt: first }), ORDINARY, kyivDateOf),
       'report',
     );
 
@@ -636,7 +640,7 @@ describe('the account map — the compact list', () => {
     ...spend('6', 'валюта моно', 'USD'),
   ]);
 
-  const many = (existing = existingState()) => startWithText(startFlow({ existing }), MANY);
+  const many = (existing = existingState()) => startWithText(startFlow({ existing }), MANY, kyivDateOf);
   const MONO = accountKey('mono black', 'UAH');
   const MONOBANK = accountKey('Monobank UAH, Black', 'UAH');
   const WALLET = accountKey('гаманець', 'UAH');
@@ -728,7 +732,7 @@ describe('the account map — the compact list', () => {
 
   it('Scenario: A currency with nothing to merge says so', () => {
     const alone = csv([...spend('1', 'mono black'), ...spend('2', 'євро', 'EUR')]);
-    const state = startWithText(startFlow(), alone);
+    const state = startWithText(startFlow(), alone, kyivDateOf);
 
     expect(mergeTargets(state, accountKey('євро', 'EUR'))).toEqual([]);
     expect(noTargetsMessage('EUR')).toBe('Немає рахунків у валюті EUR, з якими можна об’єднати');
@@ -807,7 +811,7 @@ describe('the account map — підказки про дублі', () => {
     ...spend('5', 'binance usdt', 'USD'),
     ...spend('6', 'валюта моно', 'USD'),
   ]);
-  const many = (existing = existingState()) => startWithText(startFlow({ existing }), MANY);
+  const many = (existing = existingState()) => startWithText(startFlow({ existing }), MANY, kyivDateOf);
   const MONO = accountKey('mono black', 'UAH');
   const MONOBANK = accountKey('Monobank UAH, Black', 'UAH');
   const WALLET = accountKey('гаманець', 'UAH');
@@ -897,7 +901,7 @@ describe('the account map — підказки про дублі', () => {
   it('Scenario: Different currencies are never called the same рахунок', () => {
     const twoCurrencies = csv([...spend('1', 'валюта моно'), ...spend('2', 'валюта моно', 'USD')]);
 
-    const state = startWithText(startFlow(), twoCurrencies);
+    const state = startWithText(startFlow(), twoCurrencies, kyivDateOf);
 
     expect([...duplicateHints(state).keys()]).toEqual([]);
   });
@@ -943,7 +947,7 @@ describe('the account map — підказки про дублі', () => {
   it('a new export forgets what was dismissed on the last one', () => {
     const dismissed = dismissHint(many(), MONOBANK);
 
-    expect(startWithText(dismissed, MANY).dismissedHints).toEqual([]);
+    expect(startWithText(dismissed, MANY, kyivDateOf).dismissedHints).toEqual([]);
   });
 });
 
@@ -972,7 +976,7 @@ describe('the account map — the opening line and the two groups', () => {
   const EXISTING = existingState({
     accounts: [existingAccount({ id: 'w', name: 'Гаманець' })],
   });
-  const big = () => startWithText(startFlow({ existing: EXISTING }), TWENTY_THREE);
+  const big = () => startWithText(startFlow({ existing: EXISTING }), TWENTY_THREE, kyivDateOf);
 
   const MONOBANK = accountKey('Monobank UAH, Black', 'UAH');
   const WALLET = accountKey('гаманець', 'UAH');
@@ -987,7 +991,7 @@ describe('the account map — the opening line and the two groups', () => {
   });
 
   it('says so plainly when the export holds no likely dubles at all', () => {
-    const plain = startWithText(startFlow(), csv(spend('1', 'mono black')));
+    const plain = startWithText(startFlow(), csv(spend('1', 'mono black')), kyivDateOf);
 
     expect(mapSummary(plain)).toMatchObject({ accounts: 1, duplicates: 0 });
     expect(mapSummary(plain).sentence).toBe(
@@ -1140,7 +1144,7 @@ describe('the account map — what is offered, and what is not', () => {
   const OTP = accountKey('OTP', 'UAH');
 
   it('Scenario: An entry already merged away is not a target', () => {
-    const state = startWithText(startFlow(), MANY);
+    const state = startWithText(startFlow(), MANY, kyivDateOf);
 
     const merged = redirectAccount(state, MONO, { to: 'entry', key: MONOBANK });
 
@@ -1154,7 +1158,7 @@ describe('the account map — what is offered, and what is not', () => {
       accounts: [{ ...existingAccount({ id: 'old', name: 'закритий' }), archived: true }],
     });
 
-    const offered = mergeTargets(startWithText(startFlow({ existing }), MANY), MONO);
+    const offered = mergeTargets(startWithText(startFlow({ existing }), MANY, kyivDateOf), MONO);
 
     expect(offered.map((t) => t.id)).not.toContain('account:old');
   });
@@ -1163,7 +1167,7 @@ describe('the account map — what is offered, and what is not', () => {
     // The owner keeps a «гаманець» and the export holds a Saldo account of the same name, both UAH.
     const existing = existingState({ accounts: [existingAccount({ id: 'w', name: 'гаманець' })] });
 
-    const offered = mergeTargets(startWithText(startFlow({ existing }), MANY), MONO);
+    const offered = mergeTargets(startWithText(startFlow({ existing }), MANY, kyivDateOf), MONO);
 
     expect(offered.map((t) => t.name)).toContain('гаманець · UAH');
     expect(offered.map((t) => t.name)).toContain('гаманець · UAH — наявний');
@@ -1176,7 +1180,7 @@ describe('the account map — what is offered, and what is not', () => {
       ...spend('3', 'monobank біла'),
       ...Array.from({ length: 15 }, (_, i) => spend(String(i + 4), `банка ${i + 4}`)).flat(),
     ]);
-    const state = startWithText(startFlow(), wide);
+    const state = startWithText(startFlow(), wide, kyivDateOf);
 
     const offered = mergeTargets(state, MONO);
     expect(offered).toHaveLength(17);
@@ -1202,7 +1206,7 @@ describe('the account map — what is offered, and what is not', () => {
       }),
     ]);
     const key = accountKey('РЕЗЕРВ', 'UAH');
-    const changed = setAccountKind(startWithText(startFlow(), reserve), key, 'savings');
+    const changed = setAccountKind(startWithText(startFlow(), reserve, kyivDateOf), key, 'savings');
     expect(changed.plan!.accounts[0]!.kind).toBe('savings');
 
     const given = setAccountKind(changed, key);
@@ -1220,7 +1224,7 @@ describe('the account map — what is offered, and what is not', () => {
    * review; this is the test that keeps it caught.
    */
   it('a вид chosen on a merged-away row would change nothing, which is why it is not offered', () => {
-    const merged = redirectAccount(startWithText(startFlow(), MANY), MONO, {
+    const merged = redirectAccount(startWithText(startFlow(), MANY, kyivDateOf), MONO, {
       to: 'entry',
       key: MONOBANK,
     });
@@ -1233,7 +1237,7 @@ describe('the account map — what is offered, and what is not', () => {
 
   it('names what a row receives, and says nothing when the receiver is not on the screen', () => {
     const existing = existingState({ accounts: [existingAccount({ id: 'w', name: 'спільний' })] });
-    const state = startWithText(startFlow({ existing }), MANY);
+    const state = startWithText(startFlow({ existing }), MANY, kyivDateOf);
 
     // Two entries onto one рахунок of the owner's: the thing receiving them is not a row here, so
     // neither row claims to receive the other — each says what it is, «Додається до наявного «…»».
@@ -1252,7 +1256,7 @@ describe('the account map — what is offered, and what is not', () => {
   });
 
   it('says each of the three row states in the owner’s words', () => {
-    const state = startWithText(startFlow(), MANY);
+    const state = startWithText(startFlow(), MANY, kyivDateOf);
     expect(stateLine(accountRows(state).find((r) => r.key === MONO)!)).toBe('Новий рахунок');
 
     const merged = redirectAccount(state, MONO, { to: 'entry', key: MONOBANK });
@@ -1386,7 +1390,7 @@ describe('the opening line stays true and stays Ukrainian', () => {
     const existing = existingState({
       accounts: alike.map((name, i) => existingAccount({ id: `e${i}`, name })),
     });
-    return startWithText(startFlow({ existing }), csvText);
+    return startWithText(startFlow({ existing }), csvText, kyivDateOf);
   };
 
   it('declines the adjective and not the noun after «на» — «13 схожих на дублі»', () => {
@@ -1535,5 +1539,169 @@ describe('what the журнал records about an імпорт', () => {
     ).rejects.toBe(refusal);
 
     expect(journalOf().map((e) => e.detail)).toEqual(['почалось', 'не вдалось']);
+  });
+});
+
+/**
+ * QA found the звірка reading `dropped-original-amount: the повернення keeps only 542575 UAH;
+ * 10329 EUR is dropped` — a machine code, English, and a сума in minor units. Every line the
+ * owner reads on this screen is worded here, in Ukrainian, with sums through `formatMoney` and
+ * days through `calendarLabel`; the engine hands over only the kind of row and its facts.
+ */
+describe('the звірка speaks Ukrainian', () => {
+  const NOW = new Date(2026, 8, 29, 12, 0, 0, 0);
+  const at = { transactionId: '7', row: 12, date: '2025-08-26' } as const;
+  /** Three Latin letters in a row: a word of English, or a raw code. Currency codes are allowed. */
+  const english = (line: string) =>
+    line.replace(/\b(?:UAH|USD|EUR|PLN|Saldo|UTC)\b/g, '').match(/[A-Za-z]{3,}/);
+
+  it('says a dropped original amount in formatted sums, not in minor units or a code', () => {
+    const row: UnexplainedRow = {
+      ...at,
+      reason: 'dropped-original-amount',
+      kept: money(542575, 'UAH'),
+      dropped: money(10329, 'EUR'),
+    };
+    const line = unexplainedLine(row, NOW);
+    expect(line).toBe(
+      `Повернення збережено як ${formatMoney(money(542575, 'UAH'))}; ` +
+        `суму ${formatMoney(money(10329, 'EUR'))} не збережено.`,
+    );
+    expect(line).toContain('5 425,75 UAH');
+    expect(line).not.toContain('542575');
+    expect(line).not.toContain('dropped-original-amount');
+  });
+
+  it('dates a dropped row as the app dates a day, and never prints the reason code', () => {
+    const row: UnexplainedRow = {
+      ...at,
+      reason: 'dropped-original-amount',
+      kept: money(542575, 'UAH'),
+      dropped: money(10329, 'EUR'),
+    };
+    expect(droppedRowLine(row, NOW)).toBe(`26 серпня 2025, рядок 12: ${unexplainedLine(row, NOW)}`);
+  });
+
+  it('says an accrual-month divergence with a named month and a named day', () => {
+    const row: UnexplainedRow = {
+      ...at,
+      date: '2025-09-08',
+      reason: 'accrual-month-divergence',
+      accruedTo: '2025-11',
+      exportDatetime: '2025-09-08T10:00:00.000',
+    };
+    expect(unexplainedLine(row, NOW)).toBe(
+      'Saldo відносить запис до місяця «Листопад 2025», хоча його дата — 8 вересня 2025; ' +
+        'імпорт залишає дату.',
+    );
+  });
+
+  it('says both days when the export dates a divergent row on another day than the phone does', () => {
+    // 22:00 UTC on 31 October is already 1 November in Kyiv — the day the транзакція gets.
+    const row: UnexplainedRow = {
+      ...at,
+      date: '2025-11-01',
+      reason: 'accrual-month-divergence',
+      accruedTo: '2025-09',
+      exportDatetime: '2025-10-31T22:00:00.000',
+    };
+    expect(unexplainedLine(row, NOW)).toBe(
+      'Saldo відносить запис до місяця «Вересень 2025», хоча його дата в експорті — ' +
+        '31 жовтня 2025 (22:00 за UTC); імпорт ставить дату за часом телефону — 1 листопада 2025.',
+    );
+  });
+
+  it('says a zero-only pair without a date, which it does not have', () => {
+    const row: UnexplainedRow = {
+      transactionId: '',
+      row: 4,
+      date: '',
+      reason: 'zero-only-pair',
+      saldoAccount: 'валюта моно',
+      currency: 'UAH',
+    };
+    expect(unexplainedLine(row, NOW)).toBe(
+      '«валюта моно» у UAH має лише нульові початкові залишки — такого рахунку не буде.',
+    );
+    expect(droppedRowLine(row, NOW)).toBe(`Рядок 4: ${unexplainedLine(row, NOW)}`);
+  });
+
+  it('says every other kind of row in Ukrainian too', () => {
+    const rows: UnexplainedRow[] = [
+      { ...at, reason: 'unpaired-in-transit', side: 'departure', from: 'White', to: 'Black' },
+      { ...at, reason: 'unpaired-in-transit', side: 'arrival', from: 'White', to: 'Black' },
+      { ...at, reason: 'merged-account-move', accountName: 'mono black' },
+      ...(
+        [
+          'domain-rejected',
+          'in-transit-without-account',
+          'in-transit-unknown-direction',
+          'in-transit-pair-unresolved',
+          'opening-without-account',
+          'debt-without-single-account',
+          'debt-on-unknown-account',
+          'debt-onto-itself',
+          'move-unresolved',
+          'no-rule',
+          'unknown-account',
+        ] as const
+      ).map((shape): UnexplainedRow => ({ ...at, reason: 'unrecognised-shape', shape })),
+      { ...at, reason: 'unrecognised-shape', shape: 'unmapped-category', name: 'булка' },
+      { ...at, reason: 'unrecognised-shape', shape: 'unmapped-source', name: 'Salary' },
+    ];
+    const lines = rows.map((row) => unexplainedLine(row, NOW));
+    expect(lines[0]).toBe('Гроші пішли з «White» на «Black», але їхнього зарахування немає.');
+    expect(lines[1]).toBe('Гроші прийшли на «Black» з «White», але їхнього списання немає.');
+    expect(lines[2]).toBe('Обидва кінці переказу — рахунок «mono black», тож переказу не буде.');
+    expect(lines.at(-2)).toBe('Для «булка» не вибрано категорію.');
+    expect(lines.at(-1)).toBe('Для «Salary» не вибрано джерело.');
+    for (const line of lines) {
+      // Names quoted from the export are the owner's own words; nothing else may be Latin.
+      expect(english(line.replace(/«[^»]*»/g, ''))).toBeNull();
+    }
+    // Each kind of row reads differently — none falls through to one generic sentence.
+    expect(new Set(lines).size).toBe(lines.length);
+  });
+
+  it('says what explains a difference with the sum first', () => {
+    const row: UnexplainedRow = {
+      ...at,
+      reason: 'merged-account-move',
+      accountName: 'mono black',
+    };
+    expect(explanationLine({ kind: 'export-row', amount: money(-12198, 'UAH'), row }, NOW)).toBe(
+      `${formatMoney(money(-12198, 'UAH'))} — ${unexplainedLine(row, NOW)}`,
+    );
+    expect(
+      explanationLine({ kind: 'existing-transactions', amount: money(5000, 'UAH'), count: 3 }, NOW),
+    ).toBe(`${formatMoney(money(5000, 'UAH'))} — вже записано вручну (3)`);
+  });
+
+  it('refuses the wrong file in Ukrainian', () => {
+    const state = startWithText(startFlow(), '"date","sum"\n"2024-10-27","123.00"', kyivDateOf);
+    expect(state.refusal).toMatch(/^Це не схоже на експорт Saldo: у заголовку бракує стовпців /);
+    expect(state.refusal).toMatch(/Оберіть інший файл\.$/);
+    expect(state.refusal).not.toContain('the header');
+  });
+
+  it('rejects a cross-currency merge in Ukrainian', () => {
+    const existing = existingState({
+      accounts: [existingAccount({ id: 'usd', name: 'долари', currency: 'USD' })],
+    });
+    const state = startWithText(startFlow({ existing }), ORDINARY, kyivDateOf);
+    const rejected = redirectAccount(state, accountKey('mono black', 'UAH'), {
+      to: 'account',
+      accountId: 'usd',
+    });
+    const row = accountRows(rejected).find((r) => r.entry.saldoAccount === 'mono black')!;
+    expect(row.rejection).toBe('Не можна об’єднати: «mono black» — у UAH, а «долари» — у USD.');
+  });
+
+  it('draws every line of the звірка through these words, never a raw reason or detail', () => {
+    const screen = readFileSync(new URL('../app/manage/saldo-import.tsx', import.meta.url), 'utf8');
+    expect(screen).toContain('explanationLine(explanation, now)');
+    expect(screen).toContain('droppedRowLine(row, now)');
+    expect(screen).not.toContain('row.reason');
+    expect(screen).not.toContain('.detail');
   });
 });

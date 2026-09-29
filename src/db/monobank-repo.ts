@@ -648,9 +648,9 @@ export function monobankRepo(db: Storage) {
     },
 
     /**
-     * The moment this device last sent a request to the personal API, or `undefined` on a device
-     * that has sent none. What seeds a run's pacing, so the minute between requests is a property
-     * of the phone rather than of one run.
+     * The moment this device last sent a statement request, or `undefined` on a device that has
+     * sent none. What seeds a run's pacing, so the minute between statement requests is a property
+     * of the phone rather than of one run. Client-info is limited separately and not counted here.
      */
     lastRequestAtMs(): number | undefined {
       const row = db.select().from(monobankRequestPace).get();
@@ -658,7 +658,7 @@ export function monobankRepo(db: Storage) {
     },
 
     /**
-     * A request was sent, whatever it answered. Replaces whatever was remembered; there is one row
+     * A statement request was sent, whatever it answered. Replaces whatever was remembered; there is one row
      * — a history of requests is not what pacing needs, and the latest is the only one it reads.
      */
     noteRequest(at: Date): void {

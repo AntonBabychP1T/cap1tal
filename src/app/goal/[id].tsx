@@ -126,7 +126,8 @@ export default function GoalScreen() {
         {model.accounts.map((row, index) => (
           <ListRow key={row.accountId} last={index === model.accounts.length - 1} style={styles.row}>
             <View style={styles.name}>
-              <ThemedText numberOfLines={1}>
+              {/* Two lines: at a large font a name cut to one line can read as its neighbour's. */}
+              <ThemedText numberOfLines={2}>
                 {row.name}
                 {row.archived ? ' · в архіві' : ''}
               </ThemedText>

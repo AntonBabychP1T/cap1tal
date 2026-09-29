@@ -121,6 +121,7 @@ export const CURRENCY_BY_NUMERIC: Readonly<Record<number, CurrencyCode>> = {
   840: 'USD',
   978: 'EUR',
   980: 'UAH',
+  985: 'PLN',
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

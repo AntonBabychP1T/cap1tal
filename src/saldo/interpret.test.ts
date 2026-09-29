@@ -204,6 +204,7 @@ describe('interpret — перекази between two real рахунки', () =>
     expect(plan.transactions).toEqual([]);
     const dropped = plan.unexplained.filter((row) => row.reason === 'merged-account-move');
     expect(dropped).toHaveLength(2);
+    expect(dropped[0]).toMatchObject({ accountName: 'Monobank UAH, Black' });
     // The credit and the debit cancel, so the рахунок is not one kopiyka out of balance.
     expect(dropped.reduce((sum, row) => sum + (row.effect?.amount ?? 0), 0)).toBe(0);
   });
@@ -289,7 +290,11 @@ describe('interpret — витрати, повернення', () => {
     expect(moves(plan)[0]).not.toHaveProperty('originalAmount');
     const dropped = plan.unexplained.filter((r) => r.reason === 'dropped-original-amount');
     expect(dropped).toHaveLength(1);
-    expect(dropped[0]?.detail).toContain('18636 PLN');
+    // The two figures travel as money, not as prose: the screen formats them, the engine does not.
+    expect(dropped[0]).toMatchObject({
+      kept: { amount: 221482, currency: 'UAH' },
+      dropped: { amount: 18636, currency: 'PLN' },
+    });
   });
 });
 
@@ -503,6 +508,9 @@ describe('interpret — MONEY_ON_THE_WAY', () => {
     expect(unpaired[0]).toMatchObject({
       accountId: accountNamed(plan, 'Monobank UAH, White').id,
       effect: { amount: -12198, currency: 'UAH' },
+      side: 'departure',
+      from: 'Monobank UAH, White',
+      to: 'Monobank UAH, Black',
     });
   });
 
@@ -649,13 +657,19 @@ describe('interpret — unknown shapes', () => {
       pair({ id: '1', account: 'mono black', journalType: 'CREDIT', amount: '0.00', other: 'гаманець', otherType: 'CASH' }),
     );
     expect(zeroTransfer.transactions).toEqual([]);
-    expect(zeroTransfer.unexplained[0]?.detail).toContain('the domain rejects this shape');
+    expect(zeroTransfer.unexplained[0]).toMatchObject({
+      reason: 'unrecognised-shape',
+      shape: 'domain-rejected',
+    });
 
     const zeroRefund = planFrom(
       pair({ id: '1', account: 'mono black', journalType: 'DEBIT', amount: '0.00', other: 'Groceries', otherType: 'EXPENSES' }),
     );
     expect(zeroRefund.transactions).toEqual([]);
-    expect(zeroRefund.unexplained[0]?.detail).toContain('the domain rejects this shape');
+    expect(zeroRefund.unexplained[0]).toMatchObject({
+      reason: 'unrecognised-shape',
+      shape: 'domain-rejected',
+    });
 
     // And the рахунок-борг of a «Борг» переказ that did not survive is in no plan: the report
     // states a balance for every рахунок-борг it lists, and one nothing explains has none.
@@ -680,9 +694,13 @@ describe('interpret — unknown shapes', () => {
     ]);
     const plan = interpret({ transactions, survey: elsewhere });
     expect(plan.transactions).toEqual([]);
-    expect(plan.unexplained.map((row) => row.detail)).toEqual([
-      'no категорія is mapped for "булка"',
-      'no джерело is mapped for "Salary"',
+    expect(
+      plan.unexplained.map((row) =>
+        row.reason === 'unrecognised-shape' ? [row.shape, row.name] : [row.reason],
+      ),
+    ).toEqual([
+      ['unmapped-category', 'булка'],
+      ['unmapped-source', 'Salary'],
     ]);
   });
 
@@ -695,7 +713,23 @@ describe('interpret — unknown shapes', () => {
     expect(moves(plan)[0]?.date).toBe('2025-09-08');
     const noted = plan.unexplained.filter((r) => r.reason === 'accrual-month-divergence');
     expect(noted).toHaveLength(2);
-    expect(noted[0]?.detail).toContain('2025-11');
+    // The month it is accrued to, and the Transaction Date as the export writes it.
+    expect(noted[0]).toMatchObject({
+      accruedTo: '2025-11',
+      exportDatetime: '2025-09-08T10:00:00.000',
+      date: '2025-09-08',
+    });
+  });
+
+  it('Scenario: A month-end evening entry is not a divergence', () => {
+    // Kyiv midnight of 1 November (UTC+2); Saldo fills Accrual Month from the same UTC text.
+    const plan = planFrom(
+      spend({ id: '1', amount: '10.00', other: 'Groceries', datetime: '2025-10-31T22:00' }).map(
+        (row) => ({ ...row, 'Accrual Month': '2025-10-31' }),
+      ),
+    );
+    expect(moves(plan)[0]?.date).toBe('2025-11-01');
+    expect(plan.unexplained.filter((r) => r.reason === 'accrual-month-divergence')).toEqual([]);
   });
 
   it('notes a pair that carries nothing but zero opening rows', () => {
@@ -704,7 +738,9 @@ describe('interpret — unknown shapes', () => {
       ...pair({ id: '2', account: 'валюта моно', journalType: 'DEBIT', amount: '0.00', other: 'Initial balance', otherType: 'EQUITY' }),
     ]);
     expect(plan.accounts.map((a) => a.currency)).toEqual(['USD']);
-    expect(plan.unexplained.filter((r) => r.reason === 'zero-only-pair')).toHaveLength(1);
+    const zeroOnly = plan.unexplained.filter((r) => r.reason === 'zero-only-pair');
+    expect(zeroOnly).toHaveLength(1);
+    expect(zeroOnly[0]).toMatchObject({ saldoAccount: 'валюта моно', currency: 'UAH' });
   });
 });
 

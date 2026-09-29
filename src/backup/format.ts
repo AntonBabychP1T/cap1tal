@@ -3,7 +3,7 @@ import { identityKey, receiptIdentity } from '../domain/fiscal-receipt';
 import type { Category, Source } from '../domain/category';
 import type { CategoryLimit } from '../domain/limits';
 import { compositionProblem, type AccumulationGoal } from '../domain/goals';
-import { money, type CurrencyCode, type Money } from '../domain/money';
+import { MAX_AMOUNT_MINOR, money, type CurrencyCode, type Money } from '../domain/money';
 import { isoDate, type IsoDate, type Transaction } from '../domain/transaction';
 import type { TimeOfDay } from '../reminders/time';
 
@@ -415,15 +415,24 @@ function dateAt(value: unknown, at: string): IsoDate {
 /**
  * A сума, through the domain's own constructor: an integer in minor units beside an ISO-4217 code,
  * or no сума at all. Nothing in a бекап may be money the domain would refuse to build.
+ *
+ * Nor money above `MAX_AMOUNT_MINOR`, either side of zero — the ceiling every ingress keeps. A row
+ * at the edge of the safe-integer range is a valid `money` on its own and breaks every sum it
+ * enters; restoring one would carry that crash onto a clean phone.
  */
 function moneyAt(value: unknown, at: string): Money {
   const row = objectAt(value, at);
+  let built: Money;
   try {
-    return money(integerAt(row.amount, `${at}.amount`), stringAt(row.currency, `${at}.currency`));
+    built = money(integerAt(row.amount, `${at}.amount`), stringAt(row.currency, `${at}.currency`));
   } catch (error) {
     if (error instanceof BackupProblem) throw error;
     return fail(`${at} не є сумою в мінорних одиницях із кодом валюти`);
   }
+  if (Math.abs(built.amount) > MAX_AMOUNT_MINOR) {
+    fail(`${at} — сума завелика: щонайбільше 999\u00A0999\u00A0999,99 за модулем`);
+  }
+  return built;
 }
 
 /**

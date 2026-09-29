@@ -1,6 +1,7 @@
 import { activeAccounts, type Account, type AccountKind } from '../domain/account';
 import { EVIDENCE_STRENGTH, nameEvidence, type NameEvidence } from '../domain/name-match';
 import type { MonobankAccount } from './api';
+import { Refusal } from '../domain/refusal';
 
 /**
  * What it means for a monobank account to *be* one of the owner's рахунки.
@@ -46,15 +47,15 @@ export function validateLink(input: {
 }): void {
   const { monobankAccount, account, links } = input;
   if (monobankAccount.currency !== account.currency) {
-    throw new Error(
+    throw new Refusal(
       `валюти різні: ${monobankAccount.currency} у monobank і ${account.currency} на рахунку`,
     );
   }
   if (links.some((link) => link.monobankAccountId === monobankAccount.id)) {
-    throw new Error('цей рахунок monobank уже приєднано');
+    throw new Refusal('цей рахунок monobank уже приєднано');
   }
   if (links.some((link) => link.accountId === account.id)) {
-    throw new Error('до цього рахунку вже приєднано рахунок monobank');
+    throw new Refusal('до цього рахунку вже приєднано рахунок monobank');
   }
 }
 

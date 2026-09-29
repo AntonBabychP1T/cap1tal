@@ -148,8 +148,14 @@ export function failureMessage(error: unknown): string {
 export const ACCUMULATION_GOALS_TITLE = 'Накопичення';
 export const SPENDING_GOALS_TITLE = 'Ліміти витрат';
 
-/** The currencies an account can be opened in — FR-A1's set for v1. */
-export const OFFERED_CURRENCIES = ['UAH', 'EUR', 'USD'] as const;
+/**
+ * The currencies an account can be opened in — FR-A1's set for v1, plus PLN, which the owner's
+ * own Saldo export holds and which the form could not offer. UAH first, the rest alphabetical:
+ * the order `byCurrency` (`amount-input.ts`) sorts every per-currency list into, so a chip row
+ * and a totals list never disagree about which comes first. Every one of them has two minor
+ * digits — the converter and the monobank tables rely on that (`monobank/currency.ts`).
+ */
+export const OFFERED_CURRENCIES = ['UAH', 'EUR', 'PLN', 'USD'] as const;
 
 /**
  * The Ukrainian three-form plural, re-exported from the one place it is written —

@@ -93,7 +93,7 @@ describe('limitRows', () => {
     );
     // The currency is shown next to the сума, so a ліміт in a currency the category is never spent
     // in is visible where it was set.
-    expect(LIMIT_CURRENCIES).toEqual(['UAH', 'EUR', 'USD']);
+    expect(LIMIT_CURRENCIES).toEqual(['UAH', 'EUR', 'PLN', 'USD']);
     expect(DEFAULT_LIMIT_CURRENCY).toBe('UAH');
   });
 

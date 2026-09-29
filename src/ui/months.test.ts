@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { todayIso } from './dates';
 import {
+  canStepBack,
   canStepForward,
   currentMonth,
   monthInLabel,
@@ -9,7 +10,9 @@ import {
   monthsOf,
   nextMonth,
   prevMonth,
+  reachableMonths,
   shortMonthLabel,
+  stepBack,
   stepForward,
 } from './months';
 
@@ -99,6 +102,51 @@ describe('the clamp at the current month', () => {
   it('A month somehow already past the current one is not carried further forward', () => {
     expect(canStepForward('2026-11', august)).toBe(false);
     expect(stepForward('2026-11', august)).toBe('2026-11');
+  });
+});
+
+/**
+ * QA 2026-09-29: «назад» reached January 2024 on a phone whose first транзакція is from 2025, and a
+ * транзакція dated ahead of the current month was on Головний yet unreachable on Місяць. The arrows
+ * are bounded by what is recorded; the current month is always inside the bounds.
+ */
+describe('the months Місяць can reach', () => {
+  it('From the month of the first record to the current month', () => {
+    const reach = reachableMonths({ earliest: '2025-03-14', latest: '2026-08-02' }, august);
+    expect(reach).toEqual({ first: '2025-03', last: '2026-08' });
+  });
+
+  it('Nothing recorded: the current month alone', () => {
+    expect(reachableMonths(undefined, august)).toEqual({ first: '2026-08', last: '2026-08' });
+  });
+
+  it('A record dated after the current month makes its month reachable', () => {
+    const reach = reachableMonths({ earliest: '2026-01-05', latest: '2027-01-15' }, august);
+    expect(reach).toEqual({ first: '2026-01', last: '2027-01' });
+    expect(canStepForward('2026-08', august, reach)).toBe(true);
+    expect(stepForward('2026-12', august, reach)).toBe('2027-01');
+    expect(canStepForward('2027-01', august, reach)).toBe(false);
+    expect(stepForward('2027-01', august, reach)).toBe('2027-01');
+  });
+
+  it('Only future records: back still reaches the current month, and no earlier', () => {
+    const reach = reachableMonths({ earliest: '2026-10-01', latest: '2026-10-01' }, august);
+    expect(reach).toEqual({ first: '2026-08', last: '2026-10' });
+    expect(canStepBack('2026-08', reach)).toBe(false);
+  });
+
+  it('Back stops at the month of the first record', () => {
+    const reach = reachableMonths({ earliest: '2025-12-31', latest: '2026-08-02' }, august);
+    expect(canStepBack('2026-01', reach)).toBe(true);
+    expect(stepBack('2026-01', reach)).toBe('2025-12');
+    expect(canStepBack('2025-12', reach)).toBe(false);
+    expect(stepBack('2025-12', reach)).toBe('2025-12');
+  });
+
+  it('Without bounds, forward keeps the current month as its edge', () => {
+    // What every caller that passes no bounds already relied on.
+    expect(canStepForward('2026-08', august)).toBe(false);
+    expect(canStepForward('2026-07', august)).toBe(true);
   });
 });
 

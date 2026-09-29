@@ -20,6 +20,7 @@ import {
   entryFromRoute,
   buildEntry,
   defaultAccountId,
+  entryDateCheck,
   normaliseDescription,
   proposeForTransfer,
   proposedCategoryId,
@@ -474,7 +475,7 @@ describe('the дата a form was filled with', () => {
       const { stored, refused } = record(
         draft({
           type,
-          date: '31.12.2026',
+          date: '31 грудня',
           amount: '100',
           ...(type === 'income' ? { sourceId: 'salary' } : {}),
           ...(type === 'refund' ? { categoryId: 'groceries' } : {}),
@@ -483,9 +484,15 @@ describe('the дата a form was filled with', () => {
       );
       expect(stored, `a ${type} with a mistyped дата was stored`).toBeUndefined();
       expect(refused, `a ${type}'s дата was refused in English`).toBe(
-        'дата пишеться як РРРР-ММ-ДД, напр. 2026-08-31, а не «31.12.2026»',
+        'дата пишеться як ДД.ММ.РРРР або РРРР-ММ-ДД, напр. 31.08.2026, а не «31 грудня»',
       );
     }
+  });
+
+  it('A дата typed day first with dots is stored as that calendar day', () => {
+    const { stored, refused } = record(draft({ type: 'expense', date: '5.8.2026', amount: '100' }));
+    expect(refused).toBeUndefined();
+    expect(stored?.date).toBe('2026-08-05');
   });
 
   it('Scenario: A day that does not exist is refused in Ukrainian', () => {
@@ -711,6 +718,16 @@ describe('defaultAccountId', () => {
   it('A рахунок that no longer exists pre-chooses nothing', () => {
     expect(defaultAccountId('gone', offered)).toBeUndefined();
   });
+
+  it('The рахунок the route names wins over the remembered one', () => {
+    expect(defaultAccountId('card', offered, 'jar')).toBe('jar');
+    expect(defaultAccountId(undefined, offered, 'jar')).toBe('jar');
+  });
+
+  it('A named рахунок that is not offered falls back to the remembered one', () => {
+    expect(defaultAccountId('card', [card], 'jar')).toBe('card');
+    expect(defaultAccountId('card', offered, 'gone')).toBe('card');
+  });
 });
 
 /**
@@ -741,23 +758,18 @@ describe('the entry screen follows the опис', () => {
     expect(body).toContain('setPickedByOwner(true)');
     expect(body).toContain('setCategoryId(picked)');
     // The category picker for a витрата is this same handler — one tap replaces the proposal.
-    expect(entryScreen).toContain("onSelect={entry === 'expense' ? chooseCategory : changing(setCategoryId)}");
+    expect(entryScreen).toContain("onSelect={entry === 'expense' ? chooseCategory : setCategoryId}");
   });
 
   it('Recording stores exactly the категорія shown, and pickedByOwner resets per recording', () => {
     expect(entryScreen).toContain('categoryId: displayedCategoryId,');
-    // Switching type and a fresh `clear()` after a store both drop the flag, so the next витрата
-    // follows its own опис from nothing, exactly as a fresh form would.
+    // Switching type drops the flag. A store leaves the screen (below), so the next витрата opens
+    // a fresh form that follows its own опис from nothing.
     const chooseEntry = entryScreen.slice(
       entryScreen.indexOf('const chooseEntry = useCallback'),
-      entryScreen.indexOf('const clear = useCallback'),
-    );
-    expect(chooseEntry).toContain('setPickedByOwner(false)');
-    const clear = entryScreen.slice(
-      entryScreen.indexOf('const clear = useCallback'),
       entryScreen.indexOf('const displayedCategoryId'),
     );
-    expect(clear).toContain('setPickedByOwner(false)');
+    expect(chooseEntry).toContain('setPickedByOwner(false)');
   });
 });
 
@@ -790,8 +802,14 @@ describe('who may remember a рахунок', () => {
   });
 
   it('The form opens on what was remembered, resolved against what is offered', () => {
-    expect(entryScreen).toContain('defaultAccountId(stored.rememberedAccountId');
+    expect(entryScreen).toMatch(/defaultAccountId\(\s*stored\.rememberedAccountId/);
     expect(entryScreen).toContain('entryDefaultsRepo.remembered()');
+  });
+
+  it('The «+» on a рахунок opens the form on that рахунок', () => {
+    expect(entryScreen).toContain('asked.account,');
+    const accountScreen = source('../app/account/[id].tsx');
+    expect(accountScreen).toContain("params: { account: a.id }");
   });
 });
 
@@ -836,28 +854,37 @@ describe('Головний shows itself from its top', () => {
 });
 
 /**
- * What a store leaves the entry screen in. Wiring `verify` never runs, so the assertion is
- * structural like the ones above: the confirmation is shown where the owner is looking, and the
- * form is left ready for the next транзакція rather than closed under them.
+ * What a store does to the entry screen. Wiring `verify` never runs, so the assertion is
+ * structural like the ones above.
+ *
+ * It used to clear the form and stay, with a confirmation above «Записати», so the next
+ * транзакція of the day cost no navigation. The owner reported that as a bug (2026-09-23): after
+ * «Записати» they expect Головний back, whose стрічка then opens on what was just recorded.
  */
 describe('the entry screen after a store', () => {
   const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
   const entryScreen = source('../app/transaction/new.tsx');
 
-  it('Scenario: The form is ready for the next транзакція', () => {
-    const clear = entryScreen.slice(entryScreen.indexOf('const clear = useCallback'));
-    const body = clear.slice(0, clear.indexOf('const store = useCallback'));
+  it('Recording returns to where the owner came from, after everything is stored', () => {
+    const store = entryScreen.slice(entryScreen.indexOf('const store = useCallback'));
+    const body = store.slice(0, store.indexOf('const record = useCallback'));
 
-    // Cleared: what belonged to the транзакція just stored.
-    expect(body).toContain("setAmount('')");
-    expect(body).toContain("setArrived('')");
-    expect(body).toContain("setDescription('')");
-    expect(body).toContain('setCategoryId(undefined)');
-    expect(body).toContain('setSourceId(undefined)');
-    expect(body).toContain('setDate(todayIso(new Date()))');
-    // Kept: the type and the рахунок — the рахунок being the one the store has just remembered.
-    expect(body).not.toContain('setEntry(');
-    expect(body).not.toContain('setFromId(');
+    const saved = body.indexOf('transactionsRepo.save(t, now)');
+    const remembered = body.indexOf('entryDefaultsRepo.remember(fromId)');
+    const back = body.indexOf('router.back()');
+    expect(saved).toBeGreaterThan(-1);
+    expect(remembered).toBeGreaterThan(saved);
+    expect(back).toBeGreaterThan(remembered);
+    // Nothing is left behind to clear: no confirmation, no reset form.
+    expect(entryScreen).not.toContain('setConfirmation');
+    expect(entryScreen).not.toContain('const clear = useCallback');
+  });
+
+  it('A refusal keeps the owner on the form with what they typed', () => {
+    const record = entryScreen.slice(entryScreen.indexOf('const record = useCallback'));
+    const failure = record.slice(record.indexOf('} catch (error) {'), record.indexOf('}, ['));
+    expect(failure).toContain('Alert.alert(');
+    expect(failure).not.toContain('router.');
   });
 
   it('Scenario: With no рахунок nothing can be recorded yet', () => {
@@ -876,15 +903,6 @@ describe('the entry screen after a store', () => {
     expect(entryScreen).toContain('accountChoicesFor(stored.accounts, undefined)');
   });
 
-  it('The confirmation is what the store leaves behind, and no navigation is', () => {
-    const store = entryScreen.slice(entryScreen.indexOf('const store = useCallback'));
-    const body = store.slice(0, store.indexOf('const record = useCallback'));
-
-    expect(body).toContain('setConfirmation(');
-    expect(body).toContain('recordedConfirmation(written');
-    // The owner leaves with «Назад»; a store that navigated would take the confirmation with it.
-    expect(body).not.toContain('router.');
-  });
 });
 
 describe('recordedConfirmation', () => {
@@ -1098,21 +1116,20 @@ describe('proposedCategoryId', () => {
 describe('the entry form as drawn', () => {
   const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
-  it('The confirmation is seen where the button is — drawn directly above «Записати»', () => {
-    const screen = source('../app/transaction/new.tsx');
-    const confirmation = screen.indexOf('{confirmation ? (');
-    const button = screen.indexOf('<Action title="Записати"');
-    expect(confirmation).toBeGreaterThan(-1);
-    expect(button).toBeGreaterThan(confirmation);
-    // Nothing but the confirmation stands between the two.
-    expect(screen.slice(confirmation, button)).not.toMatch(/<(Field|Picker|Choices|DateField)\b/);
-  });
-
   it('The дата is typed on a digit keyboard Android honours', () => {
     const form = readFileSync(new URL('../components/form.tsx', import.meta.url), 'utf8');
     // `numbers-and-punctuation` alone is iOS-only: Android shows letters for it.
     expect(form).toMatch(/android: 'phone-pad'/);
     expect(form).toContain('keyboardType={DATE_KEYBOARD}');
+  });
+
+  it('The дата can be picked in the platform date picker, beside the typed field', () => {
+    const form = readFileSync(new URL('../components/form.tsx', import.meta.url), 'utf8');
+    expect(form).toContain("from '@expo/ui/community/datetime-picker'");
+    expect(form).toContain('label="Календар"');
+    // Opened on the typed дата and read back per platform, never through toISOString().
+    expect(form).toContain('pickerInstant(opened)');
+    expect(form).toMatch(/pickedDate\(date, Platform\.OS === 'android' \? 'utc' : 'local'\)/);
   });
 
   it('Both the entry form and editing set the дата through DateField, not a typed field of their own', () => {
@@ -1121,5 +1138,89 @@ describe('the entry form as drawn', () => {
       expect(screen).toContain('<DateField');
       expect(screen).not.toContain('РРРР-ММ-ДД');
     }
+  });
+});
+
+/**
+ * A typo in the year used to be stored as typed: 2099-01-01 then sat on top of «Останні
+ * транзакції» forever, beyond anything Місяць could step to, and 1900-01-01 quietly moved every
+ * balance it touched. `now` is a fixed local instant — 2026-08-24, the same TODAY the drafts above
+ * use — so the window's edges are the test's, not the wall clock's.
+ */
+describe('the дата of a транзакція being recorded or edited', () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+
+  const refusal = (date: string, stored?: string): string | undefined => {
+    try {
+      entryDateCheck(date as never, now, stored as never);
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+
+  it('A дата far in the future is refused, naming it', () => {
+    expect(refusal('2099-01-01')).toBe(
+      'дата «1 січня 2099» — більше ніж за рік від сьогодні; перевірте рік',
+    );
+  });
+
+  it('A дата before 2000 is refused, naming it', () => {
+    expect(refusal('1900-01-01')).toBe('дата «1 січня 1900» — раніше 2000 року; перевірте рік');
+    expect(refusal('1999-12-31')).toBe('дата «31 грудня 1999» — раніше 2000 року; перевірте рік');
+  });
+
+  it('The window is inclusive at both edges', () => {
+    expect(entryDateCheck('2000-01-01', now)).toEqual({ kind: 'ok' });
+    // A year after today is still asked about, not refused; the day after it is refused.
+    expect(entryDateCheck('2027-08-24', now).kind).toBe('confirm');
+    expect(refusal('2027-08-25')).toMatch(/^дата «25 серпня 2027» — більше ніж за рік/);
+  });
+
+  it('Today and any past дата since 2000 are recorded without a question', () => {
+    expect(entryDateCheck(TODAY, now)).toEqual({ kind: 'ok' });
+    expect(entryDateCheck('2026-08-23', now)).toEqual({ kind: 'ok' });
+    expect(entryDateCheck('2012-03-15', now)).toEqual({ kind: 'ok' });
+  });
+
+  it('A дата after today, within the year, asks first — naming it', () => {
+    expect(entryDateCheck('2026-08-25', now)).toEqual({
+      kind: 'confirm',
+      title: 'Дата в майбутньому',
+      message: '«25 серпня» ще не настала. Записати транзакцію цією датою?',
+    });
+    expect(entryDateCheck('2027-01-05', now)).toMatchObject({
+      kind: 'confirm',
+      message: '«5 січня 2027» ще не настала. Записати транзакцію цією датою?',
+    });
+  });
+
+  it('"Today" is the local calendar day, not UTC', () => {
+    // 00:30 local on the 25th: the 25th is today, whatever the UTC date still says.
+    expect(entryDateCheck('2026-08-25', new Date(2026, 7, 25, 0, 30))).toEqual({ kind: 'ok' });
+  });
+
+  it('Editing leaves a stored дата alone, even one the window would refuse today', () => {
+    // An older import or a record made before this check must stay editable — its категорія,
+    // its сума — without the owner being forced to change a дата they did not touch.
+    expect(entryDateCheck('1999-06-01', now, '1999-06-01')).toEqual({ kind: 'ok' });
+    expect(entryDateCheck('2026-09-10', now, '2026-09-10')).toEqual({ kind: 'ok' });
+    // Changing it is judged like recording.
+    expect(refusal('2099-06-01', '2026-06-01')).toMatch(/^дата «1 червня 2099»/);
+    expect(entryDateCheck('2026-09-10', now, '2026-08-01').kind).toBe('confirm');
+  });
+});
+
+describe('the дата check as wired', () => {
+  const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+
+  it('Both recording and editing judge the дата before anything is stored', () => {
+    for (const path of ['../app/transaction/new.tsx', '../app/transaction/[id].tsx']) {
+      const screen = source(path);
+      expect(screen).toContain('entryDateCheck(');
+      expect(screen).toContain("text: 'Скасувати', style: 'cancel'");
+    }
+    // Editing passes the stored дата, so an untouched one is never re-judged.
+    expect(source('../app/transaction/[id].tsx')).toMatch(/entryDateCheck\(built\.date, new Date\(\), original\.date\)/);
   });
 });

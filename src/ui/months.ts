@@ -71,21 +71,66 @@ export function nextMonth(month: Month): Month {
 }
 
 /**
- * Whether stepping forward from `month` stays at or before the current one. The screen asks this
- * to decide whether to offer the control at all: the current month is the far edge, and a
- * disabled-looking button that does nothing is worse than no button.
+ * The months Місяць's arrows can reach: from the month of the first recorded транзакція to the
+ * later of the current month and the month of the last one. The current month is always inside —
+ * with nothing recorded it is the only one, and a record dated only ahead of it still leaves it
+ * the first.
+ *
+ * Why bounds at all (QA 2026-09-29): «назад» had none and walked into January 2024 on a phone whose
+ * history starts later — month after empty month claiming to be a picture — while a транзакція
+ * dated after the current month showed on Головний yet lay past the far edge, unreachable. The
+ * recording forms now ask before a future дата and refuse one more than a year ahead
+ * (`entryDateCheck`), so the forward stretch is short; but what is recorded must be reachable.
+ *
+ * `recorded` is the earliest and latest дата in storage (`transactions.recordedSpan()`), read once
+ * — two dates, never the history.
  */
-export function canStepForward(month: Month, now: Date): boolean {
-  return nextMonth(month) <= currentMonth(now);
+export interface ReachableMonths {
+  readonly first: Month;
+  readonly last: Month;
+}
+
+export function reachableMonths(
+  recorded: { readonly earliest: IsoDate; readonly latest: IsoDate } | undefined,
+  now: Date,
+): ReachableMonths {
+  const current = currentMonth(now);
+  if (!recorded) {
+    return { first: current, last: current };
+  }
+  const first = monthOf(recorded.earliest);
+  const last = monthOf(recorded.latest);
+  return { first: first < current ? first : current, last: last > current ? last : current };
 }
 
 /**
- * The forward step, clamped. The screen already hides the control at the edge; this is what makes
- * the clamp true rather than merely offered — a month in the future has no transactions to show
- * and would be a screen full of zeroes claiming to be a picture.
+ * Whether stepping forward from `month` stays inside what can be reached. The screen asks this to
+ * decide whether the control is live: past the edge a month has no transactions to show and would
+ * be a screen full of zeroes claiming to be a picture.
+ *
+ * Without `reach` the edge is the current month, which is what it always was before records dated
+ * ahead of it became reachable.
  */
-export function stepForward(month: Month, now: Date): Month {
-  return canStepForward(month, now) ? nextMonth(month) : month;
+export function canStepForward(month: Month, now: Date, reach?: ReachableMonths): boolean {
+  return nextMonth(month) <= (reach?.last ?? currentMonth(now));
+}
+
+/**
+ * The forward step, clamped. The screen already disables the control at the edge; this is what
+ * makes the clamp true rather than merely offered.
+ */
+export function stepForward(month: Month, now: Date, reach?: ReachableMonths): Month {
+  return canStepForward(month, now, reach) ? nextMonth(month) : month;
+}
+
+/** Whether stepping back from `month` stays at or after the month of the first record. */
+export function canStepBack(month: Month, reach: ReachableMonths): boolean {
+  return prevMonth(month) >= reach.first;
+}
+
+/** The back step, clamped at the month of the first record, as `stepForward` is at the far edge. */
+export function stepBack(month: Month, reach: ReachableMonths): Month {
+  return canStepBack(month, reach) ? prevMonth(month) : month;
 }
 
 /** «Серпень 2026». Hardcoded rather than `Intl`, so Vitest on Node and Hermes cannot disagree. */
