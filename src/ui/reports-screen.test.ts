@@ -20,7 +20,15 @@ import { accountsRepo } from '../db/accounts-repo';
 import { openTestDb, seedReferences } from '../db/test-db';
 import { transactionsRepo } from '../db/transactions-repo';
 import * as reports from '../domain/reports';
-import { reportsHistory, reportsSelection, reportsViewModel } from './reports-screen';
+import {
+  categoryBars,
+  columnBarKey,
+  columnMorph,
+  historyBars,
+  reportsHistory,
+  reportsSelection,
+  reportsViewModel,
+} from './reports-screen';
 
 // Pass-through spies on the history derivations, so a test can count how often they run.
 vi.mock('../domain/reports', async (importOriginal) => {
@@ -942,6 +950,80 @@ describe('what a choice on Звіти re-derives', () => {
       expect(derivations).toBe(2);
     } finally {
       storage.close();
+    }
+  });
+});
+
+describe('the Звіти bars on their way', () => {
+  it('Scenario: Switching the Звіти currency moves the bars', () => {
+    const transactions: Transaction[] = [
+      spend('u1', '2026-07-10', 100000),
+      spend('u2', '2026-08-10', 200000),
+      spend('d1', '2026-06-10', 3000, 'groceries', 'USD'),
+      spend('d2', '2026-08-10', 6000, 'groceries', 'USD'),
+    ];
+    const uah = view(transactions, { shownCurrency: 'UAH' });
+    const usd = view(transactions, { shownCurrency: 'USD' });
+    const morph = columnMorph(historyBars(uah), historyBars(usd));
+    if (morph.kind !== 'morph') throw new Error('expected a morph');
+    // Every bar of the new chart moves from its UAH size to its USD size.
+    for (const column of usd.history) {
+      for (const bar of column.bars) {
+        const old = uah.history.find((c) => c.month === column.month)?.bars.find((b) => b.key === bar.key);
+        expect(morph.bars.get(columnBarKey(column.month, bar.key)), `${column.month} ${bar.key}`).toEqual({
+          from: old?.size ?? 0,
+          to: bar.size,
+        });
+      }
+    }
+    // A column the UAH chart did not have arrives from 0.
+    const arriving = usd.history.find((c) => !uah.history.some((u) => u.month === c.month));
+    if (arriving) {
+      expect(morph.bars.get(columnBarKey(arriving.month, 'spent'))!.from).toBe(0);
+    }
+    // The scale beside the bars is the new chart's, in the new currency, from the moment of the switch.
+    expect(usd.historyAxis!.top).toContain('USD');
+    // The first drawing fills once from empty.
+    const first = columnMorph(null, historyBars(uah));
+    if (first.kind !== 'morph') throw new Error('expected a morph');
+    expect([...first.bars.values()].every((bar) => bar.from === 0)).toBe(true);
+  });
+
+  it('Scenario: A bar that changes sign cross-fades', () => {
+    const bars = (sizes: [number, boolean][], hasNegative: boolean) => ({
+      columns: sizes.map(([size, negative], i) => ({
+        month: `2026-0${i + 1}`,
+        bars: [{ key: 'spent', size, negative }],
+      })),
+      hasNegative,
+    });
+    // A month positive before and negative after.
+    expect(
+      columnMorph(
+        bars([[1, false], [0.5, true]], true),
+        bars([[1, true], [0.5, true]], true),
+      ),
+    ).toEqual({ kind: 'fade' });
+    // The room below the baseline appears…
+    expect(columnMorph(bars([[1, false]], false), bars([[1, false]], true))).toEqual({ kind: 'fade' });
+    // …or goes.
+    expect(columnMorph(bars([[1, false]], true), bars([[1, false]], false))).toEqual({ kind: 'fade' });
+    // The same signs, and a bar that only reaches zero, move.
+    expect(columnMorph(bars([[1, true]], true), bars([[0, false]], true)).kind).toBe('morph');
+  });
+
+  it('draws the category chart through the same morph, one bar a month', () => {
+    const transactions: Transaction[] = [
+      spend('e1', '2026-07-10', 40000, 'groceries'),
+      spend('e2', '2026-08-10', 120000, 'groceries'),
+      spend('e3', '2026-08-11', 60000, 'pets'),
+    ];
+    const groceries = view(transactions, { chosenCategoryId: 'groceries' });
+    const pets = view(transactions, { chosenCategoryId: 'pets' });
+    const morph = columnMorph(categoryBars(groceries), categoryBars(pets));
+    if (morph.kind !== 'morph') throw new Error('expected a morph');
+    for (const column of pets.categoryChart) {
+      expect(morph.bars.get(columnBarKey(column.month, 'spent'))!.to).toBe(column.size);
     }
   });
 });

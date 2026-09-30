@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { Tap } from '@/components/motion';
 import { Card, Chevron, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { progress as progressRepo } from '@/db/repos';
@@ -79,7 +80,7 @@ export default function ProgressScreen() {
         </ThemedText>
       ) : (
         model.challenges.map((row) => (
-          <Pressable key={row.key} onPress={() => router.push(row.route)}>
+          <Tap key={row.key} onPress={() => router.push(row.route)}>
             <Card style={styles.row}>
               <ThemedText type="subtitle">{row.name}</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
@@ -98,7 +99,7 @@ export default function ProgressScreen() {
                 ) : null}
               </View>
             </Card>
-          </Pressable>
+          </Tap>
         ))
       )}
 
@@ -159,10 +160,10 @@ function ProgressRow({
 }) {
   return (
     <ListRow last={last}>
-      <Pressable
+      <Tap
         onPress={onPress}
         accessibilityRole="button"
-        style={({ pressed }) => [styles.listRow, pressed ? styles.pressed : null]}>
+        style={styles.listRow}>
         <View style={styles.listText}>
           <ThemedText type="rowTitle">{name}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
@@ -170,7 +171,7 @@ function ProgressRow({
           </ThemedText>
         </View>
         <Chevron />
-      </Pressable>
+      </Tap>
     </ListRow>
   );
 }
@@ -178,7 +179,6 @@ function ProgressRow({
 const styles = StyleSheet.create({
   listRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   listText: { flex: 1, gap: Spacing.half },
-  pressed: { opacity: 0.75 },
   row: { gap: Spacing.half },
   line: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.one },
 });

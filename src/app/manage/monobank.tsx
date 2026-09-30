@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { Alert, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
 import { Action, Choices, Field, RowAction } from '@/components/form';
 import {
@@ -21,10 +21,13 @@ import { account, type AccountKind } from '@/domain/account';
 import { monobankConnection, type ConnectionResult } from '@/monobank/connection';
 import { suggestLinks } from '@/monobank/link';
 import type { SyncProgress, SyncRun } from '@/monobank/coordinator';
+import { useHaptics } from '@/hooks/haptics-ports';
+import { useTheme } from '@/hooks/use-theme';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { syncMonobankSyncTask } from '@/platform/monobank-sync-task';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { syncOutcomeEvent } from '@/ui/haptics';
 import { syncEvent } from '@/ui/read-policy';
 import { judgeProgressLater } from '@/hooks/progress-ports';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
@@ -108,6 +111,8 @@ interface Draft {
 
 export default function MonobankScreen() {
   const router = useRouter();
+  const haptics = useHaptics();
+  const theme = useTheme();
 
   /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
   const reportBug = useCallback(
@@ -257,12 +262,14 @@ export default function MonobankScreen() {
         }
         return;
       }
-      applyResult(await connection.refresh());
+      const refreshed = applyResult(await connection.refresh());
+      // A check the owner asked for that failed is felt; the one the screen makes on opening is not.
+      if (!refreshed && options.asked) haptics.play('failed');
       reload();
     } finally {
       setBusy(false);
     }
-  }, [applyResult, reload]);
+  }, [applyResult, haptics, reload]);
 
   /** The one path a token takes to the bank, wherever the owner got it from. */
   const submitToken = useCallback(
@@ -270,7 +277,10 @@ export default function MonobankScreen() {
       setBusy(true);
       try {
         const result = await connection.submit(value);
-        if (applyResult(result)) {
+        const accepted = applyResult(result);
+        // The token check the owner started, when it fails.
+        if (!accepted) haptics.play('failed');
+        if (accepted) {
           // Kept — so the candidate leaves the screen's state entirely.
           setCandidate('');
           setEntering(false);
@@ -281,7 +291,7 @@ export default function MonobankScreen() {
         setBusy(false);
       }
     },
-    [applyResult, reload],
+    [applyResult, haptics, reload],
   );
 
   const submit = useCallback(async () => {
@@ -524,6 +534,9 @@ export default function MonobankScreen() {
       }
       const result = started.run;
       setRun(result);
+      // Failed is felt; stopped with «Зупинити» or перенесено is not (`syncOutcomeEvent`).
+      const event = syncOutcomeEvent(result);
+      if (event) haptics.play(event);
       if (syncFailed(result)) {
         // Shown in place on this screen, like the бекап's: no dialog, so no offer — but the
         // журнал holds it with the same words the summary says, and the section reports it. The
@@ -533,7 +546,7 @@ export default function MonobankScreen() {
     } finally {
       setBusy(false);
     }
-  }, [names, reload]);
+  }, [haptics, names, reload]);
 
   /**
    * A run started elsewhere — by opening the app, or by the pull on Головний — going on right now.
@@ -598,7 +611,18 @@ export default function MonobankScreen() {
         </ThemedText>
         {/* What the last request to the bank came back with — a fact about the connection, so it
             sits on the quiet banner rather than reading as another line of the paragraph. */}
-        {status ? <Banner>{status}</Banner> : null}
+        {/* While a прогін, the token check or «Оновити з monobank» runs, a spinner stands beside
+            that line — and only then (motion, "Busy work shows a spinner only while it runs"). */}
+        {busy || status ? (
+          <View style={styles.statusLine}>
+            {busy ? <ActivityIndicator size="small" color={theme.textSecondary} /> : null}
+            {status ? (
+              <View style={styles.statusText}>
+                <Banner>{status}</Banner>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
 
         {entering ? (
           <>
@@ -940,5 +964,7 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   rowActions: { flexDirection: 'row' },
+  statusLine: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  statusText: { flex: 1, minWidth: 0 },
   amount: { fontWeight: 600 },
 });

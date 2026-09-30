@@ -4,7 +4,7 @@ import { type Money } from '../domain/money';
 import type { Month, Transaction } from '../domain/transaction';
 import { needsOwner, type OwnerSituation, type SyncAttempt } from '../monobank/auto';
 import type { MonobankRate } from '../monobank/currency';
-import { accountTotals, approximateTotals, totalsLine } from './account-totals';
+import { accountTotals, approximateTotals, totalsLine, wholeMoney } from './account-totals';
 import { byCurrency } from './amount-input';
 import { freshnessLabel } from './dates';
 import { plural, transactionCount } from './labels';
@@ -35,6 +35,12 @@ export interface HomeMonthStatus {
    * negative").
    */
   readonly spent: string;
+  /**
+   * The same figures one currency at a time, in `spent`'s order: what the screen draws, so a change
+   * of one currency's витрачено moves that figure alone (motion, "A changing сума never shows an
+   * amount that is not real"). Joined by « · » they are exactly `spent`.
+   */
+  readonly spentFigures: readonly { readonly currency: string; readonly text: string }[];
   /**
    * What to say instead of an amount: no транзакція at all this month, or only ordinary
    * unclassified перекази (which touch no monthly number and would otherwise read as a currency
@@ -229,6 +235,7 @@ export function homeViewModel(input: {
     status: {
       title: `${SPENT_LABEL} ${monthInLabel(input.month)}`,
       spent: totalsLine(numbers.map((n) => n.spent)),
+      spentFigures: numbers.map((n) => ({ currency: n.spent.currency, text: wholeMoney(n.spent) })),
       emptyMessage: monthEmptyMessage(currencies.length, input.transactions.length > 0),
     },
     held:

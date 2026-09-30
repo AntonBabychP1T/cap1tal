@@ -1,10 +1,10 @@
 ## 1. Measurement baseline
 
-- [ ] 1.1 Add `scripts/make-big-backup.ts`: a deterministic synthetic бекап built through the
+- [x] 1.1 Add `scripts/make-big-backup.ts`: a deterministic synthetic бекап built through the
   existing `src/backup/` writer. It holds 27 рахунки in UAH, USD and EUR and 10 000 транзакції over
   4 years (витрати, доходи, перекази across currencies, повернення, 30 ліміти, 5 цілі). Verify: the
   file restores on the emulator through Налаштування → Бекап and «Транзакції» reaches the last row.
-- [ ] 1.2 Record a baseline on the emulator with that бекап restored, and with the журнал bound as in
+- [x] 1.2 Record a baseline on the emulator with that бекап restored, and with the журнал bound as in
   the app, in
   `openspec/changes/app-speed-pass/baseline.md`. Measure with the Hermes sampling profiler or
   `performance.now()` logs in a dev build:
@@ -104,7 +104,7 @@
     judged before the flush, then judged exactly once with the same verdict)
   - "Scenario: A досягнення earned by a save appears on the screen in sight" (`announce` fires when
     judging earned something, and not otherwise)
-- [ ] 5.5 Bind `judgeProgressLater` and the `onProgressJudged` event in
+- [x] 5.5 Bind `judgeProgressLater` and the `onProgressJudged` event in
   `src/hooks/progress-ports.ts`. Replace every `evaluateProgress()` call under `src/app/` with
   `judgeProgressLater()` (the call sites listed in design D5; the launch evaluation moves into 5.6),
   and subscribe Головний, Рахунки, Звіти, `progress.tsx` and `challenge/[key].tsx` to
@@ -162,22 +162,22 @@
 
 ## 8. Long lists and redraw scope (app-shell)
 
-- [ ] 8.1 Add a list variant of `Screen` in `src/components/surfaces.tsx`: a `FlatList` keeping
+- [x] 8.1 Add a list variant of `Screen` in `src/components/surfaces.tsx`: a `FlatList` keeping
   padding, `RefreshControl` and keyboard insets. Move «Транзакції» onto it. Verify on the emulator
   that the search header, the filters and «Показати ще» behave as before.
 - [x] 8.2 Move `account/[id].tsx` and `category/[month]/[categoryId].tsx` onto the list variant.
   Source test in `src/ui/stored-history-usage.test.ts`: "Scenario: A рахунок with a thousand
   транзакції opens without drawing them all" (these screens render through the list variant, not
   `.map` in a `ScrollView`).
-- [ ] 8.3 Compute `TransactionRow` lines once per feed with `useMemo`, and hoist `Icon` path data
+- [x] 8.3 Compute `TransactionRow` lines once per feed with `useMemo`, and hoist `Icon` path data
   per key (behaviour-neutral). Check the compiler status of `TransactionRow`, `Icon`,
   `NetWorthWidget` and `CategoryWidget` in a dev build, and add `React.memo` only where it bailed
   out. Record the finding in design D7.
-- [ ] 8.4 Головний: add the `DraftRow` child owning its amount state (`renderWidget` stays a
+- [x] 8.4 Головний: add the `DraftRow` child owning its amount state (`renderWidget` stays a
   function, design D7). Source test in `src/ui/home-screen.test.ts`: "Scenario: Typing into a чернетка redraws
   only that чернетка" (the amount state is not held by the screen). Confirm with the React DevTools
   profiler on the emulator.
-- [ ] 8.5 AI-аналіз «показати файл» as a `FlatList` of lines (behaviour-neutral). Verify on the
+- [x] 8.5 AI-аналіз «показати файл» as a `FlatList` of lines (behaviour-neutral). Verify on the
   emulator with the big бекап: the panel opens and scrolls without a freeze.
 
 ## 9. Звіти (reports-screen)
@@ -197,5 +197,8 @@
 
 - [ ] 10.1 Repeat the task 1.2 measurements into `baseline.md` beside the originals. Each measured
   path must meet the design Goals; any that does not is reported, not ticked.
+  Measured on 2026-09-30, results in `baseline.md`; **left unticked**: the tab and back paths read almost
+  nothing now, but a search still blocks the JS thread for 20–50 s and "under one frame" could not be
+  established with the probe (its floor is 120 ms).
 - [x] 10.2 Run `npm run verify` and paste the final lines
 - [x] 10.3 Run the diff-reviewer subagent; fix CRITICAL findings until PASS

@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
+import { useHaptics } from '@/hooks/haptics-ports';
 import { Action } from '@/components/form';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
@@ -59,6 +60,7 @@ const provider = chkAllWebProvider(journal.watchFetch((url: string) => fetch(url
 
 export default function ScanReceiptScreen() {
   const router = useRouter();
+  const haptics = useHaptics();
 
   /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
   const reportBug = useCallback(
@@ -145,10 +147,13 @@ export default function ScanReceiptScreen() {
       if (latched.current) return;
       const next = apply((s) => decoded(s, data));
       if (next.kind === 'looking-up') {
+        // The first accepted decode, once: the latch closes in `look` (motion, "A found чек is
+        // felt").
+        haptics.play('scanned');
         void look(next);
       }
     },
-    [apply, look],
+    [apply, haptics, look],
   );
 
   /**
@@ -160,8 +165,11 @@ export default function ScanReceiptScreen() {
   const pickPhoto = useCallback(async () => {
     const outcome = await qrImage.pickAndDecode();
     const next = apply((s) => decodedFromImage(s, outcome));
-    if (next.kind === 'looking-up' && !latched.current) void look(next);
-  }, [apply, look]);
+    if (next.kind === 'looking-up' && !latched.current) {
+      haptics.play('scanned');
+      void look(next);
+    }
+  }, [apply, haptics, look]);
 
   /**
    * Attaching. The транзакція is re-read first, so one deleted while the scanner was open ends the

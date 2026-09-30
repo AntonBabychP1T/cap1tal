@@ -8,6 +8,7 @@ import { persistRetyped as persistRetypedImpl } from './counterpart-income-repo'
 import { dashboardLayoutRepo } from './dashboard-layout-repo';
 import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
+import { hapticsPreferenceRepo } from './haptics-preference-repo';
 import { importRepo } from './import-repo';
 import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
@@ -96,3 +97,5 @@ export const reporting = reportingRepo(db);
 export const progress = progressRepo(db);
 /** The owner's dashboard layout: which known Головний widgets show, and in what order. */
 export const dashboardLayout = dashboardLayoutRepo(db);
+/** The «Вібрація» switch: whether the app plays its haptics. No row is on. */
+export const hapticsPreference = hapticsPreferenceRepo(db);

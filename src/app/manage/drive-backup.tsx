@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
 import { Action, Field } from '@/components/form';
 import {
@@ -33,6 +33,8 @@ import {
   type RestorePreview,
 } from '@/backup/drive/run-restore';
 import { backup as backupRepo, driveBackupState } from '@/db/repos';
+import { useHaptics } from '@/hooks/haptics-ports';
+import { useTheme } from '@/hooks/use-theme';
 import { driveBackupPorts } from '@/hooks/drive-backup-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
@@ -107,6 +109,8 @@ type Step =
 
 export default function DriveBackupScreen() {
   const router = useRouter();
+  const theme = useTheme();
+  const haptics = useHaptics();
   const [step, setStep] = useState<Step>({ kind: 'section' });
   const [message, setMessage] = useState<string | undefined>(undefined);
   const [typed, setTyped] = useState('');
@@ -278,11 +282,13 @@ export default function DriveBackupScreen() {
       if (outcome.kind === 'failed') {
         journal.failure('backup', outcome.why);
         say(backupFailureMessage(outcome.why));
+        // The Drive бекап the owner started ended in failure: felt, not only read.
+        haptics.play('failed');
       }
       setStep({ kind: 'section' });
       refresh();
     });
-  }, [refresh, say]);
+  }, [haptics, refresh, say]);
 
   const doListVersions = useCallback(() => {
     setStep({ kind: 'busy', doing: 'connecting' });
@@ -414,9 +420,13 @@ export default function DriveBackupScreen() {
 
       {step.kind === 'busy' ? (
         <Card style={styles.card}>
-          <ThemedText type="small" themeColor="textSecondary">
-            {busyMessage(step.doing)}
-          </ThemedText>
+          {/* The spinner lives only as long as this card: while the step is busy. */}
+          <View style={styles.busyLine}>
+            <ActivityIndicator size="small" color={theme.textSecondary} />
+            <ThemedText type="small" themeColor="textSecondary" style={styles.busyText}>
+              {busyMessage(step.doing)}
+            </ThemedText>
+          </View>
         </Card>
       ) : null}
 
@@ -576,6 +586,8 @@ export default function DriveBackupScreen() {
 }
 
 const styles = StyleSheet.create({
+  busyLine: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  busyText: { flex: 1, minWidth: 0 },
   card: { gap: Spacing.three },
   row: { gap: Spacing.two },
   // The код відновлення is eight groups of seven; letting it wrap on the group boundaries is what

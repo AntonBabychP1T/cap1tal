@@ -120,6 +120,19 @@ describe('the month status', () => {
     expect(status.spent).not.toContain('150');
   });
 
+  it('Scenario: Only the currency that changed moves — the month widget draws one figure per currency', () => {
+    const { status } = model({
+      transactions: [income(500_000), expense(100_000), income(20_000, 'USD'), expense(5_000, 'USD')],
+    });
+    // One figure per currency, keyed by it, so a UAH change leaves the USD figure where it is; and
+    // together they read exactly as the joined line does.
+    expect(status.spentFigures).toEqual([
+      { currency: 'UAH', text: '1 000,00 UAH' },
+      { currency: 'USD', text: '50,00 USD' },
+    ]);
+    expect(status.spentFigures.map((figure) => figure.text).join(' · ')).toBe(status.spent);
+  });
+
   it('Scenario: Refund-only month remains negative', () => {
     const gotRefund: Refund = refund({
       id: 'r1',
@@ -403,7 +416,7 @@ describe('Головний as the overview', () => {
   it('Scenario: The uncategorised banner opens only what is waiting', () => {
     // Owner's report, 2026-09-14: the row led to the whole history, not to the транзакції it counts.
     const banner = main.slice(main.indexOf('{model.alerts.uncategorisedBanner ? ('));
-    const block = banner.slice(0, banner.indexOf('</Pressable>'));
+    const block = banner.slice(0, banner.indexOf('</Tap>'));
     expect(block).toMatch(
       /router\.push\(\{\s*pathname: '\/transactions',\s*params: \{ only: ONLY_UNCATEGORISED \},?\s*\}\)/,
     );
@@ -421,7 +434,7 @@ describe('Головний as the overview', () => {
     expect(bannerBlock).not.toContain("case 'latest-transactions'");
     // It sits entirely before the widget loop, so it renders whatever the owner has hidden.
     expect(main.indexOf('{model.alerts.uncategorisedBanner ? (')).toBeLessThan(
-      main.indexOf('{stored.plan.visibleIds.map((id) => renderWidget(id))}'),
+      main.indexOf('{stored.plan.visibleIds.map((id) => {'),
     );
   });
 
@@ -476,7 +489,7 @@ describe('Головний as the overview', () => {
     const invitation = main.indexOf('{model.held === null ? (');
     const banner = main.indexOf('{model.alerts.uncategorisedBanner ? (');
     const alerts = main.indexOf('{model.alerts.draftCount > 0 || model.alerts.failureRow ? (');
-    const widgets = main.indexOf('{stored.plan.visibleIds.map((id) => renderWidget(id))}');
+    const widgets = main.indexOf('{stored.plan.visibleIds.map((id) => {');
 
     expect(wordmark).toBeGreaterThan(-1);
     expect(header).toBeGreaterThan(wordmark);
@@ -494,7 +507,7 @@ describe('Головний as the overview', () => {
     const guarded = sentence.slice(0, sentence.indexOf(') : null}'));
     expect(guarded).toContain('Усі віджети приховано');
 
-    const widgets = main.indexOf('{stored.plan.visibleIds.map((id) => renderWidget(id))}');
+    const widgets = main.indexOf('{stored.plan.visibleIds.map((id) => {');
     const recovery = main.indexOf('{stored.plan.visibleIds.length === 0 ? (');
     expect(recovery).toBeGreaterThan(widgets);
 
@@ -554,7 +567,7 @@ describe('Головний as the overview', () => {
     // `categorise` itself: stores, closes the picker, refreshes and — for a витрата or
     // повернення only — raises the rule offer, all without ever routing anywhere.
     const categorise = main.slice(main.indexOf('const categorise = useCallback('));
-    const categoriseBody = categorise.slice(0, categorise.indexOf('[reload, reportBug, ruleOffer]'));
+    const categoriseBody = categorise.slice(0, categorise.indexOf('[haptics, reload, reportBug, ruleOffer]'));
     expect(categoriseBody).toContain('transactionsRepo.save(recategorise(t, picked), new Date())');
     expect(categoriseBody).toContain('setCategorising(undefined)');
     expect(categoriseBody).toContain('reload()');
@@ -579,7 +592,8 @@ describe('Головний as the overview', () => {
 
     expect(main).toContain('confirmPendingDraft(');
     expect(main).toContain('dismissPendingDraft(');
-    expect(main).toContain('settleDraft(\n          draftId,\n          confirmPendingDraft(');
+    expect(main).toContain('const answer = confirmPendingDraft(draft, DRAFT_PORTS, typedAmount);');
+    expect(main).toContain('settleDraft(draftId, answer);');
     expect(main).toContain('settleDraft(line.id, dismissPendingDraft(draft, DRAFT_PORTS))');
 
     // The hand-off itself: `stored.uncategorised` (the banner) and `stored.drafts` (the row) are
@@ -900,7 +914,7 @@ describe('what Головний itself wires', () => {
   it('Scenario: Typing into a чернетка redraws only that чернетка', () => {
     // The typed сума is `DraftRow`'s own state, so a keystroke re-renders that row alone — the
     // screen, the статок, the категорії widget and the стрічка never see it (app-speed-pass D7).
-    const screenBody = main.slice(main.indexOf('export default function MainScreen'), main.indexOf('function DraftRow('));
+    const screenBody = main.slice(main.indexOf('function MainScreen()'), main.indexOf('function DraftRow('));
     expect(screenBody).not.toMatch(/draftAmounts|setDraftAmounts/);
     expect(screenBody).toContain('<DraftRow');
     const row = main.slice(main.indexOf('function DraftRow('));
@@ -951,11 +965,14 @@ describe('what Головний itself wires', () => {
   it('the spinner is bound to the run, so it ends when the run does', () => {
     const pull = main.slice(main.indexOf('const pull = useCallback'));
     const body = pull.slice(0, pull.indexOf('}, ['));
-    expect(body).toContain('setPulling(true)');
+    // The gesture's spinner, or the header's for a run «Оновити» started (app-motion-pass D10).
+    expect(body).toContain("const setBusy = source === 'gesture' ? setPulling : setRefreshing;");
+    expect(body).toContain('setBusy(true)');
     // In a `finally`, so a run that ends by failing still stops the spinner.
     expect(body).toContain('finally');
-    expect(body).toContain('setPulling(false)');
+    expect(body).toContain('setBusy(false)');
     expect(main).toContain('refreshing={pulling}');
+    expect(main).toContain('{refreshing ? <ActivityIndicator');
   });
 
   it('the freshness line is drawn only when the view model has one', () => {

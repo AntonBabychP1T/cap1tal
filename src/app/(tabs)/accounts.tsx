@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
+import { ChangingFigure, TabFade, Tap } from '@/components/motion';
 import { Action, Choices, Field, RowAction } from '@/components/form';
 import {
   Card,
@@ -74,7 +75,7 @@ const UNSEEN = {
   rates: [],
 };
 
-export default function AccountsScreen() {
+function AccountsScreen() {
   const router = useRouter();
   /** A рахунок opens once, however many rows are tapped while its screen is opening. */
   const push = useSinglePush();
@@ -293,11 +294,11 @@ export default function AccountsScreen() {
           // wordless, is one accessible name read twice by a screen reader with nothing to tell
           // them apart. The condition is the empty state's own, so exactly one is ever drawn.
           draft || groups.length === 0 ? undefined : (
-            <Pressable
+            <Tap
               onPress={() => setDraft(blankDraft())}
               accessibilityLabel="Створити рахунок"
               accessibilityRole="button"
-              style={({ pressed }) => [styles.addTarget, pressed ? styles.pressed : null]}>
+              style={styles.addTarget}>
               {/* The edge, not just the fill: after the retone a `backgroundElement` square on
                   the page is #0F0D0B on #000000, and the «+» would be floating on nothing. A
                   surface on the page is held by its `cardEdge`, exactly as a card is. */}
@@ -306,7 +307,7 @@ export default function AccountsScreen() {
                 style={[styles.add, { borderColor: theme.cardEdge }]}>
                 <ThemedText type="subtitle">+</ThemedText>
               </ThemedView>
-            </Pressable>
+            </Tap>
           )
         }
       />
@@ -361,7 +362,7 @@ export default function AccountsScreen() {
                   style={styles.accountRow}>
                   {/* The tap opens the рахунок's рухи — what the owner is reaching for. Renaming
                       and archiving are actions on that screen, not consequences of this gesture. */}
-                  <Pressable
+                  <Tap
                     onPress={() => push(`/account/${a.id}`)}
                     style={styles.accountBody}>
                     <View style={styles.line}>
@@ -371,9 +372,9 @@ export default function AccountsScreen() {
                       <ThemedText numberOfLines={2} style={styles.name}>
                         {a.name}
                       </ThemedText>
-                      <ThemedText tabular style={styles.amount}>
-                        {row?.computed}
-                      </ThemedText>
+                      <ChangingFigure tabular style={styles.amount}>
+                        {row?.computed ?? ''}
+                      </ChangingFigure>
                     </View>
                     {/* The bank's figure under the рахунок's own, named so neither is mistaken
                         for the other. Only a linked рахунок has one. */}
@@ -420,7 +421,7 @@ export default function AccountsScreen() {
                         ) : null}
                       </>
                     ) : null}
-                  </Pressable>
+                  </Tap>
                   {/* The difference is in the button, so what «Звірити» would write is readable
                       before it is tapped. */}
                   {row?.reconcilable ? (
@@ -548,5 +549,16 @@ const styles = StyleSheet.create({
   reconcile: { flexDirection: 'row', justifyContent: 'flex-end', gap: Spacing.two },
   underAmount: { textAlign: 'right' },
   valueForm: { gap: Spacing.two },
-  pressed: { opacity: 0.7 },
 });
+
+/**
+ * The tab as the navigator mounts it: the screen inside the cross-fade every tab shares (motion,
+ * "Screens enter from where they come from"; design D8).
+ */
+export default function AccountsTab() {
+  return (
+    <TabFade tab="accounts">
+      <AccountsScreen />
+    </TabFade>
+  );
+}

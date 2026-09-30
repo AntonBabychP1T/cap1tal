@@ -1,11 +1,11 @@
-import { Pressable, StyleSheet, View } from 'react-native';
-import { Path, Svg } from 'react-native-svg';
+import { StyleSheet, View } from 'react-native';
 
 import { Spacing, TouchTarget } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { donutGeometry, donutSectorPath, type DonutRing } from '@/ui/dashboard-charts';
+import { donutGeometry, type DonutRing } from '@/ui/dashboard-charts';
 import { legendSwatch, sectorOpacity, type CategoryPresentation } from '@/ui/home-categories';
 import { formatMoney, splitMoney } from '@/ui/amount-input';
+import { ChangingFigure, MorphDonut, Tap } from './motion';
 import { Card } from './surfaces';
 import { ThemedText } from './themed-text';
 
@@ -69,6 +69,12 @@ export function CategoryWidget({
       : []),
   ]);
 
+  const ranks =
+    geometry.kind === 'positive' ? geometry.sectors.map((sector) => sector.categoryId) : [];
+  const rankOf = (key: string) => {
+    const rank = ranks.indexOf(key);
+    return rank === -1 ? ranks.length - 1 : rank;
+  };
   const centerText = presentation.center ? formatMoney(presentation.center) : '';
   const centerParts = presentation.center ? splitMoney(presentation.center) : undefined;
   /** Swatches only while the ring draws shares: a neutral ring has no sector to match. */
@@ -84,10 +90,10 @@ export function CategoryWidget({
         {presentation.currencyChips.length > 0 ? (
           <View style={styles.chips}>
             {presentation.currencyChips.map((chip) => (
-              // The Pressable is the 48 dp touch target; the pill inside it is what is drawn. QA
+              // The `Tap` is the 48 dp touch target; the pill inside it is what is drawn. QA
               // measured the chip itself as the whole target (42×16 dp) — a `hitSlop` is not in
               // the view's bounds, so the pill alone is what a scanner and a thumb both found.
-              <Pressable
+              <Tap
                 key={chip.currency}
                 onPress={() => onSelectCurrency(chip.currency)}
                 accessibilityRole="button"
@@ -100,7 +106,7 @@ export function CategoryWidget({
                     {chip.currency}
                   </ThemedText>
                 </View>
-              </Pressable>
+              </Tap>
             ))}
           </View>
         ) : null}
@@ -113,38 +119,28 @@ export function CategoryWidget({
           accessibilityLabel={
             geometry.kind === 'neutral' ? `${centerText}. ${neutralMessage}` : `Разом ${centerText}`
           }>
-          <Svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
-            {geometry.kind === 'positive' ? (
-              geometry.sectors.map((sector, i) => (
-                <Path
-                  key={sector.categoryId}
-                  // One category at 100% is (0, 360): `donutSectorPath` draws that as the whole
-                  // ring rather than an arc whose start is its own end, which draws nothing.
-                  d={donutSectorPath(sector.startAngle, sector.endAngle, RING)}
-                  fill={theme.accent}
-                  fillOpacity={sectorOpacity(i)}
-                />
-              ))
-            ) : (
-              // Neutral ring: no proportional sectors at all — a negative or all-zero total is
-              // mathematically misleading as a share-of-total pie (main-screen, "Signed or empty
-              // breakdowns never claim false shares").
-              // The same full ring a 100% sector draws, filled in the border tone. It used to stroke
-              // the outline of a 359.999° wedge at the ring's width, which painted a band from
-              // radius 30 to 86 — past the 80 of the viewBox — rather than the ring itself.
-              <Path d={donutSectorPath(0, 360, RING)} fill={theme.border} />
-            )}
-          </Svg>
+          {/* Each sector grows or shrinks to its new share when the month's numbers or the
+              currency change; the center and the legend are plain text from the new numbers. */}
+          <MorphDonut
+            geometry={geometry}
+            ring={RING}
+            size={SIZE}
+            fill={theme.accent}
+            neutralFill={theme.border}
+            // The accent graduated by rank; a sector that is leaving keeps the last rank's.
+            opacityOf={(key) => sectorOpacity(Math.max(0, rankOf(key)))}
+          />
           <View style={styles.donutCenter} pointerEvents="none">
-            <ThemedText
+            <ChangingFigure
               type="rowAmount"
               tabular
-              numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.5}
-              style={styles.centerNumber}>
+              style={styles.centerNumber}
+              // Stretched like the text used to be, so the figure still shrinks to the hole.
+              boxStyle={styles.centerFigure}>
               {centerParts?.number ?? ''}
-            </ThemedText>
+            </ChangingFigure>
             <ThemedText type="caption" themeColor="textSecondary">
               {centerParts?.currency ?? ''}
             </ThemedText>
@@ -153,7 +149,7 @@ export function CategoryWidget({
 
         <View style={styles.legend}>
           {presentation.rows.map((row, i) => (
-            <Pressable
+            <Tap
               key={row.categoryId}
               onPress={() => onOpenCategory(row.categoryId)}
               accessibilityRole="button"
@@ -173,10 +169,10 @@ export function CategoryWidget({
                 style={swatches ? styles.legendAmount : null}>
                 {formatMoney(row.amount)}
               </ThemedText>
-            </Pressable>
+            </Tap>
           ))}
           {presentation.remainder ? (
-            <Pressable
+            <Tap
               onPress={onOpenRemainder}
               accessibilityRole="button"
               accessibilityLabel={presentation.remainder.accessibilityLabel}
@@ -204,7 +200,7 @@ export function CategoryWidget({
                 style={swatches ? styles.legendAmount : null}>
                 {formatMoney(presentation.remainder.amount)}
               </ThemedText>
-            </Pressable>
+            </Tap>
           ) : null}
         </View>
       </View>
@@ -243,6 +239,7 @@ const styles = StyleSheet.create({
   donutWrap: { width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' },
   donutCenter: { position: 'absolute', alignItems: 'center', width: CENTER_WIDTH },
   centerNumber: { fontSize: 20, lineHeight: 24, textAlign: 'center', alignSelf: 'stretch' },
+  centerFigure: { alignSelf: 'stretch' },
   legend: { flex: 1, minWidth: 0, gap: Spacing.two },
   /* Name over its amount, not beside it: beside the donut's fixed diameter, a row wide enough for
      a long Ukrainian category name AND a six-digit сума in one line does not exist on a phone. */

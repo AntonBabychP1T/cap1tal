@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
+import { ChangingFigure } from '@/components/motion';
 import { Action, Choices, Field, Picker } from '@/components/form';
 import {
   Card,
@@ -28,6 +29,7 @@ import { mergePreview, mergeRefusal } from '@/domain/account-merge';
 import { namesById } from '@/domain/category';
 import type { Money } from '@/domain/money';
 import type { Transaction } from '@/domain/transaction';
+import { useHaptics } from '@/hooks/haptics-ports';
 import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
@@ -64,6 +66,7 @@ const CURRENCY_CHOICES = OFFERED_CURRENCIES.map((c) => ({ value: c, label: c }))
 
 export default function AccountMovementsScreen() {
   const router = useRouter();
+  const haptics = useHaptics();
   /** Rows and «+» open one screen per tap, however many taps land while it opens. */
   const push = useSinglePush();
 
@@ -280,6 +283,7 @@ export default function AccountMovementsScreen() {
         try {
           mergeAccounts({ fromId: from.id, intoId: into.id, dropCorrections });
           judgeProgressLater();
+          haptics.play('merged');
           router.replace(`/account/${into.id}`);
         } catch (error) {
           Alert.alert(
@@ -296,7 +300,7 @@ export default function AccountMovementsScreen() {
         { text: 'Обʼєднати', style: 'destructive', onPress: merge(false) },
       ]);
     },
-    [reportBug, router, stored.account, stored.accounts, stored.transactions],
+    [haptics, reportBug, router, stored.account, stored.accounts, stored.transactions],
   );
 
   /**
@@ -377,9 +381,9 @@ export default function AccountMovementsScreen() {
 
           <Card style={styles.balances}>
             <ThemedText type="overline">Розрахунковий баланс</ThemedText>
-            <ThemedText type="subtitle" tabular>
+            <ChangingFigure type="subtitle" tabular>
               {movements.balance}
-            </ThemedText>
+            </ChangingFigure>
             {/* The bank's figure under the рахунок's own, named so neither is mistaken for the
                 other. Only a linked рахунок has one. */}
             {movements.bankBalance ? (

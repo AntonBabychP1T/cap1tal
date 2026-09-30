@@ -1,15 +1,16 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   AppState,
-  Pressable,
   RefreshControl,
   StyleSheet,
   View,
   type ScrollView,
 } from 'react-native';
 
+import { Appear, ChangingFigure, Reflow, TabFade, Tap } from '@/components/motion';
 import { Action, Field, Picker, RowAction } from '@/components/form';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
 import { TransactionRow } from '@/components/transaction-row';
@@ -42,10 +43,13 @@ import {
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
+import { useHaptics } from '@/hooks/haptics-ports';
+import { useTheme } from '@/hooks/use-theme';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { syncOutcomeEvent } from '@/ui/haptics';
 import { syncEvent } from '@/ui/read-policy';
 import { useRuleOffer } from '@/hooks/use-rule-offer';
 import { syncPorts } from '@/hooks/monobank-ports';
@@ -142,8 +146,10 @@ const DRAFT_PORTS = {
   now: () => new Date(),
 };
 
-export default function MainScreen() {
+function MainScreen() {
   const router = useRouter();
+  const haptics = useHaptics();
+  const theme = useTheme();
 
   /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
   const reportBug = useCallback(
@@ -279,8 +285,15 @@ export default function MainScreen() {
    * second, which is what keeps the spinner honest.
    */
   const [pulling, setPulling] = useState(false);
-  const pull = useCallback(async (): Promise<void> => {
-    setPulling(true);
+  /**
+   * The same run started by «Оновити» in the header rather than by the gesture: it shows its own
+   * spinner beside the header line instead of the gesture's (motion, "A прогін shows a spinner
+   * until it ends"), so neither ever shows two.
+   */
+  const [refreshing, setRefreshing] = useState(false);
+  const pull = useCallback(async (source: 'gesture' | 'button'): Promise<void> => {
+    const setBusy = source === 'gesture' ? setPulling : setRefreshing;
+    setBusy(true);
     try {
       reload();
       await manualRefresh({
@@ -288,7 +301,7 @@ export default function MainScreen() {
         linkedCount: stored.links.length,
         startSync: async () => {
           const run = newId();
-          await startSync({
+          const started = await startSync({
             // The жест is a run the owner asked for — the same division the тихий інтервал draws,
             // and «Pulling down on Головний refreshes it and syncs monobank now» is where it is
             // drawn — so it asks the bank for client-info rather than reusing the answer this
@@ -304,6 +317,13 @@ export default function MainScreen() {
             // caller.
             attended: attended(),
           });
+          // A прогін the owner started that failed is felt; one stopped or postponed is not, and
+          // one already running elsewhere was not started here (motion, "An outcome the owner
+          // caused is felt once").
+          if (started.kind !== 'already-running') {
+            const event = syncOutcomeEvent(started.run);
+            if (event) haptics.play(event);
+          }
           // The sync committed, or it did not; either way the зведення is read once and only
           // what is newly true is earned.
           judgeProgressLater();
@@ -312,9 +332,9 @@ export default function MainScreen() {
         },
       });
     } finally {
-      setPulling(false);
+      setBusy(false);
     }
-  }, [configured, reload, reloadWhenSeen, stored.links.length]);
+  }, [configured, haptics, reload, reloadWhenSeen, stored.links.length]);
 
   /**
    * Opening Головний again shows it from its top — the month's status. Restoring the scroll
@@ -615,6 +635,8 @@ export default function MainScreen() {
         // A транзакція was recorded — one of the named moments the прогрес is evaluated at. It is
         // the storing that evaluates, never the drawing.
         judgeProgressLater();
+        // Stored, and felt as a store: the chip's own tick in the same tap gives way to it.
+        haptics.play('stored');
         setCategorising(undefined);
         reload();
         // The категорія is already stored, never lost by a dismissed offer (design D5).
@@ -627,7 +649,7 @@ export default function MainScreen() {
         );
       }
     },
-    [reload, reportBug, ruleOffer],
+    [haptics, reload, reportBug, ruleOffer],
   );
 
   const settleDraft = useCallback(
@@ -655,14 +677,10 @@ export default function MainScreen() {
         return;
       }
       try {
-        settleDraft(
-          draftId,
-          confirmPendingDraft(
-            draft,
-            DRAFT_PORTS,
-            typedAmount,
-          ),
-        );
+        const answer = confirmPendingDraft(draft, DRAFT_PORTS, typedAmount);
+        settleDraft(draftId, answer);
+        // Confirming a чернетка stores a транзакція: felt like any other store.
+        if (answer.kind === 'confirmed') haptics.play('stored');
       } catch (error) {
         Alert.alert(
           ...failureAlert({ title: 'Не підтверджено', where: 'draft-confirm', error, report: reportBug }),
@@ -670,7 +688,7 @@ export default function MainScreen() {
         void raiseAlert('local-save', { attended: attended() }, ALERT_PORTS);
       }
     },
-    [reportBug, settleDraft, stored.drafts],
+    [haptics, reportBug, settleDraft, stored.drafts],
   );
 
   const dismissDraftLine = useCallback(
@@ -710,7 +728,7 @@ export default function MainScreen() {
     switch (id) {
       case 'month-spent':
         return (
-          <Pressable
+          <Tap
             key={id}
             onPress={() => router.push(currentMonthRoute(new Date()))}
             accessibilityRole="button">
@@ -725,12 +743,24 @@ export default function MainScreen() {
               ) : (
                 // One line, shrunk rather than wrapped: two currencies must not push the figure
                 // into a second row and the card into a different height.
-                <ThemedText type="title" tabular numberOfLines={1} adjustsFontSizeToFit>
-                  {model.status.spent}
-                </ThemedText>
+                // One figure per currency, so only the one that changed moves.
+                <View style={styles.figures}>
+                  {model.status.spentFigures.map((figure, i) => (
+                    <Fragment key={figure.currency}>
+                      {i > 0 ? (
+                        <ThemedText type="title" themeColor="textMuted">
+                          {' · '}
+                        </ThemedText>
+                      ) : null}
+                      <ChangingFigure type="title" tabular adjustsFontSizeToFit boxStyle={styles.figure}>
+                        {figure.text}
+                      </ChangingFigure>
+                    </Fragment>
+                  ))}
+                </View>
               )}
             </Card>
-          </Pressable>
+          </Tap>
         );
 
       case 'latest-transactions':
@@ -753,63 +783,68 @@ export default function MainScreen() {
                 {stored.feed.map((t, index) => {
                   const { line, subtitle } = feedLines.get(t.id)!;
                   return (
-                    <ListRow key={line.id} last={index === stored.feed.length - 1} style={styles.row}>
-                      <TransactionRow
-                        icon={line.icon}
-                        iconTone={line.iconTone}
-                        marked={line.uncategorised}
-                        title={feedTitle(line)}
-                        titleTone={line.overLimit ? 'textDanger' : undefined}
-                        titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
-                        subtitle={subtitle}
-                        description={line.description}
-                        amount={line.amount}
-                        amountTone={line.amountTone}
-                        onPress={() => router.push(`/transaction/${line.id}`)}
-                      />
+                    // A row moves when the inline picker above it opens or closes.
+                    <Reflow key={line.id}>
+                      <ListRow last={index === stored.feed.length - 1} style={styles.row}>
+                        <TransactionRow
+                          icon={line.icon}
+                          iconTone={line.iconTone}
+                          marked={line.uncategorised}
+                          title={feedTitle(line)}
+                          titleTone={line.overLimit ? 'textDanger' : undefined}
+                          titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
+                          subtitle={subtitle}
+                          description={line.description}
+                          amount={line.amount}
+                          amountTone={line.amountTone}
+                          onPress={() => router.push(`/transaction/${line.id}`)}
+                        />
 
-                      {/* The one tap behind the mark: picking here stores the category on the
-                          transaction without the editing screen ever opening. Beside it, «Це
-                          переказ» opens editing already switched to переказ — a витрата only
-                          (design D7). */}
-                      {line.uncategorised ? (
-                        <View style={styles.rowActions}>
-                          <RowAction
-                            title={categorising === line.id ? 'Згорнути' : 'Обрати категорію'}
-                            onPress={() => {
-                              setCategorising(categorising === line.id ? undefined : line.id);
-                              setCategoryListOpen(false);
-                            }}
-                          />
-                          {offersTransferMark(t) ? (
+                        {/* The one tap behind the mark: picking here stores the category on the
+                            transaction without the editing screen ever opening. Beside it, «Це
+                            переказ» opens editing already switched to переказ — a витрата only
+                            (design D7). */}
+                        {line.uncategorised ? (
+                          <View style={styles.rowActions}>
                             <RowAction
-                              title="Це переказ"
+                              title={categorising === line.id ? 'Згорнути' : 'Обрати категорію'}
                               onPress={() => {
-                                // Its picker would be stale by the time Головний is back.
-                                setCategorising(undefined);
+                                setCategorising(categorising === line.id ? undefined : line.id);
                                 setCategoryListOpen(false);
-                                router.push(`/transaction/${line.id}?as=transfer`);
                               }}
                             />
-                          ) : null}
-                        </View>
-                      ) : null}
-                      {/* Only while the line is still «Без категорії»: the picker is keyed by id, and a line
-                          retyped elsewhere (a переказ, a дохід) keeps its id — its stale picker then refused
-                          the next tap with «категорію має лише витрата або повернення» (2026-09-22). */}
-                      {line.uncategorised && categorising === line.id ? (
-                        <Picker
-                          label="Категорія"
-                          rows={categoryRows}
-                          recentIds={recent.categories}
-                          selected={undefined}
-                          onSelect={(picked: string) => categorise(t, picked)}
-                          noun="categories"
-                          expanded={categoryListOpen}
-                          onExpandedChange={setCategoryListOpen}
-                        />
-                      ) : null}
-                    </ListRow>
+                            {offersTransferMark(t) ? (
+                              <RowAction
+                                title="Це переказ"
+                                onPress={() => {
+                                  // Its picker would be stale by the time Головний is back.
+                                  setCategorising(undefined);
+                                  setCategoryListOpen(false);
+                                  router.push(`/transaction/${line.id}?as=transfer`);
+                                }}
+                              />
+                            ) : null}
+                          </View>
+                        ) : null}
+                        {/* Only while the line is still «Без категорії»: the picker is keyed by id, and a line
+                            retyped elsewhere (a переказ, a дохід) keeps its id — its stale picker then refused
+                            the next tap with «категорію має лише витрата або повернення» (2026-09-22). */}
+                        {line.uncategorised && categorising === line.id ? (
+                          <Appear>
+                            <Picker
+                              label="Категорія"
+                              rows={categoryRows}
+                              recentIds={recent.categories}
+                              selected={undefined}
+                              onSelect={(picked: string) => categorise(t, picked)}
+                              noun="categories"
+                              expanded={categoryListOpen}
+                              onExpandedChange={setCategoryListOpen}
+                            />
+                          </Appear>
+                        ) : null}
+                      </ListRow>
+                    </Reflow>
                   );
                 })}
               </ListCard>
@@ -848,7 +883,7 @@ export default function MainScreen() {
 
       case 'progress':
         return progressPreview ? (
-          <Pressable key={id} onPress={() => router.push(PROGRESS_ROUTE)} accessibilityRole="button">
+          <Tap key={id} onPress={() => router.push(PROGRESS_ROUTE)} accessibilityRole="button">
             <Card style={styles.status}>
               <View style={styles.statusHead}>
                 <ThemedText type="overline">{progressPreview.title}</ThemedText>
@@ -865,7 +900,7 @@ export default function MainScreen() {
                 </ThemedText>
               ) : null}
             </Card>
-          </Pressable>
+          </Tap>
         ) : null;
 
       default: {
@@ -884,7 +919,7 @@ export default function MainScreen() {
           onRefresh={() => {
             // A run that throws outright is journaled and goes no further: an unhandled rejection
             // out of a gesture handler is a red box the owner can do nothing with.
-            pull().catch((thrown: unknown) => {
+            pull('gesture').catch((thrown: unknown) => {
               reportFailure('monobank-sync', thrown);
             });
           }}
@@ -897,7 +932,7 @@ export default function MainScreen() {
           "The header opens dashboard editing"). */}
       <View style={styles.brand}>
         <Wordmark />
-        <Pressable
+        <Tap
           onPress={() => router.push('/manage/home-dashboard')}
           accessibilityRole="button"
           accessibilityLabel="Налаштувати Головний"
@@ -905,7 +940,7 @@ export default function MainScreen() {
           <ThemedText type="link" themeColor="accent">
             Налаштувати
           </ThemedText>
-        </Pressable>
+        </Tap>
       </View>
 
       {/* The compact header: how fresh the bank data is, and the same manual sync both the
@@ -913,12 +948,15 @@ export default function MainScreen() {
           occupies a compact header"). Absent entirely for an owner with no monobank. */}
       {model.monobank ? (
         <View style={styles.header}>
-          <ThemedText type="small" themeColor="textMuted">
-            {model.monobank.freshness}
-          </ThemedText>
-          <Pressable
+          <View style={styles.freshness}>
+            {refreshing ? <ActivityIndicator size="small" color={theme.textMuted} /> : null}
+            <ThemedText type="small" themeColor="textMuted">
+              {model.monobank.freshness}
+            </ThemedText>
+          </View>
+          <Tap
             onPress={() =>
-              pull().catch((thrown: unknown) => {
+              pull('button').catch((thrown: unknown) => {
                 reportFailure('monobank-sync', thrown);
               })
             }
@@ -928,7 +966,7 @@ export default function MainScreen() {
             <ThemedText type="link" themeColor="accent">
               Оновити
             </ThemedText>
-          </Pressable>
+          </Tap>
         </View>
       ) : null}
 
@@ -949,18 +987,20 @@ export default function MainScreen() {
           absent entirely at zero — no heading, no reserved space (main-screen, "Uncategorised
           records are a compact feed banner"). Visible even with «Останні 5 транзакцій» hidden. */}
       {model.alerts.uncategorisedBanner ? (
-        <Pressable
-          onPress={() =>
-            router.push({ pathname: '/transactions', params: { only: ONLY_UNCATEGORISED } })
-          }
-          accessibilityRole="button">
-          <Card style={styles.attentionRow}>
-            <ThemedText numberOfLines={2} style={styles.attentionLabel}>
-              {model.alerts.uncategorisedBanner}
-            </ThemedText>
-            <Chevron />
-          </Card>
-        </Pressable>
+        <Appear>
+          <Tap
+            onPress={() =>
+              router.push({ pathname: '/transactions', params: { only: ONLY_UNCATEGORISED } })
+            }
+            accessibilityRole="button">
+            <Card style={styles.attentionRow}>
+              <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+                {model.alerts.uncategorisedBanner}
+              </ThemedText>
+              <Chevron />
+            </Card>
+          </Tap>
+        </Appear>
       ) : null}
 
       {/* At most two collapsed operational rows: the pending чернетки (count only, expanding in
@@ -968,55 +1008,65 @@ export default function MainScreen() {
           and nothing here renders at all (main-screen, "Operational alerts remain compact and
           actionable"). */}
       {model.alerts.draftCount > 0 || model.alerts.failureRow ? (
-        <Card style={styles.attention}>
-          {model.alerts.draftCount > 0 ? (
-            <Pressable
-              onPress={() => setDraftsExpanded((expanded) => !expanded)}
-              accessibilityRole="button"
-              style={styles.attentionRow}>
-              <ThemedText numberOfLines={2} style={styles.attentionLabel}>
-                {model.alerts.draftLabel}
-              </ThemedText>
-              <Chevron />
-            </Pressable>
-          ) : null}
-          {model.alerts.failureRow ? (
-            <View>
-              {model.alerts.draftCount > 0 ? <Divider /> : null}
-              <Pressable
-                onPress={() => router.push('/manage/monobank')}
+        <Appear>
+          <Card style={styles.attention}>
+            {model.alerts.draftCount > 0 ? (
+              <Tap
+                onPress={() => setDraftsExpanded((expanded) => !expanded)}
                 accessibilityRole="button"
                 style={styles.attentionRow}>
                 <ThemedText numberOfLines={2} style={styles.attentionLabel}>
-                  {model.alerts.failureRow}
-                </ThemedText>
-                <ThemedText type="link" themeColor="accent">
-                  Відкрити
+                  {model.alerts.draftLabel}
                 </ThemedText>
                 <Chevron />
-              </Pressable>
-            </View>
-          ) : null}
-        </Card>
+              </Tap>
+            ) : null}
+            {model.alerts.failureRow ? (
+              <Appear>
+                {model.alerts.draftCount > 0 ? <Divider /> : null}
+                <Tap
+                  onPress={() => router.push('/manage/monobank')}
+                  accessibilityRole="button"
+                  style={styles.attentionRow}>
+                  <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+                    {model.alerts.failureRow}
+                  </ThemedText>
+                  <ThemedText type="link" themeColor="accent">
+                    Відкрити
+                  </ThemedText>
+                  <Chevron />
+                </Tap>
+              </Appear>
+            ) : null}
+          </Card>
+        </Appear>
       ) : null}
 
+      {/* The чернетки open in place: they fade in and everything under them moves down with them
+          (motion, "Opening чернетки moves the feed down smoothly"). */}
       {draftsExpanded && drafts.length > 0 ? (
-        <ListCard>
-          {drafts.map((line, index) => (
-            <DraftRow
-              key={line.id}
-              line={line}
-              last={index === drafts.length - 1}
-              onConfirm={confirmDraftLine}
-              onDismiss={dismissDraftLine}
-            />
-          ))}
-        </ListCard>
+        <Appear>
+          <ListCard>
+            {drafts.map((line, index) => (
+              <DraftRow
+                key={line.id}
+                line={line}
+                last={index === drafts.length - 1}
+                onConfirm={confirmDraftLine}
+                onDismiss={dismissDraftLine}
+              />
+            ))}
+          </ListCard>
+        </Appear>
       ) : null}
 
       {/* The known widgets, in the owner's saved order — each rendered exactly once, through the
           exhaustive switch above (main-screen, "A saved layout controls only known widgets"). */}
-      {stored.plan.visibleIds.map((id) => renderWidget(id))}
+      {stored.plan.visibleIds.map((id) => {
+        // Each widget moves to its new place when something above it opens or leaves.
+        const widget = renderWidget(id);
+        return widget ? <Reflow key={id}>{widget}</Reflow> : null;
+      })}
 
       {/* Every widget hidden: the header, the customise action and any service item above still
           stand; this is the compact explanation that takes their place (dashboard-layout, "Every
@@ -1138,9 +1188,14 @@ const styles = StyleSheet.create({
   },
   // A tap target as wide as it is tall, never smaller than the shared minimum — text alone would
   // shrink it well under that on a short label like «Оновити».
+  freshness: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, flexShrink: 1 },
   syncButton: { minHeight: TouchTarget, minWidth: TouchTarget, alignItems: 'center', justifyContent: 'center' },
   // Clipped, so the accent rings behind the figure end at the card's own corner.
   status: { gap: Spacing.two + Spacing.half, overflow: 'hidden' },
+  // The month's витрачено, one figure per currency on one line: each shrinks to fit rather than
+  // pushing the line into a second row.
+  figures: { flexDirection: 'row', alignItems: 'baseline' },
+  figure: { flexShrink: 1, minWidth: 0 },
   statusHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   // A card holding one short line does not need a card's full padding around it.
   attention: { gap: Spacing.two, paddingVertical: Spacing.three },
@@ -1165,3 +1220,15 @@ const styles = StyleSheet.create({
   rowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.three },
   amount: { fontWeight: 600 },
 });
+
+/**
+ * The tab as the navigator mounts it: the screen inside the cross-fade every tab shares (motion,
+ * "Screens enter from where they come from"; design D8).
+ */
+export default function MainTab() {
+  return (
+    <TabFade tab="index">
+      <MainScreen />
+    </TabFade>
+  );
+}

@@ -880,3 +880,21 @@ describe('the dashboard layout in a бекап', () => {
     expect(parseState({ dashboardLayout: layout }).dashboardLayout).toEqual(layout);
   });
 });
+
+describe('the «Вібрація» preference in a бекап', () => {
+  it('Scenario: An older бекап restores with vibration on — it names no preference', () => {
+    expect(parseState({}).haptics).toBeUndefined();
+  });
+
+  it('reads a plain on or off', () => {
+    expect(parseState({ haptics: { enabled: false } }).haptics).toEqual({ enabled: false });
+    expect(parseState({ haptics: { enabled: true } }).haptics).toEqual({ enabled: true });
+  });
+
+  it('Scenario: A malformed vibration preference refuses the бекап', () => {
+    expect(() => parseState({ haptics: { enabled: 'yes' } })).toThrow();
+    expect(() => parseState({ haptics: { enabled: 1 } })).toThrow();
+    expect(() => parseState({ haptics: {} })).toThrow();
+    expect(() => parseState({ haptics: 'off' })).toThrow();
+  });
+});

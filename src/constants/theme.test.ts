@@ -40,10 +40,12 @@ function block(name: string): string {
   throw new Error(`${name} is not closed`);
 }
 
-/** `role: '#RRGGBB'` pairs, comments and doc blocks ignored. */
+/** `role: '#RRGGBB'` (or `#RRGGBBAA`) pairs, comments and doc blocks ignored. */
 function colours(name: string): Map<string, string> {
   const found = new Map<string, string>();
-  for (const [, role, value] of block(name).matchAll(/^\s{4}(\w+): '(#[0-9A-Fa-f]{6})',/gm)) {
+  for (const [, role, value] of block(name).matchAll(
+    /^\s{4}(\w+): '(#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)',/gm,
+  )) {
     found.set(role!, value!);
   }
   return found;
@@ -80,9 +82,19 @@ describe('the token table', () => {
     expect(light.size).toBeGreaterThan(10);
   });
 
-  it('gives every role a six-digit hex in both themes', () => {
+  it('gives every role a six-digit hex in both themes, the ripple alone carrying alpha', () => {
     for (const [role, value] of [...light, ...dark]) {
+      if (role === 'ripple') continue;
       expect(value, role).toMatch(/^#[0-9A-F]{6}$/i);
+    }
+  });
+
+  it("draws the ripple as the theme's own text at 12 % alpha", () => {
+    for (const theme of [light, dark]) {
+      const ripple = theme.get('ripple')!;
+      expect(ripple).toMatch(/^#[0-9A-F]{8}$/i);
+      expect(ripple.slice(0, 7)).toBe(theme.get('text'));
+      expect(Math.round((parseInt(ripple.slice(7), 16) / 255) * 100)).toBe(12);
     }
   });
 
@@ -156,5 +168,29 @@ describe('the spacing scale', () => {
   it('carries the two half-steps the canvas needs', () => {
     expect(spacing.get('oneHalf')).toBe(6);
     expect(spacing.get('twoHalf')).toBe(12);
+  });
+});
+
+describe('the motion vocabulary', () => {
+  const motion = numbers('Motion');
+
+  it('Scenario: No animation the app drives outlasts the ceiling', () => {
+    // Every duration token is one of the three the spec names; `motion-usage.test.ts` proves the
+    // other half — that nothing animated uses a duration or a delay outside these tokens.
+    const durations = ['fast', 'standard', 'emphasis'].map((step) => motion.get(step));
+    expect(durations).toEqual([150, 220, 300]);
+    for (const duration of durations) expect(duration!).toBeLessThanOrEqual(300);
+  });
+
+  it('keeps the press-in and the rise small', () => {
+    expect(block('Motion')).toMatch(/pressedScale: 0\.9\d,/);
+    expect(motion.get('shift')).toBeLessThanOrEqual(24);
+  });
+
+  it('gives the enter and exit easings four control points each', () => {
+    for (const name of ['enter', 'exit']) {
+      const points = new RegExp(`${name}: \\[([^\\]]+)\\]`).exec(block('Motion'))?.[1];
+      expect(points?.split(',').map(Number), name).toHaveLength(4);
+    }
   });
 });

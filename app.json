@@ -22,6 +22,9 @@
       "permissions": [
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
+        "android.permission.VIBRATE"
       ]
     },
     "web": {

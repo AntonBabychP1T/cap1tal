@@ -19,6 +19,7 @@ import {
 import { activeAccounts } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
+import { useHaptics } from '@/hooks/haptics-ports';
 import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { usePagedList } from '@/hooks/use-paged-list';
@@ -71,6 +72,7 @@ const ANY = '';
 
 export default function TransactionsScreen() {
   const router = useRouter();
+  const haptics = useHaptics();
 
   const [stored, reloadStored] = useReloadOnFocus(
     useCallback(
@@ -223,6 +225,8 @@ export default function TransactionsScreen() {
         transactionsRepo.save(recategorise(t, picked), new Date());
         // A транзакція was recorded — one of the moments the прогрес is evaluated at.
         judgeProgressLater();
+        // Stored, and felt as a store: the chip's own tick in the same tap gives way to it.
+        haptics.play('stored');
         setCategorising(undefined);
         setCategoryListOpen(false);
         reload();
@@ -243,7 +247,7 @@ export default function TransactionsScreen() {
         );
       }
     },
-    [reload, reloadStored, reportBug, ruleOffer],
+    [haptics, reload, reloadStored, reportBug, ruleOffer],
   );
 
   const accountChoices = [

@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   donutGeometry,
+  donutMorph,
   donutSectorPath,
   historyGeometry,
-  MAX_PLOTTED_POINTS,
   type HistorySeriesPoint,
+  lineAt,
+  lineMorph,
+  linePath,
+  MAX_PLOTTED_POINTS,
+  sectorAt,
 } from './dashboard-charts';
 
 describe('donutGeometry', () => {
@@ -226,5 +231,130 @@ describe('donutSectorPath', () => {
 
   it('A sector over half the circle takes the large arc', () => {
     expect(donutSectorPath(0, 270, ring)).toContain('A 72 72 0 1 1');
+  });
+});
+
+describe('linePath', () => {
+  it('draws one polyline per run, flipped for the y-down axis', () => {
+    expect(
+      linePath(
+        [
+          [
+            { x: 0, y: 0 },
+            { x: 0.5, y: 1 },
+          ],
+          [{ x: 1, y: 0.5 }],
+        ],
+        200,
+        100,
+      ),
+    ).toBe('M 0 100 L 100 0 M 200 50');
+  });
+});
+
+describe('lineMorph', () => {
+  // Two histories over the same five days, one of them with other values.
+  const days = (values: (number | undefined)[]): HistorySeriesPoint[] =>
+    values.map((value, i) => ({ x: i / (values.length - 1), value }));
+
+  it('Scenario: Switching the історія статку morphs the line', () => {
+    const uah = historyGeometry(days([100, 300, 200, 400, 500]));
+    const usd = historyGeometry(days([5, 4, 6, 8, 7]));
+    const morph = lineMorph(uah, usd);
+    if (morph.kind !== 'morph') throw new Error('expected a morph');
+    // Every point keeps its place on the time axis and travels from its old height to its new one.
+    expect(morph.xs).toEqual([[0, 0.25, 0.5, 0.75, 1]]);
+    expect(morph.from).toEqual([uah.segments[0]!.map((p) => p.y)]);
+    expect(morph.to).toEqual([usd.segments[0]!.map((p) => p.y)]);
+    // At either end the drawn line is exactly one of the two real shapes.
+    expect(lineAt(morph, 0)).toEqual(uah.segments.map((run) => run.map(({ x, y }) => ({ x, y }))));
+    expect(lineAt(morph, 1)).toEqual(usd.segments.map((run) => run.map(({ x, y }) => ({ x, y }))));
+    expect(lineAt(morph, 0.5)[0]![1]!.y).toBeCloseTo((morph.from[0]![1]! + morph.to[0]![1]!) / 2);
+  });
+
+  it('Scenario: A shape that cannot be matched cross-fades', () => {
+    const whole = historyGeometry(days([1, 2, 3, 4, 5]));
+    // A gap where the shown history has none: another split into runs.
+    expect(lineMorph(whole, historyGeometry(days([1, 2, undefined, 4, 5])))).toEqual({ kind: 'fade' });
+    // Another point count.
+    expect(lineMorph(whole, historyGeometry(days([1, 2, 3, 4])))).toEqual({ kind: 'fade' });
+    // Equal counts on other days, as downsampling can leave them: another seriesIndex.
+    const thinned = {
+      segments: [whole.segments[0]!.map((p, i) => (i === 2 ? { ...p, seriesIndex: 7 } : p))],
+    };
+    expect(lineMorph(whole, thinned)).toEqual({ kind: 'fade' });
+    // Nothing drawn before is nothing to travel from.
+    expect(lineMorph(historyGeometry([]), whole)).toEqual({ kind: 'fade' });
+  });
+});
+
+describe('donutMorph', () => {
+  const ring = (rows: [string, number][]) =>
+    donutGeometry(rows.map(([categoryId, amount]) => ({ categoryId, amount })));
+
+  it('Scenario: A new категорія grows into the donut', () => {
+    const before = ring([
+      ['food', 300],
+      ['cafe', 100],
+    ]);
+    const after = ring([
+      ['food', 300],
+      ['taxi', 100],
+      ['cafe', 200],
+    ]);
+    const morph = donutMorph(before, after);
+    if (morph.kind !== 'morph') throw new Error('expected a morph');
+    expect(morph.sectors.map((s) => s.key)).toEqual(['food', 'taxi', 'cafe']);
+    const [food, taxi, cafe] = morph.sectors;
+    // The arriving sector starts at zero sweep where it will sit — between food and cafe.
+    expect(taxi!.from).toEqual([270, 270]);
+    expect(taxi!.to).toEqual([180, 240]);
+    // The others move to their new shares.
+    expect(food!.from).toEqual([0, 270]);
+    expect(food!.to).toEqual([0, 180]);
+    expect(cafe!.from).toEqual([270, 360]);
+    expect(cafe!.to).toEqual([240, 360]);
+    // Settled, every sector is exactly the new geometry's.
+    if (after.kind !== 'positive') throw new Error('expected positive');
+    for (const sector of morph.sectors) {
+      const target = after.sectors.find((s) => s.categoryId === sector.key)!;
+      expect(sectorAt(sector, 1)).toEqual([target.startAngle, target.endAngle]);
+    }
+  });
+
+  it('shrinks a leaving категорія to zero sweep where it was', () => {
+    const morph = donutMorph(
+      ring([
+        ['food', 200],
+        ['taxi', 100],
+        ['cafe', 100],
+      ]),
+      ring([
+        ['food', 300],
+        ['cafe', 100],
+      ]),
+    );
+    if (morph.kind !== 'morph') throw new Error('expected a morph');
+    const taxi = morph.sectors.find((s) => s.key === 'taxi')!;
+    expect(taxi.from).toEqual([180, 270]);
+    expect(taxi.to).toEqual([270, 270]);
+  });
+
+  it('cross-fades a neutral ring or shared категорії in another order', () => {
+    const shown = ring([
+      ['food', 300],
+      ['cafe', 100],
+    ]);
+    expect(donutMorph(shown, ring([]))).toEqual({ kind: 'fade' });
+    expect(donutMorph(ring([['food', -10]]), shown)).toEqual({ kind: 'fade' });
+    expect(
+      donutMorph(
+        shown,
+        ring([
+          ['cafe', 400],
+          ['food', 100],
+        ]),
+      ),
+    ).toEqual({ kind: 'fade' });
   });
 });

@@ -598,3 +598,75 @@ function emptyHistoryMessageFor(currencyCount: number, hasTransactions: boolean)
     ? 'За всю історію гроші лише переходили між рахунками.'
     : 'Історія порожня — ще нічого не записано.';
 }
+
+// ─── The bars on their way (app-motion-pass design D12) ─────────────────────────────────────────
+
+/** What a Звіти chart draws, reduced to what its bars need to move: sizes by month and bar key. */
+export interface ChartBars {
+  readonly columns: readonly {
+    readonly month: Month;
+    readonly bars: readonly { readonly key: string; readonly size: number; readonly negative: boolean }[];
+  }[];
+  /** The chart has room below its baseline. */
+  readonly hasNegative: boolean;
+}
+
+/** The history chart's bars: three per month, keyed by the number each stands for. */
+export function historyBars(model: Pick<ReportsViewModel, 'history' | 'historyHasNegative'>): ChartBars {
+  return {
+    columns: model.history.map((column) => ({ month: column.month, bars: column.bars })),
+    hasNegative: model.historyHasNegative,
+  };
+}
+
+/** The category chart's bars: one per month. */
+export function categoryBars(
+  model: Pick<ReportsViewModel, 'categoryChart' | 'categoryChartHasNegative'>,
+): ChartBars {
+  return {
+    columns: model.categoryChart.map((column) => ({
+      month: column.month,
+      bars: [{ key: 'spent', size: column.size, negative: column.negative }],
+    })),
+    hasNegative: model.categoryChartHasNegative,
+  };
+}
+
+/** Where one bar is drawn from and to, by `columnBarKey`. */
+export type ColumnMorph =
+  | { readonly kind: 'morph'; readonly bars: ReadonlyMap<string, { readonly from: number; readonly to: number }> }
+  | { readonly kind: 'fade' };
+
+/** A bar's key across two charts: its month and which of the month's numbers it is. */
+export function columnBarKey(month: Month, key: string): string {
+  return `${month}:${key}`;
+}
+
+/**
+ * How the Звіти bars go from `prev` to `next` (motion, "A chart moves from its old shape to its new
+ * one"): every bar from its old size to its new one, growing from the baseline, a column that
+ * arrives from 0. `prev` null is the screen's first drawing, which fills once from empty.
+ *
+ * A bar that would cross the baseline — the same month's number changing sign — or the room below
+ * the baseline appearing or going, which would shift the whole chart in one frame, is a `fade`.
+ * A column that leaves has no entry: it disappears at once.
+ */
+export function columnMorph(prev: ChartBars | null, next: ChartBars): ColumnMorph {
+  const before = new Map<string, { size: number; negative: boolean }>();
+  if (prev) {
+    if (prev.hasNegative !== next.hasNegative) return { kind: 'fade' };
+    for (const column of prev.columns) {
+      for (const bar of column.bars) before.set(columnBarKey(column.month, bar.key), bar);
+    }
+  }
+  const bars = new Map<string, { from: number; to: number }>();
+  for (const column of next.columns) {
+    for (const bar of column.bars) {
+      const key = columnBarKey(column.month, bar.key);
+      const old = before.get(key);
+      if (old && old.size > 0 && bar.size > 0 && old.negative !== bar.negative) return { kind: 'fade' };
+      bars.set(key, { from: old?.size ?? 0, to: bar.size });
+    }
+  }
+  return { kind: 'morph', bars };
+}

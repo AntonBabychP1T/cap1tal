@@ -1,11 +1,11 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
-import { Path, Svg } from 'react-native-svg';
+import { useMemo, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
 import { Spacing, TouchTarget } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { historyGeometry } from '@/ui/dashboard-charts';
 import type { NetWorthWidgetModel } from '@/ui/net-worth';
+import { Appear, ChangingFigure, MorphLine, Reflow, Swap, Tap } from './motion';
 import { Card, Chevron, Divider } from './surfaces';
 import { ThemedText } from './themed-text';
 
@@ -20,20 +20,6 @@ import { ThemedText } from './themed-text';
 /** The width the chart is drawn at before the card has measured itself. */
 const FALLBACK_CHART_WIDTH = 280;
 const CHART_HEIGHT = 96;
-
-function chartPath(series: ReturnType<typeof historyGeometry>, width: number): string {
-  return series.segments
-    .map((segment) =>
-      segment
-        .map((p, i) => {
-          const x = p.x * width;
-          const y = CHART_HEIGHT - p.y * CHART_HEIGHT;
-          return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-        })
-        .join(' '),
-    )
-    .join(' ');
-}
 
 /**
  * The chevron beside a show/hide toggle, pointing where the list will go: down while it is shut,
@@ -64,6 +50,8 @@ export function NetWorthWidget({
   const [pointsOpen, setPointsOpen] = useState(false);
   /** The chart spans the card: measured, because a fixed 280 left a wide card's right third empty. */
   const [chartWidth, setChartWidth] = useState(FALLBACK_CHART_WIDTH);
+  // Once per history, so the line morphs only when what it draws has changed.
+  const geometry = useMemo(() => historyGeometry(model.historySeries), [model.historySeries]);
 
   if (model.emptyMessage) {
     return (
@@ -74,22 +62,22 @@ export function NetWorthWidget({
     );
   }
 
-  const geometry = historyGeometry(model.historySeries);
-
   return (
     <Card style={styles.card}>
       <View style={styles.head}>
         <ThemedText type="overline">Статок</ThemedText>
-        <Pressable onPress={onOpenAccounts} accessibilityRole="button" style={styles.accountsLink}>
+        <Tap onPress={onOpenAccounts} accessibilityRole="button" style={styles.accountsLink}>
           <ThemedText type="small" themeColor="accent">
             Рахунки
           </ThemedText>
           <Chevron />
-        </Pressable>
+        </Tap>
       </View>
 
       {model.readouts.map((readout, i) => (
-        <ThemedText
+        // One figure per currency, so a UAH change leaves USD and EUR still (motion, "Only the
+        // currency that changed moves").
+        <ChangingFigure
           key={readout.currency}
           // `title` is the one number a screen leads with; a рахунок in every currency the owner
           // holds is several numbers, so only the first (UAH first, `currencyReadouts`' own order)
@@ -101,7 +89,7 @@ export function NetWorthWidget({
           adjustsFontSizeToFit
           themeColor={readout.available ? undefined : 'textDanger'}>
           {readout.text}
-        </ThemedText>
+        </ChangingFigure>
       ))}
       {model.approximate.status === 'available' ? (
         <ThemedText type="small" themeColor="textMuted" tabular>
@@ -112,9 +100,9 @@ export function NetWorthWidget({
       {model.historyChoices.length > 1 ? (
         <View style={styles.chips}>
           {model.historyChoices.map((choice) => (
-            // The Pressable is the 48 dp touch target, the pill inside it is what is drawn — the
+            // The `Tap` is the 48 dp touch target, the pill inside it is what is drawn — the
             // same split as the category widget's chips (`chipTarget` there).
-            <Pressable
+            <Tap
               key={choice.id}
               onPress={() => onSelectHistory(choice.id)}
               accessibilityRole="button"
@@ -126,23 +114,29 @@ export function NetWorthWidget({
                   {choice.label}
                 </ThemedText>
               </View>
-            </Pressable>
+            </Tap>
           ))}
         </View>
       ) : null}
 
+      {/* A message and the chart replace each other with a cross-fade (motion, "A chart moves
+          from its old shape to its new one"); the chart itself morphs. */}
       {model.historyUnavailableMessage ? (
-        <ThemedText type="small" themeColor="textSecondary">
-          {model.historyUnavailableMessage}
-        </ThemedText>
+        <Swap key="unavailable">
+          <ThemedText type="small" themeColor="textSecondary">
+            {model.historyUnavailableMessage}
+          </ThemedText>
+        </Swap>
       ) : model.historyWithheldMessage ? (
         // The combined history has no rate to convert at: nothing else of it is drawn, and the
         // currency choices above still read their own histories.
-        <ThemedText type="small" themeColor="textSecondary">
-          {model.historyWithheldMessage}
-        </ThemedText>
+        <Swap key="withheld">
+          <ThemedText type="small" themeColor="textSecondary">
+            {model.historyWithheldMessage}
+          </ThemedText>
+        </Swap>
       ) : (
-        <>
+        <Swap key="chart" style={styles.card}>
           <ThemedText
             type="small"
             themeColor="textSecondary"
@@ -161,14 +155,15 @@ export function NetWorthWidget({
               const width = Math.round(nativeEvent.layout.width);
               if (width > 0 && width !== chartWidth) setChartWidth(width);
             }}>
-            <Svg width={chartWidth} height={CHART_HEIGHT} viewBox={`0 0 ${chartWidth} ${CHART_HEIGHT}`}>
-              <Path
-                d={chartPath(geometry, chartWidth)}
-                fill="none"
-                stroke={theme.accent}
-                strokeWidth={2}
-              />
-            </Svg>
+            {/* Only the line moves: the caption, the span and the points are the new history's own
+                text from the moment it changes. */}
+            <MorphLine
+              geometry={geometry}
+              width={chartWidth}
+              height={CHART_HEIGHT}
+              color={theme.accent}
+              strokeWidth={2}
+            />
             {/* The span the line covers, so an empty stretch reads as «no data then» rather than
                 as a chart that failed to draw. */}
             {model.historySpan ? (
@@ -188,7 +183,7 @@ export function NetWorthWidget({
             </ThemedText>
           ) : null}
 
-          <Pressable
+          <Tap
             onPress={() => setPointsOpen((open) => !open)}
             accessibilityRole="button"
             accessibilityState={{ expanded: pointsOpen }}
@@ -197,57 +192,60 @@ export function NetWorthWidget({
               {pointsOpen ? 'Сховати точки' : 'Показати точки'}
             </ThemedText>
             <DisclosureChevron open={pointsOpen} />
-          </Pressable>
+          </Tap>
           {pointsOpen ? (
-            <View style={styles.pointsList}>
+            <Appear style={styles.pointsList}>
               {model.historyPoints.map((point) => (
                 <ThemedText key={point.key} type="small" themeColor="textSecondary">
                   {point.label}
                 </ThemedText>
               ))}
-            </View>
+            </Appear>
           ) : null}
-        </>
+        </Swap>
       )}
 
-      <Divider />
-      <Pressable
-        onPress={() => setExplanationOpen((open) => !open)}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: explanationOpen }}
-        style={styles.toggleRow}>
-        <ThemedText type="small" themeColor="accent">
-          {explanationOpen ? 'Сховати пояснення' : 'Пояснення'}
-        </ThemedText>
-        <DisclosureChevron open={explanationOpen} />
-      </Pressable>
-      {explanationOpen ? (
-        <View style={styles.explanation}>
-          <ThemedText type="small" themeColor="textSecondary">
-            {model.accountsDifference}
+      {/* Moves down with the points list opening above it rather than jumping. */}
+      <Reflow style={styles.card}>
+        <Divider />
+        <Tap
+          onPress={() => setExplanationOpen((open) => !open)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: explanationOpen }}
+          style={styles.toggleRow}>
+          <ThemedText type="small" themeColor="accent">
+            {explanationOpen ? 'Сховати пояснення' : 'Пояснення'}
           </ThemedText>
-          {model.explanation.map((line) => (
-            <View key={line.accountId} style={styles.explanationRow}>
-              {/* The basis under the name, not in a third column: most рахунки have none, and a
-                  column that is empty on most rows pushed every сума to a different edge. */}
-              <View style={styles.explanationName}>
-                {/* Two lines: at a large font a рахунок's name cut to one reads as its neighbour's. */}
-                <ThemedText type="small" numberOfLines={2}>
-                  {line.name}
-                </ThemedText>
-                {line.basis ? (
-                  <ThemedText type="caption" themeColor="textMuted">
-                    {line.basis}
+          <DisclosureChevron open={explanationOpen} />
+        </Tap>
+        {explanationOpen ? (
+          <Appear style={styles.explanation}>
+            <ThemedText type="small" themeColor="textSecondary">
+              {model.accountsDifference}
+            </ThemedText>
+            {model.explanation.map((line) => (
+              <View key={line.accountId} style={styles.explanationRow}>
+                {/* The basis under the name, not in a third column: most рахунки have none, and a
+                    column that is empty on most rows pushed every сума to a different edge. */}
+                <View style={styles.explanationName}>
+                  {/* Two lines: at a large font a рахунок's name cut to one reads as its neighbour's. */}
+                  <ThemedText type="small" numberOfLines={2}>
+                    {line.name}
                   </ThemedText>
-                ) : null}
+                  {line.basis ? (
+                    <ThemedText type="caption" themeColor="textMuted">
+                      {line.basis}
+                    </ThemedText>
+                  ) : null}
+                </View>
+                <ThemedText type="small" tabular>
+                  {line.amount}
+                </ThemedText>
               </View>
-              <ThemedText type="small" tabular>
-                {line.amount}
-              </ThemedText>
-            </View>
-          ))}
-        </View>
-      ) : null}
+            ))}
+          </Appear>
+        ) : null}
+      </Reflow>
     </Card>
   );
 }

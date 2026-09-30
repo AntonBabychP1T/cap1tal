@@ -7,6 +7,7 @@ import type { CurrencyCode } from '@/domain/money';
 import type { RuleTarget } from '@/domain/rules';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
+import { useHaptics } from '@/hooks/haptics-ports';
 import { ruleFromDraft, ruleOffer, storeRule, type RuleOffer } from '@/ui/list-management';
 
 /**
@@ -28,6 +29,7 @@ import { ruleFromDraft, ruleOffer, storeRule, type RuleOffer } from '@/ui/list-m
  */
 export function useRuleOffer(reportBug: (entryId: string) => void) {
   const [offer, setOffer] = useState<RuleOffer | undefined>();
+  const haptics = useHaptics();
 
   const raise = useCallback(
     (input: {
@@ -63,6 +65,9 @@ export function useRuleOffer(reportBug: (entryId: string) => void) {
           { id: newId(), createdAt: new Date() },
         );
         await storeRule(rule, rulesRepo.save);
+        // The sheet's accept is its own owner action, after the store it followed: felt once the
+        // правило is written (motion, "An outcome the owner caused is felt once").
+        haptics.play('rule-accepted');
         setOffer(undefined);
       } catch (error) {
         Alert.alert(
@@ -75,7 +80,7 @@ export function useRuleOffer(reportBug: (entryId: string) => void) {
         );
       }
     },
-    [offer, reportBug],
+    [haptics, offer, reportBug],
   );
 
   return { offer, raise, accept, decline };

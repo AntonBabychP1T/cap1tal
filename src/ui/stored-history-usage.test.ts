@@ -50,8 +50,12 @@ describe('the screens read the stored history', () => {
     }
     const surfaces = readFileSync(fileURLToPath(new URL('../components/surfaces.tsx', import.meta.url)), 'utf8');
     const list = surfaces.slice(surfaces.indexOf('export function ListScreen'));
-    expect(list).toContain('<FlatList');
+    // `MotionList` is the FlatList with the motion pass's row reflow (app-motion-pass design D4):
+    // every prop given here reaches `Animated.FlatList` unchanged.
+    expect(list).toContain('<MotionList');
     expect(list).toMatch(/initialNumToRender=\{15\}/);
     expect(list).toMatch(/windowSize=\{7\}/);
+    const motion = readFileSync(fileURLToPath(new URL('../components/motion.tsx', import.meta.url)), 'utf8');
+    expect(motion).toMatch(/<Animated\.FlatList \{\.\.\.props\} itemLayoutAnimation=\{motion\.reflow\} \/>/);
   });
 });

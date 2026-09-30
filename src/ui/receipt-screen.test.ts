@@ -963,8 +963,8 @@ describe('the screens are wired to this module', () => {
     expect(scan).toContain('decodedFromImage(s, outcome)');
     // A photo accepted while CameraView is still mounted enters the same `look` callback whose
     // first synchronous step closes the latch; a queued camera decode cannot start a second lookup.
-    expect(scan).toContain(
-      "if (next.kind === 'looking-up' && !latched.current) void look(next)",
+    expect(scan).toMatch(
+      /if \(next\.kind === 'looking-up' && !latched\.current\) \{\s*haptics\.play\('scanned'\);\s*void look\(next\);/,
     );
     // Offered beside the live camera view, not only after a refusal.
     expect(scan).toContain("<Action variant=\"secondary\" title={PICK_PHOTO_LABEL} onPress={() => void pickPhoto()} />");

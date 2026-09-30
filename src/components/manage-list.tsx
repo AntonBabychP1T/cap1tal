@@ -1,9 +1,10 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
 import { Action, Field, RowAction } from './form';
 import { CategoryIconPicker, type PickableCategoryIcon } from './category-icon-picker';
+import { ListItem, Tap } from './motion';
 import { Card, Chevron, IconTile, ListCard, ListRow, Screen, ScreenHeader } from './surfaces';
 import { ThemedText } from './themed-text';
 
@@ -143,84 +144,87 @@ export function ManageListScreen({
 
       <ListCard>
         {rows.map((row, index) => (
-          <ListRow key={row.id} last={index === rows.length - 1} style={styles.row}>
-            {editing?.id === row.id ? (
-              <>
-                <Field
-                  label="Назва"
-                  value={editing.name}
-                  onChangeText={(name) => setEditing({ ...editing, name })}
-                />
-                {categoryIcons && editing.iconKey ? <CategoryIconPicker icons={categoryIcons} value={editing.iconKey} onChange={(iconKey) => setEditing({ ...editing, iconKey })} /> : null}
-                <View style={styles.actions}>
-                  {row.canRename ? (
-                    <RowAction
-                      title="Зберегти"
-                      onPress={() => {
-                        if (attempt('rename', () => rename(row.id, editing.name, editing.iconKey))) {
-                          setEditing(undefined);
-                        }
-                      }}
-                    />
-                  ) : null}
-                  <RowAction tone="quiet" title="Скасувати" onPress={() => setEditing(undefined)} />
-                  {row.canArchive ? (
-                    <RowAction
-                      tone="quiet"
-                      title="В архів"
-                      onPress={() => {
-                        if (attempt('archive', () => archive(row.id))) setEditing(undefined);
-                      }}
-                    />
-                  ) : null}
-                  {row.canUnarchive ? (
-                    <RowAction
-                      tone="quiet"
-                      title="З архіву"
-                      onPress={() => {
-                        if (attempt('unarchive', () => unarchive(row.id))) setEditing(undefined);
-                      }}
-                    />
-                  ) : null}
-                </View>
-              </>
-            ) : (
-              // The row itself is the way into its editor; a reserved row has nothing to open and
-              // says why instead.
-              <Pressable
-                disabled={row.reserved}
-                accessibilityRole={row.reserved ? undefined : 'button'}
-                accessibilityHint={row.reserved ? undefined : 'Змінити або перенести в архів'}
-                onPress={() => {
-                  setCreating(false);
-                  setEditing({ id: row.id, name: row.name, iconKey: row.iconKey as CategoryIconKey | undefined });
-                }}
-                style={({ pressed }) => [styles.rowTap, pressed ? styles.pressed : null]}>
-                <View style={styles.rowTop}>
-                  {row.icon ? <IconTile name={row.icon} /> : null}
-                  {/* Archived rows stay visible and are set apart, never dropped. */}
-                  <View style={styles.name}>
-                    <ThemedText
-                      numberOfLines={1}
-                      themeColor={row.archived ? 'textMuted' : undefined}>
-                      {row.name}
-                    </ThemedText>
-                    {row.reserved ? (
-                      <ThemedText type="small" themeColor="textMuted">
-                        службова — застосунок сам її використовує
-                      </ThemedText>
+          // A row that leaves fades out and the rows under it close the gap.
+          <ListItem key={row.id} reflow>
+            <ListRow last={index === rows.length - 1} style={styles.row}>
+              {editing?.id === row.id ? (
+                <>
+                  <Field
+                    label="Назва"
+                    value={editing.name}
+                    onChangeText={(name) => setEditing({ ...editing, name })}
+                  />
+                  {categoryIcons && editing.iconKey ? <CategoryIconPicker icons={categoryIcons} value={editing.iconKey} onChange={(iconKey) => setEditing({ ...editing, iconKey })} /> : null}
+                  <View style={styles.actions}>
+                    {row.canRename ? (
+                      <RowAction
+                        title="Зберегти"
+                        onPress={() => {
+                          if (attempt('rename', () => rename(row.id, editing.name, editing.iconKey))) {
+                            setEditing(undefined);
+                          }
+                        }}
+                      />
+                    ) : null}
+                    <RowAction tone="quiet" title="Скасувати" onPress={() => setEditing(undefined)} />
+                    {row.canArchive ? (
+                      <RowAction
+                        tone="quiet"
+                        title="В архів"
+                        onPress={() => {
+                          if (attempt('archive', () => archive(row.id))) setEditing(undefined);
+                        }}
+                      />
+                    ) : null}
+                    {row.canUnarchive ? (
+                      <RowAction
+                        tone="quiet"
+                        title="З архіву"
+                        onPress={() => {
+                          if (attempt('unarchive', () => unarchive(row.id))) setEditing(undefined);
+                        }}
+                      />
                     ) : null}
                   </View>
-                  {row.archived ? (
-                    <ThemedText type="overline" themeColor="textMuted">
-                      в архіві
-                    </ThemedText>
-                  ) : null}
-                  {row.reserved ? null : <Chevron />}
-                </View>
-              </Pressable>
-            )}
-          </ListRow>
+                </>
+              ) : (
+                // The row itself is the way into its editor; a reserved row has nothing to open and
+                // says why instead.
+                <Tap
+                  disabled={row.reserved}
+                  accessibilityRole={row.reserved ? undefined : 'button'}
+                  accessibilityHint={row.reserved ? undefined : 'Змінити або перенести в архів'}
+                  onPress={() => {
+                    setCreating(false);
+                    setEditing({ id: row.id, name: row.name, iconKey: row.iconKey as CategoryIconKey | undefined });
+                  }}
+                  style={styles.rowTap}>
+                  <View style={styles.rowTop}>
+                    {row.icon ? <IconTile name={row.icon} /> : null}
+                    {/* Archived rows stay visible and are set apart, never dropped. */}
+                    <View style={styles.name}>
+                      <ThemedText
+                        numberOfLines={1}
+                        themeColor={row.archived ? 'textMuted' : undefined}>
+                        {row.name}
+                      </ThemedText>
+                      {row.reserved ? (
+                        <ThemedText type="small" themeColor="textMuted">
+                          службова — застосунок сам її використовує
+                        </ThemedText>
+                      ) : null}
+                    </View>
+                    {row.archived ? (
+                      <ThemedText type="overline" themeColor="textMuted">
+                        в архіві
+                      </ThemedText>
+                    ) : null}
+                    {row.reserved ? null : <Chevron />}
+                  </View>
+                </Tap>
+              )}
+            </ListRow>
+          </ListItem>
         ))}
       </ListCard>
     </Screen>
@@ -238,6 +242,5 @@ const styles = StyleSheet.create({
   },
   name: { flex: 1, gap: Spacing.half },
   rowTap: { minHeight: 40, justifyContent: 'center' },
-  pressed: { opacity: 0.75 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: Spacing.two },
 });

@@ -1,7 +1,8 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
+import { Tap } from '@/components/motion';
 import { Action, ThemedSwitch } from '@/components/form';
 import { Banner, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
@@ -133,7 +134,7 @@ export default function HomeDashboardScreen() {
             </View>
             <View style={styles.moves}>
               {row.canMoveUp ? (
-                <Pressable
+                <Tap
                   accessibilityRole="button"
                   accessibilityLabel={row.moveUpLabel}
                   onPress={() => move(row.id, 'up')}
@@ -141,10 +142,10 @@ export default function HomeDashboardScreen() {
                   <ThemedText type="link" themeColor="accent">
                     Вище
                   </ThemedText>
-                </Pressable>
+                </Tap>
               ) : null}
               {row.canMoveDown ? (
-                <Pressable
+                <Tap
                   accessibilityRole="button"
                   accessibilityLabel={row.moveDownLabel}
                   onPress={() => move(row.id, 'down')}
@@ -152,7 +153,7 @@ export default function HomeDashboardScreen() {
                   <ThemedText type="link" themeColor="accent">
                     Нижче
                   </ThemedText>
-                </Pressable>
+                </Tap>
               ) : null}
             </View>
           </ListRow>

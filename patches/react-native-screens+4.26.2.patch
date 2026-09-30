@@ -1,0 +1,44 @@
+diff --git a/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/appearance/TabsAppearanceApplicator.kt b/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/appearance/TabsAppearanceApplicator.kt
+index 10cd91b..6d1d378 100644
+--- a/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/appearance/TabsAppearanceApplicator.kt
++++ b/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/appearance/TabsAppearanceApplicator.kt
+@@ -95,20 +95,35 @@ internal class TabsAppearanceApplicator(
+ 
+         bottomNavigationView.labelVisibilityMode = visibilityMode
+ 
++        // cap1tal patch: this runs again on every tab selection, and Material's `setItemRippleColor`,
++        // `setItemActiveIndicatorEnabled` and `setItemActiveIndicatorColor` rebuild every item's
++        // background RippleDrawable with no equality check. The tapped item's ripple is
++        // mid-animation at that moment; replaced, it never gets its exit, and its RenderThread
++        // noise loop (7 s on API 31+) keeps the app drawing ~400 unchanged frames after each
++        // switch. Set them only when they change.
++
+         // Ripple color
+         val rippleColor =
+             tabBarAppearance?.tabBarItemRippleColor
+                 ?: resolveColorAttr(context, R.attr.itemRippleColor)
+-        bottomNavigationView.itemRippleColor = ColorStateList.valueOf(rippleColor)
++        val currentRipple = bottomNavigationView.itemRippleColor
++        if (currentRipple == null || currentRipple.isStateful || currentRipple.defaultColor != rippleColor) {
++            bottomNavigationView.itemRippleColor = ColorStateList.valueOf(rippleColor)
++        }
+ 
+         // Active Indicator
+         val activeIndicatorColor =
+             tabBarAppearance?.tabBarItemActiveIndicatorColor
+                 ?: resolveColorAttr(context, R.attr.colorSecondaryContainer)
+ 
+-        bottomNavigationView.isItemActiveIndicatorEnabled =
+-            tabBarAppearance?.tabBarItemActiveIndicatorEnabled ?: true
+-        bottomNavigationView.itemActiveIndicatorColor = ColorStateList.valueOf(activeIndicatorColor)
++        val activeIndicatorEnabled = tabBarAppearance?.tabBarItemActiveIndicatorEnabled ?: true
++        if (bottomNavigationView.isItemActiveIndicatorEnabled != activeIndicatorEnabled) {
++            bottomNavigationView.isItemActiveIndicatorEnabled = activeIndicatorEnabled
++        }
++        val currentIndicator = bottomNavigationView.itemActiveIndicatorColor
++        if (currentIndicator == null || currentIndicator.isStateful || currentIndicator.defaultColor != activeIndicatorColor) {
++            bottomNavigationView.itemActiveIndicatorColor = ColorStateList.valueOf(activeIndicatorColor)
++        }
+     }
+ 
+     fun updateFontStyles(

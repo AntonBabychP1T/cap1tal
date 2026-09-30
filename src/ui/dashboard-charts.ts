@@ -3,6 +3,10 @@
  * React, no `react-native-svg` — a renderer (task 4.5/4.6) turns this into `Path`s. Angles are
  * degrees, 0 at 12 o'clock, clockwise; normalized coordinates are 0..1, the caller's own job to
  * place in a viewBox.
+ *
+ * The path builders carry the `'worklet'` directive (app-motion-pass design D12): a morphing chart
+ * builds its `d` on the UI thread every frame of its 300 ms. The directive is a plain string to
+ * Node, so they stay pure and tested here like everything else.
  */
 
 /** One category's share of a positive donut. */
@@ -62,6 +66,7 @@ export interface DonutRing {
 const FULL_SWEEP_EPSILON = 0.01;
 
 function polarPoint(ring: DonutRing, radius: number, angleDeg: number): { x: number; y: number } {
+  'worklet';
   // -90 so 0° is 12 o'clock, matching `donutGeometry`'s own convention, sweeping clockwise.
   const rad = ((angleDeg - 90) * Math.PI) / 180;
   return { x: ring.center + radius * Math.cos(rad), y: ring.center + radius * Math.sin(rad) };
@@ -79,6 +84,7 @@ function polarPoint(ring: DonutRing, radius: number, angleDeg: number): { x: num
  * rule leaves the hole unpainted without needing `fillRule="evenodd"` at the call site.
  */
 export function donutSectorPath(startAngle: number, endAngle: number, ring: DonutRing): string {
+  'worklet';
   const { center: c, outerRadius: R, innerRadius: r } = ring;
   if (endAngle - startAngle >= 360 - FULL_SWEEP_EPSILON) {
     return [
@@ -226,4 +232,158 @@ export function historyGeometry(series: readonly HistorySeriesPoint[]): HistoryG
   );
 
   return { minValue, maxValue, segments };
+}
+
+/**
+ * The history line as an SVG path `d`, in a `width` × `height` box: one `M … L …` polyline per run,
+ * so no line bridges a gap. `y` is flipped for SVG's y-down axis.
+ */
+export function linePath(
+  segments: readonly (readonly { readonly x: number; readonly y: number }[])[],
+  width: number,
+  height: number,
+): string {
+  'worklet';
+  return segments
+    .map((segment) =>
+      segment
+        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x * width} ${height - p.y * height}`)
+        .join(' '),
+    )
+    .join(' ');
+}
+
+// ─── Morphing (app-motion-pass design D12) ──────────────────────────────────────────────────────
+
+/**
+ * How a chart goes from one drawn shape to the next (motion, "A chart moves from its old shape to
+ * its new one"): `morph` when the two can be matched point for point or sector for sector, and
+ * `fade` — a fast cross-fade — when they cannot.
+ */
+export type LineMorph =
+  | {
+      readonly kind: 'morph';
+      /** Each run's points' shared x, in order. */
+      readonly xs: readonly (readonly number[])[];
+      /** Each run's points' heights before and after, on the same positions. */
+      readonly from: readonly (readonly number[])[];
+      readonly to: readonly (readonly number[])[];
+    }
+  | { readonly kind: 'fade' };
+
+/**
+ * Whether the history line can travel from `prev` to `next`: only when both hold the same runs of
+ * the same points — the same `seriesIndex` at the same x, so the same day — at every position. Each
+ * point then moves from its old height to its new one at its place on the time axis. Another point
+ * count, another split into runs, or equal counts that downsampling left on other days are a
+ * `fade`: nothing is resampled, so a morph never draws a point that does not exist.
+ */
+export function lineMorph(
+  prev: Pick<HistoryGeometry, 'segments'>,
+  next: Pick<HistoryGeometry, 'segments'>,
+): LineMorph {
+  if (prev.segments.length === 0 || prev.segments.length !== next.segments.length) {
+    return { kind: 'fade' };
+  }
+  const xs: number[][] = [];
+  const from: number[][] = [];
+  const to: number[][] = [];
+  for (let r = 0; r < next.segments.length; r++) {
+    const before = prev.segments[r]!;
+    const after = next.segments[r]!;
+    if (before.length !== after.length) return { kind: 'fade' };
+    for (let i = 0; i < after.length; i++) {
+      if (before[i]!.seriesIndex !== after[i]!.seriesIndex || before[i]!.x !== after[i]!.x) {
+        return { kind: 'fade' };
+      }
+    }
+    xs.push(after.map((p) => p.x));
+    from.push(before.map((p) => p.y));
+    to.push(after.map((p) => p.y));
+  }
+  return { kind: 'morph', xs, from, to };
+}
+
+/** The line part-way through a morph, `t` from 0 (the old shape) to 1 (the new one). */
+export function lineAt(
+  morph: Extract<LineMorph, { kind: 'morph' }>,
+  t: number,
+): { x: number; y: number }[][] {
+  'worklet';
+  return morph.xs.map((run, r) =>
+    run.map((x, i) => {
+      const a = morph.from[r]![i]!;
+      const b = morph.to[r]![i]!;
+      return { x, y: a + (b - a) * t };
+    }),
+  );
+}
+
+/** One donut sector on its way: the key it is drawn for, its angles before and after. */
+export interface SectorMorph {
+  readonly key: string;
+  readonly from: readonly [number, number];
+  readonly to: readonly [number, number];
+}
+
+export type DonutMorph =
+  | { readonly kind: 'morph'; readonly sectors: readonly SectorMorph[] }
+  | { readonly kind: 'fade' };
+
+/**
+ * How the категорії donut goes from `prev` to `next`, sector by sector, keyed by категорія: a shared
+ * one grows or shrinks to its new share, an arriving one grows from nothing at the place it will
+ * sit, and a leaving one shrinks to nothing where it was. A neutral ring on either side (empty,
+ * or no honest shares), or shared категорії in another order — which would draw sectors over each
+ * other mid-way — is a `fade`.
+ */
+export function donutMorph(prev: DonutGeometry, next: DonutGeometry): DonutMorph {
+  if (prev.kind !== 'positive' || next.kind !== 'positive') return { kind: 'fade' };
+  const inNext = new Set(next.sectors.map((s) => s.categoryId));
+  const inPrev = new Set(prev.sectors.map((s) => s.categoryId));
+  const sharedBefore = prev.sectors.filter((s) => inNext.has(s.categoryId)).map((s) => s.categoryId);
+  const sharedAfter = next.sectors.filter((s) => inPrev.has(s.categoryId)).map((s) => s.categoryId);
+  if (sharedBefore.some((key, n) => key !== sharedAfter[n])) return { kind: 'fade' };
+
+  const sectors: SectorMorph[] = [];
+  // Where each side has got to: an arriving sector starts at the old ring's cursor, a leaving one
+  // ends at the new ring's.
+  let before = 0;
+  let after = 0;
+  let i = 0;
+  let j = 0;
+  while (i < prev.sectors.length || j < next.sectors.length) {
+    const old = prev.sectors[i];
+    const now = next.sectors[j];
+    if (old && !inNext.has(old.categoryId)) {
+      sectors.push({ key: old.categoryId, from: [old.startAngle, old.endAngle], to: [after, after] });
+      before = old.endAngle;
+      i++;
+    } else if (now && !inPrev.has(now.categoryId)) {
+      sectors.push({ key: now.categoryId, from: [before, before], to: [now.startAngle, now.endAngle] });
+      after = now.endAngle;
+      j++;
+    } else {
+      // Both cursors stand on the same shared категорія: the order check above guarantees it.
+      sectors.push({
+        key: now!.categoryId,
+        from: [old!.startAngle, old!.endAngle],
+        to: [now!.startAngle, now!.endAngle],
+      });
+      before = old!.endAngle;
+      after = now!.endAngle;
+      i++;
+      j++;
+    }
+  }
+  return { kind: 'morph', sectors };
+}
+
+/** A sector's angles part-way through a morph, `t` from 0 to 1. */
+export function sectorAt(sector: SectorMorph, t: number): [number, number] {
+  'worklet';
+  return [
+    sector.from[0] + (sector.to[0] - sector.from[0]) * t,
+    sector.from[1] + (sector.to[1] - sector.from[1]) * t,
+  ];
 }

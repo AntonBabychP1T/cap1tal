@@ -49,6 +49,12 @@ export const Colors = {
     dangerSurface: '#F6E2DF',
     /** Muted sage: дохід, a reached ціль. Never «all good» in general. */
     textPositive: '#4C7A44',
+    /**
+     * The touch ripple (motion, "Every tap is acknowledged at once"): `text` at 12 % alpha, so a
+     * press darkens a light surface and lightens a dark one by the same small step. The one role
+     * with an alpha byte — it is only ever drawn over another surface.
+     */
+    ripple: '#1C19151F',
   },
   dark: {
     text: '#E8E1D5',
@@ -71,6 +77,7 @@ export const Colors = {
     textDanger: '#E4695C',
     dangerSurface: '#33211F',
     textPositive: '#93B183',
+    ripple: '#E8E1D51F',
   },
 } as const;
 
@@ -135,3 +142,33 @@ export const Spacing = {
 export const TouchTarget = 48;
 
 export const MaxContentWidth = 800;
+
+/**
+ * The motion vocabulary (motion, "Every movement the app drives comes from one short vocabulary").
+ * Everything the app animates itself takes its duration, easing and spring from here, so one edit
+ * retunes every movement of its kind. Plain numbers: the Reanimated easings are built from the
+ * control points in `src/components/motion.tsx`, which keeps this file free of native imports.
+ *
+ * Platform-drawn motion is not in here and keeps its own timing: screen transitions, the ripple, a
+ * switch's toggle and the busy spinner.
+ */
+export const Motion = {
+  /** A press answer, a cross-fade, anything the owner should barely notice take time. */
+  fast: 150,
+  /** A section opening, neighbours moving to their new place, a month sliding in. */
+  standard: 220,
+  /** A meter filling, a chart morphing, a figure rising: the ceiling, never exceeded. */
+  emphasis: 300,
+  /** Cubic-bezier control points for things entering: decelerate into place. */
+  enter: [0.2, 0, 0, 1],
+  /** Cubic-bezier control points for things leaving: accelerate away. */
+  exit: [0.3, 0, 1, 1],
+  /** The one spring, for a press-in and its return. */
+  press: { damping: 18, stiffness: 320, mass: 0.6 },
+  /** How far a primary button or the add button presses in. */
+  pressedScale: 0.97,
+  /** The pressed tone where the platform draws no ripple. */
+  pressedOpacity: 0.7,
+  /** Px a changing figure rises by, and a stepped month slides by. */
+  shift: 16,
+} as const;

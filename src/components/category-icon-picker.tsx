@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { Tap } from './motion';
 import { RowAction } from './form';
 import { Icon } from './icon';
 import { ThemedText } from './themed-text';
@@ -53,7 +54,7 @@ export function CategoryIconPicker({
             {icons.filter((icon) => icon.group === group).map((icon) => {
               const checked = value === icon.key;
               return (
-                <Pressable
+                <Tap
                   key={icon.key}
                   accessibilityRole="radio"
                   accessibilityLabel={icon.name}
@@ -64,7 +65,7 @@ export function CategoryIconPicker({
                   }}
                   style={[styles.cell, { backgroundColor: theme.backgroundInset, borderColor: checked ? theme.accent : 'transparent' }]}>
                   <Icon name={icon.glyph} color={checked ? 'accent' : 'textSecondary'} size={22} />
-                </Pressable>
+                </Tap>
               );
             })}
           </View>

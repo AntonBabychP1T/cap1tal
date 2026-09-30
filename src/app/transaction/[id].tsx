@@ -1,7 +1,8 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
+import { Tap } from '@/components/motion';
 import { askAboutTransfer } from '@/components/transfer-dialog';
 import { Action, Choices, DateField, Field, Picker } from '@/components/form';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
@@ -18,6 +19,7 @@ import {
 import type { Account } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
+import { useHaptics } from '@/hooks/haptics-ports';
 import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
@@ -64,6 +66,7 @@ type OpenPicker = 'from' | 'to' | 'category' | 'source';
 
 export default function EditTransactionScreen() {
   const router = useRouter();
+  const haptics = useHaptics();
 
   /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
   const reportBug = useCallback(
@@ -197,8 +200,11 @@ export default function EditTransactionScreen() {
       // A транзакція was edited. Nothing already earned is ever taken back by it (design D2);
       // only what the change newly makes true is earned.
       judgeProgressLater();
+      // Stored: felt once, and before any правило offer the save raises (motion, "An outcome
+      // the owner caused is felt once").
+      haptics.play('stored');
     },
-    [original],
+    [haptics, original],
   );
 
   /** The offer to remember today's edit as a правило — raised only after the категорія is stored. */
@@ -308,13 +314,15 @@ export default function EditTransactionScreen() {
         }
         router.back();
       } catch (error) {
+        // The one refusal site: `buildEntry`'s refusal lands here too, so a refusal plays once.
+        haptics.play('refused');
         Alert.alert(
           ...failureAlert({ title: 'Не збережено', where: 'transaction-save', error, report: reportBug }),
         );
       }
     };
     attempt(false);
-  }, [form, original, persist, reportBug, router, ruleOffer, storeTransfer, stored.accounts]);
+  }, [form, haptics, original, persist, reportBug, router, ruleOffer, storeTransfer, stored.accounts]);
 
   const remove = useCallback(() => {
     if (!original) return;
@@ -327,11 +335,13 @@ export default function EditTransactionScreen() {
           transactionsRepo.remove(original.id);
           // A транзакція was deleted. The engine only ever adds: nothing is unearned by this.
           judgeProgressLater();
+          // The answer to the question, not the question itself, is what is felt.
+          haptics.play('removed');
           router.back();
         },
       },
     ]);
-  }, [original, router]);
+  }, [haptics, original, router]);
 
   if (!original) {
     return (
@@ -484,15 +494,12 @@ export default function EditTransactionScreen() {
         }
         // The save this offer follows already wrote the транзакція; leaving the editing screen —
         // by accepting, declining or the back gesture that `Sheet` treats the same as «Не треба» —
-        // is what «Зберегти» was always going to do next.
-        onAccept={async (merchant) => {
-          await ruleOffer.accept(merchant);
-          router.back();
-        }}
-        onDecline={() => {
-          ruleOffer.decline();
-          router.back();
-        }}
+        // is what «Зберегти» was always going to do next. The choice is stored at once; the editor
+        // closes once the sheet has left (motion, "A choice is stored at once and the screen
+        // changes after the sheet leaves").
+        onAccept={(merchant) => ruleOffer.accept(merchant)}
+        onDecline={ruleOffer.decline}
+        onExited={() => router.back()}
       />
     </Screen>
   );
@@ -537,9 +544,9 @@ function ReceiptLine({
   return offer.prominent ? (
     <Action variant="secondary" title={offer.label} onPress={onScan} />
   ) : (
-    <Pressable onPress={onScan} style={styles.receiptLink} accessibilityRole="button">
+    <Tap onPress={onScan} style={styles.receiptLink} accessibilityRole="button">
       <ThemedText type="link">{offer.label}</ThemedText>
-    </Pressable>
+    </Tap>
   );
 }
 

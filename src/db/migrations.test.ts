@@ -30,6 +30,7 @@ import {
   fiscalReceipts,
   goalAccounts,
   goals,
+  hapticsPreference,
   investmentValues,
   journal,
   monobankAccounts,
@@ -1956,6 +1957,35 @@ describe('migrations — the категорія and newest-first order indexes',
       expect(plan).not.toMatch(/TEMP B-TREE/);
     } finally {
       storage.close();
+    }
+  });
+});
+
+describe('migrations — the «Вібрація» preference', () => {
+  it('Scenario: Vibration is on from the start — a fresh database holds no row', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      expect(db.select().from(hapticsPreference).all()).toEqual([]);
+      db.insert(hapticsPreference).values({ id: 'haptics', enabled: false }).run();
+      expect(db.select().from(hapticsPreference).all()).toEqual([{ id: 'haptics', enabled: false }]);
+      // One row, never two: the CHECK keeps the table to a single preference.
+      expect(() => db.insert(hapticsPreference).values({ id: 'other', enabled: true }).run()).toThrow();
+    } finally {
+      storage.close();
+    }
+  });
+
+  it('upgrades an existing installation with the table empty, which reads as on', () => {
+    const staged = openTestDbMigratedTo(5);
+    try {
+      const { db } = staged;
+      // Before this migration the table does not exist at all.
+      expect(() => db.select().from(hapticsPreference).all()).toThrow();
+      staged.migrateToLatest();
+      expect(db.select().from(hapticsPreference).all()).toEqual([]);
+    } finally {
+      staged.close();
     }
   });
 });

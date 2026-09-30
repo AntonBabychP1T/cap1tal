@@ -324,6 +324,10 @@ the moment they start moves.
 - **Compiler check first.** Before adding any `React.memo`, confirm the compiler compiled the
   component (the React DevTools "Memo ✨" badge on the emulator, or the compiler's Babel logger in a
   dev build). Add `React.memo` only where it bailed out.
+  **Finding (task 8.3):** run through `babel-plugin-react-compiler` with its `logger`, all four
+  compiled and none bailed out — `TransactionRow`, `Icon`, `NetWorthWidget` (and its
+  `DisclosureChevron`) and `CategoryWidget` (and its `Swatch`). So no `React.memo` was added.
+  `Icon`'s paths were already module constants (`ICON_PATHS`), so there was nothing to hoist.
 - **AI-аналіз «показати файл»** renders the export as a `FlatList` of lines, not one `<Text>`.
 - **Звіти's history derivation is memoized under the stamp, not per read.** `reports.tsx` builds a
   fresh `stored` object on every focus read, so a `useMemo` over it alone would re-derive the whole

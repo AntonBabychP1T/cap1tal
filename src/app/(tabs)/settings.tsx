@@ -1,13 +1,15 @@
 import { useRouter } from 'expo-router';
 import { useCallback } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { TabFade, Tap } from '@/components/motion';
+import { ThemedSwitch } from '@/components/form';
 import { ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 
 import { outboundTrafficNote, SETTINGS_SECTIONS } from '@/ui/settings-sections';
 import { isConnected } from '@/backup/drive/state';
-import { driveBackupState } from '@/db/repos';
+import { driveBackupState, hapticsPreference } from '@/db/repos';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 
 import { Spacing } from '@/constants/theme';
@@ -20,7 +22,7 @@ import { Spacing } from '@/constants/theme';
  * The sections themselves are `src/ui/settings-sections.ts`, where `verify` can reach them.
  */
 
-export default function SettingsScreen() {
+function SettingsScreen() {
   const router = useRouter();
   /**
    * Re-read whenever the tab comes back into focus — not once at mount.
@@ -30,11 +32,20 @@ export default function SettingsScreen() {
    * телефоні» while a sealed бекап was already going to Drive, which is the one thing the
    * outbound-traffic requirement forbids. One row of synchronous SQLite per focus.
    */
-  const [driveConnected] = useReloadOnFocus(
-    useCallback(() => isConnected(driveBackupState.read()), []),
-    // Not read until the tab is first opened; the note waits for it.
+  const [stored, reload] = useReloadOnFocus(
+    useCallback(
+      () => ({
+        driveConnected: isConnected(driveBackupState.read()),
+        // Re-read on focus like the rest, so a restored бекап's preference shows on return.
+        vibration: hapticsPreference.enabled(),
+      }),
+      [],
+    ),
+    // Not read until the tab is first opened; the note and the switch wait for it.
     { whileUnseen: undefined },
   );
+  const driveConnected = stored?.driveConnected;
+  const vibration = stored?.vibration;
 
   return (
     <Screen>
@@ -43,9 +54,9 @@ export default function SettingsScreen() {
       <ListCard>
         {SETTINGS_SECTIONS.map((section, index) => (
           <ListRow key={section.href} last={index === SETTINGS_SECTIONS.length - 1}>
-            <Pressable
+            <Tap
               onPress={() => router.push(section.href)}
-              style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
+              style={styles.row}>
               <View style={styles.text}>
                 <ThemedText>{section.title}</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
@@ -55,10 +66,29 @@ export default function SettingsScreen() {
               <ThemedText type="subtitle" themeColor="textMuted">
                 ›
               </ThemedText>
-            </Pressable>
+            </Tap>
           </ListRow>
         ))}
       </ListCard>
+
+      {/* «Вібрація»: whether haptics play (motion, "The owner can turn vibration off"). Stored at
+          once; the switch's own tick plays after the store, so turning it on ticks and turning it
+          off plays nothing. Not a section: it opens nothing. */}
+      {vibration === undefined ? null : (
+        <ListCard>
+          <ListRow last style={styles.row}>
+            <ThemedText style={styles.text}>Вібрація</ThemedText>
+            <ThemedSwitch
+              accessibilityLabel="Вібрація"
+              value={vibration}
+              onValueChange={(enabled) => {
+                hapticsPreference.set(enabled);
+                reload();
+              }}
+            />
+          </ListRow>
+        </ListCard>
+      )}
 
       {driveConnected === undefined ? null : (
         <ThemedText type="small" themeColor="textMuted">
@@ -77,5 +107,16 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   text: { flex: 1, gap: Spacing.half },
-  pressed: { opacity: 0.7 },
 });
+
+/**
+ * The tab as the navigator mounts it: the screen inside the cross-fade every tab shares (motion,
+ * "Screens enter from where they come from"; design D8).
+ */
+export default function SettingsTab() {
+  return (
+    <TabFade tab="settings">
+      <SettingsScreen />
+    </TabFade>
+  );
+}

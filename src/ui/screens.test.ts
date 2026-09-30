@@ -407,7 +407,7 @@ describe('where the прогрес is evaluated, and where it is not', () => {
     const layout = readScreen('_layout.tsx');
 
     for (const name of ['progress', 'achievement/[key]', 'challenge/[key]']) {
-      expect(layout).toContain(`<Stack.Screen name="${name}"`);
+      expect(layout).toMatch(new RegExp(`<Stack\\.Screen\\s+name="${name.replace(/[[\]]/g, '\\$&')}"`));
     }
     // Scenario: The tabs are unchanged — the same five, and «Прогрес» is not among them.
     //
@@ -428,11 +428,11 @@ describe('where the прогрес is evaluated, and where it is not', () => {
   it('Scenario: Прогрес is reachable from Звіти', () => {
     const reports = readScreen(join('(tabs)', 'reports.tsx'));
     expect(reports).toContain('router.push(PROGRESS_ROUTE)');
-    // Scenario: The entry is there with nothing earned — the Pressable is unconditional, not
+    // Scenario: The entry is there with nothing earned — the Tap is unconditional, not
     // wrapped in a `{… ? (` the way the sections above it are.
     const entry = reports.slice(reports.indexOf('router.push(PROGRESS_ROUTE)') - 200);
     expect(entry.slice(0, 200)).not.toMatch(/\?\s*\($/m);
-    expect(reports).toMatch(/<Pressable onPress=\{\(\) => router\.push\(PROGRESS_ROUTE\)\}/);
+    expect(reports).toMatch(/<Tap onPress=\{\(\) => router\.push\(PROGRESS_ROUTE\)\}/);
 
     // Головний no longer renders a «Прогрес» section at all — the REMOVED requirement
     // "Головний shows «Прогрес» only when something is waiting" has no replacement on Головний;

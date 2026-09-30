@@ -27,6 +27,7 @@ import { categoriesRepo } from './categories-repo';
 import { dashboardLayoutRepo } from './dashboard-layout-repo';
 import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
+import { hapticsPreferenceRepo } from './haptics-preference-repo';
 import { importRepo } from './import-repo';
 import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
@@ -1528,6 +1529,91 @@ describe('the dashboard layout travels; a restore replaces it rather than mergin
     await roundTrip();
 
     expect(dashboardLayoutRepo(target.db).read()).toEqual({ items: defaultDashboardLayout() });
+  });
+});
+
+describe('the «Вібрація» preference travels with the бекап', () => {
+  let source: TestStorage;
+  let target: TestStorage;
+
+  beforeEach(() => {
+    source = openTestDb();
+    seedWorld(source.db);
+    target = openTestDb();
+  });
+  afterEach(() => {
+    source.close();
+    target.close();
+  });
+
+  it('Scenario: Vibration off survives the round trip', async () => {
+    hapticsPreferenceRepo(source.db).set(false);
+    // Read on the target before the restore, so its answer is remembered from memory…
+    const onTarget = hapticsPreferenceRepo(target.db);
+    expect(onTarget.enabled()).toBe(true);
+
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+
+    // …and still the very next read after the restore answers off, with no restart: the next
+    // store after it plays no haptic (`hapticFor` with `enabled` false plays nothing).
+    expect(onTarget.enabled()).toBe(false);
+    expect(backupRepo(target.db).snapshot().haptics).toEqual({ enabled: false });
+  });
+
+  it('Scenario: An older бекап restores with vibration on', async () => {
+    // Written before the preference was carried: the file names none.
+    hapticsPreferenceRepo(source.db).set(false);
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const body = JSON.parse(snapshot.bytes) as { data: Record<string, unknown>; checksum: string };
+    delete body.data.haptics;
+    body.checksum = crc32(canonicalJson(body.data));
+    // The phone being restored onto has it off.
+    hapticsPreferenceRepo(target.db).set(false);
+
+    expect(await restoreBackup(backupRepo(target.db), JSON.stringify(body))).toBe('ok');
+    expect(hapticsPreferenceRepo(target.db).enabled()).toBe(true);
+  });
+
+  it('Scenario: The preference restores atomically with the money', async () => {
+    seedWorld(target.db);
+    hapticsPreferenceRepo(source.db).set(false);
+    const repo = backupRepo(target.db);
+    const before = repo.snapshot();
+
+    const read = readBackup((await saveBackup(backupRepo(source.db), MADE_AT)).bytes);
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+    expect(read.state.haptics).toEqual({ enabled: false });
+    // One of its транзакції fails to write: a дата the column takes and the reader could not.
+    const broken = {
+      ...read.state,
+      transactions: [
+        ...read.state.transactions,
+        {
+          transaction: { ...read.state.transactions[0]!.transaction, id: 'n-last', date: '2026-02-30' },
+          storedAtMs: STORED_AT.getTime(),
+        },
+      ],
+    };
+
+    expect(() => repo.replaceAll(broken)).toThrow();
+    expect(repo.snapshot()).toEqual(before);
+    expect(hapticsPreferenceRepo(target.db).enabled()).toBe(true);
+  });
+
+  it('Scenario: A malformed vibration preference refuses the бекап', async () => {
+    seedWorld(target.db);
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const body = JSON.parse(snapshot.bytes) as { data: Record<string, unknown>; checksum: string };
+    body.data.haptics = { enabled: 'yes' };
+    // The integrity value matches: the file is intact, and still not a бекап this app can read.
+    body.checksum = crc32(canonicalJson(body.data));
+    const repo = backupRepo(target.db);
+    const before = repo.snapshot();
+
+    expect(await restoreBackup(repo, JSON.stringify(body))).not.toBe('ok');
+    expect(repo.snapshot()).toEqual(before);
+    expect(hapticsPreferenceRepo(target.db).enabled()).toBe(true);
   });
 });
 

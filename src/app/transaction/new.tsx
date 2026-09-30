@@ -16,6 +16,7 @@ import {
 } from '@/db/repos';
 
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
+import { useHaptics } from '@/hooks/haptics-ports';
 import { ALERT_PORTS, attended } from '@/hooks/use-alerting';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
@@ -75,6 +76,7 @@ const ENTRY_CHOICES: readonly { value: EntryType; label: string }[] = (
 
 export default function NewTransactionScreen() {
   const router = useRouter();
+  const haptics = useHaptics();
 
   /** Every refusal on this screen offers «Повідомити про помилку» with that failure attached. */
   const reportBug = useCallback(
@@ -264,9 +266,12 @@ export default function NewTransactionScreen() {
       }
       // Storing worked, so whatever the last failure to store was is no longer true.
       void clearAlert('local-save', ALERT_PORTS);
+      // Felt, not only seen: a store made while looking away is confirmed too (motion, "Storing a
+      // транзакція is felt").
+      haptics.play('stored');
       router.back();
     },
-    [fromId, router],
+    [fromId, haptics, router],
   );
 
   const record = useCallback(() => {
@@ -319,6 +324,8 @@ export default function NewTransactionScreen() {
         }
         store(built);
       } catch (error) {
+        // The one refusal site: `buildEntry`'s refusal lands here too, so a refusal plays once.
+        haptics.play('refused');
         Alert.alert(
           ...failureAlert({ title: 'Не записано', where: 'transaction-record', error, report: reportBug }),
         );
@@ -337,6 +344,7 @@ export default function NewTransactionScreen() {
     displayedCategoryId,
     entry,
     fromId,
+    haptics,
     offered,
     reportBug,
     sourceId,

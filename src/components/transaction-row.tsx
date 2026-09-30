@@ -1,5 +1,6 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { Tap } from './motion';
 import { IconTile, Mark } from './surfaces';
 import { ThemedText } from './themed-text';
 
@@ -48,10 +49,7 @@ export function TransactionRow({
   onPress: () => void;
 }) {
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      style={({ pressed }) => [styles.row, pressed ? styles.pressed : null]}>
+    <Tap onPress={onPress} accessibilityRole="button" style={styles.row}>
       <IconTile name={icon} tone={iconTone} />
       <View style={styles.body}>
         <View style={styles.top}>
@@ -74,13 +72,12 @@ export function TransactionRow({
           </ThemedText>
         ) : null}
       </View>
-    </Pressable>
+    </Tap>
   );
 }
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
-  pressed: { opacity: 0.75 },
   body: { flex: 1, minWidth: 0, gap: Spacing.half },
   top: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
   titleWrap: {

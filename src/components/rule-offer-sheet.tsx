@@ -23,12 +23,15 @@ export function RuleOfferSheet({
   targetLabel,
   onAccept,
   onDecline,
+  onExited,
 }: {
   offer: RuleOffer | undefined;
   /** The category's name, or «переказ на <назва>» for a правило-переказ (design D6). */
   targetLabel: string;
   onAccept: (merchant: string) => void;
   onDecline: () => void;
+  /** Once the sheet has left, however it was answered — where a screen change after it belongs. */
+  onExited?: () => void;
 }) {
   /**
    * The pattern as the owner may edit it, seeded fresh from each new offer that arrives — adjusted
@@ -43,7 +46,11 @@ export function RuleOfferSheet({
   }
 
   return (
-    <Sheet open={offer !== undefined} title="Запамʼятати правило?" onClose={onDecline}>
+    <Sheet
+      open={offer !== undefined}
+      title="Запамʼятати правило?"
+      onClose={onDecline}
+      onExited={onExited}>
       <View style={styles.body}>
         <ThemedText type="small" themeColor="textSecondary">
           Наступного разу такий опис одразу піде в цю категорію.

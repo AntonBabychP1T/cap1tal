@@ -758,6 +758,24 @@ export const dashboardLayout = sqliteTable(
   ],
 );
 
+/**
+ * Whether the app plays its haptics — the «Вібрація» switch on Налаштування (motion, "The owner can
+ * turn vibration off"; app-motion-pass design D14). One row, `'haptics'`, the same single-row idiom
+ * `daily_reminder` and `dashboard_layout` keep, CHECK and all.
+ *
+ * No row means on: a fresh install and an older бекап restored both hold none, and vibration plays
+ * until the owner turns it off. A preference, not money; a бекап carries it like the layout.
+ */
+export const hapticsPreference = sqliteTable(
+  'haptics_preference',
+  {
+    /** Always `'haptics'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull(),
+  },
+  (t) => [check('haptics_preference_single_row', sql`${t.id} = 'haptics'`)],
+);
+
 export type DailyReminderRow = typeof dailyReminder.$inferSelect;
 export type NewDailyReminderRow = typeof dailyReminder.$inferInsert;
 export type AlertRow = typeof alerts.$inferSelect;
@@ -765,6 +783,7 @@ export type EntryDefaultsRow = typeof entryDefaults.$inferSelect;
 export type NewEntryDefaultsRow = typeof entryDefaults.$inferInsert;
 export type DashboardLayoutRow = typeof dashboardLayout.$inferSelect;
 export type NewDashboardLayoutRow = typeof dashboardLayout.$inferInsert;
+export type HapticsPreferenceRow = typeof hapticsPreference.$inferSelect;
 
 /**
  * A фіскальний чек: the composition of a purchase, beneath the транзакція that paid for it.

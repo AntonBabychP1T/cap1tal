@@ -13,6 +13,7 @@ import {
   counterpartIncomeAwaits,
   dailyReminder,
   dashboardLayout,
+  hapticsPreference,
   earnedAchievements,
   entryDefaults,
   fiscalReceipts,
@@ -63,6 +64,7 @@ export function backupRepo(db: Storage): BackupStore {
       const committed = db.select().from(saldoImport).all()[0];
       const reminder = db.select().from(dailyReminder).all()[0];
       const layout = db.select().from(dashboardLayout).all()[0];
+      const haptics = db.select().from(hapticsPreference).all()[0];
       return {
         accounts: db.select().from(accounts).orderBy(asc(accounts.id)).all().map(toAccount),
         categories: db
@@ -301,6 +303,8 @@ export function backupRepo(db: Storage): BackupStore {
               },
             }
           : {}),
+        // Only when the owner has ever flipped «Вібрація»; untouched is on, and carries nothing.
+        ...(haptics ? { haptics: { enabled: haptics.enabled } } : {}),
       };
     },
 
@@ -356,6 +360,7 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(saldoImport).run();
         tx.delete(dailyReminder).run();
         tx.delete(dashboardLayout).run();
+        tx.delete(hapticsPreference).run();
         // The прогрес is replaced wholesale like everything else: a відновлення that left this
         // phone's earned set in place would describe a history that is no longer here. The three
         // reference nothing, so they may go anywhere in this order.
@@ -586,6 +591,11 @@ export function backupRepo(db: Storage): BackupStore {
               itemsJson: JSON.stringify(state.dashboardLayout.items),
             })
             .run();
+        }
+        if (state.haptics) {
+          // In the same transaction as the money: a restore that fails leaves this untouched too.
+          // A бекап naming none leaves no row, which is on.
+          tx.insert(hapticsPreference).values({ id: 'haptics', enabled: state.haptics.enabled }).run();
         }
       }, { behavior: 'immediate' });
     },

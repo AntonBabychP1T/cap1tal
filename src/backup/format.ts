@@ -37,7 +37,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 5;
+export const BACKUP_SCHEMA_VERSION = 6;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -141,6 +141,9 @@ export const BACKUP_TABLES: readonly string[] = [
   // The owner's dashboard layout: a deliberate customisation, the same class of preference
   // `daily_reminder` already travels for (design D7 of customizable-home-dashboard).
   'dashboard_layout',
+  // The «Вібрація» switch: a choice the owner made, which travels like the layout
+  // (app-motion-pass design D14).
+  'haptics_preference',
 ];
 
 /**
@@ -350,6 +353,11 @@ export interface BackupState {
   readonly investmentValues: readonly BackupInvestmentValue[];
   /** The dashboard layout; absent on a device where the owner never customised or reset it. */
   readonly dashboardLayout?: BackupDashboardLayout;
+  /**
+   * The «Вібрація» switch; absent on a device where the owner never touched it — which restores to
+   * no row, which is on. A бекап written before the switch existed restores the same way.
+   */
+  readonly haptics?: { readonly enabled: boolean };
 }
 
 /** The whole file: the marker, the versions, the moment, the integrity value and the contents. */
@@ -888,6 +896,15 @@ export function parseState(value: unknown): BackupState {
     ...(data.dashboardLayout === undefined || data.dashboardLayout === null
       ? {}
       : { dashboardLayout: dashboardLayoutAt(data.dashboardLayout, 'dashboardLayout') }),
+    // A plain on or off, or the бекап is refused whole (backup-file, "A malformed vibration
+    // preference refuses the бекап").
+    ...(data.haptics === undefined || data.haptics === null
+      ? {}
+      : {
+          haptics: {
+            enabled: booleanAt(objectAt(data.haptics, 'haptics').enabled, 'haptics.enabled'),
+          },
+        }),
   };
 }
 

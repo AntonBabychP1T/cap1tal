@@ -12,6 +12,7 @@ import { AppState, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { useRouteAnimation } from '@/components/motion';
 import { Colors } from '@/constants/theme';
 import { db } from '@/db/client';
 import {
@@ -174,6 +175,10 @@ const NOTIFY = { notifications: localNotifications, storage: remindersRepo, now:
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  // Every route's transition from one policy (motion, "Screens enter from where they come from";
+  // design D2): from the side, the entry form and the scanner from the bottom, a fade when the
+  // phone asks for reduced motion. Platform-drawn, so no JS runs per frame.
+  const animation = useRouteAnimation();
   const router = useRouter();
   const pathname = usePathname();
   // One of two places migrations are applied — every committed migration, in order, before any
@@ -569,54 +574,150 @@ export default function RootLayout() {
           // A Stack, not the tabs themselves: editing one transaction, and a category's month list,
           // are pushed on top of whichever tab opened them, so each can be left with «Назад» and
           // neither becomes a tab of its own.
-          <Stack screenOptions={{ headerShown: false }}>
+          <Stack screenOptions={{ headerShown: false, animation: animation('') }}>
             <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="transaction/[id]" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="transaction/[id]"
+              options={{ presentation: 'card', animation: animation('transaction/[id]') }}
+            />
             {/* «Нова транзакція»: the entry form, opened by the «+» on Головний. A static segment
                 beside `transaction/[id]`, so the router resolves it to the form and never to the
                 editor of a транзакція whose id happens to read "new" (design D1). */}
-            <Stack.Screen name="transaction/new" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="transaction/new"
+              options={{ presentation: 'card', animation: animation('transaction/new') }}
+            />
             {/* The фіскальний чек of a транзакція: the scanner, and the позиції of the чек it
                 attached. Pushed over the транзакція's own form, so «Назад» from either lands back
                 on the транзакція rather than on the tab beneath it. */}
-            <Stack.Screen name="transaction/scan" options={{ presentation: 'card' }} />
-            <Stack.Screen name="transaction/receipt" options={{ presentation: 'card' }} />
-            <Stack.Screen name="category/[month]/[categoryId]" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="transaction/scan"
+              options={{ presentation: 'card', animation: animation('transaction/scan') }}
+            />
+            <Stack.Screen
+              name="transaction/receipt"
+              options={{ presentation: 'card', animation: animation('transaction/receipt') }}
+            />
+            <Stack.Screen
+              name="category/[month]/[categoryId]"
+              options={{ presentation: 'card', animation: animation('category/[month]/[categoryId]') }}
+            />
             {/* The breakdown of one ціль-накопичення, pushed over «Звіти» like «Рухи рахунку». */}
-            <Stack.Screen name="goal/[id]" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="goal/[id]"
+              options={{ presentation: 'card', animation: animation('goal/[id]') }}
+            />
             {/* Рухи рахунку: where a tap on a рахунок lands, and where that рахунок's own actions
                 live. `account/` and not `accounts/` — the tab already owns `/accounts`. */}
-            <Stack.Screen name="account/[id]" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="account/[id]"
+              options={{ presentation: 'card', animation: animation('account/[id]') }}
+            />
             {/* «Транзакції»: the whole history with its search, reached from the стрічка on
                 Головний. Pushed over the tabs and not a sixth tab of its own (design D14). */}
-            <Stack.Screen name="transactions" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="transactions"
+              options={{ presentation: 'card', animation: animation('transactions') }}
+            />
             {/* «Прогрес» and its two details: pushed over the tabs like «Транзакції», never a
                 sixth tab. The key of a досягнення or a виклик reaches the route encoded. */}
-            <Stack.Screen name="progress" options={{ presentation: 'card' }} />
-            <Stack.Screen name="achievement/[key]" options={{ presentation: 'card' }} />
-            <Stack.Screen name="challenge/[key]" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="progress"
+              options={{ presentation: 'card', animation: animation('progress') }}
+            />
+            <Stack.Screen
+              name="achievement/[key]"
+              options={{ presentation: 'card', animation: animation('achievement/[key]') }}
+            />
+            <Stack.Screen
+              name="challenge/[key]"
+              options={{ presentation: 'card', animation: animation('challenge/[key]') }}
+            />
             {/* «AI-аналіз»: reached from «Звіти», pushed over the tabs like «Транзакції». Nothing
                 of it is stored, so it has no state to restore and no place in the tab bar. */}
-            <Stack.Screen name="ai-analysis" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="ai-analysis"
+              options={{ presentation: 'card', animation: animation('ai-analysis') }}
+            />
             {/* The Налаштування sections. `manage/` rather than `settings/` for the reason the
                 category screen gives about `month/`: the tab already owns `/settings`. */}
-            <Stack.Screen name="manage/categories" options={{ presentation: 'card' }} />
-            <Stack.Screen name="manage/sources" options={{ presentation: 'card' }} />
-            <Stack.Screen name="manage/rules" options={{ presentation: 'card' }} />
-            <Stack.Screen name="manage/monobank" options={{ presentation: 'card' }} />
-            <Stack.Screen name="manage/notifications" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="manage/categories"
+              options={{ presentation: 'card', animation: animation('manage/categories') }}
+            />
+            <Stack.Screen
+              name="manage/sources"
+              options={{ presentation: 'card', animation: animation('manage/sources') }}
+            />
+            <Stack.Screen
+              name="manage/rules"
+              options={{ presentation: 'card', animation: animation('manage/rules') }}
+            />
+            <Stack.Screen
+              name="manage/monobank"
+              options={{ presentation: 'card', animation: animation('manage/monobank') }}
+            />
+            <Stack.Screen
+              name="manage/notifications"
+              options={{ presentation: 'card', animation: animation('manage/notifications') }}
+            />
+            {/* The rest of the sections, declared so each takes its transition from the same
+                policy rather than from whatever the navigator defaults an undeclared route to. */}
+            <Stack.Screen
+              name="manage/limits"
+              options={{ presentation: 'card', animation: animation('manage/limits') }}
+            />
+            <Stack.Screen
+              name="manage/goals"
+              options={{ presentation: 'card', animation: animation('manage/goals') }}
+            />
+            <Stack.Screen
+              name="manage/reminders"
+              options={{ presentation: 'card', animation: animation('manage/reminders') }}
+            />
+            <Stack.Screen
+              name="manage/home-dashboard"
+              options={{ presentation: 'card', animation: animation('manage/home-dashboard') }}
+            />
+            <Stack.Screen
+              name="manage/backup"
+              options={{ presentation: 'card', animation: animation('manage/backup') }}
+            />
+            <Stack.Screen
+              name="manage/drive-backup"
+              options={{ presentation: 'card', animation: animation('manage/drive-backup') }}
+            />
+            <Stack.Screen
+              name="manage/saldo-import"
+              options={{ presentation: 'card', animation: animation('manage/saldo-import') }}
+            />
             {/* «Репорти про помилки»: the list, the form and one saved репорт. `new` is a static
                 segment beside `[id]`, the same shape `transaction/new` has. */}
-            <Stack.Screen name="manage/bug-reports/index" options={{ presentation: 'card' }} />
-            <Stack.Screen name="manage/bug-reports/new" options={{ presentation: 'card' }} />
-            <Stack.Screen name="manage/bug-reports/[id]" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="manage/bug-reports/index"
+              options={{ presentation: 'card', animation: animation('manage/bug-reports/index') }}
+            />
+            <Stack.Screen
+              name="manage/bug-reports/new"
+              options={{ presentation: 'card', animation: animation('manage/bug-reports/new') }}
+            />
+            <Stack.Screen
+              name="manage/bug-reports/[id]"
+              options={{ presentation: 'card', animation: animation('manage/bug-reports/[id]') }}
+            />
             {/* The lever the emulator smoke pulls to see the crash fallback: a route that throws
                 while rendering, in a development build only, reachable by deep link and linked to
                 from nowhere (design D12). */}
-            <Stack.Screen name="crash" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="crash"
+              options={{ presentation: 'card', animation: animation('crash') }}
+            />
             {/* «Перші кроки»: pushed like the management screens, and where a device holding
                 nothing at all lands from Головний. */}
-            <Stack.Screen name="onboarding" options={{ presentation: 'card' }} />
+            <Stack.Screen
+              name="onboarding"
+              options={{ presentation: 'card', animation: animation('onboarding') }}
+            />
           </Stack>
         ) : null}
         {/* Above the Stack and not inside it (design D4): an overlay writes no `screen` entry, so

@@ -1,8 +1,6 @@
 import {
-  FlatList,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   View,
@@ -13,6 +11,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Circle, Svg } from 'react-native-svg';
 
 import { Icon } from './icon';
+import { FillBar, FillRing, ListItem, MotionList, SettleFirst, Tap } from './motion';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
@@ -112,7 +111,10 @@ export function Screen({
               overlay ? { paddingBottom: layout.scrollBottomPadding } : null,
             ]}
             keyboardShouldPersistTaps="handled">
-            {children}
+            {/* What the screen holds when it is first drawn is simply there; only what appears
+                after it fades in (motion, "What opens, closes or leaves moves its neighbours
+                smoothly"). */}
+            <SettleFirst>{children}</SettleFirst>
           </ScrollView>
           {footer}
         </KeyboardAvoidingView>
@@ -136,11 +138,12 @@ export function Fab({ label = '+', onPress }: { label?: string; onPress: () => v
     handleSize: HANDLE_SIZE,
   });
   return (
-    <Pressable
+    <Tap
+      emphasis
       accessibilityRole="button"
       accessibilityLabel="Записати транзакцію"
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.fab,
         {
           bottom: layout.fabBottom,
@@ -148,13 +151,12 @@ export function Fab({ label = '+', onPress }: { label?: string; onPress: () => v
           // The ring is the page showing through, so the «+» keeps its shape over a row it
           // happens to sit on. Nothing here is a shadow — the app draws none.
           borderColor: theme.background,
-          transform: [{ scale: pressed ? 0.96 : 1 }],
         },
       ]}>
       <ThemedText type="subtitle" style={[styles.fabLabel, { color: theme.onAccent }]}>
         {label}
       </ThemedText>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -207,20 +209,24 @@ export function ListScreen<T>({
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.screen} edges={['top']}>
         <KeyboardAvoidingView style={styles.screen} behavior="padding">
-          <FlatList
+          <MotionList
             data={data}
             keyExtractor={keyExtractor}
             renderItem={({ item, index }) => (
-              <ThemedView
-                type="backgroundElement"
-                style={[
-                  styles.listSegment,
-                  { borderColor: theme.cardEdge },
-                  index === 0 && styles.listSegmentFirst,
-                  index === last && styles.listSegmentLast,
-                ]}>
-                {renderRow(item, index)}
-              </ThemedView>
+              // A row that leaves — a транзакція removed in its editor — fades out, and the list
+              // closes the gap (motion, "A removed транзакція's row closes the gap").
+              <ListItem>
+                <ThemedView
+                  type="backgroundElement"
+                  style={[
+                    styles.listSegment,
+                    { borderColor: theme.cardEdge },
+                    index === 0 && styles.listSegmentFirst,
+                    index === last && styles.listSegmentLast,
+                  ]}>
+                  {renderRow(item, index)}
+                </ThemedView>
+              </ListItem>
             )}
             ListHeaderComponent={<View style={styles.listHeader}>{header}</View>}
             ListEmptyComponent={empty ? <View>{empty}</View> : null}
@@ -266,14 +272,14 @@ export function ScreenHeader({
       {back ? (
         // `backButton` makes the arrow's own box a full touch target — hitSlop alone left the
         // view 26×32, which is what an accessibility check measures and what a finger misses.
-        <Pressable
+        <Tap
           onPress={back}
           accessibilityRole="button"
           accessibilityLabel="Назад"
           hitSlop={Spacing.two}
           style={styles.backButton}>
           <ThemedText type="subtitle">←</ThemedText>
-        </Pressable>
+        </Tap>
       ) : null}
       <View style={styles.headerText}>
         {/* `screenTitle`, not `subtitle`: the header is its own role now, and `subtitle` stays
@@ -305,7 +311,7 @@ export function ScreenHeader({
  * The way out of a section, as a pill on its heading: outlined rather than filled, so it never
  * competes with the screen's own action — the «+» — and never reads as a second one.
  *
- * The Pressable is a full `TouchTarget` tall and the outlined pill sits centred inside it. It used
+ * The `Tap` is a full `TouchTarget` tall and the outlined pill sits centred inside it. It used
  * to be the pill itself with a `hitSlop` — 32 dp of bounds, which is what QA's scanner measured
  * and what Android reports to accessibility services; `hitSlop` is outside the view's bounds, so
  * nothing that inspects the layout ever sees it. The heading row grows to 48; the pill does not.
@@ -313,16 +319,13 @@ export function ScreenHeader({
 function SectionAction({ label, onPress }: { label: string; onPress: () => void }) {
   const theme = useTheme();
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      style={({ pressed }) => [styles.sectionActionTarget, pressed && styles.pressed]}>
+    <Tap onPress={onPress} accessibilityRole="button" style={styles.sectionActionTarget}>
       <View style={[styles.sectionAction, { borderColor: theme.accent }]}>
         <ThemedText type="linkPrimary" numberOfLines={1}>
           {label}
         </ThemedText>
       </View>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -546,13 +549,14 @@ export function Meter({
   track?: ThemeColor;
 }) {
   const theme = useTheme();
-  const filled = share(value);
+  // Moves from its previous fill to the new one, and fills once from empty on its first draw
+  // (motion, "Progress fills from where it was").
   return (
-    <View style={[styles.meterTrack, { backgroundColor: theme[track] }]}>
-      <View
-        style={[styles.meterFill, { width: `${filled * 100}%`, backgroundColor: theme[color] }]}
-      />
-    </View>
+    <FillBar
+      value={share(value)}
+      trackStyle={[styles.meterTrack, { backgroundColor: theme[track] }]}
+      fillStyle={[styles.meterFill, { backgroundColor: theme[color] }]}
+    />
   );
 }
 
@@ -636,12 +640,9 @@ export function IconRow({
   return (
     <ListRow last={last}>
       {onPress ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={onPress}
-          style={({ pressed }) => (pressed ? styles.pressed : null)}>
+        <Tap accessibilityRole="button" onPress={onPress}>
           {body}
-        </Pressable>
+        </Tap>
       ) : (
         body
       )}
@@ -672,18 +673,18 @@ export function RoundIconButton({
   const theme = useTheme();
   const accent = tone === 'accent';
   return (
-    <Pressable
+    <Tap
+      emphasis
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
       hitSlop={(TouchTarget - ROUND_BUTTON) / 2}
-      style={({ pressed }) => [
+      style={[
         styles.roundButton,
         { backgroundColor: accent ? theme.accent : theme.backgroundInset },
-        pressed && styles.pressed,
       ]}>
       <Icon name={icon} size={20} color={accent ? 'onAccent' : 'textSecondary'} />
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -834,15 +835,15 @@ export function ProgressRing({
           fill="none"
         />
         {filled > 0 ? (
-          <Circle
+          <FillRing
+            value={filled}
+            circumference={circumference}
             cx={centre}
             cy={centre}
             r={radius}
             stroke={theme[color]}
             strokeWidth={stroke}
             fill="none"
-            strokeDasharray={circumference}
-            strokeDashoffset={circumference * (1 - filled)}
             strokeLinecap="round"
             // SVG starts an arc at three o'clock; a ring the owner reads starts at twelve.
             transform={`rotate(-90 ${centre} ${centre})`}
@@ -999,7 +1000,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.one + Spacing.half,
   },
-  pressed: { opacity: 0.6 },
   fab: {
     position: 'absolute',
     right: Spacing.three,
@@ -1058,5 +1058,6 @@ const styles = StyleSheet.create({
   },
   heroCard: { borderRadius: Radius.hero, overflow: 'hidden' },
   meterTrack: { height: Spacing.one, borderRadius: Spacing.half, overflow: 'hidden' },
-  meterFill: { height: '100%' },
+  // The fill's own leading edge is as round as the track's, since it slides rather than grows.
+  meterFill: { height: '100%', borderRadius: Spacing.half },
 });

@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 
+import { FillColumn, Swap, TabFade, Tap } from '@/components/motion';
 import { Choices } from '@/components/form';
 import { Card, Chevron, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
@@ -20,12 +21,18 @@ import { todayIso } from '@/ui/dates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { PROGRESS_ROUTE } from '@/ui/progress-screen';
 import {
-  reportsHistory,
-  reportsSelection,
-  type ReportsHistory,
+  categoryBars,
   type ChartAxis,
+  columnBarKey,
+  columnMorph,
+  type ColumnMorph,
+  historyBars,
   type HistoryReadout,
   type ReportsBar,
+  type ReportsHistory,
+  reportsHistory,
+  reportsSelection,
+  type ReportsViewModel,
 } from '@/ui/reports-screen';
 
 import { Spacing, type ThemeColor } from '@/constants/theme';
@@ -59,18 +66,26 @@ const BAR_COLORS: Readonly<Record<string, ThemeColor>> = {
 
 function Bar({
   bar,
+  from,
   color,
   room,
 }: {
   bar: ReportsBar;
+  /** The size it is first drawn at (`columnMorph`): 0 on the first drawing, the old size on a switch. */
+  from: number;
   color: ThemeColor;
   /** Whether this chart holds a negative month at all, and so needs a half below the baseline. */
   room: boolean;
 }) {
   const theme = useTheme();
+  // A full-height bar slid out of the baseline, so it moves from its old height to its new one
+  // with a transform alone (motion, "Progress fills from where it was").
   const filled = (
-    <View
-      style={[styles.bar, { height: bar.size * CHART_HEIGHT, backgroundColor: theme[color] }]}
+    <FillColumn
+      size={bar.size}
+      from={from}
+      negative={bar.negative}
+      style={[styles.bar, { backgroundColor: theme[color] }]}
     />
   );
   return (
@@ -83,6 +98,43 @@ function Bar({
       ) : null}
     </View>
   );
+}
+
+/**
+ * Where a bar is first drawn from: its `columnMorph` start, or at its size when the chart
+ * cross-faded instead.
+ */
+function fromOf(morph: ColumnMorph, month: string, key: string, size: number): number {
+  return morph.kind === 'morph' ? (morph.bars.get(columnBarKey(month, key))?.from ?? size) : size;
+}
+
+/**
+ * The two charts' way from the last model drawn to this one (design D12), kept beside it: how
+ * each bar moves, and how many times each chart has cross-faded, which keys its re-drawing.
+ */
+interface ChartMotion {
+  readonly model: ReportsViewModel | null;
+  readonly history: ColumnMorph;
+  readonly category: ColumnMorph;
+  readonly historyFades: number;
+  readonly categoryFades: number;
+}
+
+function chartMotion(was: ChartMotion, model: ReportsViewModel): ChartMotion {
+  const history = columnMorph(was.model ? historyBars(was.model) : null, historyBars(model));
+  // A chart that gives way to «Оберіть категорію…» or comes back from it cross-fades by its
+  // own branch, and starts from empty again.
+  const category = columnMorph(
+    was.model && was.model.categoryChart.length > 0 ? categoryBars(was.model) : null,
+    categoryBars(model),
+  );
+  return {
+    model,
+    history,
+    category,
+    historyFades: was.historyFades + (history.kind === 'fade' ? 1 : 0),
+    categoryFades: was.categoryFades + (category.kind === 'fade' ? 1 : 0),
+  };
 }
 
 /**
@@ -280,7 +332,7 @@ function Column({
   const theme = useTheme();
   const measure = useContext(MeasureColumn);
   return (
-    <Pressable
+    <Tap
       onPress={onPick}
       accessibilityLabel={label}
       style={styles.column}
@@ -306,7 +358,7 @@ function Column({
         ]}>
         {label}
       </ThemedText>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -386,7 +438,7 @@ const UNSEEN: ReportsHistory = reportsHistory({
   now: new Date(),
 });
 
-export default function ReportsScreen() {
+function ReportsScreen() {
   const router = useRouter();
   const [stored, , reloadWhenSeen] = useReloadOnFocus(
     useCallback(() => readReportsHistory(todayIso(new Date())), []),
@@ -409,6 +461,23 @@ export default function ReportsScreen() {
     () => reportsSelection(stored, { shownCurrency, chosenCategoryId, chosenMonth }),
     [chosenCategoryId, chosenMonth, shownCurrency, stored],
   );
+
+  // Adjusted during render: what the charts move from is the model drawn last.
+  const [charts, setCharts] = useState<ChartMotion>(() =>
+    chartMotion(
+      {
+        model: null,
+        history: { kind: 'fade' },
+        category: { kind: 'fade' },
+        historyFades: 0,
+        categoryFades: 0,
+      },
+      model,
+    ),
+  );
+  if (charts.model !== model) {
+    setCharts(chartMotion(charts, model));
+  }
 
   if (stored === UNSEEN) {
     return <Screen>{null}</Screen>;
@@ -439,25 +508,30 @@ export default function ReportsScreen() {
             {model.historyReadout ? <HistoryNumbers readout={model.historyReadout} /> : null}
             <View style={styles.plot}>
               {model.historyAxis ? <Axis axis={model.historyAxis} /> : null}
-              <MonthStrip key={spanOf(model.history)} marked={model.historyReadout?.month}>
-                {model.history.map((column) => (
-                  <Column
-                    key={column.month}
-                    month={column.month}
-                    label={column.label}
-                    selected={column.selected}
-                    onPick={() => setChosenMonth(column.month)}>
-                    {column.bars.map((bar) => (
-                      <Bar
-                        key={bar.key}
-                        bar={bar}
-                        color={BAR_COLORS[bar.key]!}
-                        room={model.historyHasNegative}
-                      />
-                    ))}
-                  </Column>
-                ))}
-              </MonthStrip>
+              {/* Re-drawn with a cross-fade only when the bars cannot move (a sign flip, the room
+                  below the baseline appearing or going); otherwise every bar moves. */}
+              <Swap key={charts.historyFades} still={charts.historyFades === 0} style={styles.strip}>
+                <MonthStrip key={spanOf(model.history)} marked={model.historyReadout?.month}>
+                  {model.history.map((column) => (
+                    <Column
+                      key={column.month}
+                      month={column.month}
+                      label={column.label}
+                      selected={column.selected}
+                      onPick={() => setChosenMonth(column.month)}>
+                      {column.bars.map((bar) => (
+                        <Bar
+                          key={bar.key}
+                          bar={bar}
+                          from={fromOf(charts.history, column.month, bar.key, bar.size)}
+                          color={BAR_COLORS[bar.key]!}
+                          room={model.historyHasNegative}
+                        />
+                      ))}
+                    </Column>
+                  ))}
+                </MonthStrip>
+              </Swap>
             </View>
           </Card>
 
@@ -471,11 +545,13 @@ export default function ReportsScreen() {
               scroll
             />
             {model.categoryChart.length === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary">
-                Оберіть категорію, щоб побачити її по місяцях.
-              </ThemedText>
+              <Swap key="choose">
+                <ThemedText type="small" themeColor="textSecondary">
+                  Оберіть категорію, щоб побачити її по місяцях.
+                </ThemedText>
+              </Swap>
             ) : (
-              <>
+              <Swap key="chart" style={styles.chartBody}>
                 {model.categoryReadout ? (
                   <View style={styles.readoutRow}>
                     <ThemedText type="overline" themeColor="textSecondary">
@@ -488,26 +564,32 @@ export default function ReportsScreen() {
                 ) : null}
                 <View style={styles.plot}>
                   {model.categoryAxis ? <Axis axis={model.categoryAxis} /> : null}
-                  <MonthStrip
-                    key={spanOf(model.categoryChart)}
-                    marked={model.categoryReadout?.month}>
-                    {model.categoryChart.map((column) => (
-                      <Column
-                        key={column.month}
-                        month={column.month}
-                        label={column.label}
-                        selected={column.selected}
-                        onPick={() => setChosenMonth(column.month)}>
-                        <Bar
-                          bar={column}
-                          color={BAR_COLORS.spent!}
-                          room={model.categoryChartHasNegative}
-                        />
-                      </Column>
-                    ))}
-                  </MonthStrip>
+                  <Swap
+                    key={charts.categoryFades}
+                    still={charts.categoryFades === 0}
+                    style={styles.strip}>
+                    <MonthStrip
+                      key={spanOf(model.categoryChart)}
+                      marked={model.categoryReadout?.month}>
+                      {model.categoryChart.map((column) => (
+                        <Column
+                          key={column.month}
+                          month={column.month}
+                          label={column.label}
+                          selected={column.selected}
+                          onPick={() => setChosenMonth(column.month)}>
+                          <Bar
+                            bar={column}
+                            from={fromOf(charts.category, column.month, 'spent', column.size)}
+                            color={BAR_COLORS.spent!}
+                            room={model.categoryChartHasNegative}
+                          />
+                        </Column>
+                      ))}
+                    </MonthStrip>
+                  </Swap>
                 </View>
-              </>
+              </Swap>
             )}
           </Card>
         </>
@@ -522,13 +604,13 @@ export default function ReportsScreen() {
             </ThemedText>
             {/* Not a dead end: the sentence says there is none, this is where one is made
                 (reports-screen, "An empty цілі group leads to creating a ціль"). */}
-            <Pressable
+            <Tap
               onPress={() => router.push('/manage/goals')}
               accessibilityRole="button"
               style={styles.goalOffer}>
               <ThemedText type="linkPrimary">Створити ціль</ThemedText>
               <Chevron />
-            </Pressable>
+            </Tap>
           </>
         ) : null}
 
@@ -542,7 +624,7 @@ export default function ReportsScreen() {
               {model.goals.accumulationTitle}
             </ThemedText>
             {model.goals.accumulation.map((goal) => (
-              <Pressable
+              <Tap
                 key={goal.id}
                 onPress={() => router.push(goal.route as never)}
                 style={styles.goal}>
@@ -588,7 +670,7 @@ export default function ReportsScreen() {
                     </ThemedText>
                   ) : null}
                 </View>
-              </Pressable>
+              </Tap>
             ))}
           </>
         ) : null}
@@ -599,7 +681,7 @@ export default function ReportsScreen() {
               {model.goals.spendingTitle}
             </ThemedText>
             {model.goals.spending.map((goal) => (
-              <Pressable
+              <Tap
                 key={goal.categoryId}
                 onPress={() => router.push(goal.route as never)}
                 style={styles.goal}>
@@ -638,7 +720,7 @@ export default function ReportsScreen() {
                     </ThemedText>
                   )}
                 </View>
-              </Pressable>
+              </Tap>
             ))}
           </>
         ) : null}
@@ -647,7 +729,7 @@ export default function ReportsScreen() {
       {/* The way in to «Прогрес», where the цілі already are. Present whether or not anything has
           been earned — «Прогрес» is the screen that says there is nothing yet — and it changes
           nothing this tab already shows. */}
-      <Pressable onPress={() => router.push(PROGRESS_ROUTE)} accessibilityRole="button">
+      <Tap onPress={() => router.push(PROGRESS_ROUTE)} accessibilityRole="button">
         <Card style={styles.chartCard}>
           <View style={styles.row}>
             <ThemedText type="overline">Прогрес</ThemedText>
@@ -657,12 +739,12 @@ export default function ReportsScreen() {
             {model.progressBadge ?? 'Що вже вийшло і що варто зробити далі'}
           </ThemedText>
         </Card>
-      </Pressable>
+      </Tap>
 
       {/* The way in to «AI-аналіз», and nothing more: showing it computes nothing, builds no
           пакет and hands nothing to any app. It is offered on an empty history too — the
           AI-аналіз screen is the one that says there is nothing to analyse yet. */}
-      <Pressable onPress={() => router.push('/ai-analysis')} accessibilityRole="button">
+      <Tap onPress={() => router.push('/ai-analysis')} accessibilityRole="button">
         <Card style={styles.chartCard}>
           <View style={styles.row}>
             <ThemedText type="overline">AI-аналіз</ThemedText>
@@ -672,7 +754,7 @@ export default function ReportsScreen() {
             Передати ці числа застосунку, який ви оберете, щоб він їх пояснив
           </ThemedText>
         </Card>
-      </Pressable>
+      </Tap>
     </Screen>
   );
 }
@@ -699,6 +781,10 @@ const styles = StyleSheet.create({
   readoutLabel: { flex: 1 },
   swatch: { width: Spacing.two, height: Spacing.two, borderRadius: Spacing.half },
   plot: { flexDirection: 'row', gap: Spacing.two },
+  // The strip's place in the plot, as the ScrollView alone had it: whatever the axis leaves.
+  strip: { flex: 1, minWidth: 0 },
+  // The category chart's readout and plot, spaced as the card spaces its children.
+  chartBody: { gap: Spacing.three },
   axisAbove: { height: CHART_HEIGHT, justifyContent: 'space-between', alignItems: 'flex-end' },
   axisBelow: { height: CHART_HEIGHT, justifyContent: 'flex-end', alignItems: 'flex-end' },
   // The horizontal padding is the mark's breathing room: a pill on the first or last column must
@@ -714,7 +800,20 @@ const styles = StyleSheet.create({
   columnBars: { flexDirection: 'row', alignItems: 'stretch', gap: Spacing.half },
   baseline: { position: 'absolute', left: 0, right: 0, borderTopWidth: StyleSheet.hairlineWidth },
   barSlot: { width: Spacing.two },
-  barHalf: { height: CHART_HEIGHT, justifyContent: 'flex-end' },
+  // Clipped: the bar inside is full height and slides out of the baseline (`FillColumn`).
+  barHalf: { height: CHART_HEIGHT, justifyContent: 'flex-end', overflow: 'hidden' },
   barHalfBelow: { justifyContent: 'flex-start' },
   bar: { width: '100%', borderRadius: Spacing.half },
 });
+
+/**
+ * The tab as the navigator mounts it: the screen inside the cross-fade every tab shares (motion,
+ * "Screens enter from where they come from"; design D8).
+ */
+export default function ReportsTab() {
+  return (
+    <TabFade tab="reports">
+      <ReportsScreen />
+    </TabFade>
+  );
+}

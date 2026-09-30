@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet } from 'react-native';
+import { Alert, StyleSheet } from 'react-native';
 
+import { Tap } from '@/components/motion';
 import { Action, Choices, Field } from '@/components/form';
 import { Chevron, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
@@ -103,7 +104,7 @@ export default function LimitsScreen() {
             {/* The row is the way into its editor (settings-screen, "A management list leads
                 with its rows and edits a row from the row"): thirty «Встановити» buttons made the
                 list a button grid. */}
-            <Pressable
+            <Tap
               accessibilityRole="button"
               accessibilityHint={row.limit ? 'Змінити або прибрати ліміт' : 'Встановити ліміт'}
               onPress={() =>
@@ -116,7 +117,7 @@ export default function LimitsScreen() {
                       },
                 )
               }
-              style={({ pressed }) => [styles.rowTop, pressed ? styles.pressed : null]}>
+              style={styles.rowTop}>
               <ThemedText
                 numberOfLines={1}
                 style={styles.name}
@@ -130,7 +131,7 @@ export default function LimitsScreen() {
                 {row.limit ?? 'без ліміту'}
               </ThemedText>
               <Chevron />
-            </Pressable>
+            </Tap>
             {/* An archived category is here only because it still carries a ліміт: it is set
                 apart so the leftover can be found and cleared, and it leaves once it is. */}
             {row.archived ? (
@@ -190,5 +191,4 @@ const styles = StyleSheet.create({
     minHeight: 40,
   },
   name: { flex: 1 },
-  pressed: { opacity: 0.75 },
 });

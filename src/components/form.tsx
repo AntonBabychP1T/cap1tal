@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react';
 import {
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -15,10 +14,13 @@ import {
 import { DateTimePicker } from '@expo/ui/community/datetime-picker';
 
 import { Icon } from './icon';
+import { Appear, Tap } from './motion';
 import { ThemedText } from './themed-text';
 
 import { Radius, Spacing, TouchTarget } from '@/constants/theme';
+import { useHaptics } from '@/hooks/haptics-ports';
 import { useTheme } from '@/hooks/use-theme';
+import { choiceEvent } from '@/ui/haptics';
 import { dateStepOffers, parseTypedDate, pickedDate, pickerInstant, todayIso } from '@/ui/dates';
 import { type IconName } from '@/ui/icons';
 import {
@@ -216,24 +218,23 @@ function DateStep({
 }) {
   const theme = useTheme();
   return (
-    <Pressable
+    <Tap
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={hint ?? label}
       accessibilityState={{ selected: picked }}
       hitSlop={Spacing.one}
-      style={({ pressed }) => [
+      style={[
         styles.dateStep,
         {
           backgroundColor: picked ? theme.accentSurface : theme.backgroundSelected,
           borderColor: picked ? theme.accent : theme.cardEdge,
-          opacity: pressed ? 0.7 : 1,
         },
       ]}>
       <ThemedText type={picked ? 'smallBold' : 'small'} themeColor={picked ? 'accent' : 'textSecondary'}>
         {label}
       </ThemedText>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -269,19 +270,27 @@ export function Chip({
   onPress: () => void;
 }) {
   const theme = useTheme();
+  const haptics = useHaptics();
   return (
-    <Pressable
+    <Tap
       disabled={disabled}
-      onPress={onPress}
+      onPress={() => {
+        // A tick when the choice changes — re-picking the chip already picked is no change
+        // (motion, "An outcome the owner caused is felt once"). A store the same tap causes plays
+        // its own confirm instead (`strongestHaptic`).
+        const event = choiceEvent(picked, true, 'chosen');
+        if (event) haptics.play(event);
+        onPress();
+      }}
       // The chip is 38 tall; the finger gets its 48 either way.
       hitSlop={Spacing.two}
-      style={({ pressed }) => [
+      style={[
         styles.choice,
         {
           // An outline, not a fill: in a row of eight categories a filled chip shouts.
           backgroundColor: picked ? theme.accentSurface : theme.backgroundSelected,
           borderColor: picked ? theme.accent : theme.cardEdge,
-          opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
+          opacity: disabled ? 0.5 : 1,
         },
       ]}>
       {icon ? <Icon name={icon} size={14} color={picked ? 'accent' : 'textSecondary'} /> : null}
@@ -290,7 +299,7 @@ export function Chip({
         themeColor={picked ? 'accent' : 'textSecondary'}>
         {label}
       </ThemedText>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -349,7 +358,7 @@ export function SearchBar({
         style={[styles.searchInput, { color: theme.text }]}
       />
       {value.length > 0 ? (
-        <Pressable
+        <Tap
           accessibilityRole="button"
           accessibilityLabel="Очистити пошук"
           onPress={() => onChange('')}
@@ -357,7 +366,7 @@ export function SearchBar({
           <ThemedText type="subtitle" themeColor="textMuted" style={styles.searchClear}>
             ×
           </ThemedText>
-        </Pressable>
+        </Tap>
       ) : null}
     </View>
   );
@@ -479,9 +488,17 @@ function ScrollingChips<T extends string>({
  */
 export function ThemedSwitch(props: Omit<SwitchProps, 'trackColor' | 'thumbColor'>) {
   const theme = useTheme();
+  const haptics = useHaptics();
   return (
     <Switch
       {...props}
+      onValueChange={(value) => {
+        // The switch's own change first, the tick after it: the «Вібрація» switch stores before
+        // this reads it, so turning it on ticks and turning it off plays nothing.
+        props.onValueChange?.(value);
+        const event = choiceEvent(props.value, value, 'toggled');
+        if (event) haptics.play(event);
+      }}
       trackColor={{ true: theme.accentSurface, false: theme.backgroundSelected }}
       thumbColor={props.value ? theme.accent : theme.textMuted}
       ios_backgroundColor={theme.backgroundSelected}
@@ -512,17 +529,18 @@ export function Action({
   const filled = variant === 'primary' && !disabled;
 
   return (
-    <Pressable
+    <Tap
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [
+      // The screen's primary button also presses in (motion, "Every tap is acknowledged at once").
+      emphasis={variant === 'primary'}
+      style={[
         styles.action,
         variant === 'primary' && {
           backgroundColor: disabled ? theme.backgroundSelected : theme.accent,
         },
         // `cardEdge`: a button's outline is the whole button. See `Field` above.
         variant === 'secondary' && { borderWidth: 1, borderColor: theme.cardEdge },
-        pressed && styles.pressed,
       ]}>
       <ThemedText
         type="default"
@@ -560,7 +578,7 @@ export function Action({
         }>
         {title}
       </ThemedText>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -579,14 +597,10 @@ export function RowAction({
 }) {
   const theme = useTheme();
   return (
-    <Pressable
+    <Tap
       onPress={onPress}
       hitSlop={Spacing.two}
-      style={({ pressed }) => [
-        styles.rowAction,
-        { borderColor: theme.cardEdge },
-        pressed && styles.pressed,
-      ]}>
+      style={[styles.rowAction, { borderColor: theme.cardEdge }]}>
       {/* One line, said so. The pill is sized to the whole title, so nothing here can ellipsize —
           but without it Android re-measures the label after the keyboard has resized the window
           and paints it a word short: «Усі транзакції та пошук» became «Усі транзакції та» on
@@ -600,7 +614,7 @@ export function RowAction({
         }>
         {title}
       </ThemedText>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -693,7 +707,9 @@ export function Picker({
           {NOTHING_FOUND}
         </ThemedText>
       ) : (
-        <View style={styles.choices}>
+        // The full list opens by fading in, and what is under it moves down with it (motion,
+        // "What opens, closes or leaves moves its neighbours smoothly").
+        <Appear style={styles.choices}>
           {asChoices(narrowed).map((choice) => (
             <Chip
               key={choice.value}
@@ -702,7 +718,7 @@ export function Picker({
               onPress={() => choose(choice.value)}
             />
           ))}
-        </View>
+        </Appear>
       )}
       <View style={styles.offer}>
         <RowAction title={COLLAPSE_LABEL} onPress={collapse} tone="quiet" />
@@ -771,5 +787,4 @@ const styles = StyleSheet.create({
     borderRadius: Radius.chip,
     borderWidth: 1,
   },
-  pressed: { opacity: 0.75 },
 });

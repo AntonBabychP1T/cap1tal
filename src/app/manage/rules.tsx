@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
+import { ListItem, Tap } from '@/components/motion';
 import { Action, Choices, Field } from '@/components/form';
 import { Card, Chevron, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
@@ -217,37 +218,40 @@ export default function RulesScreen() {
           {stored.rules.map((rule, index) => {
             const line = ruleLine(rule, names, accountNames);
             return (
-              <ListRow key={line.id} last={index === stored.rules.length - 1} style={styles.row}>
-                {draft?.id === rule.id ? (
-                  renderForm(draft, rule)
-                ) : (
-                  // The row is the way into its editor, where «Видалити» now lives too.
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityHint="Змінити або видалити правило"
-                    onPress={() => {
-                      setSweptMessage(undefined);
-                      setDraft({
-                        id: rule.id,
-                        merchant: rule.merchant ?? '',
-                        mcc: rule.mcc === undefined ? '' : mccText(rule.mcc),
-                        target: rule.target.kind,
-                        ...(rule.target.kind === 'category'
-                          ? { categoryId: rule.target.categoryId }
-                          : { toAccountId: rule.target.toAccountId }),
-                      });
-                    }}
-                    style={({ pressed }) => [styles.rowTop, pressed ? styles.pressed : null]}>
-                    <ThemedText numberOfLines={1} style={styles.criteria}>
-                      {line.criteria}
-                    </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.target}>
-                      → {line.category}
-                    </ThemedText>
-                    <Chevron />
-                  </Pressable>
-                )}
-              </ListRow>
+              // A deleted правило fades out and the rows under it close the gap.
+              <ListItem key={line.id} reflow>
+                <ListRow last={index === stored.rules.length - 1} style={styles.row}>
+                  {draft?.id === rule.id ? (
+                    renderForm(draft, rule)
+                  ) : (
+                    // The row is the way into its editor, where «Видалити» now lives too.
+                    <Tap
+                      accessibilityRole="button"
+                      accessibilityHint="Змінити або видалити правило"
+                      onPress={() => {
+                        setSweptMessage(undefined);
+                        setDraft({
+                          id: rule.id,
+                          merchant: rule.merchant ?? '',
+                          mcc: rule.mcc === undefined ? '' : mccText(rule.mcc),
+                          target: rule.target.kind,
+                          ...(rule.target.kind === 'category'
+                            ? { categoryId: rule.target.categoryId }
+                            : { toAccountId: rule.target.toAccountId }),
+                        });
+                      }}
+                      style={styles.rowTop}>
+                      <ThemedText numberOfLines={1} style={styles.criteria}>
+                        {line.criteria}
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.target}>
+                        → {line.category}
+                      </ThemedText>
+                      <Chevron />
+                    </Tap>
+                  )}
+                </ListRow>
+              </ListItem>
             );
           })}
         </ListCard>
@@ -268,5 +272,4 @@ const styles = StyleSheet.create({
   },
   criteria: { flex: 1 },
   target: { flexShrink: 1, maxWidth: '55%' },
-  pressed: { opacity: 0.75 },
 });
