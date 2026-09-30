@@ -1497,6 +1497,24 @@ describe('transactionsRepo search', () => {
     ]);
   });
 
+  it('Scenario: Ukrainian letters fold as before', () => {
+    repo.save(
+      expenseByDefault({
+        id: 'e-ukrainian',
+        date: '2026-03-14',
+        accountId: 'card',
+        amount: money(3000, 'UAH'),
+        categoryId: 'food',
+        description: 'ҐАНОК ЇЖАК Єнот І',
+      }),
+      storedAt,
+    );
+
+    expect(ids(repo.search({ ...page, match: { ...noLabels, text: 'ґанок їжак єнот і' } }))).toEqual([
+      'e-ukrainian',
+    ]);
+  });
+
   it('Scenario: A сума finds both legs of a переказ', () => {
     const found = repo.search({
       ...page,

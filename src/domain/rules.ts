@@ -1,4 +1,5 @@
 import type { Account } from './account';
+import { foldCase } from './fold';
 import {
   UNCATEGORISED_CATEGORY_ID,
   type Transaction,
@@ -31,14 +32,6 @@ export interface Rule {
 }
 
 /**
- * Case-insensitivity with the Ukrainian casing rules on both sides, so «СІЛЬПО» in a bank
- * description meets the pattern «сільпо» the owner typed (design decision 7).
- */
-function fold(text: string): string {
-  return text.toLocaleLowerCase('uk');
-}
-
-/**
  * The pattern a rule actually matches on: trimmed, and `undefined` when nothing is left. Both the
  * form and the repository refuse a blank pattern, but a blank one reaching here would otherwise be
  * a wildcard — `''` occurs in every description — and a wildcard would outrank every real MCC rule
@@ -59,7 +52,7 @@ function matches(
   // rejected"); should one ever reach here it matches nothing rather than everything.
   if (merchant === undefined && rule.mcc === undefined) return false;
   // Both criteria present means both must hold — the tiers below rank rules, they never relax them.
-  if (merchant !== undefined && !fold(transaction.description).includes(fold(merchant))) {
+  if (merchant !== undefined && !foldCase(transaction.description).includes(foldCase(merchant))) {
     return false;
   }
   if (rule.mcc !== undefined && rule.mcc !== transaction.mcc) return false;
@@ -75,7 +68,7 @@ function specificity(rule: Rule): number {
 /** Length after folding, so the comparison is over the same text the match was made on. */
 function patternLength(rule: Rule): number {
   const merchant = patternOf(rule);
-  return merchant === undefined ? 0 : fold(merchant).length;
+  return merchant === undefined ? 0 : foldCase(merchant).length;
 }
 
 /**
@@ -188,7 +181,7 @@ export function matchCategory(
  * compared, and its length ranks on the ladder exactly as it reads.
  */
 export function proposeMerchantPattern(description: string | undefined): string | undefined {
-  const folded = fold(description ?? '').trim();
+  const folded = foldCase(description ?? '').trim();
   if (folded === '') return undefined;
   const leading = /^\p{L}[\p{L}\s]*/u.exec(folded)?.[0]?.trim();
   if (leading === undefined || leading === '') return folded;

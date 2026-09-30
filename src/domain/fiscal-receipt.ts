@@ -1,4 +1,5 @@
 import { daysBetween } from './dates';
+import { foldCase } from './fold';
 import type { Money } from './money';
 import type { IsoDate, Transaction } from './transaction';
 
@@ -153,8 +154,8 @@ function transactionAmount(t: Transaction): Money | undefined {
  */
 function opysSaysSeller(description: string | undefined, seller: string): boolean {
   if (description === undefined) return false;
-  const opys = description.toLocaleLowerCase('uk');
-  const name = seller.toLocaleLowerCase('uk');
+  const opys = foldCase(description);
+  const name = foldCase(seller);
   return opys.includes(name) || name.includes(opys);
 }
 

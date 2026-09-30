@@ -1,4 +1,5 @@
 import { money, type CurrencyCode, type Money } from '../domain/money';
+import { foldCase } from '../domain/fold';
 import type { CapturedNotification } from './capture';
 
 /**
@@ -41,11 +42,6 @@ export function parseInputOf(capture: CapturedNotification): string {
   return `${capture.title} ${capture.text}`.replace(/\s+/gu, ' ').trim();
 }
 
-/** Ukrainian casing on both sides, as `matchRule` folds its patterns. */
-function fold(text: string): string {
-  return text.toLocaleLowerCase('uk');
-}
-
 /**
  * The closed set of currency marks (design D5). The app offers accounts in exactly these three
  * currencies, so an amount next to anything else — or next to nothing — is not a сума this parser
@@ -83,14 +79,14 @@ function currencyAfter(input: string, end: number): CurrencyCode | undefined {
   const rest = input.slice(end);
   const match = MARK_AFTER.exec(rest);
   if (match === null || isWordish(rest.charAt(match[0].length))) return undefined;
-  return CURRENCY_BY_MARK.get(fold(match[1] ?? ''));
+  return CURRENCY_BY_MARK.get(foldCase(match[1] ?? ''));
 }
 
 function currencyBefore(input: string, start: number): CurrencyCode | undefined {
   const head = input.slice(0, start);
   const match = MARK_BEFORE.exec(head);
   if (match === null || isWordish(head.charAt(match.index - 1))) return undefined;
-  return CURRENCY_BY_MARK.get(fold(match[1] ?? ''));
+  return CURRENCY_BY_MARK.get(foldCase(match[1] ?? ''));
 }
 
 /**
@@ -114,7 +110,7 @@ function minorUnitsOf(token: string): number | undefined {
 const MONEY_IN_MARKS = ['зарахування', 'поповнення', 'повернення', 'надходження'] as const;
 
 function directionOf(input: string): MovementDirection {
-  const folded = fold(input);
+  const folded = foldCase(input);
   return MONEY_IN_MARKS.some((mark) => folded.includes(mark)) ? 'in' : 'out';
 }
 

@@ -1,5 +1,6 @@
 import { plural } from '../progress/plural';
 import type { Account, AccountKind } from '../domain/account';
+import { foldCase } from '../domain/fold';
 import type { NameEvidence } from '../domain/name-match';
 import type { TransactionType } from '../domain/transaction';
 
@@ -47,15 +48,16 @@ export function byName(a: { name: string; id: string }, b: { name: string; id: s
 }
 
 /**
- * The fold the owner's data needs before one name is matched against another: `toLowerCase()`
- * folds ASCII only, so «Продукти» would not answer to «продукти».
+ * The fold the owner's data needs before one name is matched against another — `foldCase`
+ * (search-fold-speed design D1), since SQLite's `lower()` folds ASCII only and «Продукти» would
+ * not answer to «продукти».
  *
  * It lives here beside `byName` because ordering names and matching names are the same question
  * asked twice, and because two screens now ask it — the search on «Транзакції» and the search
  * inside a picker's full list. Two copies would be two answers the day one of them is tuned.
  */
 export function folded(value: string): string {
-  return value.toLocaleLowerCase('uk');
+  return foldCase(value);
 }
 
 /**

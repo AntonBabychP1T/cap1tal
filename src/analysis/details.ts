@@ -72,15 +72,13 @@ const UNNAMED = 'Без назви';
  * Nothing else is done to it — no cleaning, no dictionary, no guessing at a chain behind a branch
  * code. The опис is the bank's text and the пакет passes it on as the bank wrote it, only folded.
  *
- * `toLowerCase()` and deliberately **not** `toLocaleLowerCase('uk')`, which is what
- * `transactions-repo.ts:247` and `transaction-search.ts` use on the very same описи. The two are
- * folding for two different purposes and the difference is the пакет's own guarantee: a search
- * result is read once and thrown away, while this string is both the key merchants are grouped by
- * and the key they are sorted by, and every ordering in a пакет must be identical under Node in
- * `verify` and under Hermes on the phone. That is the same rule the sorts below and in
- * `categories.ts` keep by refusing `localeCompare`. Cyrillic has no locale tailoring today — `uk`
- * and the root mapping agree — so this costs nothing and removes the one `Intl` dependency that
- * could ever make two devices build two пакети out of one stored state.
+ * `toLowerCase()` directly — the same default mapping as `foldCase` (`src/domain/fold.ts`), which
+ * the search on «Транзакції» folds with. This one is also the key merchants are grouped by and the
+ * key they are sorted by, and every ordering in a пакет must be identical under Node in `verify`
+ * and under Hermes on the phone. That is the same rule the sorts below and in `categories.ts`
+ * keep by refusing `localeCompare`. Cyrillic has no locale tailoring today — `uk` and the root
+ * mapping agree — so this costs nothing and removes the one `Intl` dependency that could ever make
+ * two devices build two пакети out of one stored state.
  */
 export function foldMerchant(description: string): string {
   return description.trim().replace(/\s+/g, ' ').toLowerCase();

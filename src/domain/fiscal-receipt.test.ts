@@ -254,12 +254,13 @@ describe('the seller beside the опис', () => {
  * The point of the whole file, asserted on the source rather than trusted: the domain's чек knows
  * about money and транзакції and about nothing that computes a total. An import of
  * `monthly-picture`, `account`, `limits`, `goals` or `reports` here would be the first step
- * towards a чек that moves a number, which the spec forbids outright.
+ * towards a чек that moves a number, which the spec forbids outright. `fold` is the one text helper
+ * of the app (search-fold-speed): it computes no number.
  */
 it('the чек reaches no number the app computes', async () => {
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(new URL('./fiscal-receipt.ts', import.meta.url), 'utf8');
   const imported = [...source.matchAll(/^\s*import[^']*'([^']+)'/gm)].map(([, from]) => from);
 
-  expect(imported.toSorted()).toEqual(['./dates', './money', './transaction']);
+  expect(imported.toSorted()).toEqual(['./dates', './fold', './money', './transaction']);
 });

@@ -12,6 +12,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 
+import { foldCase } from '../domain/fold';
 import {
   isoDate,
   UNCATEGORISED_CATEGORY_ID,
@@ -112,7 +113,9 @@ export function transactionsRepo(db: Storage) {
         .all(),
       'whole-history',
     );
-    return narrowed.filter((t) => satisfies(t, criteria.match));
+    // The typed text is folded once here, not once per candidate row (design D2).
+    const match = { ...criteria.match, text: foldCase(criteria.match.text) };
+    return narrowed.filter((t) => satisfies(t, match));
   });
 
   return {
@@ -266,8 +269,10 @@ export function transactionsRepo(db: Storage) {
      * itself; with something typed the matches are remembered under the change stamp, and the next
      * page slices them without reading storage again (app-speed-pass design D6).
      *
-     * The ceiling is honest: this reads the narrowed rows into memory, which is right for the
-     * hundreds-to-low-thousands this app holds. If it stops being right the next step is a
+     * The judging is `foldCase` per candidate row (~1 µs on Hermes; a locale-argument mapping was
+     * ~0.4 ms and made ten thousand транзакції a 16-second stall — search-fold-speed). The ceiling
+     * is honest: this reads the narrowed rows into memory, and what is left of it on a long
+     * history is in that change's `measurements.md`. If it stops being right the next step is a
      * lowercase shadow column filled by a migration.
      */
     search(input: {
@@ -429,7 +434,7 @@ function sqlFalse(): SQL {
   return sql`0`;
 }
 
-/** The whole of what a search matches, applied to one транзакція. */
+/** The whole of what a search matches, applied to one транзакція; `match.text` is already folded. */
 function satisfies(
   t: Transaction,
   match: {
@@ -450,9 +455,9 @@ function satisfies(
   if (match.text === '' || !t.description) {
     return false;
   }
-  // `toLocaleLowerCase('uk')` and not `toLowerCase()`: the owner's data is Ukrainian, and this is
-  // the fold SQLite cannot do. Matched at any position, so part of an опис finds it.
-  return t.description.toLocaleLowerCase('uk').includes(match.text.toLocaleLowerCase('uk'));
+  // `foldCase` is the fold SQLite cannot do (it folds ASCII only). Matched at any position, so
+  // part of an опис finds it.
+  return foldCase(t.description).includes(match.text);
 }
 
 /** Every сума a транзакція carries — both legs of a переказ, the single amount of the rest. */

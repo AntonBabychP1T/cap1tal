@@ -200,5 +200,8 @@
   Measured on 2026-09-30, results in `baseline.md`; **left unticked**: the tab and back paths read almost
   nothing now, but a search still blocks the JS thread for 20–50 s and "under one frame" could not be
   established with the probe (its floor is 120 ms).
+  Search half re-measured after `search-fold-speed` (2026-09-30): «bolt» on the same 10 000-транзакція
+  бекап now frees the JS thread 0.75–0.96 s after the last key; numbers in that change's
+  `measurements.md`. 10.1 stays open for the one-frame goal on tab switches.
 - [x] 10.2 Run `npm run verify` and paste the final lines
 - [x] 10.3 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
