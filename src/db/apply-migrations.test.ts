@@ -73,7 +73,7 @@ describe('apply-migrations', () => {
       const applied = checker.prepare('SELECT COUNT(*) as n FROM __drizzle_migrations').get() as {
         n: number;
       };
-      expect(applied.n).toBe(6);
+      expect(applied.n).toBe(7);
       expect(
         checker.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'accounts'").get(),
       ).toBeDefined();

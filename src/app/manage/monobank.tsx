@@ -24,7 +24,10 @@ import type { SyncProgress, SyncRun } from '@/monobank/coordinator';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { useTheme } from '@/hooks/use-theme';
 import { syncPorts } from '@/hooks/monobank-ports';
+import { backgroundSync } from '@/platform/background-sync-device';
+import type { BackgroundRestriction } from '@/platform/background-sync';
 import { syncMonobankSyncTask } from '@/platform/monobank-sync-task';
+import { useOnForeground } from '@/hooks/use-on-foreground';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { syncOutcomeEvent } from '@/ui/haptics';
@@ -52,10 +55,13 @@ import {
   linkSetConfirmation,
   MONOBANK_TOKEN_PAGE_URL,
   backgroundNote,
+  inventory,
   lastSyncLine,
   monobankAccountRows,
   newAccountDraft,
   notConfiguredStatus,
+  notShownIds,
+  REFRESH_LIST_LABEL,
   outcomeLabel,
   progressLabel,
   proposalRows,
@@ -145,7 +151,22 @@ export default function MonobankScreen() {
 
   // The cached rows are what the screen opens on, so an offline opening is still useful; a
   // successful client-info answer replaces them for as long as the screen is open.
-  const shown = fetched ?? stored.monobankAccounts;
+  // Beside a fresh answer, a still-linked account it no longer names keeps its stored row, so a
+  // closed card stays on the list with the line that explains it (`inventory`).
+  const shown = useMemo(
+    () =>
+      inventory<MonobankAccountView>({
+        fetched,
+        stored: stored.monobankAccounts,
+        links: stored.links,
+      }),
+    [fetched, stored.links, stored.monobankAccounts],
+  );
+  /** Linked accounts the newest stored client-info answer no longer names — set aside (D4). */
+  const notShown = useMemo(
+    () => notShownIds(stored.links, stored.monobankAccounts),
+    [stored.links, stored.monobankAccounts],
+  );
   const rows = useMemo(
     () =>
       monobankAccountRows({
@@ -155,14 +176,26 @@ export default function MonobankScreen() {
         // «сьогодні» and «вчора» are read against the moment the screen is drawn, like every other
         // clock in this app — passed in, never read inside the rule.
         now: new Date(),
+        notShown,
       }),
-    [shown, stored.accounts, stored.links],
+    [notShown, shown, stored.accounts, stored.links],
   );
-  /** The most recent moment among the linked accounts, or that there has not been one. */
+  /** The oldest moment among the linked accounts the token still shows, or that there has not been one. */
   const lastSync = useMemo(
-    () => lastSyncLine({ links: stored.links, now: new Date() }),
-    [stored.links],
+    () => lastSyncLine({ links: stored.links, now: new Date(), accounts: stored.monobankAccounts }),
+    [stored.links, stored.monobankAccounts],
   );
+  /**
+   * How the phone treats the app's background work, read again whenever the screen comes back
+   * into view — returning from the phone's own dialog or settings is exactly that (spec: «The
+   * screen says that sync also runs in the background»).
+   */
+  const [restriction, setRestriction] = useState<BackgroundRestriction>(() => backgroundSync.restriction());
+  const readRestriction = useCallback(() => setRestriction(backgroundSync.restriction()), []);
+  // On focus below, beside the refresh; and on return to the foreground, which is how the owner
+  // comes back from the phone's own dialog without the screen ever losing focus.
+  useOnForeground(readRestriction);
+  const background = backgroundNote(stored.links, restriction);
   const names = useMemo(
     () => new Map(rows.map((row) => [row.monobankAccountId, row.name])),
     [rows],
@@ -245,7 +278,7 @@ export default function MonobankScreen() {
   }, []);
 
   /**
-   * `asked` is whether the owner tapped «Оновити з monobank» rather than merely opened the screen:
+   * `asked` is whether the owner tapped «Оновити список рахунків» rather than merely opened the screen:
    * only then does a missing token earn a sentence of its own (see `notConfiguredStatus`).
    */
   const refresh = useCallback(async (options: { readonly asked: boolean }) => {
@@ -593,7 +626,8 @@ export default function MonobankScreen() {
   useFocusEffect(
     useCallback(() => {
       void refresh({ asked: false });
-    }, [refresh]),
+      readRestriction();
+    }, [readRestriction, refresh]),
   );
 
   /** Opening «monobank» is the owner looking at the failure this section explains (design D6). */
@@ -611,7 +645,7 @@ export default function MonobankScreen() {
         </ThemedText>
         {/* What the last request to the bank came back with — a fact about the connection, so it
             sits on the quiet banner rather than reading as another line of the paragraph. */}
-        {/* While a прогін, the token check or «Оновити з monobank» runs, a spinner stands beside
+        {/* While a прогін, the token check or «Оновити список рахунків» runs, a spinner stands beside
             that line — and only then (motion, "Busy work shows a spinner only while it runs"). */}
         {busy || status ? (
           <View style={styles.statusLine}>
@@ -672,7 +706,7 @@ export default function MonobankScreen() {
             />
             <Action
               variant="secondary"
-              title={busy ? 'Оновлюємо…' : 'Оновити з monobank'}
+              title={busy ? 'Оновлюємо…' : REFRESH_LIST_LABEL}
               onPress={() => void refresh({ asked: true })}
               disabled={busy}
             />
@@ -910,12 +944,22 @@ export default function MonobankScreen() {
               : `Приєднано рахунків: ${stored.links.length}. Банк дозволяє один запит на хвилину, тож перша синхронізація може тривати.`}
           </ThemedText>
         )}
-        {backgroundNote(stored.links) !== null && (
+        {background !== null && (
           // Only with a link: with none there is no рахунок for a background run to sync, and no
-          // chance is asked for either (spec: monobank-sync-screen).
-          <ThemedText type="small" themeColor="textSecondary">
-            {backgroundNote(stored.links)}
-          </ThemedText>
+          // chance is asked for either (spec: monobank-sync-screen). The action is the phone's own
+          // fix — its battery-optimisation request, or the app's settings page — never the app's.
+          <>
+            <ThemedText type="small" themeColor="textSecondary">
+              {background.text}
+            </ThemedText>
+            {background.action ? (
+              <Action
+                variant="secondary"
+                title={background.action.title}
+                onPress={() => void backgroundSync.openRestrictionFix(background.action!.fix)}
+              />
+            ) : null}
+          </>
         )}
         {control === 'stop' ? (
           <Action

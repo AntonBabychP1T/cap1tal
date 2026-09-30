@@ -72,7 +72,7 @@ import { categoryPresentation } from '@/ui/home-categories';
 import { hasDateRolledOver, makeCancelToken } from '@/ui/home-data';
 import { manualRefresh } from '@/ui/home-refresh';
 import { homeViewModel } from '@/ui/home-screen';
-import { syncCoverage } from '@/ui/monobank-screen';
+import { bankCoverage } from '@/ui/monobank-screen';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { failureAlert, refusalAlert } from '@/ui/failure-alert';
 import { judgeProgressLater, onProgressJudged, progressScreenData } from '@/hooks/progress-ports';
@@ -226,6 +226,9 @@ function MainScreen() {
         // the attempt says how the last run went. Two local reads, beside the others.
         links: monobankRepo.listLinks(),
         attempt: monobankRepo.attempt(),
+        // Which of them the token still shows: a рахунок it stopped showing is set aside rather
+        // than left to age the whole bank (monobank-sync-freshness D4). One more small local read.
+        monobankAccounts: monobankRepo.rememberedAccounts(),
       };
     }, []),
   );
@@ -464,13 +467,16 @@ function MainScreen() {
   const [draftsExpanded, setDraftsExpanded] = useState(false);
 
   /**
-   * How much of the bank has synced, and how old the whole of it is — `syncCoverage`'s own answer,
+   * How much of the bank has synced, and how old the whole of it is — `bankCoverage`'s own answer,
    * read here and passed into the view model whole. The monobank screen reads the same one, which
    * is what keeps the two lines from ever saying different things.
    *
    * Only a completed account carries a moment, so a failed run leaves this exactly where it was.
    */
-  const coverage = useMemo(() => syncCoverage(stored.links), [stored.links]);
+  const coverage = useMemo(
+    () => bankCoverage(stored.links, stored.monobankAccounts),
+    [stored.links, stored.monobankAccounts],
+  );
 
   /**
    * Everything the screen says about the month, the money held and what is waiting. No number is

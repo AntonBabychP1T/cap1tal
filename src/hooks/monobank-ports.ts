@@ -3,6 +3,7 @@ import { AppState } from 'react-native';
 import { accounts as accountsRepo, monobank as monobankRepo, rules as rulesRepo } from '@/db/repos';
 import type { SyncPorts } from '@/monobank/coordinator';
 import { deviceTimer, foregroundRun, withRequestTimeout, REQUEST_TIMEOUT_MS } from '@/monobank/yielding';
+import { backgroundSync } from '@/platform/background-sync-device';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { dateOfEpochMs } from '@/ui/dates';
 import { newId } from '@/ui/id';
@@ -81,6 +82,11 @@ export function syncPorts(over: Partial<SyncPorts> = {}, run: string = newId()):
     // it every background run — until the app was next opened (design D5).
     wait: foreground.wait,
     postponed: foreground.postponed,
+    // A run that stops with a позачерговий рахунок unread off screen asks the phone for a
+    // дочитування — the decision is `startSync`'s (monobank-sync-freshness D5); these are the
+    // device's two facts it needs.
+    continueLater: (delayMs) => backgroundSync.continueLater(delayMs),
+    inForeground: () => AppState.currentState === 'active',
     newId,
     ...over,
     // Last, and composed rather than replaced: the monobank screen's «2 з 3» is the owner's, and

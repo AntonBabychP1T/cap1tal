@@ -12,6 +12,7 @@ import {
 } from '../domain/transaction';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
 import { accountsRepo } from './accounts-repo';
+import { monobankRepo } from './monobank-repo';
 import { reportingRepo } from './reporting-repo';
 import { transactionsRepo } from './transactions-repo';
 import {
@@ -618,6 +619,7 @@ describe('migrations — monobank links, progress and описи', () => {
         lastAttemptedAt: null,
         pagingWindowToMs: null,
         pagingRequestToMs: null,
+        owedSince: null,
       },
     ]);
     expect(everyColumn(db)).toContain('last_synced_at');
@@ -1759,6 +1761,7 @@ describe('migrations — where a half-paged window got to', () => {
       ['last_attempted_at', 0],
       ['paging_window_to_ms', 0],
       ['paging_request_to_ms', 0],
+      ['owed_since', 0],
     ]);
   });
 });
@@ -1986,6 +1989,51 @@ describe('migrations — the «Вібрація» preference', () => {
       expect(db.select().from(hapticsPreference).all()).toEqual([]);
     } finally {
       staged.close();
+    }
+  });
+});
+
+describe('migrations — when a link became позачерговий', () => {
+  it('Scenario: The migration keeps what the links held', () => {
+    const staged = openTestDbMigratedTo(6);
+    try {
+      const { db } = staged;
+      accountsRepo(db).save(account({ id: 'black', name: 'mono', kind: 'spending', currency: 'UAH' }));
+      db.run(sql`INSERT INTO monobank_accounts (id, kind, name, currency, bank_balance_amount, obtained_at)
+                 VALUES ('mono-black', 'card', 'black', 'UAH', 100, 1790000000000)`);
+      db.run(sql`INSERT INTO monobank_links (monobank_account_id, account_id, sync_start_date, cursor_ms,
+                   last_synced_at, last_attempted_at, paging_window_to_ms, paging_request_to_ms)
+                 VALUES ('mono-black', 'black', '2026-09-01', 1790100000000, 1790200000000,
+                   1790300000000, 1790400000000, 1790350000000)`);
+
+      staged.migrateToLatest();
+
+      const [link] = monobankRepo(db).listLinks();
+      expect(link).toEqual({
+        monobankAccountId: 'mono-black',
+        accountId: 'black',
+        syncStartDate: '2026-09-01',
+        cursorMs: 1790100000000,
+        lastSyncedAtMs: 1790200000000,
+        lastAttemptedAtMs: 1790300000000,
+        paging: { windowToMs: 1790400000000, requestToMs: 1790350000000 },
+        owedSinceMs: null,
+      });
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('gives `monobank_links` its nullable `owed_since` and leaves the eight it had', () => {
+    const storage = openTestDb();
+    try {
+      const columns = storage.db
+        .all<{ name: string; notnull: number }>(sql`PRAGMA table_info(monobank_links)`)
+        .map((column) => [column.name, column.notnull] as const);
+      expect(columns.at(-1)).toEqual(['owed_since', 0]);
+      expect(columns).toHaveLength(9);
+    } finally {
+      storage.close();
     }
   });
 });

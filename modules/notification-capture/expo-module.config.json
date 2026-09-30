@@ -1,6 +1,9 @@
 {
   "platforms": ["android"],
   "android": {
-    "modules": ["expo.modules.notificationcapture.NotificationCaptureModule"]
+    "modules": [
+      "expo.modules.notificationcapture.NotificationCaptureModule",
+      "expo.modules.notificationcapture.BackgroundSyncModule"
+    ]
   }
 }

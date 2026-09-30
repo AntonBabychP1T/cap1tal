@@ -30,11 +30,56 @@ export interface OrderableLink {
   readonly monobankAccountId: string;
   /** Epoch milliseconds of the last turn, or `null` for a link that has never had one. */
   readonly lastAttemptedAtMs: number | null;
+  /**
+   * Epoch milliseconds of the moment the link became **позачерговий**, or `null`/absent for one
+   * that is not. Absent is «not», so every caller that predates it keeps its order.
+   */
+  readonly owedSinceMs?: number | null;
 }
 
 /**
- * The linked accounts in the order a run should give them their turns: longest since its turn
- * first, a link that has never had one before every link that has, and the monobank account id as
+ * How long a рахунок may go without a turn before it is **overdue** and goes before the rest —
+ * the bound that keeps a busy позачерговий рахунок from starving the others (design D2). With
+ * chances about a quarter of an hour apart the turn rule alone reaches nine рахунки every two
+ * hours or so, so an overdue рахунок is the sign that the phone gave few chances or that one
+ * рахунок took them all; either way a дочитування then reads the overdue ones one a minute.
+ */
+export const TURN_OVERDUE_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Which group a link goes in (design D2): `0` — позачерговий and not yet given a turn since it
+ * became so; `1` — overdue, its last turn older than `TURN_OVERDUE_MS` or none at all; `2` — the
+ * rest. Without `nowMs` nothing is overdue, so a caller that predates it keeps its order.
+ *
+ * Priority ends at the turn. A позачерговий рахунок whose statement failed, or that needs more
+ * pages than one turn reads, then waits its turn like any other; an overdue one is not overdue
+ * again for three hours. That is what keeps a рахунок that cannot complete from heading every run,
+ * and it is what bounds a chain of дочитування (design D5).
+ */
+export function priorityOf(link: OrderableLink, nowMs?: number): 0 | 1 | 2 {
+  const owed = link.owedSinceMs;
+  const turned = link.lastAttemptedAtMs;
+  // A moment in the future of the clock — a sync boundary set ahead — owes nothing yet: no answer
+  // reaches it, so it could only keep the link first, and every chance due, for nothing.
+  const owedNow = owed !== null && owed !== undefined && (nowMs === undefined || owed <= nowMs);
+  if (owedNow && (turned === null || turned < owed)) {
+    return 0;
+  }
+  if (nowMs !== undefined && (turned === null || nowMs - turned >= TURN_OVERDUE_MS)) {
+    return 1;
+  }
+  return 2;
+}
+
+/** Whether a link goes before the turn order at all — `priorityOf` below `2`. */
+export function hasPriority(link: OrderableLink, nowMs?: number): boolean {
+  return priorityOf(link, nowMs) < 2;
+}
+
+/**
+ * The linked accounts in the order a run should give them their turns: every позачерговий link
+ * that has had no turn since it became so, then every overdue one (`priorityOf`), then the rest,
+ * and inside each group longest since its turn first, a link that has never had one before every link that has, and the monobank account id as
  * the tie-break so a run is reproducible.
  *
  * A **turn** is a run sending the bank a request about that link — taken whatever the answer was.
@@ -47,8 +92,15 @@ export interface OrderableLink {
  *
  * Returns a new array; the input is not touched.
  */
-export function syncOrder<T extends OrderableLink>(links: readonly T[]): T[] {
+export function syncOrder<T extends OrderableLink>(links: readonly T[], nowMs?: number): T[] {
   return [...links].sort((a, b) => {
+    // Позачергові рахунки without a turn since first — the balances say the bank holds something
+    // about them — then the overdue, then the rest; the turn rule orders each group on its own
+    // (design D2).
+    const group = priorityOf(a, nowMs) - priorityOf(b, nowMs);
+    if (group !== 0) {
+      return group;
+    }
     if (a.lastAttemptedAtMs !== b.lastAttemptedAtMs) {
       // `null` is «has waited longest», not «waited no time»: a link no run has spent a request
       // on is the one the app knows nothing about, and it goes first.
@@ -66,15 +118,16 @@ export function syncOrder<T extends OrderableLink>(links: readonly T[]): T[] {
 
 /**
  * How long a stored client-info answer goes on serving a прогін nobody asked for — the **межа
- * свіжості**, and therefore the most транзакції may lag the bank by.
+ * свіжості**.
  *
- * An hour. The phone's chances come about four to it, so an hour spends one of them on балanci and
- * leaves three for the statement requests that actually import; a shorter bound spends more chances
- * on balances, a longer one commits figures older than the owner would recognise. It is not a
- * freshness promise about the балanci — a прогін imports nothing later than the answer it used, so
- * an old answer makes an old *span*, not a wrong one.
+ * A minute. The balances are what tell a прогін which рахунки moved (`upsertAccounts` marks them
+ * позачергові), so a прогін that starts later than that asks for them first; the bank limits
+ * client-info apart from the statement, so doing so costs the statement nothing (design D3). Two
+ * прогони inside the same minute — an opening and the screen's own refresh, or a follow-up —
+ * share one answer. It is not a freshness promise about the баланси: a прогін imports nothing later
+ * than the answer it used, so an old answer makes an old *span*, not a wrong one.
  */
-export const CLIENT_INFO_FRESH_MS = 60 * 60 * 1000;
+export const CLIENT_INFO_FRESH_MS = 60 * 1000;
 
 /** What `usableAccounts` needs of a link: which monobank account it is, and where it stands. */
 export interface NamedLink {
@@ -137,7 +190,7 @@ export function usableAccounts<T extends RememberedAccount>(
   if (rows.length === 0 || links.length === 0) {
     return undefined;
   }
-  const newestMs = rows.reduce((newest, row) => Math.max(newest, row.obtainedAt.getTime()), -Infinity);
+  const newestMs = newestAnswerMs(rows);
   if (!Number.isFinite(newestMs) || newestMs > nowMs || nowMs - newestMs >= freshMs) {
     return undefined;
   }
@@ -162,6 +215,40 @@ export function usableAccounts<T extends RememberedAccount>(
     }
   }
   return { accounts, obtainedAt: new Date(newestMs) };
+}
+
+/**
+ * The moment of the newest stored client-info answer: every row one `upsertAccounts` call writes
+ * carries the same moment, so the newest moment across the rows *is* an answer's. `-Infinity` for
+ * none.
+ */
+function newestAnswerMs(rows: readonly { readonly obtainedAt: Date }[]): number {
+  return rows.reduce((newest, row) => Math.max(newest, row.obtainedAt.getTime()), -Infinity);
+}
+
+/**
+ * The linked рахунки the token still shows: those the newest stored client-info answer names.
+ *
+ * The same reading of «the newest answer» `usableAccounts` makes — the rows carrying the newest
+ * moment are the answer — without its freshness bound, because a рахунок the token stopped showing
+ * a week ago is gone whatever the age of the answer that said so. A рахунок left out is **set
+ * aside**: it decides neither how a прогін is remembered nor how fresh the bank reads (design D4).
+ *
+ * Nothing is left out when the phone holds no answer, or when the newest answer names none of the
+ * links — a token that shows nothing linked is something the owner has to act on, so every link
+ * goes on counting and the failure stays visible.
+ */
+export function shownLinks<T extends { readonly monobankAccountId: string }>(
+  links: readonly T[],
+  rows: readonly { readonly id: string; readonly obtainedAt: Date }[],
+): T[] {
+  if (rows.length === 0) {
+    return [...links];
+  }
+  const newestMs = newestAnswerMs(rows);
+  const named = new Set(rows.filter((row) => row.obtainedAt.getTime() === newestMs).map((row) => row.id));
+  const shown = links.filter((link) => named.has(link.monobankAccountId));
+  return shown.length === 0 ? [...links] : shown;
 }
 
 /** One statement request's span, epoch milliseconds, both ends inclusive. */

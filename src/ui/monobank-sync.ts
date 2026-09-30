@@ -1,11 +1,12 @@
 import {
+  MIN_REQUEST_GAP_MS,
   syncLinkedAccounts,
   type AccountOutcome,
   type SyncPorts,
   type SyncProgress,
   type SyncRun,
 } from '../monobank/coordinator';
-import { worstOutcome, type SyncAttempt } from '../monobank/auto';
+import { continuationDelayMs, worstOutcome, type SyncAttempt } from '../monobank/auto';
 import { clear as clearAlert, raise as raiseAlert, type AlertPorts } from './alerting';
 import { STEP_BEGAN, SYNC_ACCOUNTS, SYNC_STEP } from '../reporting/journal';
 import { journal, type StepEnding } from './journal';
@@ -228,6 +229,51 @@ function failed(outcome: AccountOutcome | undefined): boolean {
   return outcome !== undefined && outcome !== 'cancelled' && outcome !== 'postponed';
 }
 
+/** What the журнал calls the app asking the phone for a дочитування. */
+export const BACKGROUND_CONTINUATION = 'background-continuation';
+
+/**
+ * Asks the phone for a дочитування when the run just ended left a позачерговий рахунок unread off
+ * screen — the decision is `continuationDelayMs`'s; this only reads what it needs after the run.
+ *
+ * Here, in the one place every run ends, so a run the owner started and walked away from, a
+ * background chance and a дочитування itself all continue the same way (monobank-sync-freshness
+ * D5). Nothing about it can fail the run: storage that will not answer, or a phone that will not
+ * schedule, leaves the next chance to continue from the cursors as it always has.
+ */
+function askForContinuation(
+  sync: SyncPorts,
+  run: Extract<SyncRun, { kind: 'ran' }>,
+  mark: string | undefined,
+): void {
+  const continueLater = sync.continueLater;
+  if (continueLater === undefined) {
+    return;
+  }
+  try {
+    const lastRequestAtMs = sync.storage.lastRequestAtMs();
+    const delay = continuationDelayMs({
+      accounts: run.accounts,
+      links: sync.storage.listLinks(),
+      inForeground: sync.inForeground?.() ?? false,
+      ...(lastRequestAtMs === undefined ? {} : { lastRequestAtMs }),
+      nowMs: sync.nowMs(),
+      gapMs: sync.minRequestGapMs ?? MIN_REQUEST_GAP_MS,
+    });
+    if (delay !== undefined) {
+      continueLater(delay);
+      // So a репорт tells a chain of дочитування from the periodic chances (spec: «Every request for
+      // one SHALL be recorded in the журнал»).
+      journal.record('native', BACKGROUND_CONTINUATION, 'asked', {
+        ...(mark === undefined ? {} : { run: mark }),
+        counts: { ms: delay },
+      });
+    }
+  } catch {
+    // Swallowed on purpose: see above.
+  }
+}
+
 /**
  * Starts a sync, unless one is already going on.
  *
@@ -262,6 +308,7 @@ export async function startSync(ports: StartSyncPorts): Promise<SyncStart> {
     if (outcome !== undefined) {
       ports.attempts.finishAttempt(outcome);
     }
+    askForContinuation(ports.sync, result, ports.run);
     if (ports.alerts) {
       // Success clears, whoever asked for the run: a сповіщення left standing by a failure the
       // owner was away for must not outlive the sync that fixed it. A failure raises one only

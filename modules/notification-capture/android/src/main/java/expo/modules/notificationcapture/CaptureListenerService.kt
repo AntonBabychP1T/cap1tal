@@ -109,8 +109,25 @@ class CaptureListenerService : NotificationListenerService() {
    */
   override fun onNotificationPosted(sbn: StatusBarNotification) {
     val packageName = sbn.packageName
-    if (!CaptureStore.watched(this).contains(packageName)) {
-      return
+    // Routed from the package, the flags and what the app has told the phone — before anything of
+    // the notification's content is looked at (monobank-sync-freshness design D6). A monobank
+    // notification can only be a поштовх or nothing: its moment is noted and a дочитування asked
+    // for, and its title and text are never read.
+    when (
+      NudgeRule.route(
+        packageName,
+        sbn.notification.flags,
+        SyncContinuation.nudgesWanted(this),
+        CaptureStore.watched(this),
+      )
+    ) {
+      NudgeRule.Route.NUDGE -> {
+        SyncContinuation.nudge(this, sbn.postTime)
+        Log.d(TAG, "$packageName: поштовх")
+        return
+      }
+      NudgeRule.Route.DROP -> return
+      NudgeRule.Route.CAPTURE -> Unit
     }
     // A group summary repeats what its children already said; capturing it would offer the owner
     // the same транзакція twice under a vaguer text.

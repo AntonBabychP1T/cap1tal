@@ -43,6 +43,13 @@
       "when": 1790751973401,
       "tag": "0005_remarkable_bushwacker",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790791762852,
+      "tag": "0006_loose_drax",
+      "breakpoints": true
     }
   ]
 }

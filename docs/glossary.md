@@ -98,7 +98,8 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   the транзакція it proposed; dismissing it creates nothing and it never returns.
 - **Watched app** (відстежуваний застосунок) — a phone app whose push notifications the owner has
   opted this app into reading, mapped to exactly one рахунок. Only a watched app's notifications
-  are read at all, and what is read never leaves the phone.
+  are read at all, and what is read never leaves the phone. The monobank app is never watched: of
+  its notifications only the moment is noted, as a поштовх.
 
 ## Categories and sources
 
@@ -293,34 +294,58 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 ## The monobank sync
 
 - **Прогін** (run) — one sweep of the linked рахунки: one statement request per рахунок, paced to
-  the bank's one request a minute, and a client-info request only when the прогін needs one. A
-  прогін nobody asked for uses the client-info answer this phone already holds while it is inside
-  the межа свіжості, so its allowance goes to the request that imports; a прогін the owner asked
-  for — «Синхронізувати», or the жест on Головний — always asks the bank, because both are the
-  owner saying «now». Only one прогін
+  the bank's one statement request a minute. It reads the balances first — a client-info request,
+  which the bank limits apart from the statement — unless this phone stored an answer inside the
+  межа свіжості; the balances are what tell it which рахунки are позачергові. A прогін the owner
+  asked for — «Синхронізувати», the жест or «Оновити» on Головний — always asks the bank, because
+  all three are the owner saying «now», and makes every рахунок позачерговий. Only one прогін
   exists on the phone at a time; anything that would start a second waits for the one going on and
   reports what *it* came to. A прогін commits each page as it reads it, so a прогін that stops
   early loses nothing and leaves the next one both a cursor and, for a рахунок stopped in the
   middle of a вікно, the place гортання reached — see позиція гортання.
 - **Хід** (turn) — one request sent about one рахунок, whatever the answer. What the order of a
-  прогін is rationed by: the рахунок that has waited longest since its хід goes first, so a прогін
-  cut short over and over still reaches every рахунок instead of looping on the first few. A хід
-  the run never spent a request on is not a хід.
-- **Межа свіжості** (staleness bound) — the hour a client-info answer this phone stored goes on
-  serving a прогін nobody asked for. Inside it such a прогін sends no client-info request and
-  spends its allowance on the statement; it also imports nothing later than that answer's moment,
+  прогін is rationed by: позачергові рахунки without a хід since first, then прострочені, then the
+  rest, and in each group the рахунок that has waited longest since its хід goes first — so a
+  прогін cut short over and over still reaches every рахунок instead of looping on the first few.
+  A хід the run never spent a request on is not a хід.
+- **Позачерговий рахунок** (owed; code `owedSince`, `oweAll`) — a linked рахунок the app knows the
+  bank holds something about that it has not read yet: its баланс банку moved in a stored
+  client-info answer, it was just linked, or the owner asked for a sync. It goes before every other
+  рахунок until its next хід, and a прогін that leaves one unread off screen asks for a
+  дочитування. A completed синхронізація up to that moment clears it; an unchanged balance never
+  makes a рахунок current by itself.
+- **Прострочений рахунок** (overdue) — a linked рахунок that has had no хід for three hours (or
+  never). It goes before every рахунок that is merely waiting, which is what keeps a busy card from
+  taking every chance while the others wait for good.
+- **Відкладений рахунок** (set aside; code `not-shown`) — a linked рахунок the token no longer
+  shows (a closed or reissued card). No request is sent about it and nothing of its history is
+  touched; it is said plainly on its row, and it decides neither how a прогін is remembered nor how
+  fresh the bank reads. Not «відкладено» of a банка, which is money put aside.
+- **Межа свіжості** (staleness bound) — the minute a client-info answer this phone stored goes on
+  serving a прогін nobody asked for. Inside it such a прогін sends no client-info request; outside
+  it the прогін reads the balances first. A прогін imports nothing later than the answer it used,
   so the баланс банку a рахунок carries and the транзакції committed beside it describe the same
-  instant and «Звірити» stays meaningful. It is therefore also the most транзакції may lag the
-  bank by.
+  instant and «Звірити» stays meaningful.
 - **Тихий інтервал** (quiet interval) — the quarter of an hour a прогін nobody asked for waits
   after the last one. It governs only the runs the owner did not ask for: «Синхронізувати» ignores
-  it, and so does a прогін that was перенесено, which by definition has requests still owed.
+  it, and so does a прогін that was перенесено, one a поштовх makes due, and a chance or
+  дочитування while a рахунок is позачерговий or прострочений.
 - **Фоновий прогін** (background run) — a прогін started on a chance the phone gives while the app
-  is not in front of the owner. The same прогін under the same rules, with one difference: it never
-  waits. It sends what the bank's minute already allows — about one request — and ends; what paces
-  it is the phone's own gap between chances, which is longer than the bank's minute and is the one
-  timer Android does not stop along with the app. The app asks for chances only while a рахунок is linked, claims no
-  cadence, and a фоновий прогін announces nothing unless monobank needs the owner.
+  is not in front of the owner, or by a дочитування. The same прогін under the same rules, with one
+  difference: it never waits. It sends what the bank's minute already allows — the balances and
+  about one statement request — and ends; what continues it is the phone: its own periodic chances,
+  about a quarter of an hour apart, or a дочитування the app asked for. The app asks for chances
+  only while a рахунок is linked, claims no cadence, and a фоновий прогін announces nothing unless
+  monobank needs the owner.
+- **Дочитування** (continuation; code `continueLater`, `SyncContinuationWork`) — a one-off chance
+  the app asks the phone for, as soon as the bank's minute allows, when a прогін ended off screen
+  with a позачерговий or прострочений рахунок перенесено. Each дочитування runs one фоновий прогін
+  and asks for the next by the same rule, so the rest is read about one a minute; each рахунок keeps
+  a chain going for one хід at most, so it always ends. At most one is pending at a time.
+- **Поштовх** (nudge) — a notification the monobank app posted, taken only as a sign that something
+  moved: its moment is noted and a дочитування is asked for a little over a minute later. Only the
+  posting app, the moment and the notification's flags are looked at; its title and text are never
+  read or kept, and the monobank app stays never watched.
 - **Поступитися** (yield) — what a прогін in front of the owner does when the app leaves the
   foreground: it stops before its next request and lets the background have the phone. Not
   «передати», which the глосарій gives to handing a file to another app.

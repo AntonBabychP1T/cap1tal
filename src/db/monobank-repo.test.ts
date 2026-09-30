@@ -107,6 +107,7 @@ describe('monobankRepo — accounts and links', () => {
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
         paging: null,
+        owedSinceMs: boundaryMs,
       },
     ]);
     // The link is what makes the account take part in sync; the boundary is where it starts.
@@ -163,6 +164,7 @@ describe('monobankRepo — accounts and links', () => {
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
         paging: null,
+        owedSinceMs: boundaryMs,
       },
     ]);
   });
@@ -194,6 +196,7 @@ describe('monobankRepo — accounts and links', () => {
       lastSyncedAtMs: null,
       lastAttemptedAtMs: null,
         paging: null,
+      owedSinceMs: boundaryMs,
     });
   });
 
@@ -340,6 +343,7 @@ describe('monobankRepo — across a restart', () => {
           lastSyncedAtMs: null,
           lastAttemptedAtMs: null,
         paging: null,
+          owedSinceMs: cursorMs,
         },
       ]);
       expect(repo.getAccount('mono-card')).toEqual({ ...monoCard, obtainedAt });
@@ -1206,6 +1210,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
         paging: null,
+        owedSinceMs: boundaryMs,
       },
       {
         monobankAccountId: 'mono-jar',
@@ -1215,6 +1220,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
         paging: null,
+        owedSinceMs: boundaryMs,
       },
       {
         monobankAccountId: 'mono-white',
@@ -1224,6 +1230,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
         lastSyncedAtMs: null,
         lastAttemptedAtMs: null,
         paging: null,
+        owedSinceMs: boundaryMs,
       },
     ]);
     // The рахунок a proposal promised to create exists, with the currency the link demands.
@@ -1579,6 +1586,156 @@ describe('the moment of the last personal-API request', () => {
       expect(monobankRepo(storage.db).lastRequestAtMs()).toBeUndefined();
     } finally {
       storage.close();
+    }
+  });
+});
+
+describe('when a link is позачерговий', () => {
+  let storage: TestStorage;
+  let repo: MonobankRepo;
+
+  const later = new Date('2026-08-28T09:00:00.000Z');
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    accountsRepo(storage.db).save(card);
+    accountsRepo(storage.db).save(dollars);
+    repo = monobankRepo(storage.db);
+    repo.upsertAccounts([monoCard, monoJar], obtainedAt);
+    repo.link({
+      monobankAccountId: 'mono-card',
+      accountId: 'card',
+      syncStartDate: '2026-08-01',
+      cursorMs: boundaryMs,
+    });
+    repo.link({
+      monobankAccountId: 'mono-jar',
+      accountId: 'usd',
+      syncStartDate: '2026-08-01',
+      cursorMs: boundaryMs,
+    });
+    // Both links read once, so what follows starts from two рахунки that are not позачергові.
+    repo.markSynced('mono-card', obtainedAt);
+    repo.markSynced('mono-jar', obtainedAt);
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  const owed = (id: string) => repo.linkOf(id)?.owedSinceMs;
+
+  it('Scenario: A new link is позачерговий from its boundary', () => {
+    accountsRepo(storage.db).save(jarAccount);
+    repo.upsertAccounts([{ ...monoJar, id: 'mono-jar-2', currency: 'UAH', bankBalance: money(1, 'UAH') }], obtainedAt);
+    repo.link({ monobankAccountId: 'mono-jar-2', accountId: 'jar', syncStartDate: '2026-08-01', cursorMs: boundaryMs });
+
+    expect(owed('mono-jar-2')).toBe(boundaryMs);
+  });
+
+  it('Scenario: A balance that moved makes its рахунок позачерговий', () => {
+    repo.upsertAccounts(
+      [{ ...monoCard, bankBalance: money(5_000_00 - 120_000, 'UAH') }, monoJar],
+      later,
+    );
+
+    expect(owed('mono-card')).toBe(later.getTime());
+    expect(owed('mono-jar')).toBeNull();
+  });
+
+  it('Scenario: An unchanged balance changes nothing', () => {
+    repo.upsertAccounts([monoCard, monoJar], later);
+
+    expect(owed('mono-card')).toBeNull();
+    expect(owed('mono-jar')).toBeNull();
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(obtainedAt.getTime());
+  });
+
+  it('A later movement moves the moment later', () => {
+    repo.upsertAccounts([{ ...monoCard, bankBalance: money(1, 'UAH') }], later);
+    repo.upsertAccounts([{ ...monoCard, bankBalance: money(2, 'UAH') }], new Date(later.getTime() + 60_000));
+
+    expect(owed('mono-card')).toBe(later.getTime() + 60_000);
+  });
+
+  it('Scenario: A later movement is not lost to a sync over an older answer', () => {
+    // A прогін works from the answer at `later`; while it does, the screen stores one a minute
+    // newer in which the card moved again. The прогін completes up to `later`.
+    repo.upsertAccounts([{ ...monoCard, bankBalance: money(1, 'UAH') }], later);
+    repo.upsertAccounts([{ ...monoCard, bankBalance: money(2, 'UAH') }], new Date(later.getTime() + 60_000));
+    repo.markSynced('mono-card', later);
+
+    expect(owed('mono-card')).toBe(later.getTime() + 60_000);
+  });
+
+  it('An account nobody linked is not marked, and no link appears for it', () => {
+    repo.unlink('mono-jar');
+    repo.upsertAccounts([{ ...monoJar, bankBalance: money(1, 'USD') }], later);
+
+    expect(repo.linkOf('mono-jar')).toBeUndefined();
+  });
+
+  it('Scenario: Asking for a sync makes every рахунок позачерговий', () => {
+    repo.upsertAccounts([{ ...monoCard, bankBalance: money(1, 'UAH') }], later);
+    const asked = new Date(later.getTime() + 5 * 60_000);
+
+    repo.oweAll(asked);
+
+    // Both are позачергові from the asking moment: a sync has to reach it to clear either.
+    expect(owed('mono-card')).toBe(asked.getTime());
+    expect(owed('mono-jar')).toBe(asked.getTime());
+
+    // And an asking moment older than a movement does not pull that movement back.
+    repo.upsertAccounts([{ ...monoCard, bankBalance: money(7, 'UAH') }], new Date(asked.getTime() + 60_000));
+    repo.oweAll(asked);
+    expect(owed('mono-card')).toBe(asked.getTime() + 60_000);
+  });
+
+  it('Scenario: A completed sync clears it', () => {
+    repo.oweAll(later);
+    repo.markSynced('mono-card', new Date(later.getTime() + 1));
+
+    expect(owed('mono-card')).toBeNull();
+    expect(owed('mono-jar')).toBe(later.getTime());
+  });
+
+  it('A completed sync up to exactly that moment clears it', () => {
+    repo.oweAll(later);
+    repo.markSynced('mono-card', later);
+
+    expect(owed('mono-card')).toBeNull();
+  });
+
+  it('A sync that ended before the moment does not clear it', () => {
+    repo.oweAll(later);
+    repo.markSynced('mono-card', new Date(later.getTime() - 60_000));
+
+    expect(owed('mono-card')).toBe(later.getTime());
+    expect(repo.linkOf('mono-card')?.lastSyncedAtMs).toBe(later.getTime() - 60_000);
+  });
+
+  it('Scenario: A позачерговий link is still позачерговий after a restart', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'cap1tal-owed-')), 'owed.db');
+    const opened = openFileDb(path);
+    try {
+      const seeded = monobankRepo(opened.db);
+      seedReferences(opened.db, VOCABULARY);
+      accountsRepo(opened.db).save(card);
+      seeded.upsertAccounts([monoCard], obtainedAt);
+      seeded.link({ monobankAccountId: 'mono-card', accountId: 'card', syncStartDate: '2026-08-01', cursorMs: boundaryMs });
+      seeded.markSynced('mono-card', obtainedAt);
+      seeded.oweAll(later);
+    } finally {
+      opened.close();
+    }
+
+    const reopened = openFileDb(path);
+    try {
+      expect(monobankRepo(reopened.db).linkOf('mono-card')?.owedSinceMs).toBe(later.getTime());
+    } finally {
+      reopened.close();
+      rmSync(path, { force: true });
     }
   });
 });

@@ -206,14 +206,40 @@ it('Scenario: A captured notification exists only on the phone', () => {
   expect(sources.length).toBeGreaterThan(0);
   for (const name of sources) {
     const source = readFileSync(new URL(name, directory), 'utf8');
-    // Android itself, Expo's module runtime, one file API and one JSON parser. Nothing else.
+    // Android itself, Expo's module runtime, one file API and one JSON parser — and, since the
+    // monobank дочитування (monobank-sync-freshness D5), the two concurrency runtimes WorkManager
+    // needs: `java.util.concurrent` and `kotlinx.coroutines`, neither of which does any I/O.
+    // Nothing else.
     for (const [, imported] of source.matchAll(/^import\s+(\S+)/gm)) {
-      expect(imported).toMatch(/^(android\.|androidx\.|expo\.modules\.|java\.io\.File|org\.json\.)/);
+      expect(imported).toMatch(
+        /^(android\.|androidx\.|expo\.modules\.|java\.io\.File|org\.json\.|java\.util\.concurrent\.|kotlinx\.coroutines\.)/,
+      );
     }
     for (const forbidden of ['java.net', 'HttpURLConnection', 'Socket', 'okhttp', 'http://', 'https://']) {
       expect(source).not.toContain(forbidden);
     }
   }
+});
+
+it('Scenario: Nothing of the notification is kept — the поштовх never touches its content', () => {
+  const directory = new URL(
+    '../../modules/notification-capture/android/src/main/java/expo/modules/notificationcapture/',
+    import.meta.url,
+  );
+  // The files the monobank поштовх runs through are handed the package, the flags and the moment,
+  // and nothing else: none of them can so much as name a notification's content.
+  for (const name of ['NudgeRule.kt', 'SyncContinuation.kt', 'SyncContinuationWork.kt', 'BackgroundSyncModule.kt']) {
+    const source = readFileSync(new URL(name, directory), 'utf8');
+    for (const content of ['extras', 'EXTRA_', 'tickerText', 'CaptureStore.append', 'CapturedRecord']) {
+      expect(source, `${name} names ${content}`).not.toContain(content);
+    }
+  }
+  // And the listener routes before it reads: the monobank package is decided by `NudgeRule`, and
+  // the first read of `extras` comes after the only route that captures.
+  const listener = readFileSync(new URL('CaptureListenerService.kt', directory), 'utf8');
+  const routed = listener.indexOf('NudgeRule.route(');
+  expect(routed).toBeGreaterThan(-1);
+  expect(listener.indexOf('.extras')).toBeGreaterThan(listener.indexOf('NudgeRule.Route.CAPTURE', routed));
 });
 
 /**

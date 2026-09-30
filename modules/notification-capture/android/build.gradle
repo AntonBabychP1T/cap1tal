@@ -23,8 +23,23 @@ android {
   }
 }
 
+/** The installed `expo-background-task`'s version — the publication autolinking already links. */
+def expoBackgroundTaskVersion = new groovy.json.JsonSlurper()
+  .parse(file("${rootDir}/../node_modules/expo-background-task/package.json"))
+  .version
+
 dependencies {
-  // `NotificationManagerCompat.getEnabledListenerPackages` — the one androidx call the module
-  // makes, and the same version the Expo modules in the tree resolve.
+  // `NotificationManagerCompat.getEnabledListenerPackages`, and the same version the Expo modules in
+  // the tree resolve.
   implementation "androidx.core:core-ktx:1.17.0"
+  // The дочитування (monobank-sync-freshness design D5): a one-off WorkManager run of the tasks
+  // `expo-background-task` registered — the same WorkManager version that library resolves, and its
+  // `BackgroundTaskConsumer` to run them through.
+  implementation "androidx.work:work-runtime-ktx:2.9.1"
+  // SDK 57 links Expo modules as the prebuilt publications they ship in `local-maven-repo`, which
+  // autolinking adds to every project; the version is the installed package's, so an upgrade needs
+  // no edit here.
+  implementation "host.exp.exponent:expo.modules.backgroundtask:${expoBackgroundTaskVersion}"
+  // `NudgeRule`'s JVM test: the privacy rule proven without a device.
+  testImplementation "junit:junit:4.13.2"
 }

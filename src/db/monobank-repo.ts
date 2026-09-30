@@ -95,6 +95,12 @@ export interface StoredMonobankLink extends MonobankLink {
    * same pages and stopped in the same place.
    */
   readonly paging: PagingPosition | null;
+  /**
+   * Epoch milliseconds of the moment this link became **позачерговий** — the bank holds something
+   * about it this phone has not read yet — or `null` for a link that is not. What `syncOrder` puts
+   * first and what a дочитування is asked for by (design D1, D2, D5).
+   */
+  readonly owedSinceMs: number | null;
 }
 
 /**
@@ -183,6 +189,7 @@ function toStoredLink(row: {
   lastAttemptedAt: Date | null;
   pagingWindowToMs: Date | null;
   pagingRequestToMs: Date | null;
+  owedSince: Date | null;
 }): StoredMonobankLink {
   return {
     monobankAccountId: row.monobankAccountId,
@@ -200,6 +207,7 @@ function toStoredLink(row: {
             windowToMs: row.pagingWindowToMs.getTime(),
             requestToMs: row.pagingRequestToMs.getTime(),
           },
+    owedSinceMs: row.owedSince?.getTime() ?? null,
   };
 }
 
@@ -306,6 +314,23 @@ export function monobankRepo(db: Storage) {
             throw new Error(
               `баланс рахунку monobank «${a.id}» у ${a.bankBalance.currency}, а сам рахунок у ${a.currency}`,
             );
+          }
+          // A баланс банку that moved since the answer stored before this one means the bank holds
+          // something about this рахунок the phone has not read: its link becomes позачерговий at
+          // this answer's moment (design D1). Here rather than in the прогін, so the monobank
+          // screen's own refresh counts as well. The *later* moment wins, so a sync that completes
+          // up to an older answer cannot clear a movement it never saw; an account nobody linked
+          // has no link to mark.
+          const stored = tx
+            .select()
+            .from(monobankAccounts)
+            .where(eq(monobankAccounts.id, a.id))
+            .get();
+          if (stored !== undefined && stored.bankBalanceAmount !== a.bankBalance.amount) {
+            tx.update(monobankLinks)
+              .set({ owedSince: latestOwed(obtainedAt) })
+              .where(eq(monobankLinks.monobankAccountId, a.id))
+              .run();
           }
           const row = {
             id: a.id,
@@ -571,9 +596,23 @@ export function monobankRepo(db: Storage) {
     markSynced(monobankAccountId: string, at: Date): void {
       db
         .update(monobankLinks)
-        .set({ lastSyncedAt: at })
+        .set({
+          lastSyncedAt: at,
+          // A sync that reached the moment the link became позачерговий has read what was owed; one
+          // that ended before it has not, so the link keeps its place at the head of the order.
+          owedSince: sql`CASE WHEN ${monobankLinks.owedSince} <= ${at.getTime()} THEN NULL ELSE ${monobankLinks.owedSince} END`,
+        })
         .where(eq(monobankLinks.monobankAccountId, monobankAccountId))
         .run();
+    },
+
+    /**
+     * Makes every link позачерговий from `at` — what a прогін the owner asked for does before it
+     * asks the bank anything, so whatever it cannot finish in front of them is continued by a
+     * дочитування (design D1, D5). A link already позачерговий from a later moment keeps it.
+     */
+    oweAll(at: Date): void {
+      db.update(monobankLinks).set({ owedSince: latestOwed(at) }).run();
     },
 
     /**
@@ -703,6 +742,14 @@ export function monobankRepo(db: Storage) {
   };
 }
 
+/**
+ * `owed_since` moved to `at`, or left where it is when that is later — the later moment is the one
+ * a sync has to reach before the link stops being позачерговий (design D1).
+ */
+function latestOwed(at: Date) {
+  return sql`MAX(COALESCE(${monobankLinks.owedSince}, ${at.getTime()}), ${at.getTime()})`;
+}
+
 function insertLink(
   db: Pick<Storage, 'insert'>,
   input: {
@@ -718,6 +765,8 @@ function insertLink(
       accountId: input.accountId,
       syncStartDate: input.syncStartDate,
       cursorMs: new Date(input.cursorMs),
+      // Everything since the boundary is unread, so a new link is позачерговий from it.
+      owedSince: new Date(input.cursorMs),
     })
     .run();
 }

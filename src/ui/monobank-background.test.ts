@@ -23,6 +23,7 @@ import type { JournalEntry } from '../reporting/journal';
 import { startOfLocalDayMs } from './dates';
 import { bindTestJournal } from './journal';
 import {
+  BACKGROUND_CHANCE,
   backgroundTurnsWanted,
   journalChance,
   journalRegistration,
@@ -212,10 +213,12 @@ describe('one chance the phone gives', () => {
        * chance affords.
        */
       gapMs?: number;
+      /** Laid over the device-like sync ports — a `continueLater` to hear, for instance. */
+      sync?: Partial<SyncPorts>;
     } = {},
   ): BackgroundTurnPorts {
     return {
-      sync: syncPortsLike(fetchImpl, over.tokenStore, over.gapMs),
+      sync: { ...syncPortsLike(fetchImpl, over.tokenStore, over.gapMs), ...over.sync },
       storage: repo,
       alerts: { notifications: phone, storage: reminders, now: () => new Date(clockMs) },
       attended: () => over.attended ?? false,
@@ -246,6 +249,10 @@ describe('one chance the phone gives', () => {
 
     it('Scenario: A chance inside the quiet interval sends nothing', async () => {
       linkCards(1);
+      // Read five minutes ago, so nothing about it is owed or overdue — only the тихий інтервал
+      // is left to decide.
+      repo.noteTurn('mono-0', new Date(CHANCE_AT - 5 * MINUTE));
+      repo.markSynced('mono-0', new Date(CHANCE_AT - 5 * MINUTE));
       repo.beginAttempt(new Date(CHANCE_AT - 5 * MINUTE));
       repo.finishAttempt('complete');
       const bankPorts = bank();
@@ -584,13 +591,124 @@ describe('one chance the phone gives', () => {
     });
   });
 
+  describe('a поштовх and the balances', () => {
+    type Body = { accounts: { id: string; balance: number }[] };
+
+    /** Three cards, all read once by a chance at CHANCE_AT, so none is позачерговий. */
+    async function readAll(): Promise<Body> {
+      const { clientInfo } = linkCards(3);
+      const first = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
+      await runBackgroundTurn(turnPorts(first.fetchImpl));
+      expect(repo.listLinks().map((l) => l.owedSinceMs)).toEqual([null, null, null]);
+      return clientInfo as Body;
+    }
+
+    const statementsOf = (calls: readonly string[]) =>
+      calls.filter((u) => u.includes('/statement/')).map((u) => u.split('/statement/')[1]!.split('/')[0]!);
+
+    it('Scenario: A purchase on the black card is read within about two minutes', async () => {
+      const clientInfo = await readAll();
+      // Three minutes later a purchase moves `mono-2` — the card read last, whose turn is the
+      // most recent — and the monobank app's notification was noted 90 s ago.
+      clockMs = CHANCE_AT + 3 * MINUTE;
+      const moved = {
+        ...clientInfo,
+        accounts: clientInfo.accounts.map((a) => (a.id === 'mono-2' ? { ...a, balance: a.balance - 120_000 } : a)),
+      };
+      const now = bank({
+        clientInfo: () => ({ status: 200, body: moved }),
+        statement: () => ({ status: 200, body: [statementItem('purchase')] }),
+      });
+      const continued: number[] = [];
+
+      const turn = await runBackgroundTurn({
+        ...turnPorts(now.fetchImpl, { gapMs: MINUTE, sync: { continueLater: (ms) => continued.push(ms) } }),
+        nudgedAtMs: () => clockMs - 90_000,
+      });
+
+      // Due inside the тихий інтервал, balances first, and the moved card before the two that
+      // waited longer.
+      expect(turn).toMatchObject({ kind: 'ran', imported: 1, nudged: true });
+      expect(statementsOf(now.calls)).toEqual(['mono-2']);
+      // And the журнал says it was a поштовх's doing, not a periodic chance.
+      journalChance({ turn, attended: false });
+      expect(journalOf().filter((e) => e.name === BACKGROUND_CHANCE).at(-1)?.detail).toContain('nudged');
+      expect(repo.linkOf('mono-2')?.owedSinceMs).toBeNull();
+      // Nothing else moved, so nothing more is owed and no дочитування is asked for.
+      expect(continued).toEqual([]);
+    });
+
+    it('Scenario: A поштовх is due inside the тихий інтервал', async () => {
+      await readAll();
+      clockMs = CHANCE_AT + 3 * MINUTE;
+
+      expect(await runBackgroundTurn(turnPorts(bank().fetchImpl))).toEqual({ kind: 'not-due' });
+      const nudged = await runBackgroundTurn({
+        ...turnPorts(bank().fetchImpl),
+        nudgedAtMs: () => clockMs - MINUTE,
+      });
+      expect(nudged.kind).toBe('ran');
+    });
+
+    it('Scenario: A failure in the middle of a chain does not end it', async () => {
+      const { clientInfo } = linkCards(3);
+      // Three new links — позачергові from their boundary — and the first one's statement fails.
+      const failing = (url: string) =>
+        url.includes('mono-0') ? { status: 500, body: {} } : { status: 200, body: [] };
+      const first = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
+      const firstFetch: AuthFetchLike = (url, headers) =>
+        url.includes('/statement/') && url.includes('mono-0')
+          ? Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve(failing(url).body) })
+          : first.fetchImpl(url, headers);
+      const continued: number[] = [];
+      const ports = (fetchImpl: AuthFetchLike) =>
+        turnPorts(fetchImpl, { gapMs: MINUTE, sync: { continueLater: (ms) => continued.push(ms) } });
+
+      const turn = await runBackgroundTurn(ports(firstFetch));
+      expect(turn).toMatchObject({ kind: 'ran', outcome: 'unavailable' });
+      expect(repo.attempt()?.outcome).toBe('unavailable');
+      // Two позачергові without a turn are left, so the chain goes on.
+      expect(continued).toEqual([MINUTE + 2_000]);
+
+      // The дочитування a minute later: inside the тихий інтервал, after an unavailable attempt.
+      clockMs += MINUTE + 2_000;
+      const next = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
+      const second = await runBackgroundTurn(ports(next.fetchImpl));
+
+      expect(second.kind).toBe('ran');
+      expect(statementsOf(next.calls)).toEqual(['mono-1']);
+    });
+
+    it('Scenario: A vanished card does not keep Головний stale — nor raise the сповіщення', async () => {
+      linkCards(2);
+      accountsRepo(storage.db).save(
+        account({ id: 'closed', name: 'закрита', kind: 'spending', currency: 'UAH', openingBalance: money(0, 'UAH') }),
+      );
+      repo.upsertAccounts(
+        [{ id: 'mono-closed', kind: 'card', name: 'closed', currency: 'UAH', bankBalance: money(0, 'UAH') }],
+        new Date(CHANCE_AT - 3 * 24 * HOUR),
+      );
+      repo.link({ monobankAccountId: 'mono-closed', accountId: 'closed', syncStartDate: SYNC_START, cursorMs: startOfLocalDayMs(SYNC_START) });
+      repo.markSynced('mono-closed', new Date(CHANCE_AT - 2 * 24 * HOUR));
+      // The newest answer names the two that are still there; both synced a minute ago.
+      rememberCards(2, CHANCE_AT - 10 * MINUTE);
+      repo.markSynced('mono-0', new Date(CHANCE_AT - MINUTE));
+      repo.markSynced('mono-1', new Date(CHANCE_AT - MINUTE));
+
+      await runBackgroundTurn(turnPorts(bank({ clientInfo: () => ({ status: 500, body: {} }) }).fetchImpl));
+
+      expect(phone.posted()).toEqual([]);
+      expect(reminders.outstandingKinds()).toEqual([]);
+    });
+  });
+
   describe('what a chance affords', () => {
     const statementsOf = (calls: readonly string[]) =>
       calls.filter((u) => u.includes('/statement/')).map((u) => u.split('/statement/')[1]!.split('/')[0]!);
 
     it('Scenario: A chance sends what the gap allows and stops', async () => {
       const { clientInfo } = linkCards(3);
-      rememberCards(3, CHANCE_AT - 10 * MINUTE);
+      rememberCards(3, CHANCE_AT - 20_000);
       // A quarter of an hour since this phone's last request: longer than the gap, so the chance
       // may send — and, having sent, owes the whole of it again before a second.
       repo.noteRequest(new Date(CHANCE_AT - 15 * MINUTE));
@@ -612,7 +730,7 @@ describe('one chance the phone gives', () => {
 
     it('Scenario: A chance that owes the gap sends nothing', async () => {
       const { clientInfo } = linkCards(2);
-      rememberCards(2, CHANCE_AT - 10 * MINUTE);
+      rememberCards(2, CHANCE_AT - 20_000);
       repo.noteRequest(new Date(CHANCE_AT - 200));
       const bankPorts = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
 
@@ -624,7 +742,7 @@ describe('one chance the phone gives', () => {
 
     it('Scenario: A chance starts no timer', async () => {
       const { clientInfo } = linkCards(2);
-      rememberCards(2, CHANCE_AT - 10 * MINUTE);
+      rememberCards(2, CHANCE_AT - 20_000);
       repo.noteRequest(new Date(CHANCE_AT - 200));
       const bankPorts = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
       // Nothing a chance decides may reach a timer. On the owner's phone a fifty-nine-second wait
@@ -647,7 +765,7 @@ describe('one chance the phone gives', () => {
 
     it('Scenario: Successive chances work through every рахунок', async () => {
       const { clientInfo } = linkCards(3);
-      rememberCards(3, CHANCE_AT - 10 * MINUTE);
+      rememberCards(3, CHANCE_AT - 20_000);
       const asked: string[] = [];
 
       for (let chance = 0; chance < 3; chance += 1) {

@@ -6,6 +6,7 @@ import { monobank as monobankRepo } from '@/db/repos';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { ALERT_PORTS } from '@/hooks/use-alerting';
+import { backgroundSync } from '@/platform/background-sync-device';
 import { prepareBackgroundStorage, reconcileTask } from '@/platform/background-turn';
 import { newId } from '@/ui/id';
 import { backgroundTurnsWanted, journalChance, runBackgroundTurn } from '@/ui/monobank-background';
@@ -48,6 +49,9 @@ TaskManager.defineTask(MONOBANK_SYNC_TASK, async () => {
       // сповіщення. Read when the run ends, which is when the question is asked.
       attended: () => AppState.currentState === 'active',
       nowMs: () => Date.now(),
+      // The last поштовх the capture layer noted: a chance or дочитування after one is due whatever
+      // the тихий інтервал says (monobank-sync-freshness D6).
+      nudgedAtMs: () => backgroundSync.nudgedAtMs(),
       run,
     });
     // What the system gave and what came of it — decided in `journalChance`, which is where it can
@@ -86,5 +90,9 @@ TaskManager.defineTask(MONOBANK_SYNC_TASK, async () => {
 export function syncMonobankSyncTask(): Promise<void> {
   // A registration that outlives the last link by one foreground costs one chance that finds
   // nothing linked and sends nothing; that is why re-asserting is cheaper than tracking.
-  return reconcileTask(MONOBANK_SYNC_TASK, backgroundTurnsWanted({ links: monobankRepo.listLinks() }));
+  const wanted = backgroundTurnsWanted({ links: monobankRepo.listLinks() });
+  // The поштовх follows the same rule and is re-asserted the same way: a monobank notification is
+  // noted only while there is a рахунок for the дочитування it asks for to read.
+  backgroundSync.setNudgesWanted(wanted);
+  return reconcileTask(MONOBANK_SYNC_TASK, wanted);
 }

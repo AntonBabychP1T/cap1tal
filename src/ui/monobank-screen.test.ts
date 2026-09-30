@@ -8,7 +8,11 @@ import type { MonobankLink } from '../monobank/link';
 import { accountCount, transactionCount } from './labels';
 import {
   backgroundNote,
+  bankCoverage,
+  inventory,
   BACKGROUND_SYNC_NOTE,
+  notShownIds,
+  REFRESH_LIST_LABEL,
   boundaryConfirmation,
   FOREIGN_RUN_FINISHED,
   FOREIGN_RUN_RUNNING,
@@ -186,6 +190,58 @@ describe('when a sync last completed', () => {
 
     // Said, not left empty: an empty moment and a moment nobody looked up read the same.
     expect(rows[0]?.lastSync).toBe('Ще не синхронізовано');
+  });
+
+  it('Scenario: A closed card is named, not blamed', () => {
+    const answer = [
+      { id: 'mono-black', obtainedAt: new Date(2026, 8, 2, 8, 0) },
+      { id: 'mono-white', obtainedAt: new Date(2026, 7, 20, 8, 0) },
+    ];
+    const black = { ...linkedBlack, lastSyncedAtMs: new Date(2026, 8, 2, 7, 58).getTime() };
+    const white = { ...linkedWhite, lastSyncedAtMs: new Date(2026, 7, 31, 9, 0).getTime() };
+    const gone = notShownIds([black, white], answer);
+    expect([...gone]).toEqual([white.monobankAccountId]);
+
+    const rows = monobankAccountRows({
+      monobankAccounts: [blackCard, whiteCard],
+      links: [black, white],
+      accounts: [card, cash],
+      now,
+      notShown: gone,
+    });
+    expect(rows.find((r) => r.monobankAccountId === white.monobankAccountId)?.lastSync).toBe(
+      'monobank більше не показує цей рахунок',
+    );
+    expect(rows.find((r) => r.monobankAccountId === black.monobankAccountId)?.lastSync).toMatch(/^Синхронізовано/);
+    // And the screen's own moment is the black card's alone, not the closed card's older one.
+    expect(lastSyncLine({ links: [black, white], now, accounts: answer })).toBe(
+      lastSyncLine({ links: [black], now }),
+    );
+  });
+
+  it('Scenario: A closed card is named, not blamed — after the screen refreshed too', () => {
+    // The screen's own refresh fetched an answer that no longer names the white card; the stored
+    // rows still have it, from an older answer, and it is still linked.
+    const fresh = [blackCard];
+    const stored = [blackCard, whiteCard];
+    const white = { ...linkedWhite, lastSyncedAtMs: new Date(2026, 7, 31, 9, 0).getTime() };
+    const listed = inventory({ fetched: fresh, stored, links: [linkedBlack, white] });
+    expect(listed.map((a) => a.id)).toEqual(['mono-black', 'mono-white']);
+
+    const rows = monobankAccountRows({
+      monobankAccounts: listed,
+      links: [linkedBlack, white],
+      accounts: [card, cash],
+      now,
+      notShown: new Set(['mono-white']),
+    });
+    expect(rows.find((r) => r.monobankAccountId === 'mono-white')?.lastSync).toBe(
+      'monobank більше не показує цей рахунок',
+    );
+    // An account nobody linked that the answer dropped is simply gone from the list.
+    expect(inventory({ fetched: fresh, stored, links: [linkedBlack] }).map((a) => a.id)).toEqual(['mono-black']);
+    // With no fresh answer the stored rows are the list.
+    expect(inventory({ fetched: undefined, stored, links: [] })).toBe(stored);
   });
 
   it('Scenario: No linked account has ever synced', () => {
@@ -566,7 +622,14 @@ describe('tokenStateLabel', () => {
 });
 
 describe('notConfiguredStatus', () => {
-  it('«Оновити з monobank» without a token says what «Синхронізувати» says', () => {
+  it('Scenario: The two actions read differently', () => {
+    // The list refresh re-reads the cards and банки; it syncs nothing, and says so.
+    expect(REFRESH_LIST_LABEL).toBe('Оновити список рахунків');
+    expect(screen).toContain('REFRESH_LIST_LABEL');
+    expect(screen).not.toContain('Оновити з monobank');
+  });
+
+  it('«Оновити список рахунків» without a token says what «Синхронізувати» says', () => {
     // QA: the button used to answer a tap with nothing at all while its neighbour said the
     // sentence below. Asked for, the refresh owes the owner the same reason in the same words.
     expect(notConfiguredStatus({ asked: true })).toBe('Спершу введіть токен monobank');
@@ -959,7 +1022,9 @@ describe('what the screen says about the background', () => {
   });
 
   it('Scenario: A linked bank is told about the background', () => {
-    expect(backgroundNote([link('mono-card')])).toBe(BACKGROUND_SYNC_NOTE);
+    expect(backgroundNote([link('mono-card')], 'allowed')).toEqual({ text: BACKGROUND_SYNC_NOTE });
+    // A phone that cannot tell says the same and offers nothing.
+    expect(backgroundNote([link('mono-card')], 'unknown')).toEqual({ text: BACKGROUND_SYNC_NOTE });
     // About every quarter of an hour, when the phone allows it — and no clock time, because
     // Doze, standby buckets and the manufacturer's battery saver each defer a chance at will.
     expect(BACKGROUND_SYNC_NOTE).toContain('чверть години');
@@ -967,13 +1032,28 @@ describe('what the screen says about the background', () => {
     expect(BACKGROUND_SYNC_NOTE).not.toMatch(/\d{1,2}:\d{2}/);
   });
 
-  it('Scenario: Nothing linked, nothing said about the background', () => {
-    // Nothing linked is nothing for a background run to do, and no chance is asked for either.
-    expect(backgroundNote([])).toBeNull();
+  it('Scenario: An optimised phone is offered the exemption', () => {
+    const note = backgroundNote([link('mono-card')], 'optimised');
+    expect(note?.text).toContain('на години');
+    expect(note?.action).toEqual({ title: 'Дозволити роботу у фоні', fix: 'optimised' });
+    expect(note?.text).not.toMatch(/\d{1,2}:\d{2}/);
   });
 
-  it('the screen renders it, and only when a link exists', () => {
-    expect(screen).toContain('backgroundNote(stored.links)');
+  it('Scenario: A restriction set by hand points to the settings', () => {
+    const note = backgroundNote([link('mono-card')], 'restricted');
+    expect(note?.text).toContain('налаштуваннях');
+    expect(note?.action).toEqual({ title: 'Відкрити налаштування застосунку', fix: 'restricted' });
+  });
+
+  it('Scenario: Nothing linked, nothing said about the background', () => {
+    // Nothing linked is nothing for a background run to do, and no chance is asked for either.
+    for (const restriction of ['allowed', 'optimised', 'restricted', 'unknown'] as const) {
+      expect(backgroundNote([], restriction)).toBeNull();
+    }
+  });
+
+  it('the screen renders it from the phone\'s own reading, and only when a link exists', () => {
+    expect(screen).toContain('backgroundNote(stored.links, restriction)');
   });
 
   it('Scenario: Every outcome is named on the screen', () => {
@@ -987,5 +1067,64 @@ describe('what the screen says about the background', () => {
       // And each is a word, in the owner's language.
       expect(outcomeLabel(outcome)).toMatch(/[а-яїієґ]/i);
     }
+  });
+});
+
+describe('bankCoverage — the whole bank, minus what the token no longer shows', () => {
+  const at = (h: number) => new Date(2026, 8, 2, h, 0);
+  const link = (id: string, lastSyncedAtMs: number | null) => ({ monobankAccountId: id, lastSyncedAtMs });
+
+  it('Scenario: A closed card does not age the whole bank', () => {
+    const answer = [
+      { id: 'mono-a', obtainedAt: at(12) },
+      { id: 'mono-b', obtainedAt: at(12) },
+      { id: 'mono-closed', obtainedAt: at(1) },
+    ];
+    const coverage = bankCoverage(
+      [link('mono-a', at(12).getTime()), link('mono-b', at(11).getTime()), link('mono-closed', at(1).getTime() - 86_400_000)],
+      answer,
+    );
+    expect(coverage).toEqual({ linked: 2, synced: 2, oldestCompletedMs: at(11).getTime() });
+  });
+
+  it('Scenario: A token that shows nothing linked still reads stale', () => {
+    const twoDaysAgo = at(12).getTime() - 2 * 86_400_000;
+    const coverage = bankCoverage(
+      [link('mono-a', twoDaysAgo), link('mono-b', twoDaysAgo)],
+      [{ id: 'mono-other', obtainedAt: at(12) }],
+    );
+    expect(coverage).toEqual({ linked: 2, synced: 2, oldestCompletedMs: twoDaysAgo });
+  });
+});
+
+describe('a run with a set-aside card is not a failure on the screen', () => {
+  const result = (id: string, outcome: 'complete' | 'unavailable' | 'postponed', reason?: 'not-shown') => ({
+    monobankAccountId: id,
+    accountId: id,
+    outcome,
+    imported: 0,
+    ...(reason === undefined ? {} : { reason }),
+  });
+
+  it('a closed card neither fails the run nor asks for a retry, and is named for what it is', () => {
+    const run = {
+      kind: 'ran' as const,
+      imported: 0,
+      accounts: [result('mono-black', 'complete'), result('mono-white', 'unavailable', 'not-shown')],
+    };
+    expect(syncFailed(run)).toBe(false);
+    const summary = syncSummary(run, new Map([['mono-white', 'white ··9999']]));
+    expect(summary.retryOffered).toBe(false);
+    expect(summary.accounts[1]?.text).toBe('white ··9999: monobank більше не показує цей рахунок');
+  });
+
+  it('a token that shows nothing linked still fails', () => {
+    const run = {
+      kind: 'ran' as const,
+      imported: 0,
+      accounts: [result('mono-black', 'unavailable', 'not-shown')],
+    };
+    expect(syncFailed(run)).toBe(true);
+    expect(syncSummary(run, new Map()).retryOffered).toBe(true);
   });
 });

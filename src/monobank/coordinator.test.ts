@@ -18,7 +18,7 @@ import { inMemoryMonobankTokenStore, type MonobankTokenStore } from '../platform
 import { startOfLocalDayMs } from '../ui/dates';
 import { MAX_STATEMENT_WINDOW_MS, STATEMENT_PAGE_SIZE, type AuthFetchLike } from './api';
 import { planWindows } from './sync';
-import { syncLinkedAccounts, type SyncPorts, type SyncProgress, type SyncRun } from './coordinator';
+import { NOT_SHOWN, syncLinkedAccounts, type SyncPorts, type SyncProgress, type SyncRun } from './coordinator';
 
 /**
  * A whole sync run, against synthetic bank answers and the real database. Nothing here reaches
@@ -1083,12 +1083,189 @@ describe('syncLinkedAccounts', () => {
     const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
 
     expect(run.accounts.find((a) => a.monobankAccountId === 'mono-gone')?.outcome).toBe('unavailable');
-    // Not an `api.ts` answer at all, so it carries no reason (design.md's Non-Goals).
-    expect(run.accounts.find((a) => a.monobankAccountId === 'mono-gone')?.reason).toBeUndefined();
+    // Set aside, and said why: the token no longer shows it (monobank-sync-freshness D4).
+    expect(run.accounts.find((a) => a.monobankAccountId === 'mono-gone')?.reason).toBe(NOT_SHOWN);
     expect(asked(statements())).toEqual(['mono-card']);
     // No request was spent on it, so no turn was taken: it costs nothing to leave at the head of
     // the order, and the next run will pass over it just as cheaply.
     expect(repo.linkOf('mono-gone')?.lastAttemptedAtMs).toBeNull();
+  });
+
+  describe('позачергові рахунки', () => {
+    /** Client-info for `n` cards `mono-0…`, each at the balance `balanceOf` gives it. */
+    const answerWith = (n: number, balanceOf: (i: number) => number) => () => ({
+      status: 200,
+      body: {
+        clientId: 'x',
+        name: 'Власник',
+        jars: [],
+        accounts: Array.from({ length: n }, (_, i) => ({
+          id: `mono-${i}`,
+          currencyCode: 980,
+          balance: balanceOf(i),
+          creditLimit: 0,
+          maskedPan: [`53754100000000${i}`],
+          type: 'black',
+        })),
+      },
+    });
+
+    /** Three linked cards, each read once and then given turns oldest-first: 0, then 1, then 2. */
+    async function readAll(): Promise<void> {
+      manyLinks(3);
+      const first = scriptedFetch({ clientInfo: answerWith(3, () => 0) });
+      await syncLinkedAccounts(portsWith(first.fetchImpl));
+      repo.noteTurn('mono-0', new Date(RUN_AT - 30 * 60_000));
+      repo.noteTurn('mono-1', new Date(RUN_AT - 20 * 60_000));
+      repo.noteTurn('mono-2', new Date(RUN_AT - 60_000));
+      expect(repo.listLinks().map((l) => l.owedSinceMs)).toEqual([null, null, null]);
+    }
+
+    it('Scenario: A рахунок the balances show moved goes first in the run that saw it', async () => {
+      await readAll();
+      clockMs = RUN_AT + 10 * 60_000;
+      // The answer this run fetches shows `mono-2` — the one that had its turn a minute ago —
+      // 1200 UAH lower. Without the balances it would be the last of the three.
+      const script = scriptedFetch({ clientInfo: answerWith(3, (i) => (i === 2 ? -120_000 : 0)) });
+
+      await syncLinkedAccounts(
+        portsWith(script.fetchImpl, { cancelled: () => script.statements().length >= 1 }),
+      );
+
+      expect(asked(script.statements())).toEqual(['mono-2']);
+      // Read, so no longer позачерговий.
+      expect(repo.linkOf('mono-2')?.owedSinceMs).toBeNull();
+    });
+
+    it("Scenario: The screen's own refresh is not lost", async () => {
+      await readAll();
+      clockMs = RUN_AT + 10 * 60_000;
+      // The monobank screen stored an answer twenty seconds ago in which `mono-2` moved.
+      repo.upsertAccounts(
+        [0, 1, 2].map((i) => ({
+          id: `mono-${i}`,
+          kind: 'card' as const,
+          name: `card ${i}`,
+          currency: 'UAH' as const,
+          bankBalance: money(i === 2 ? -120_000 : 0, 'UAH'),
+        })),
+        new Date(clockMs - 20_000),
+      );
+      const script = scriptedFetch({ clientInfo: answerWith(3, () => 0) });
+
+      await syncLinkedAccounts(
+        portsWith(script.fetchImpl, { cancelled: () => script.statements().length >= 1 }),
+      );
+
+      // No client-info: the stored answer is inside the minute, and it already said who moved.
+      expect(script.calls.filter((u) => u.includes('/client-info'))).toEqual([]);
+      expect(asked(script.statements())).toEqual(['mono-2']);
+    });
+
+    it('Scenario: Asking for a sync makes every рахунок позачерговий', async () => {
+      await readAll();
+      clockMs = RUN_AT + 10 * 60_000;
+      const startedAt = clockMs;
+      const script = scriptedFetch({ clientInfo: answerWith(3, () => 0) });
+
+      await syncLinkedAccounts(
+        portsWith(script.fetchImpl, { asked: true, cancelled: () => script.statements().length >= 1 }),
+      );
+
+      // Nothing moved, but the owner asked: the one read is cleared, the two it did not reach are
+      // позачергові from the moment the прогін started — which is what a дочитування reads.
+      expect(asked(script.statements())).toEqual(['mono-0']);
+      expect(repo.linkOf('mono-0')?.owedSinceMs).toBeNull();
+      expect(repo.linkOf('mono-1')?.owedSinceMs).toBe(startedAt);
+      expect(repo.linkOf('mono-2')?.owedSinceMs).toBe(startedAt);
+    });
+
+    it('A run nobody asked for over unmoved balances makes nothing позачерговий', async () => {
+      await readAll();
+      clockMs = RUN_AT + 10 * 60_000;
+      const script = scriptedFetch({ clientInfo: answerWith(3, () => 0) });
+
+      await syncLinkedAccounts(
+        portsWith(script.fetchImpl, { cancelled: () => script.statements().length >= 1 }),
+      );
+
+      // The turn order as it was: the longest-waiting first, and nobody owed.
+      expect(asked(script.statements())).toEqual(['mono-0']);
+      expect(repo.listLinks().map((l) => l.owedSinceMs)).toEqual([null, null, null]);
+    });
+
+    it('Scenario: The balances do not cost the statement its minute', async () => {
+      await readAll();
+      clockMs = RUN_AT + 11 * 60_000;
+      repo.noteRequest(new Date(clockMs - 2 * 60_000));
+      waits = [];
+      const script = scriptedFetch({ clientInfo: answerWith(3, () => 0) });
+
+      await syncLinkedAccounts(
+        portsWith(script.fetchImpl, {
+          minRequestGapMs: 60_000,
+          cancelled: () => script.statements().length >= 1,
+        }),
+      );
+
+      expect(script.calls.map((u) => (u.includes('/client-info') ? 'client-info' : 'statement'))).toEqual([
+        'client-info',
+        'statement',
+      ]);
+      expect(waits).toEqual([]);
+    });
+  });
+
+  it('Scenario: A set-aside рахунок takes no turn and is never перенесено', async () => {
+    // Three links; the token shows two. The run stops at the minute it owes after the first
+    // statement request, so everything after it is перенесено — except the one it set aside.
+    const { clientInfo } = manyLinks(2);
+    repo.upsertAccounts(
+      [{ id: 'mono-gone', kind: 'card', name: 'gone', currency: 'UAH', bankBalance: money(0, 'UAH') }],
+      NO_FRESH_ANSWER,
+    );
+    accountsRepo(storage.db).save(account({ id: 'gone', name: 'закрита', kind: 'spending', currency: 'UAH' }));
+    link('mono-gone', 'gone');
+    const turnBefore = repo.linkOf('mono-gone')?.lastAttemptedAtMs;
+    const script = scriptedFetch({ clientInfo });
+
+    const run = ran(
+      await syncLinkedAccounts(
+        portsWith(script.fetchImpl, { postponed: () => script.statements().length >= 1 }),
+      ),
+    );
+
+    const gone = run.accounts.find((a) => a.monobankAccountId === 'mono-gone');
+    expect(gone).toMatchObject({ outcome: 'unavailable', reason: NOT_SHOWN });
+    expect(run.accounts.filter((a) => a.outcome === 'postponed').map((a) => a.monobankAccountId)).toEqual([
+      'mono-1',
+    ]);
+    expect(asked(script.statements())).toEqual(['mono-0']);
+    expect(repo.linkOf('mono-gone')?.lastAttemptedAtMs).toBe(turnBefore);
+  });
+
+  it('Scenario: A link the token no longer names does not send every прогін back to client-info — at the real bound', async () => {
+    link('mono-card', 'card');
+    repo.upsertAccounts(
+      [{ id: 'mono-gone', kind: 'card', name: 'gone', currency: 'UAH', bankBalance: money(0, 'UAH') }],
+      NO_FRESH_ANSWER,
+    );
+    link('mono-gone', 'jar');
+    // The newest answer, twenty seconds old, names only the card.
+    repo.upsertAccounts(
+      [{ id: 'mono-card', kind: 'card', name: 'black ··1234', currency: 'UAH', bankBalance: money(1_000_000, 'UAH') }],
+      new Date(RUN_AT - 20_000),
+    );
+    const script = scriptedFetch({});
+
+    const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl)));
+
+    expect(script.calls.filter((u) => u.includes('/client-info'))).toEqual([]);
+    expect(run.accounts.find((a) => a.monobankAccountId === 'mono-gone')).toMatchObject({
+      outcome: 'unavailable',
+      reason: NOT_SHOWN,
+    });
+    expect(asked(script.statements())).toEqual(['mono-card']);
   });
 
   it('Scenario: A run stopped while it waits spends no request and takes no turn', async () => {
@@ -1439,7 +1616,7 @@ describe('syncLinkedAccounts', () => {
     const run = ran(await syncLinkedAccounts(portsWith(fetchImpl)));
 
     expect(run.accounts[0]?.outcome).toBe('unavailable');
-    expect(run.accounts[0]?.reason).toBeUndefined();
+    expect(run.accounts[0]?.reason).toBe(NOT_SHOWN);
     expect(statements()).toEqual([]);
     // The link, the cursor and the imported ids are all still there.
     expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundary);
@@ -1461,6 +1638,14 @@ describe('syncLinkedAccounts', () => {
     expect(await syncLinkedAccounts(portsWith(fetchImpl))).toEqual({ kind: 'no-links' });
     expect(calls).toEqual([]);
   });
+    /**
+     * These scenarios were written against the hour-long межа свіжості and prove the mechanism — a
+     * stored answer serving a прогін nobody asked for — which a longer bound exercises the same
+     * way. The minute the app now uses is proven in `sync.test.ts` and below.
+     */
+    const hourPorts = (fetchImpl: AuthFetchLike, overrides: Partial<SyncPorts> = {}) =>
+      portsWith(fetchImpl, { clientInfoFreshMs: 60 * 60_000, ...overrides });
+
 
   describe('the client-info request a run need not send', () => {
     /** Stores a client-info answer of this phone's own, `agoMs` before the run starts. */
@@ -1479,7 +1664,7 @@ describe('syncLinkedAccounts', () => {
     const clientInfoCalls = (calls: readonly string[]) =>
       calls.filter((u) => u.includes('/client-info')).length;
 
-    it('Scenario: A fresh stored answer sends the allowance to the statement', async () => {
+    it('stored-answer mechanism (hour bound): A fresh stored answer sends the allowance to the statement', async () => {
       remember(10 * 60_000);
       link('mono-card', 'card');
       link('mono-white', 'jar');
@@ -1487,7 +1672,7 @@ describe('syncLinkedAccounts', () => {
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
       const script = scriptedFetch({});
 
-      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl)));
+      const run = ran(await syncLinkedAccounts(hourPorts(script.fetchImpl)));
 
       // The one request a run of this shape can afford went to the statement, which is the request
       // that imports. This is the whole defect: before, it went to client-info and imported nothing.
@@ -1504,31 +1689,31 @@ describe('syncLinkedAccounts', () => {
 
       // The pull on Головний and «Синхронізувати» are the two the app already calls «asked for»;
       // both are the owner saying «now», and both may spend a request on saying it.
-      await syncLinkedAccounts(portsWith(script.fetchImpl, { asked: true }));
+      await syncLinkedAccounts(hourPorts(script.fetchImpl, { asked: true }));
 
       expect(clientInfoCalls(script.calls)).toBe(1);
       expect(script.calls[0]).toContain('/client-info');
     });
 
-    it('Scenario: A прогін an opening starts uses the stored answer', async () => {
+    it('stored-answer mechanism (hour bound): A прогін an opening starts uses the stored answer', async () => {
       link('mono-card', 'card');
       remember(10 * 60_000);
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
       const script = scriptedFetch({});
 
       // The same ports without `asked`: an opening, a foreground return, the follow-up, a chance.
-      await syncLinkedAccounts(portsWith(script.fetchImpl));
+      await syncLinkedAccounts(hourPorts(script.fetchImpl));
 
       expect(clientInfoCalls(script.calls)).toBe(0);
     });
 
-    it('Scenario: An answer older than the межа свіжості is refetched', async () => {
+    it('stored-answer mechanism (hour bound): An answer older than the bound is refetched', async () => {
       link('mono-card', 'card');
       remember(2 * 60 * 60_000);
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
       const script = scriptedFetch({});
 
-      await syncLinkedAccounts(portsWith(script.fetchImpl));
+      await syncLinkedAccounts(hourPorts(script.fetchImpl));
 
       expect(clientInfoCalls(script.calls)).toBe(1);
     });
@@ -1543,7 +1728,7 @@ describe('syncLinkedAccounts', () => {
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
       const script = scriptedFetch({});
 
-      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl)));
+      const run = ran(await syncLinkedAccounts(hourPorts(script.fetchImpl)));
 
       // No client-info request: the stale row is «the token no longer shows this рахунок», the
       // same verdict a fetched answer gives it — never a reason to ask again, or the run would
@@ -1556,7 +1741,7 @@ describe('syncLinkedAccounts', () => {
       expect(repo.linkOf('mono-white')?.lastAttemptedAtMs).toBeNull();
     });
 
-    it('Scenario: A прогін that refetches leaves the next one able to send a statement', async () => {
+    it('stored-answer mechanism (hour bound): A прогін that refetches leaves the next one able to send a statement', async () => {
       link('mono-card', 'card');
       // Nothing stored inside the bound, and the gap owed at once: the first run may send exactly
       // its client-info request and stops there.
@@ -1566,7 +1751,7 @@ describe('syncLinkedAccounts', () => {
       // Postponed the moment the first request is spent: this run affords client-info and no more,
       // which is exactly the shape of a chance on a phone that has been away for a while.
       await syncLinkedAccounts(
-        portsWith(script.fetchImpl, { postponed: () => script.calls.length > 0 }),
+        hourPorts(script.fetchImpl, { postponed: () => script.calls.length > 0 }),
       );
       expect(clientInfoCalls(script.calls)).toBe(1);
       expect(script.statements()).toEqual([]);
@@ -1574,13 +1759,13 @@ describe('syncLinkedAccounts', () => {
       // The convergence hinge: the answer was stored before the run stopped, so the run after it
       // sends a statement request instead of buying the same balances again.
       const second = scriptedFetch({});
-      await syncLinkedAccounts(portsWith(second.fetchImpl));
+      await syncLinkedAccounts(hourPorts(second.fetchImpl));
 
       expect(clientInfoCalls(second.calls)).toBe(0);
       expect(second.calls[0]).toContain('/statement/');
     });
 
-    it('Scenario: A прогін that may send one request imports with it', async () => {
+    it('stored-answer mechanism (hour bound): A прогін that may send one request imports with it', async () => {
       remember(10 * 60_000);
       link('mono-card', 'card');
       link('mono-white', 'jar');
@@ -1595,7 +1780,7 @@ describe('syncLinkedAccounts', () => {
       let sent = 0;
       const run = ran(
         await syncLinkedAccounts(
-          portsWith(script.fetchImpl, {
+          hourPorts(script.fetchImpl, {
             wait: () => {
               sent += 1;
               return Promise.resolve();
@@ -1623,7 +1808,7 @@ describe('syncLinkedAccounts', () => {
       };
       const script = scriptedFetch({});
 
-      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl, { storage: refusing })));
+      const run = ran(await syncLinkedAccounts(hourPorts(script.fetchImpl, { storage: refusing })));
 
       // A read whose only job is to spare a request must never cost the run.
       expect(clientInfoCalls(script.calls)).toBe(1);
@@ -1661,7 +1846,7 @@ describe('syncLinkedAccounts', () => {
         }),
       });
 
-      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl)));
+      const run = ran(await syncLinkedAccounts(hourPorts(script.fetchImpl)));
 
       // The баланс банку committed with these pages is forty minutes old, so the транзакції beside
       // it must be too: a рахунок carrying an hour of spending the balance has not seen would make
@@ -1676,13 +1861,13 @@ describe('syncLinkedAccounts', () => {
       remember(40 * 60_000);
       link('mono-card', 'card');
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
-      await syncLinkedAccounts(portsWith(scriptedFetch({}).fetchImpl));
+      await syncLinkedAccounts(hourPorts(scriptedFetch({}).fetchImpl));
       expect(repo.linkOf('mono-card')?.cursorMs).toBe(RUN_AT - 40 * 60_000);
 
       // A прогін with an answer of its own carries the cursor to that answer's moment.
       clockMs = RUN_AT + 60_000;
       const second = scriptedFetch({});
-      await syncLinkedAccounts(portsWith(second.fetchImpl, { asked: true }));
+      await syncLinkedAccounts(hourPorts(second.fetchImpl, { asked: true }));
 
       // The answer this run fetched, not the clock after it waited out the gap.
       expect(repo.linkOf('mono-card')?.cursorMs).toBe(RUN_AT + 60_000);
@@ -1694,7 +1879,7 @@ describe('syncLinkedAccounts', () => {
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
 
       await syncLinkedAccounts(
-        portsWith(
+        hourPorts(
           scriptedFetch({
             statement: () => ({
               status: 200,
@@ -1713,7 +1898,7 @@ describe('syncLinkedAccounts', () => {
       link('mono-card', 'card');
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
 
-      await syncLinkedAccounts(portsWith(scriptedFetch({}).fetchImpl));
+      await syncLinkedAccounts(hourPorts(scriptedFetch({}).fetchImpl));
 
       // Not «now»: a sync is as recent as the answer it covered, and saying otherwise would date a
       // синхронізація over a span the bank was never asked about.
@@ -1724,7 +1909,7 @@ describe('syncLinkedAccounts', () => {
       remember(40 * 60_000);
       link('mono-card', 'card');
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
-      await syncLinkedAccounts(portsWith(scriptedFetch({}).fetchImpl));
+      await syncLinkedAccounts(hourPorts(scriptedFetch({}).fetchImpl));
       const synced = repo.linkOf('mono-card')?.lastSyncedAtMs;
       const turn = repo.linkOf('mono-card')?.lastAttemptedAtMs;
 
@@ -1732,7 +1917,7 @@ describe('syncLinkedAccounts', () => {
       // moment, so there is nothing to ask the bank about.
       clockMs = RUN_AT + 5 * 60_000;
       const second = scriptedFetch({});
-      const run = ran(await syncLinkedAccounts(portsWith(second.fetchImpl)));
+      const run = ran(await syncLinkedAccounts(hourPorts(second.fetchImpl)));
 
       expect(second.calls).toEqual([]);
       expect(run.accounts.map((a) => a.outcome)).toEqual(['complete']);
@@ -1758,7 +1943,7 @@ describe('syncLinkedAccounts', () => {
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
       const script = scriptedFetch({});
 
-      const run = ran(await syncLinkedAccounts(portsWith(script.fetchImpl)));
+      const run = ran(await syncLinkedAccounts(hourPorts(script.fetchImpl)));
 
       // One request spent on client-info, and it heals the рахунок: the answer is dated now, past
       // the boundary the owner set, so the very next window is one the bank can be asked about.
@@ -1775,11 +1960,11 @@ describe('syncLinkedAccounts', () => {
       remember(40 * 60_000);
       link('mono-card', 'card');
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
-      await syncLinkedAccounts(portsWith(scriptedFetch({}).fetchImpl));
+      await syncLinkedAccounts(hourPorts(scriptedFetch({}).fetchImpl));
 
       clockMs = RUN_AT + 60_000;
       const second = scriptedFetch({});
-      const run = ran(await syncLinkedAccounts(portsWith(second.fetchImpl)));
+      const run = ran(await syncLinkedAccounts(hourPorts(second.fetchImpl)));
 
       expect(second.calls).toEqual([]);
       expect(run.accounts.map((a) => a.outcome)).toEqual(['complete']);
@@ -1791,7 +1976,7 @@ describe('syncLinkedAccounts', () => {
       repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
 
       await syncLinkedAccounts(
-        portsWith(
+        hourPorts(
           scriptedFetch({
             statement: () => ({
               status: 200,
@@ -1808,14 +1993,14 @@ describe('syncLinkedAccounts', () => {
       expect(repo.linkOf('mono-card')?.lastAttemptedAtMs).toBe(clockMs);
     });
 
-    it('Scenario: A statement request is not sent seconds after a request the screen made', async () => {
+    it('stored-answer mechanism (hour bound): A statement request is not sent seconds after a request the screen made', async () => {
       link('mono-card', 'card');
       remember(10 * 60_000);
       // The monobank screen refreshed a moment ago and noted the request it sent.
       repo.noteRequest(new Date(RUN_AT - 200));
       const script = scriptedFetch({});
 
-      await syncLinkedAccounts(portsWith(script.fetchImpl));
+      await syncLinkedAccounts(hourPorts(script.fetchImpl));
 
       // The run owes the rest of the gap and waits it out rather than firing into a refusal.
       expect(waits).toEqual([800]);

@@ -1,0 +1,1 @@
+ALTER TABLE `monobank_links` ADD `owed_since` integer;

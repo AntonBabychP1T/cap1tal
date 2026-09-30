@@ -32,13 +32,21 @@ paths:
 
 ## Permissions and background work
 - Every Android permission is declared in the Expo config with a one-line comment on why, and the
-  OpenSpec change that adds it has a requirement explaining the user-facing reason.
+  OpenSpec change that adds it has a requirement explaining the user-facing reason. `app.json` is
+  JSON, so the comment lives here: `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` — the monobank screen
+  offers the phone's own exemption so background sync is not deferred for hours
+  (monobank-sync-freshness).
 - Two background capabilities are in scope, and no others. **Notification access** (reading other
   banks' pushes): parsing happens on the device; nothing read from notifications is sent anywhere.
   **WorkManager chances** through `expo-background-task`, shared by the Google Drive бекап and the
   monobank sync: one worker, one interval (`BACKGROUND_TURN_INTERVAL_MINUTES` in
   `src/platform/background-turn.ts`), two task definitions reached from the bundle's entry
-  (`index.ts`) so a wake-up with no Activity finds them. No foreground service, no exact alarm.
+  (`index.ts`) so a wake-up with no Activity finds them. Beside that chain, and only for the
+  monobank sync (owner's decision, 2026-09-30): the one-off **дочитування** worker
+  (`SyncContinuationWork` in `modules/notification-capture`) — never periodic, never more than one
+  pending, scheduled by the JS run's decision or by a **поштовх** — and the поштовх itself, the one
+  use of notification access for the monobank app: its package, moment and flags, never its
+  content. No foreground service, no exact alarm.
 - A background task decides nothing itself. Everything it does is a pure function under `verify`
   (`src/ui/monobank-background.ts`, `src/backup/drive/run-backup.ts`); the task file holds the
   device facts, the budget and the mapping to `BackgroundTaskResult`.

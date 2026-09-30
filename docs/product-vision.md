@@ -191,15 +191,21 @@ Not in v1: forecasts ("at this pace you will have X left").
   capture queue never enter the Google Drive backup and are never sent to a server.
 - The monobank sync also runs while the app is not open, on the chances Android gives it, and only
   while at least one рахунок is linked (owner's decision, 2026-09-07). It is the same run an
-  opening starts — the same token, read for the run and kept nowhere else, the same one request a
-  minute, the same нічого-не-надсилаємо inside the тихий інтервал — but it never waits: it sends
-  what the bank's minute already allows, which is about one request, and ends in seconds. What
-  paces it is the phone's own gap between chances, not a timer of the app's; a run that waited on
-  one held the single-run lock until the app was next opened, because Android stops JS timers along
-  with the Activity. What it did not reach is перенесено and the next chance continues it, so
-  successive chances work through every рахунок. Best-effort and no cadence is claimed: Doze and battery saving
-  defer a chance for as long as the phone likes, so the app says «приблизно раз на чверть години,
-  коли телефон це дозволяє» and never a clock time. A background run announces nothing unless
+  opening starts — the same token, read for the run and kept nowhere else, the same one statement
+  request a minute, the same нічого-не-надсилаємо inside the тихий інтервал — but it never waits:
+  it reads the balances and sends what the bank's minute already allows, which is about one
+  statement request, and ends in seconds. The balances decide what it reads: a рахунок whose баланс
+  банку moved goes first (owner's decision, 2026-09-30: the black card must be current within the
+  hour without opening the app, the rest a little less often). What paces it is the phone, never a
+  timer of the app's; a run that waited on one held the single-run lock until the app was next
+  opened, because Android stops JS timers along with the Activity. What it did not reach is
+  перенесено; the next chance continues it, and when what it left is a рахунок the app knows is
+  unread, the app asks the phone for a one-off **дочитування** a minute later, so «Оновити» makes
+  every рахунок current within about ten minutes with the app closed. A notification the monobank
+  app posts is a **поштовх** — only its moment is noted — that asks for one too. The app offers the
+  phone's own battery-optimisation exemption so chances are not deferred for hours. Best-effort
+  and no cadence is claimed: the app says «приблизно раз на чверть години, коли телефон це
+  дозволяє» and never a clock time. A background run announces nothing unless
   monobank needs the owner — a rejected token, or data that has stopped being refreshed — and it
   writes no text the owner never saw.
 - Backup has one versioned file format. The owner can export/import that file manually. When Google

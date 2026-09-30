@@ -1,4 +1,5 @@
-import type { AccountOutcome, AccountResult } from './coordinator';
+import { NOT_SHOWN, type AccountOutcome, type AccountResult } from './coordinator';
+import { hasPriority, type OrderableLink } from './sync';
 
 /**
  * When a sync may start on its own, what a finished run is remembered as, and whether what it
@@ -120,11 +121,20 @@ export function syncDue(input: {
   readonly nowMs: number;
   /** Overridden in tests; the app always uses `QUIET_INTERVAL_MS`. */
   readonly quietIntervalMs?: number;
+  /**
+   * The moment of the last **поштовх** — a notification the monobank app posted — or absent for
+   * none. One noted after the last attempt makes a sync due whatever the quiet interval says: the
+   * bank has just said something moved, and that is what the interval exists to wait for.
+   */
+  readonly nudgedAtMs?: number;
 }): boolean {
   if (input.links === 0) {
     return false;
   }
   if (input.attemptedAtMs === undefined) {
+    return true;
+  }
+  if (input.nudgedAtMs !== undefined && input.nudgedAtMs > input.attemptedAtMs) {
     return true;
   }
   // The quiet interval exists to stop repeated openings spending the bank's budget on runs that
@@ -178,7 +188,64 @@ export function followUpDue(input: {
  * answer that could lie, so the caller records no outcome instead.
  */
 export function worstOutcome(results: readonly AccountResult[]): AccountOutcome | undefined {
-  return BY_URGENCY.find((outcome) => results.some((result) => result.outcome === outcome));
+  const counted = countedResults(results);
+  return BY_URGENCY.find((outcome) => counted.some((result) => result.outcome === outcome));
+}
+
+/**
+ * The results a run is judged by. A рахунок the token no longer shows is set aside: it has no say
+ * while any other рахунок of the run does, and the whole say when none does — a token that shows
+ * nothing linked is something the owner has to act on (monobank-sync-freshness D4). Every reading
+ * of «did this run fail» goes through here: the remembered outcome, the screen's verdict and its
+ * offer to retry.
+ */
+export function countedResults<T extends Pick<AccountResult, 'reason'>>(results: readonly T[]): readonly T[] {
+  const shown = results.filter((result) => result.reason !== NOT_SHOWN);
+  return shown.length > 0 ? shown : results;
+}
+
+/** A little past the bank's minute, so a дочитування never lands a moment before it is allowed. */
+const CONTINUATION_MARGIN_MS = 2_000;
+/** The soonest a дочитування is asked for, however long ago the last request went out. */
+const CONTINUATION_MIN_MS = 5_000;
+
+/**
+ * How long from now to ask the phone for a **дочитування**, or `undefined` for none
+ * (monobank-sync-freshness D5).
+ *
+ * One is asked for only when the прогін that just ended left a позачерговий рахунок перенесено that
+ * has had no turn since it became so — `hasPriority` read over the links *after* the run — and only
+ * when the app is not in front of the owner, whose own follow-up continues a перенесено прогін
+ * there. Priority rather than «позачерговий» is what ends the chain: each such рахунок gets at most
+ * one turn this way, so one that fails or needs page after page falls back to the ordinary chances
+ * instead of waking the phone every minute for ever.
+ *
+ * The delay is what is left of the bank's minute since the last statement request, plus a margin,
+ * and never less than a few seconds. A request moment in the future of the clock waits one gap and
+ * never longer — the same guard `paced` keeps.
+ */
+export function continuationDelayMs(input: {
+  readonly accounts: readonly Pick<AccountResult, 'monobankAccountId' | 'outcome'>[];
+  readonly links: readonly OrderableLink[];
+  readonly inForeground: boolean;
+  readonly lastRequestAtMs?: number;
+  readonly nowMs: number;
+  readonly gapMs: number;
+}): number | undefined {
+  if (input.inForeground) {
+    return undefined;
+  }
+  const byId = new Map(input.links.map((link) => [link.monobankAccountId, link]));
+  const owedLeft = input.accounts.some((result) => {
+    const link = byId.get(result.monobankAccountId);
+    return result.outcome === 'postponed' && link !== undefined && hasPriority(link, input.nowMs);
+  });
+  if (!owedLeft) {
+    return undefined;
+  }
+  const since = input.lastRequestAtMs === undefined ? input.gapMs : input.nowMs - input.lastRequestAtMs;
+  const owed = since < 0 ? input.gapMs : Math.max(input.gapMs - since, 0);
+  return Math.max(owed + CONTINUATION_MARGIN_MS, CONTINUATION_MIN_MS);
 }
 
 /**

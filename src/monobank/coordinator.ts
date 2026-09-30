@@ -111,6 +111,11 @@ export interface SyncStorage {
   lastRequestAtMs(): number | undefined;
   /** A statement request was sent. Called for every one, ok or refused alike. */
   noteRequest(at: Date): void;
+  /**
+   * Makes every link позачерговий from `at`, keeping an earlier moment — what a прогін the owner
+   * asked for does first (monobank-sync-freshness D1).
+   */
+  oweAll(at: Date): void;
 }
 
 export interface SyncPorts {
@@ -145,6 +150,14 @@ export interface SyncPorts {
    * (design D3, D5).
    */
   readonly postponed?: () => boolean;
+  /**
+   * Asks the phone for a **дочитування** `delayMs` from now — a one-off chance to run again. Called
+   * by `startSync`, never by the run itself, when `continuationDelayMs` says a позачерговий рахунок
+   * was left unread (monobank-sync-freshness D5). Absent where nothing can be scheduled.
+   */
+  readonly continueLater?: (delayMs: number) => void;
+  /** Whether the app is in front of the owner right now; absent reads as not. */
+  readonly inForeground?: () => boolean;
   /**
    * Whether the owner asked for this run — «Синхронізувати» on the monobank screen, or the pull on
    * Головний. The same division the тихий інтервал draws, and there is one of it in this app.
@@ -210,12 +223,18 @@ export interface AccountResult {
   readonly imported: number;
   /**
    * Why this account's turn came to `unavailable`, when the bank did answer and `api.ts` could
-   * name the cause — absent for every other outcome, and absent for the two `unavailable`s that
-   * are not an `api.ts` answer at all: a рахунок the token no longer names, and a local storage
-   * write that failed. Diagnostics only; nothing here changes what the outcome itself means.
+   * name the cause, or `not-shown` for a рахунок the token no longer names — absent for every
+   * other outcome, and for a local storage write that failed.
    */
-  readonly reason?: UnavailableReason;
+  readonly reason?: UnavailableReason | typeof NOT_SHOWN;
 }
+
+/**
+ * The reason a рахунок the token no longer shows is **set aside** under: `unavailable`, no request,
+ * no turn, and — through `worstOutcome` and `shownLinks` — no say in how the прогін is remembered
+ * or how fresh the bank reads (monobank-sync-freshness D4).
+ */
+export const NOT_SHOWN = 'not-shown';
 
 /** What a whole run answers with. Every state the screen has to tell apart is one of these. */
 export type SyncRun =
@@ -288,12 +307,19 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
   // The one variable the secret lives in for the whole run. Nothing below puts it anywhere else.
   const token = stored.token;
 
-  // Longest since its turn first (`sync.ts`), taken once here and never recomputed: an order that
-  // followed the run's own progress would be a priority queue over state the loop is mutating,
-  // and a run over N accounts could no longer be said to make N requests.
-  const links = syncOrder(ports.storage.listLinks());
-  if (links.length === 0) {
+  // Read here for the empty check and for deciding whether a stored answer serves; the *order*
+  // is taken below, once the client-info step has had its say about which рахунки moved.
+  const storedLinks = ports.storage.listLinks();
+  if (storedLinks.length === 0) {
     return { kind: 'no-links' };
+  }
+
+  // A прогін the owner asked for makes every рахунок позачерговий before it asks the bank
+  // anything: whatever it cannot finish in front of them is then continued by a дочитування rather
+  // than by whenever the phone next gives a chance (monobank-sync-freshness D1, D5). A storage
+  // hiccup here costs the continuation, never the прогін.
+  if (ports.asked) {
+    remember(() => ports.storage.oweAll(ports.now()));
   }
 
   const rules = ports.rules();
@@ -365,7 +391,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     /** The moment of the answer this account was synced up to; absent before one is settled. */
     syncedToMs?: number,
     /** Why an `unavailable` outcome came to that, when `api.ts` could name it. */
-    reason?: UnavailableReason,
+    reason?: UnavailableReason | typeof NOT_SHOWN,
   ): void => {
     // Only a completed account moves its moment. An account that ends invalid-token, rate-limited,
     // unavailable, cancelled or postponed keeps whatever moment it had, so the screen never dates a
@@ -392,7 +418,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     report({ kind: 'finished-account', result });
   };
 
-  report({ kind: 'started', accounts: links.length });
+  report({ kind: 'started', accounts: storedLinks.length });
 
   /**
    * The client-info answer this run works from — the one it already holds, or the one it fetches.
@@ -408,7 +434,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     : remembered(() =>
         usableAccounts(
           ports.storage.rememberedAccounts(),
-          links,
+          storedLinks,
           ports.nowMs(),
           ports.clientInfoFreshMs,
         ),
@@ -426,7 +452,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
       // Stopped before a single request went out: nothing was asked, no turn was taken by anybody,
       // and nothing is blamed on the bank for a decision that was not the bank's. Every рахунок
       // keeps its place at the head of the next run's order.
-      for (const link of links) {
+      for (const link of syncOrder(storedLinks)) {
         finish(link, info.outcome, 0);
       }
       return { kind: 'ran', imported: 0, accounts: results };
@@ -434,7 +460,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     if (info.kind !== 'ok') {
       const outcome = outcomeOf(info);
       const reason = reasonOf(info);
-      for (const link of links) {
+      for (const link of syncOrder(storedLinks)) {
         finish(link, outcome, 0, undefined, reason);
       }
       return { kind: 'ran', imported: 0, accounts: results };
@@ -471,9 +497,31 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
    */
   const runToMs = obtainedAt.getTime();
 
+  // Позачергові first, then longest since its turn (`sync.ts`), taken once here — after the
+  // client-info step, so an answer this run fetched has already marked what moved — and never
+  // recomputed: an order that followed the run's own progress would be a priority queue over state
+  // the loop is mutating, and a run over N accounts could no longer be said to make N requests.
+  const links = syncOrder(remembered(() => ports.storage.listLinks()) ?? storedLinks, ports.nowMs());
+
   let stopped: AccountOutcome | undefined;
 
   for (const [index, link] of links.entries()) {
+    const bankAccount = fetched.get(link.monobankAccountId);
+    if (!bankAccount) {
+      // The token no longer shows this account — revoked, closed, or belonging to another owner.
+      // Nothing is deleted and nothing is asked for: the link stays, visibly disconnected, and its
+      // cursor, imported ids and транзакції are exactly where they were. Set aside under its own
+      // reason, and decided before any stop, so it is never перенесено: it decides neither how the
+      // прогін is remembered, nor how fresh the bank reads, nor whether a дочитування is asked for.
+      report({
+        kind: 'account',
+        monobankAccountId: link.monobankAccountId,
+        index: index + 1,
+        of: links.length,
+      });
+      finish(link, 'unavailable', 0, undefined, NOT_SHOWN);
+      continue;
+    }
     if (stopped) {
       // Everything after an invalid token, a cancellation or a run out of time, without a single
       // further request.
@@ -493,15 +541,6 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
       index: index + 1,
       of: links.length,
     });
-
-    const bankAccount = fetched.get(link.monobankAccountId);
-    if (!bankAccount) {
-      // The token no longer shows this account — revoked, or belonging to another owner. Nothing
-      // is deleted and nothing is asked for: the link stays, visibly disconnected, and its
-      // cursor, imported ids and транзакції are exactly where they were.
-      finish(link, 'unavailable', 0);
-      continue;
-    }
 
     const account = await syncOneAccount({
       link,

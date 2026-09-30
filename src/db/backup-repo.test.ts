@@ -892,6 +892,8 @@ describe('the round trip a бекап promises', () => {
       lastAttemptedAtMs: null,
       // Nor is the paging position, for the turn's own reason: a restored phone has read no pages.
       paging: null,
+      // Nor whether it was позачерговий: what this phone had not read yet is this phone's fact.
+      owedSinceMs: null,
     });
     expect(notificationsRepo(target.db).watches()).toEqual([
       { packageName: 'ua.privatbank.ap24', accountId: 'card', currency: 'UAH' },
@@ -916,6 +918,18 @@ describe('the round trip a бекап promises', () => {
     expect(link?.cursorMs).toBe(CURSOR_MS);
     expect(link?.syncStartDate).toBe('2026-08-01');
     expect(link?.lastSyncedAtMs).toBe(SYNCED_AT.getTime());
+  });
+
+  it('Scenario: A бекап does not carry it', async () => {
+    // The source link is позачерговий: its balance moved in the answer stored after linking.
+    monobankRepo(source.db).oweAll(new Date(CURSOR_MS + 60_000));
+    expect(monobankRepo(source.db).linkOf('mono-card')?.owedSinceMs).not.toBeNull();
+
+    const { bytes } = await saveBackup(backupRepo(source.db), MADE_AT);
+    expect(bytes).not.toContain('owedSince');
+
+    expect(await restoreBackup(backupRepo(target.db), bytes)).toBe('ok');
+    expect(monobankRepo(target.db).linkOf('mono-card')?.owedSinceMs).toBeNull();
   });
 
   it('Scenario: A бекап carries no paging position', async () => {

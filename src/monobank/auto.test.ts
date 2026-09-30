@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  continuationDelayMs,
   followUpDue,
   needsOwner,
   QUIET_INTERVAL_MS,
@@ -9,7 +10,7 @@ import {
   worstOutcome,
   type SyncAttempt,
 } from './auto';
-import { ACCOUNT_OUTCOMES, type AccountOutcome, type AccountResult } from './coordinator';
+import { ACCOUNT_OUTCOMES, NOT_SHOWN, type AccountOutcome, type AccountResult } from './coordinator';
 
 /**
  * The four decisions behind «відкрив застосунок → тихо запустився sync», with no clock, no
@@ -253,7 +254,7 @@ describe('whether a run that ended has to be finished at once', () => {
     expect(followUpDue({ attempt: undefined, inForeground: true })).toBe(false);
   });
 
-  it('Scenario: A run that yields in the background is not followed up', () => {
+  it('Scenario: A run that yields in the background starts nothing in the app', () => {
     expect(followUpDue({ attempt: attempt('postponed'), inForeground: false })).toBe(false);
   });
 
@@ -264,5 +265,174 @@ describe('whether a run that ended has to be finished at once', () => {
     // An attempt whose run has not reported yet — one going on now, or one the phone did not
     // survive — is not a postponed one either.
     expect(followUpDue({ attempt: attempt(), inForeground: true })).toBe(false);
+  });
+});
+
+describe('a рахунок the token no longer shows is set aside', () => {
+  const gone = (id: string): AccountResult => ({ ...result('unavailable', id), reason: NOT_SHOWN });
+
+  it('Scenario: A vanished card does not make a working прогін unavailable', () => {
+    expect(
+      worstOutcome([result('complete', 'black'), gone('closed'), result('postponed', 'white')]),
+    ).toBe('postponed');
+    expect(worstOutcome([result('complete', 'black'), gone('closed')])).toBe('complete');
+  });
+
+  it('Scenario: A token that shows nothing linked is still a failure', () => {
+    expect(worstOutcome([gone('a'), gone('b'), gone('c')])).toBe('unavailable');
+  });
+
+  it('an unavailable рахунок the bank did answer about still counts', () => {
+    expect(worstOutcome([result('complete', 'black'), result('unavailable', 'white'), gone('closed')])).toBe(
+      'unavailable',
+    );
+  });
+});
+
+describe('a поштовх makes a background chance due', () => {
+  it('Scenario: A поштовх is due inside the тихий інтервал', () => {
+    expect(
+      syncDue({ links: 1, attemptedAtMs: NOW - 3 * MINUTE, outcome: 'complete', nudgedAtMs: NOW - MINUTE, nowMs: NOW }),
+    ).toBe(true);
+  });
+
+  it('a поштовх from before the last attempt was already answered by it', () => {
+    expect(
+      syncDue({ links: 1, attemptedAtMs: NOW - 3 * MINUTE, outcome: 'complete', nudgedAtMs: NOW - 4 * MINUTE, nowMs: NOW }),
+    ).toBe(false);
+  });
+
+  it('a поштовх with nothing linked is nothing', () => {
+    expect(syncDue({ links: 0, nudgedAtMs: NOW - MINUTE, nowMs: NOW })).toBe(false);
+  });
+});
+
+describe('when a прогін asks for a дочитування', () => {
+  const GAP = MINUTE;
+  /** A link позачерговий since `owedSinceMs`, whose last turn was `lastAttemptedAtMs`. */
+  const link = (id: string, owedSinceMs: number | null, lastAttemptedAtMs: number | null = null) => ({
+    monobankAccountId: `mono-${id}`,
+    owedSinceMs,
+    lastAttemptedAtMs,
+  });
+  const delay = (input: {
+    accounts: readonly AccountResult[];
+    links: readonly ReturnType<typeof link>[];
+    inForeground?: boolean;
+    lastRequestAtMs?: number;
+  }) =>
+    continuationDelayMs({
+      accounts: input.accounts,
+      links: input.links,
+      inForeground: input.inForeground ?? false,
+      ...(input.lastRequestAtMs === undefined ? {} : { lastRequestAtMs: input.lastRequestAtMs }),
+      nowMs: NOW,
+      gapMs: GAP,
+    });
+
+  it('Scenario: «Оновити» finishes with the app closed — the first link of the chain', () => {
+    // Two read, the owner left while the прогін waited for the third: seven позачергові, none
+    // given a turn since the owner asked, are перенесено.
+    const owedAt = NOW - 3 * MINUTE;
+    const accounts = [
+      result('complete', 'a'),
+      result('complete', 'b'),
+      ...['c', 'd', 'e', 'f', 'g', 'h', 'i'].map((id) => result('postponed', id)),
+    ];
+    const links = [
+      link('a', null, NOW - 2 * MINUTE),
+      link('b', null, NOW - 20_000),
+      ...['c', 'd', 'e', 'f', 'g', 'h', 'i'].map((id) => link(id, owedAt, NOW - 5 * 60 * MINUTE)),
+    ];
+
+    // The last statement request went out 20 s ago, so the next may go in 40 s — plus a margin.
+    expect(delay({ accounts, links, lastRequestAtMs: NOW - 20_000 })).toBe(40_000 + 2_000);
+  });
+
+  it('Scenario: A background chance that reads the one moved рахунок asks for nothing more', () => {
+    expect(
+      delay({
+        accounts: [result('complete', 'black'), result('postponed', 'white'), result('postponed', 'jar')],
+        links: [link('black', null, NOW), link('white', null, NOW - HOUR), link('jar', null, NOW - 2 * HOUR)],
+        lastRequestAtMs: NOW,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A failure does not start a chain', () => {
+    expect(
+      delay({
+        accounts: [result('unavailable', 'black'), result('postponed', 'white')],
+        links: [link('black', NOW - MINUTE, NOW), link('white', null, NOW - HOUR)],
+        lastRequestAtMs: NOW,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A рахунок already given its turn does not keep the chain going', () => {
+    // It became позачерговий, had its turn in this прогін (one page of several), and was stopped:
+    // still позачерговий, but no longer first — the chances continue it.
+    expect(
+      delay({
+        accounts: [result('postponed', 'black')],
+        links: [link('black', NOW - 5 * MINUTE, NOW - 10_000)],
+        lastRequestAtMs: NOW - 10_000,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: Nothing is asked while the owner is watching', () => {
+    expect(
+      delay({
+        accounts: [result('postponed', 'white')],
+        links: [link('white', NOW - MINUTE)],
+        inForeground: true,
+        lastRequestAtMs: NOW - 10_000,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A рахунок the busy ones keep passing over is reached within three hours', () => {
+    // The black card moved before this chance and took its one statement request; the white card
+    // has had no turn for three hours, so the chance asks for a дочитування that reads it.
+    expect(
+      delay({
+        accounts: [result('complete', 'black'), result('postponed', 'white')],
+        links: [link('black', null, NOW), link('white', null, NOW - 3 * HOUR)],
+        lastRequestAtMs: NOW,
+      }),
+    ).toBe(GAP + 2_000);
+    // Two hours in, it is merely waiting: the ordinary chances reach it.
+    expect(
+      delay({
+        accounts: [result('complete', 'black'), result('postponed', 'white')],
+        links: [link('black', null, NOW), link('white', null, NOW - 2 * HOUR)],
+        lastRequestAtMs: NOW,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A phone that gave no chance for hours catches up in minutes', () => {
+    // Four hours without a chance: every рахунок is overdue; this one read the first.
+    const turnedLongAgo = NOW - 4 * HOUR;
+    const accounts = [result('complete', 'a'), ...['b', 'c', 'd'].map((id) => result('postponed', id))];
+    const links = [link('a', null, NOW), ...['b', 'c', 'd'].map((id) => link(id, null, turnedLongAgo))];
+
+    expect(delay({ accounts, links, lastRequestAtMs: NOW })).toBe(GAP + 2_000);
+  });
+
+  it('never sooner than five seconds, and a gap long past costs nothing but that', () => {
+    const owed = { accounts: [result('postponed', 'white')], links: [link('white', NOW - MINUTE)] };
+    expect(delay({ ...owed, lastRequestAtMs: NOW - HOUR })).toBe(5_000);
+    expect(delay(owed)).toBe(5_000);
+  });
+
+  it('a request moment in the future of the clock waits one gap, never longer', () => {
+    const owed = { accounts: [result('postponed', 'white')], links: [link('white', NOW - MINUTE)] };
+    expect(delay({ ...owed, lastRequestAtMs: NOW + HOUR })).toBe(GAP + 2_000);
+  });
+
+  it('a postponed рахунок whose link is gone asks for nothing', () => {
+    expect(delay({ accounts: [result('postponed', 'white')], links: [], lastRequestAtMs: NOW })).toBeUndefined();
   });
 });

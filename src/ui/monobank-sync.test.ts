@@ -22,6 +22,7 @@ import { networkSummary } from '../reporting/report';
 import { startOfLocalDayMs } from './dates';
 import { bindTestJournal } from './journal';
 import {
+  BACKGROUND_CONTINUATION,
   composeProgress,
   journalProgress,
   onSyncState,
@@ -577,6 +578,86 @@ describe('the one place a sync is started', () => {
 
       expect(repo.attempt()?.outcome).toBe('complete');
       expect(phone.posted()).toEqual([]);
+    });
+  });
+
+  describe('the дочитування a run asks for', () => {
+    function counting(): { fetchImpl: AuthFetchLike; statements: () => number } {
+      let statements = 0;
+      const answering = bank({ clientInfo: () => ({ status: 200, body: CLIENT_INFO_THREE }) });
+      return {
+        fetchImpl: (url, headers) => {
+          if (url.includes('/statement/')) {
+            statements += 1;
+          }
+          return answering(url, headers);
+        },
+        statements: () => statements,
+      };
+    }
+
+    it('Scenario: «Оновити» finishes with the app closed — the run the owner left asks for one', async () => {
+      linkCard();
+      linkTwoMoreCards();
+      const bankScript = counting();
+      const asked: number[] = [];
+
+      // «Оновити»: a прогін the owner asked for, left after its first рахунок.
+      await startSync(
+        ports(bankScript.fetchImpl, {
+          attended: false,
+          sync: {
+            asked: true,
+            minRequestGapMs: 60_000,
+            postponed: () => bankScript.statements() >= 1,
+            inForeground: () => false,
+            continueLater: (ms) => asked.push(ms),
+          },
+        }),
+      );
+
+      // The statement went out at RUN_AT, so the next may go a minute later — plus the margin.
+      expect(asked).toEqual([62_000]);
+      // And the журнал says so, so a репорт can tell a chain from the periodic chances.
+      expect(
+        journalOf().filter((entry) => entry.name === BACKGROUND_CONTINUATION).map((entry) => entry.counts),
+      ).toEqual([{ ms: 62_000 }]);
+    });
+
+    it('Scenario: Nothing is asked while the owner is watching', async () => {
+      linkCard();
+      linkTwoMoreCards();
+      const bankScript = counting();
+      const asked: number[] = [];
+
+      await startSync(
+        ports(bankScript.fetchImpl, {
+          sync: {
+            asked: true,
+            minRequestGapMs: 60_000,
+            postponed: () => bankScript.statements() >= 1,
+            inForeground: () => true,
+            continueLater: (ms) => asked.push(ms),
+          },
+        }),
+      );
+
+      expect(asked).toEqual([]);
+    });
+
+    it('a run that read everything asks for nothing', async () => {
+      linkCard();
+      linkTwoMoreCards();
+      const asked: number[] = [];
+
+      await startSync(
+        ports(counting().fetchImpl, {
+          sync: { asked: true, inForeground: () => false, continueLater: (ms) => asked.push(ms) },
+        }),
+      );
+
+      expect(asked).toEqual([]);
+      expect(repo.listLinks().map((l) => l.owedSinceMs)).toEqual([null, null, null]);
     });
   });
 

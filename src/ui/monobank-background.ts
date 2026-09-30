@@ -1,9 +1,10 @@
 import { attemptInput, needsOwner, syncDue, worstOutcome } from '../monobank/auto';
+import { hasPriority, shownLinks, type OrderableLink } from '../monobank/sync';
 import type { AccountOutcome, SyncPorts } from '../monobank/coordinator';
 import { chanceRun } from '../monobank/yielding';
 import { clear as clearAlert, raise as raiseAlert, type AlertPorts } from './alerting';
 import { journal } from './journal';
-import { syncCoverage } from './monobank-screen';
+import { bankCoverage } from './monobank-screen';
 import { startSync, type AttemptStorage } from './monobank-sync';
 
 /**
@@ -35,7 +36,12 @@ export function backgroundTurnsWanted(input: { readonly links: readonly unknown[
 
 /** What a background run needs of storage: the links it syncs, and the attempt around the run. */
 export interface BackgroundTurnStorage extends AttemptStorage {
-  listLinks(): readonly { readonly lastSyncedAtMs?: number | null }[];
+  listLinks(): readonly (OrderableLink & { readonly lastSyncedAtMs?: number | null })[];
+  /**
+   * The client-info answer this phone last stored, as rows with their moments — what tells a
+   * рахунок the token still shows from one it no longer does (`shownLinks`).
+   */
+  rememberedAccounts(): readonly { readonly id: string; readonly obtainedAt: Date }[];
 }
 
 export interface BackgroundTurnPorts {
@@ -55,6 +61,11 @@ export interface BackgroundTurnPorts {
   readonly quietIntervalMs?: number;
   /** Overridden in tests; the app always uses `STALE_AFTER_MS`. */
   readonly staleAfterMs?: number;
+  /**
+   * The moment of the last **поштовх** the capture layer noted — a notification the monobank app
+   * posted — or `undefined` for none, or where the phone cannot note one.
+   */
+  readonly nudgedAtMs?: () => number | undefined;
   /**
    * The mark this chance's entries carry — the same one the ports were built with, so the
    * `native` entry for the chance, the run's two ends and every request it made read as one
@@ -87,6 +98,11 @@ export type BackgroundTurn =
       readonly kind: 'ran';
       readonly outcome: AccountOutcome | undefined;
       readonly imported: number;
+      /**
+       * Present when a **поштовх** noted after the last attempt is what made this chance due to
+       * look — so the журнал can tell a поштовх's дочитування from a periodic chance.
+       */
+      readonly nudged?: true;
     };
 
 /** What the журнал calls one chance the system gave the app. */
@@ -121,7 +137,8 @@ export function journalChance(input: {
 }): void {
   const where = input.attended ? 'active' : 'background';
   const came = input.turn.kind === 'ran' ? (input.turn.outcome ?? 'ran') : input.turn.kind;
-  journal.record('native', BACKGROUND_CHANCE, `${where} · ${came}`, {
+  const nudged = input.turn.kind === 'ran' && input.turn.nudged === true ? ' · nudged' : '';
+  journal.record('native', BACKGROUND_CHANCE, `${where} · ${came}${nudged}`, {
     ...(input.run === undefined ? {} : { run: input.run }),
     ...(input.turn.kind === 'ran' ? { counts: { imported: input.turn.imported } } : {}),
   });
@@ -138,12 +155,24 @@ export function journalRegistration(answer: TaskRegistration): boolean {
 
 export async function runBackgroundTurn(ports: BackgroundTurnPorts): Promise<BackgroundTurn> {
   const links = ports.storage.listLinks();
+  const nowMs = ports.nowMs();
+  const nudgedAtMs = ports.nudgedAtMs?.();
+  const before = ports.storage.attempt();
+  const nudged = nudgedAtMs !== undefined && (before === undefined || nudgedAtMs > before.attemptedAtMs);
+  // A рахунок still waiting for the turn its priority promises — позачерговий or overdue, and shown
+  // by the token — makes the chance due whatever the тихий інтервал says: that is what keeps a
+  // chain of дочитування going past a рахунок that failed in the middle of it (design D5).
+  const owedWaiting = shownLinks(links, ports.storage.rememberedAccounts()).some((link) =>
+    hasPriority(link, nowMs),
+  );
   if (
+    !owedWaiting &&
     !syncDue({
       links: links.length,
-      ...attemptInput(ports.storage.attempt()),
-      nowMs: ports.nowMs(),
+      ...attemptInput(before),
+      nowMs,
       ...(ports.quietIntervalMs === undefined ? {} : { quietIntervalMs: ports.quietIntervalMs }),
+      ...(nudgedAtMs === undefined ? {} : { nudgedAtMs }),
     })
   ) {
     return { kind: 'not-due' };
@@ -179,7 +208,7 @@ export async function runBackgroundTurn(ports: BackgroundTurnPorts): Promise<Bac
 
   const outcome = worstOutcome(run.accounts);
   await announce(ports, outcome);
-  return { kind: 'ran', outcome, imported: run.imported };
+  return { kind: 'ran', outcome, imported: run.imported, ...(nudged ? { nudged: true as const } : {}) };
 }
 
 /**
@@ -200,7 +229,8 @@ async function announce(
     return;
   }
   // Read back after the run: the moments it moved are what «stale» is measured against.
-  const coverage = syncCoverage(ports.storage.listLinks());
+  // Over the рахунки the token still shows: one it stopped showing is set aside, not stale.
+  const coverage = bankCoverage(ports.storage.listLinks(), ports.storage.rememberedAccounts());
   const situation = needsOwner({
     attempt: ports.storage.attempt(),
     // The whole-bank moment, not the freshest рахунок's — the same reading Головний decides its

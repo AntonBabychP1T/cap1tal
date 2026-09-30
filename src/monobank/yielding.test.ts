@@ -275,7 +275,7 @@ describe('a run that yields', () => {
     const timers = fakeTimers(RUN_AT);
     // The gap is long past, and the phone holds a client-info answer inside the межа свіжості: so
     // this chance may send one statement request, and owes the gap before a second.
-    rememberAccounts(3, RUN_AT - 10 * 60_000);
+    rememberAccounts(3, RUN_AT - 20_000);
     repo.noteRequest(new Date(RUN_AT - 60 * 60_000));
 
     const run = ran(
@@ -328,7 +328,7 @@ describe('a run that yields', () => {
     const { clientInfo } = linkAccounts(3);
     const script = scriptedFetch({ clientInfo });
     const timers = fakeTimers(RUN_AT);
-    rememberAccounts(3, RUN_AT - 10 * 60_000);
+    rememberAccounts(3, RUN_AT - 20_000);
     // This phone sent a request a moment ago, so the whole of the gap is still owed.
     repo.noteRequest(new Date(RUN_AT - 200));
 
@@ -347,7 +347,7 @@ describe('a run that yields', () => {
     const { clientInfo } = linkAccounts(3);
     const script = scriptedFetch({ clientInfo });
     const timers = fakeTimers(RUN_AT);
-    rememberAccounts(3, RUN_AT - 10 * 60_000);
+    rememberAccounts(3, RUN_AT - 20_000);
     repo.noteRequest(new Date(RUN_AT - 200));
 
     await drive(
@@ -364,7 +364,7 @@ describe('a run that yields', () => {
 
   it('Scenario: Successive chances work through every рахунок', async () => {
     const { clientInfo } = linkAccounts(3);
-    rememberAccounts(3, RUN_AT - 10 * 60_000);
+    rememberAccounts(3, RUN_AT - 20_000);
     const asked3: string[] = [];
 
     for (let chance = 0; chance < 3; chance += 1) {

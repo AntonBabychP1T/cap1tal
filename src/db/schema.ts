@@ -372,6 +372,16 @@ export const monobankLinks = sqliteTable(
      * nothing.
      */
     pagingRequestToMs: integer('paging_request_to_ms', { mode: 'timestamp_ms' }),
+    /**
+     * The moment this link became **позачерговий** — the app knows the bank holds something about
+     * it that has not been read yet — or nothing at all for a link that is not. Set when a stored
+     * client-info answer shows its баланс банку moved, when it is linked (its boundary), and for
+     * every link when the owner asks for a sync; cleared by a completed sync that reached it.
+     *
+     * What a прогін puts first and what a дочитування is asked for by (design D1, D2, D5). Left out
+     * of a бекап for `last_attempted_at`'s reason: it is what *this* phone has not yet read.
+     */
+    owedSince: integer('owed_since', { mode: 'timestamp_ms' }),
   },
   (t) => [
     check(

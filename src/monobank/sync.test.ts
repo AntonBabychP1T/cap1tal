@@ -11,6 +11,9 @@ import {
 import { MAX_STATEMENT_WINDOW_MS, STATEMENT_PAGE_SIZE, type StatementItem } from './api';
 import {
   CLIENT_INFO_FRESH_MS,
+  priorityOf,
+  shownLinks,
+  TURN_OVERDUE_MS,
   continueWindow,
   isFullAnswer,
   mapStatement,
@@ -396,10 +399,12 @@ describe('syncOrder — whose turn a run takes first', () => {
     monobankAccountId,
     lastAttemptedAtMs,
   });
-  const order = (links: readonly { monobankAccountId: string }[]) =>
-    syncOrder(links as never).map((l) => l.monobankAccountId);
+  const order = (
+    links: readonly { monobankAccountId: string; owedSinceMs?: number | null }[],
+    nowMs?: number,
+  ) => syncOrder(links as never, nowMs).map((l) => l.monobankAccountId);
 
-  it('Scenario: An account that has never had a turn goes first', () => {
+  it('Scenario: An account that has never had a turn goes first among those not позачергові', () => {
     // An hour is not long, but «never» is longer than any moment there is. The ids are chosen so
     // that alphabetical order says the opposite: this fails under the sort this replaced.
     expect(order([link('a-turned', NOW - 60 * 60 * 1000), link('z-never', null)])).toEqual([
@@ -430,6 +435,73 @@ describe('syncOrder — whose turn a run takes first', () => {
     // Same again for two links whose turns fall in the same millisecond.
     const together = [link('mono-z', NOW), link('mono-y', NOW)];
     expect(order(together)).toEqual(['mono-y', 'mono-z']);
+  });
+
+  it('Scenario: A позачерговий рахунок goes before one that has waited longer', () => {
+    // Позачерговий ten minutes ago, its last turn an hour ago — before it became so.
+    const owed = { ...link('a-owed', NOW - 60 * 60 * 1000), owedSinceMs: NOW - 10 * 60 * 1000 };
+    expect(order([link('z-days', NOW - 3 * DAY_MS), owed])).toEqual(['a-owed', 'z-days']);
+  });
+
+  it('Scenario: A позачерговий рахунок that keeps failing does not hold the queue', () => {
+    // It became позачерговий, had its turn a minute ago, and the statement failed: it is still
+    // позачерговий, but the turn it has had since puts it back among the rest, last of them.
+    const failing = { ...link('a-failing', NOW - 60 * 1000), owedSinceMs: NOW - 10 * 60 * 1000 };
+    expect(order([failing, link('m-hour', NOW - 60 * 60 * 1000), link('z-never', null)])).toEqual([
+      'z-never',
+      'm-hour',
+      'a-failing',
+    ]);
+  });
+
+  it('Позачергові рахунки are ordered among themselves by the turn rule', () => {
+    const owed = (id: string, turned: number | null) => ({ ...link(id, turned), owedSinceMs: NOW - 1000 });
+    expect(
+      order([owed('a-minute', NOW - 60 * 1000), link('x-plain', null), owed('z-never', null), owed('m-hour', NOW - 60 * 60 * 1000)]),
+    ).toEqual(['z-never', 'm-hour', 'a-minute', 'x-plain']);
+  });
+
+  it('A link that is not позачерговий is ordered exactly as before', () => {
+    // `owedSinceMs` absent and `null` are the same: nothing is owed.
+    expect(
+      order([{ ...link('b', NOW - 1000), owedSinceMs: null }, link('a', NOW - 2000)]),
+    ).toEqual(['a', 'b']);
+  });
+
+  it('Scenario: A рахунок the busy ones keep passing over is reached within three hours', () => {
+    // The black card moved before this chance (позачерговий, no turn since); the white card never
+    // moves and had its turn three hours ago; a jar had its turn an hour ago.
+    const black = { ...link('a-black', NOW - 16 * 60 * 1000), owedSinceMs: NOW - 60 * 1000 };
+    const white = link('m-white', NOW - TURN_OVERDUE_MS);
+    const jar = link('b-jar', NOW - 60 * 60 * 1000);
+    expect(order([jar, white, black], NOW)).toEqual(['a-black', 'm-white', 'b-jar']);
+    // Without the clock nothing is overdue, so the jar and the white card keep the turn order.
+    expect(order([jar, white, black])).toEqual(['a-black', 'm-white', 'b-jar']);
+    expect(order([jar, link('m-white', NOW - 2 * 60 * 60 * 1000), black], NOW)).toEqual([
+      'a-black',
+      'm-white',
+      'b-jar',
+    ]);
+  });
+
+  it('A boundary set in the future owes nothing yet', () => {
+    const ahead = { ...link('ahead', null), owedSinceMs: NOW + 24 * 60 * 60 * 1000 };
+    // Never turned, so overdue — but not позачерговий until the clock reaches its boundary.
+    expect(priorityOf(ahead, NOW)).toBe(1);
+    expect(priorityOf({ ...ahead, lastAttemptedAtMs: NOW - 1000 }, NOW)).toBe(2);
+  });
+
+  it('An overdue рахунок goes before one merely waiting, and after the позачергові', () => {
+    const overdue = link('z-overdue', NOW - TURN_OVERDUE_MS - 1);
+    const waiting = link('a-waiting', NOW - TURN_OVERDUE_MS + 60 * 1000);
+    const owed = { ...link('m-owed', NOW - 60 * 1000), owedSinceMs: NOW - 30 * 1000 };
+    expect(order([waiting, overdue, owed], NOW)).toEqual(['m-owed', 'z-overdue', 'a-waiting']);
+    expect(priorityOf(owed, NOW)).toBe(0);
+    expect(priorityOf(overdue, NOW)).toBe(1);
+    expect(priorityOf(waiting, NOW)).toBe(2);
+    // Never turned is overdue once there is a clock to measure it by.
+    expect(priorityOf(link('never', null), NOW)).toBe(1);
+    expect(priorityOf(link('never', null))).toBe(2);
   });
 
   it('A turn of zero is a turn, not the absence of one', () => {
@@ -481,6 +553,7 @@ function byId(
 
 describe('usableAccounts — the client-info answer a run may use instead of fetching one', () => {
   const HOUR_MS = 60 * 60 * 1000;
+  const MINUTE_MS = 60 * 1000;
   const row = (id: string, obtainedAtMs: number) => ({
     id,
     kind: 'card' as const,
@@ -497,9 +570,9 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
       lastSyncedAtMs: NOW - 24 * 60 * 60 * 1000,
     }));
 
-  it('Scenario: A fresh stored answer sends the allowance to the statement', () => {
+  it('Scenario: A stored answer from seconds ago sends the allowance to the statement', () => {
     const answer = usableAccounts(
-      [row('mono-a', NOW - 10 * 60 * 1000), row('mono-b', NOW - 10 * 60 * 1000)],
+      [row('mono-a', NOW - 20 * 1000), row('mono-b', NOW - 20 * 1000)],
       links('mono-a', 'mono-b'),
       NOW,
     );
@@ -507,16 +580,18 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
     // Every link named by one answer inside the межа свіжості: the run uses it and sends nothing.
     expect(answer).toBeDefined();
     expect([...answer!.accounts.keys()].sort()).toEqual(['mono-a', 'mono-b']);
-    expect(answer!.obtainedAt.getTime()).toBe(NOW - 10 * 60 * 1000);
+    expect(answer!.obtainedAt.getTime()).toBe(NOW - 20 * 1000);
     expect(answer!.accounts.get('mono-a')?.bankBalance).toEqual(money(1000, 'UAH'));
   });
 
-  it('Scenario: An answer older than the межа свіжості is refetched', () => {
+  it('Scenario: A stored answer older than a minute is refetched', () => {
     expect(usableAccounts([row('mono-a', NOW - 2 * HOUR_MS)], links('mono-a'), NOW)).toBeUndefined();
-    // The bound itself is the edge: an answer exactly an hour old no longer serves.
-    expect(usableAccounts([row('mono-a', NOW - HOUR_MS)], links('mono-a'), NOW)).toBeUndefined();
+    expect(usableAccounts([row('mono-a', NOW - 10 * MINUTE_MS)], links('mono-a'), NOW)).toBeUndefined();
+    // The bound itself is the edge: an answer exactly a minute old no longer serves — which is
+    // what makes every background chance, a quarter of an hour apart, read the balances first.
+    expect(usableAccounts([row('mono-a', NOW - MINUTE_MS)], links('mono-a'), NOW)).toBeUndefined();
     expect(
-      usableAccounts([row('mono-a', NOW - HOUR_MS + 1)], links('mono-a'), NOW),
+      usableAccounts([row('mono-a', NOW - MINUTE_MS + 1)], links('mono-a'), NOW),
     ).toBeDefined();
   });
 
@@ -536,7 +611,7 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
     // per-row rule would call it stale, refetch, still not find it named, and spend every прогін's
     // allowance on client-info for ever.
     const answer = usableAccounts(
-      [row('mono-gone', NOW - 3 * HOUR_MS), row('mono-a', NOW - 10 * 60 * 1000)],
+      [row('mono-gone', NOW - 3 * HOUR_MS), row('mono-a', NOW - 20 * 1000)],
       links('mono-a', 'mono-gone'),
       NOW,
     );
@@ -549,7 +624,7 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
   });
 
   it('The newest moment is the answer, however the rows are ordered', () => {
-    const rows = [row('mono-b', NOW - 10 * 60 * 1000), row('mono-a', NOW - 3 * HOUR_MS)];
+    const rows = [row('mono-b', NOW - 20 * 1000), row('mono-a', NOW - 3 * HOUR_MS)];
 
     expect([...usableAccounts(rows, links('mono-b'), NOW)!.accounts.keys()]).toEqual(['mono-b']);
     expect([...usableAccounts([...rows].reverse(), links('mono-b'), NOW)!.accounts.keys()]).toEqual([
@@ -560,7 +635,7 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
   it('A link no row names at all leaves the rest usable', () => {
     // A рахунок linked before this phone ever read client-info about it: the answer still serves
     // every other link, and that one gets the same verdict a fetched answer would give it.
-    const answer = usableAccounts([row('mono-a', NOW - 60 * 1000)], links('mono-a', 'mono-new'), NOW);
+    const answer = usableAccounts([row('mono-a', NOW - 20 * 1000)], links('mono-a', 'mono-new'), NOW);
 
     expect(answer).toBeDefined();
     expect([...answer!.accounts.keys()]).toEqual(['mono-a']);
@@ -572,10 +647,10 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
     // goes on saying «Ще не синхронізовано», because nothing was. Asking the bank costs one request
     // and heals it: the answer that comes back is dated now, past the boundary the owner set.
     const answer = usableAccounts(
-      [row('mono-a', NOW - 10 * 60 * 1000)],
+      [row('mono-a', NOW - 20 * 1000)],
       [
         { monobankAccountId: 'mono-a', cursorMs: NOW - 24 * HOUR_MS, lastSyncedAtMs: NOW - 24 * HOUR_MS },
-        { monobankAccountId: 'mono-new', cursorMs: NOW - 60 * 1000, lastSyncedAtMs: null },
+        { monobankAccountId: 'mono-new', cursorMs: NOW - 10 * 1000, lastSyncedAtMs: null },
       ],
       NOW,
     );
@@ -587,7 +662,7 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
     // No answer heals that one, so demanding a fresh one for it would spend the allowance on
     // client-info for ever — the very shape of the defect this function exists to remove.
     const answer = usableAccounts(
-      [row('mono-a', NOW - 10 * 60 * 1000)],
+      [row('mono-a', NOW - 20 * 1000)],
       [{ monobankAccountId: 'mono-a', cursorMs: NOW + HOUR_MS, lastSyncedAtMs: null }],
       NOW,
     );
@@ -599,8 +674,8 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
     // The ordinary steady state: the cursor stands exactly where the last run left it, which is
     // the moment of the answer this run is about to use again.
     const answer = usableAccounts(
-      [row('mono-a', NOW - 10 * 60 * 1000)],
-      [{ monobankAccountId: 'mono-a', cursorMs: NOW - 10 * 60 * 1000, lastSyncedAtMs: NOW - 10 * 60 * 1000 }],
+      [row('mono-a', NOW - 20 * 1000)],
+      [{ monobankAccountId: 'mono-a', cursorMs: NOW - 20 * 1000, lastSyncedAtMs: NOW - 20 * 1000 }],
       NOW,
     );
 
@@ -612,8 +687,8 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
     // moment does not move and a never-synced link goes on refusing it — knowingly: every link is
     // `unavailable` under it anyway, so the allowance had no statement request to go to.
     const answer = usableAccounts(
-      [row('mono-gone', NOW - 10 * 60 * 1000)],
-      [{ monobankAccountId: 'mono-new', cursorMs: NOW - 60 * 1000, lastSyncedAtMs: null }],
+      [row('mono-gone', NOW - 20 * 1000)],
+      [{ monobankAccountId: 'mono-new', cursorMs: NOW - 10 * 1000, lastSyncedAtMs: null }],
       NOW,
     );
 
@@ -621,8 +696,35 @@ describe('usableAccounts — the client-info answer a run may use instead of fet
   });
 
   it('The bound is overridable, and defaults to CLIENT_INFO_FRESH_MS', () => {
-    expect(CLIENT_INFO_FRESH_MS).toBe(60 * 60 * 1000);
+    expect(CLIENT_INFO_FRESH_MS).toBe(60 * 1000);
     expect(usableAccounts([row('mono-a', NOW - 120)], links('mono-a'), NOW, 60)).toBeUndefined();
     expect(usableAccounts([row('mono-a', NOW - 30)], links('mono-a'), NOW, 60)).toBeDefined();
+  });
+});
+
+describe('shownLinks — the linked рахунки the token still shows', () => {
+  const row = (id: string, obtainedAtMs: number) => ({ id, obtainedAt: new Date(obtainedAtMs) });
+  const link = (monobankAccountId: string) => ({ monobankAccountId, lastSyncedAtMs: NOW });
+  const ids = (links: readonly { monobankAccountId: string }[]) => links.map((l) => l.monobankAccountId);
+
+  it('Scenario: A vanished card does not keep Головний stale — it is left out', () => {
+    // The newest answer (NOW) names two of the three; the card it no longer names kept a row from
+    // an older answer, which no answer will ever refresh.
+    const rows = [row('mono-a', NOW), row('mono-b', NOW), row('mono-gone', NOW - DAY_MS)];
+
+    expect(ids(shownLinks([link('mono-a'), link('mono-gone'), link('mono-b')], rows))).toEqual([
+      'mono-a',
+      'mono-b',
+    ]);
+  });
+
+  it('Scenario: A token that shows nothing linked is still a failure — nothing is left out', () => {
+    const rows = [row('mono-other', NOW), row('mono-a', NOW - DAY_MS)];
+
+    expect(ids(shownLinks([link('mono-a'), link('mono-b')], rows))).toEqual(['mono-a', 'mono-b']);
+  });
+
+  it('A phone that holds no answer cannot tell, so it leaves nothing out', () => {
+    expect(ids(shownLinks([link('mono-a')], []))).toEqual(['mono-a']);
   });
 });

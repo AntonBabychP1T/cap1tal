@@ -1,8 +1,11 @@
 import { activeAccounts, type Account, type AccountKind } from '../domain/account';
 import type { CurrencyCode, Money } from '../domain/money';
 import type { IsoDate } from '../domain/transaction';
-import type { AccountOutcome, SyncProgress, SyncRun } from '../monobank/coordinator';
+import { countedResults } from '../monobank/auto';
+import { NOT_SHOWN, type AccountOutcome, type SyncProgress, type SyncRun } from '../monobank/coordinator';
 import { suggestKind, type LinkProposal, type MonobankLink } from '../monobank/link';
+import { shownLinks } from '../monobank/sync';
+import type { BackgroundRestriction } from '../platform/background-sync';
 import { formatMoney } from './amount-input';
 import { momentLabel, parseTypedDate, startOfLocalDayMs } from './dates';
 import {
@@ -133,8 +136,15 @@ export const NEVER_SYNCED_DEVICE = 'Синхронізації на цьому �
 export function lastSyncLine(input: {
   readonly links: readonly (MonobankLink & { readonly lastSyncedAtMs?: number | null })[];
   readonly now: Date;
+  /**
+   * The client-info answer this phone last stored, as rows with their moments. Given, a linked
+   * рахунок the newest answer does not name is set aside and ages nothing (monobank-sync-freshness
+   * D4); absent, every link counts.
+   */
+  readonly accounts?: readonly { readonly id: string; readonly obtainedAt: Date }[];
 }): string | null {
-  const coverage = syncCoverage(input.links);
+  const coverage =
+    input.accounts === undefined ? syncCoverage(input.links) : bankCoverage(input.links, input.accounts);
   if (coverage.linked === 0) {
     return null;
   }
@@ -145,6 +155,19 @@ export function lastSyncLine(input: {
     return syncedCountLine(coverage);
   }
   return `Остання синхронізація — ${momentLabel(coverage.oldestCompletedMs, input.now)}`;
+}
+
+/**
+ * `syncCoverage` over the linked рахунки the token still shows — the reading every freshness line
+ * and every «does monobank need the owner» decision takes (monobank-sync-freshness D4): Головний,
+ * this screen, and a background run's announcing. A рахунок the newest stored client-info answer
+ * does not name is set aside rather than left to age the whole bank for ever.
+ */
+export function bankCoverage(
+  links: readonly { readonly monobankAccountId: string; readonly lastSyncedAtMs?: number | null }[],
+  accounts: readonly { readonly id: string; readonly obtainedAt: Date }[],
+): SyncCoverage {
+  return syncCoverage(shownLinks(links, accounts));
 }
 
 /** How much of the bank has synced, and how old the whole of it is. */
@@ -218,6 +241,8 @@ export function monobankAccountRows(input: {
   readonly accounts: readonly Account[];
   /** The clock, passed in like every other one — «сьогодні» is decided by the caller's instant. */
   readonly now: Date;
+  /** Linked monobank accounts the token no longer shows (`notShownIds`); their rows say so. */
+  readonly notShown?: ReadonlySet<string>;
 }): MonobankAccountRow[] {
   const linkOf = new Map(input.links.map((link) => [link.monobankAccountId, link]));
   const accountsById = new Map(input.accounts.map((a) => [a.id, a]));
@@ -238,7 +263,13 @@ export function monobankAccountRows(input: {
         // same fallback the feed uses, and as transient as that one.
         ...(link ? { accountName: account ? account.name : link.accountId } : {}),
         ...(link?.syncStartDate ? { syncStartDate: link.syncStartDate } : {}),
-        ...(link ? { lastSync: lastSyncOf(link.lastSyncedAtMs, input.now) } : {}),
+        ...(link
+          ? {
+              lastSync: input.notShown?.has(monobankAccount.id)
+                ? NOT_SHOWN_LINE
+                : lastSyncOf(link.lastSyncedAtMs, input.now),
+            }
+          : {}),
       };
     });
 }
@@ -397,11 +428,12 @@ export function syncSummary(
     accounts: run.accounts.map((result) => ({
       monobankAccountId: result.monobankAccountId,
       outcome: result.outcome,
-      text: `${names.get(result.monobankAccountId) ?? result.monobankAccountId}: ${outcomeLabel(
-        result.outcome,
-      )}${result.imported > 0 ? `, ${transactionCount(result.imported)}` : ''}`,
+      text: `${names.get(result.monobankAccountId) ?? result.monobankAccountId}: ${
+        result.reason === NOT_SHOWN ? NOT_SHOWN_LINE : outcomeLabel(result.outcome)
+      }${result.imported > 0 ? `, ${transactionCount(result.imported)}` : ''}`,
     })),
-    retryOffered: run.accounts.some((result) => result.outcome !== 'complete'),
+    // A set-aside card leaves nothing a retry could finish.
+    retryOffered: countedResults(run.accounts).some((result) => result.outcome !== 'complete'),
     replaceTokenOffered: run.accounts.some((result) => result.outcome === 'invalid-token'),
   };
 }
@@ -423,7 +455,9 @@ export function syncFailed(run: SyncRun): boolean {
   if (run.kind === 'storage-unavailable') {
     return true;
   }
-  return run.accounts.some(
+  // Over the рахунки the run is judged by: a card the token no longer shows is set aside, not a
+  // failure felt on every pull (monobank-sync-freshness D4).
+  return countedResults(run.accounts).some(
     (result) =>
       result.outcome !== 'complete' &&
       result.outcome !== 'cancelled' &&
@@ -442,20 +476,102 @@ export function syncFailed(run: SyncRun): boolean {
 export const BACKGROUND_SYNC_NOTE =
   'Синхронізація також відбувається у фоні — приблизно раз на чверть години, коли телефон це дозволяє.';
 
+/** Said when Android may put the app's background work off: Doze and App Standby, unexempted. */
+export const BACKGROUND_OPTIMISED_NOTE =
+  'Android може відкладати фонову синхронізацію на години, поки застосунок економить заряд. ' +
+  'Дозвольте роботу у фоні — і рахунки оновлюватимуться без відкриття застосунку.';
+
+/** Said when the owner restricted the app's background activity in the phone's settings. */
+export const BACKGROUND_RESTRICTED_NOTE =
+  'Фонову роботу застосунку вимкнено в налаштуваннях телефона, тож без відкриття застосунку ' +
+  'рахунки не оновлюються.';
+
+/** What the background note says, and the phone's own fix it offers, when it offers one. */
+export interface BackgroundNote {
+  readonly text: string;
+  readonly action?: { readonly title: string; readonly fix: 'optimised' | 'restricted' };
+}
+
 /**
  * Said only when there is something for a background run to do. With nothing linked there is no
  * рахунок to sync, no chance is asked for, and the sentence would describe work that does not
  * happen.
+ *
+ * Otherwise one of three readings of the phone (spec: «The screen says that sync also runs in the
+ * background»). A phone that cannot tell reads as allowed and is offered nothing: a button that
+ * opens nothing is worse than none. No reading names a clock time.
  */
-export function backgroundNote(links: readonly MonobankLink[]): string | null {
-  return links.length === 0 ? null : BACKGROUND_SYNC_NOTE;
+export function backgroundNote(
+  links: readonly MonobankLink[],
+  restriction: BackgroundRestriction,
+): BackgroundNote | null {
+  if (links.length === 0) {
+    return null;
+  }
+  switch (restriction) {
+    case 'optimised':
+      return {
+        text: BACKGROUND_OPTIMISED_NOTE,
+        action: { title: 'Дозволити роботу у фоні', fix: 'optimised' },
+      };
+    case 'restricted':
+      return {
+        text: BACKGROUND_RESTRICTED_NOTE,
+        action: { title: 'Відкрити налаштування застосунку', fix: 'restricted' },
+      };
+    default:
+      return { text: BACKGROUND_SYNC_NOTE };
+  }
 }
+
+/** What a linked row says when the token no longer shows its monobank account. */
+export const NOT_SHOWN_LINE = 'monobank більше не показує цей рахунок';
+
+/**
+ * The linked monobank accounts the token no longer shows — every link `shownLinks` leaves out of
+ * the newest stored answer (monobank-sync-freshness D4).
+ */
+export function notShownIds(
+  links: readonly MonobankLink[],
+  accounts: readonly { readonly id: string; readonly obtainedAt: Date }[],
+): Set<string> {
+  const shown = new Set(shownLinks(links, accounts).map((link) => link.monobankAccountId));
+  return new Set(links.map((link) => link.monobankAccountId).filter((id) => !shown.has(id)));
+}
+
+/**
+ * The cards and банки the screen lists: the fresh answer when there is one, else what is stored —
+ * and, beside a fresh answer, every stored account that is still linked but the answer no longer
+ * names. Without those a closed card vanished from the list the moment the screen refreshed, and
+ * with it the line that explains it and the one control that disconnects it.
+ */
+export function inventory<T extends { readonly id: string }>(input: {
+  readonly fetched: readonly T[] | undefined;
+  readonly stored: readonly T[];
+  readonly links: readonly MonobankLink[];
+}): readonly T[] {
+  if (input.fetched === undefined) {
+    return input.stored;
+  }
+  const named = new Set(input.fetched.map((account) => account.id));
+  const linked = new Set(input.links.map((link) => link.monobankAccountId));
+  return [
+    ...input.fetched,
+    ...input.stored.filter((account) => linked.has(account.id) && !named.has(account.id)),
+  ];
+}
+
+/**
+ * The action that re-reads the list of cards and банки. It syncs no транзакції, and its label says
+ * so — «Оновити з monobank» read as a sync, and an owner pressed it expecting one.
+ */
+export const REFRESH_LIST_LABEL = 'Оновити список рахунків';
 
 /** Why nothing went to the bank: there is no token to send. Said by both of the screen's asks. */
 const TOKEN_NEEDED = 'Спершу введіть токен monobank';
 
 /**
- * What «Оновити з monobank» says when there is no token to refresh with.
+ * What «Оновити список рахунків» says when there is no token to refresh with.
  *
  * The same sentence «Синхронізувати» answers with, because it is the same reason: a tap that
  * silently did nothing read as a broken button, right next to one that explained itself. Only when
