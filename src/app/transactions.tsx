@@ -1,10 +1,10 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { Action, Choices, Picker, RowAction, SearchBar } from '@/components/form';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
-import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
+import { Card, ListRow, ListScreen, ScreenHeader } from '@/components/surfaces';
 import { TransactionRow } from '@/components/transaction-row';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -12,20 +12,23 @@ import {
   categories as categoriesRepo,
   limits as limitsRepo,
   sources as sourcesRepo,
+  storageStampNow,
+  storedHistory,
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { activeAccounts } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
+import { usePagedList } from '@/hooks/use-paged-list';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { useRuleOffer } from '@/hooks/use-rule-offer';
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import { accountChoiceLabel } from '@/ui/labels';
 import { ruleTargetLabel } from '@/ui/list-management';
-import { monthLabel, monthsOf } from '@/ui/months';
+import { monthLabel } from '@/ui/months';
 import { recategorise } from '@/ui/retype';
 import { PICKER_SIZE } from '@/ui/shortlist';
 import {
@@ -34,8 +37,8 @@ import {
   monthFromRoute,
   ONLY_UNCATEGORISED,
   searchCriteria,
+  searchDelayMs,
   searchLineTitle,
-  showMore,
   uncategorisedFromRoute,
 } from '@/ui/transaction-search';
 import {
@@ -78,8 +81,9 @@ export default function TransactionsScreen() {
         categories: categoriesRepo.list(),
         sources: sourcesRepo.list(),
         limits: limitsRepo.list(),
-        // Only for the місяці the narrowing offers — the list itself is read a page at a time.
-        months: monthsOf(transactionsRepo.listAll()),
+        // Only for the місяці the narrowing offers — the list itself is read a page at a time. One
+        // stamped DISTINCT over the date index, never the whole history (app-speed-pass design D6).
+        months: transactionsRepo.months(),
         // What the categorising picker puts first — the same recents Головний's picker reads.
         latest: transactionsRepo.listLatest(RECENT_WINDOW),
       }),
@@ -87,7 +91,14 @@ export default function TransactionsScreen() {
     ),
   );
 
+  /**
+   * What the list is searched for. The field's own text lives in `PausedSearchBar`, which hands it
+   * over once typing pauses — so a keystroke redraws the field and nothing else (transaction-search,
+   * "Typing a search is never held up by the search"; app-speed-pass design D6). Clearing the
+   * narrowing starts the field over through `searchReset`.
+   */
   const [query, setQuery] = useState('');
+  const [searchReset, setSearchReset] = useState(0);
   const [accountId, setAccountId] = useState(ANY);
   // The місяць the screen opens on: «будь-який», or the one a `?month=` in the route asked for.
   // `monthFromRoute` is what decides whether that text is a місяць at all, under `verify`.
@@ -116,28 +127,15 @@ export default function TransactionsScreen() {
     [accountId, criteria, month, uncategorisedOnly],
   );
 
+  /** What the search reads from, and storage's change stamp: a new question starts over. */
+  const pagePorts = useMemo(() => ({ read, stamp: storageStampNow }), [read]);
   /**
-   * How many pages the owner has asked for, and the pages themselves read from storage. State
-   * holds the *asking*, not the rows, so «Показати ще» keeps everything already on the screen in
-   * place — the same offsets in the same order.
-   *
-   * The rows come back through `useReloadOnFocus` and not through a `useMemo`: with an empty
-   * query — this screen's own default — `searchCriteria('')` is `undefined` on both sides of a
-   * focus reload, so nothing a memo depends on would change and the screen would keep the page it
-   * computed when it was mounted. A транзакція edited from the results would then read as it was,
-   * and a deleted one would stay on the screen as a row that opens «Такої транзакції немає».
-   * `showMore` is what decides a page, and it is proven in `transaction-search.test.ts`.
+   * The pages shown: «Показати ще» reads only the next one while nothing was written since, and a
+   * return to the screen or its own write reads as many rows as are shown, in one read, never back
+   * to the first page (app-speed-pass design D6). The decisions are `transaction-search.ts`'s.
    */
-  const [pages, setPages] = useState(1);
-  const [shown, reload] = useReloadOnFocus(
-    useCallback(() => {
-      let current = showMore([], read);
-      for (let more = 1; more < pages; more += 1) {
-        current = showMore(current.transactions, read);
-      }
-      return current;
-    }, [pages, read]),
-  );
+  const question = JSON.stringify({ criteria: criteria ?? null, accountId, month, uncategorisedOnly });
+  const [shown, showNext, reload] = usePagedList(question, pagePorts);
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
@@ -149,7 +147,9 @@ export default function TransactionsScreen() {
       overLimitByMonth({
         feed: shown.transactions,
         limits: stored.limits,
-        monthTransactions: (m) => transactionsRepo.listMonth(m),
+        // From the stored history already read between writes — never a read per month the rows
+        // span (transaction-search, "Limit marks on the list need no read per month").
+        monthTransactions: (m) => storedHistory.read().byMonth().get(m) ?? [],
       }),
     [shown.transactions, stored.limits],
   );
@@ -158,15 +158,19 @@ export default function TransactionsScreen() {
     criteria !== undefined || accountId !== ANY || month !== ANY || uncategorisedOnly;
   const nothing = emptyMessage({ shown: shown.transactions.length, narrowed });
 
-  /** Changing the question starts its own first page; what was grown belonged to the old one. */
+  /**
+   * Changing the question starts its own first page — `usePagedList` does that whenever the
+   * question's value changes — so what was grown for the old one is never shown under the new.
+   * Kept as the one door every narrowing goes through.
+   */
   const ask = useCallback((change: () => void) => {
-    setPages(1);
     change();
   }, []);
 
   const clearNarrowing = useCallback(() => {
     ask(() => {
       setQuery('');
+      setSearchReset((n) => n + 1);
       setAccountId(ANY);
       setMonth(ANY);
       setUncategorisedOnly(false);
@@ -218,7 +222,7 @@ export default function TransactionsScreen() {
       try {
         transactionsRepo.save(recategorise(t, picked), new Date());
         // A транзакція was recorded — one of the moments the прогрес is evaluated at.
-        evaluateProgress();
+        judgeProgressLater();
         setCategorising(undefined);
         setCategoryListOpen(false);
         reload();
@@ -258,130 +262,141 @@ export default function TransactionsScreen() {
     ...stored.months.map((m) => ({ value: m, label: monthLabel(m) })),
   ];
 
-  // One clock for the whole list, so «сьогодні» cannot change halfway down it.
-  const now = new Date();
-  return (
-    <Screen>
-      <ScreenHeader
-        title="Транзакції"
-        subtitle="Уся історія, новіші вгорі"
-        back={() => router.back()}
-      />
+  /**
+   * Every shown row's line, once per list rather than on every render — one clock for the whole
+   * list, so «сьогодні» cannot change halfway down it (app-speed-pass design D7).
+   */
+  const lines = useMemo(() => {
+    const now = new Date();
+    return new Map(
+      shown.transactions.map((t) => {
+        const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
+        return [t.id, { line, subtitle: feedSubtitle(line, now) }] as const;
+      }),
+    );
+  }, [byId, categoryIconKeys, categoryNames, overLimit, shown.transactions, sourceNames]);
 
-      <Card style={styles.filters}>
-        <SearchBar
-          value={query}
-          onChange={(typed: string) => ask(() => setQuery(typed))}
-          placeholder="опис, категорія або сума"
-        />
-        <Choices
-          label="Рахунок"
-          choices={accountChoices}
-          selected={accountId}
-          onSelect={(picked: string) => ask(() => setAccountId(picked))}
-          scroll
-        />
-        <Choices
-          label="Категорія"
-          choices={categoryChoices}
-          selected={uncategorisedOnly ? ONLY_UNCATEGORISED : ANY}
-          onSelect={(picked: string) =>
-            ask(() => setUncategorisedOnly(picked === ONLY_UNCATEGORISED))
+  /** One row of the list — drawn only while it is on or near the screen. */
+  const renderRow = (t: Transaction, index: number) => {
+    const { line, subtitle } = lines.get(t.id)!;
+    const title = searchLineTitle(line, uncategorisedOnly);
+    return (
+      <ListRow key={line.id} last={index === shown.transactions.length - 1}>
+        {/* Under «Без категорії» the опис already is the title; said once. */}
+        <TransactionRow
+          icon={line.icon}
+          iconTone={line.iconTone}
+          marked={line.uncategorised}
+          title={title}
+          titleTone={line.overLimit ? 'textDanger' : undefined}
+          titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
+          subtitle={subtitle}
+          description={
+            line.description && !(uncategorisedOnly && title === line.description)
+              ? line.description
+              : undefined
           }
-          scroll
+          amount={line.amount}
+          amountTone={line.amountTone}
+          onPress={() => router.push(`/transaction/${line.id}`)}
         />
-        {/* Only the місяці something is actually recorded in: a month the owner has nothing in
-            could only ever produce «нічого не знайдено». */}
-        {stored.months.length > 0 ? (
-          <Choices
-            label="Місяць"
-            choices={monthChoices}
-            selected={month}
-            onSelect={(picked: string) => ask(() => setMonth(picked))}
-            scroll
+
+        {/* The one tap behind the mark, as on Головний: picking stores the категорія
+            without the editing screen ever opening. */}
+        {line.uncategorised ? (
+          <View style={styles.rowActions}>
+            <RowAction
+              title={categorising === line.id ? 'Згорнути' : 'Обрати категорію'}
+              onPress={() => {
+                setCategorising(categorising === line.id ? undefined : line.id);
+                setCategoryListOpen(false);
+              }}
+            />
+          </View>
+        ) : null}
+        {/* Only while the line is still «Без категорії»: the picker is keyed by id, and a line
+            retyped elsewhere (a переказ, a дохід) keeps its id — its stale picker then refused
+            the next tap with «категорію має лише витрата або повернення» (2026-09-22). */}
+        {line.uncategorised && categorising === line.id ? (
+          <Picker
+            label="Категорія"
+            rows={categoryRows}
+            recentIds={recent.categories}
+            selected={undefined}
+            onSelect={(picked: string) => categorise(t, picked)}
+            noun="categories"
+            expanded={categoryListOpen}
+            onExpandedChange={setCategoryListOpen}
           />
         ) : null}
-        {narrowed ? (
-          <Action variant="secondary" title="Показати все" onPress={clearNarrowing} />
-        ) : null}
-      </Card>
+      </ListRow>
+    );
+  };
 
-      {nothing ? (
-        <ThemedText type="small" themeColor="textSecondary">
-          {nothing}
-        </ThemedText>
-      ) : (
+  return (
+    <ListScreen
+      header={
         <>
-          <ListCard>
-            {shown.transactions.map((t, index) => {
-              const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
-              const title = searchLineTitle(line, uncategorisedOnly);
-              return (
-                <ListRow key={line.id} last={index === shown.transactions.length - 1}>
-                  {/* Under «Без категорії» the опис already is the title; said once. */}
-                  <TransactionRow
-                    icon={line.icon}
-                    iconTone={line.iconTone}
-                    marked={line.uncategorised}
-                    title={title}
-                    titleTone={line.overLimit ? 'textDanger' : undefined}
-                    titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
-                    subtitle={feedSubtitle(line, now)}
-                    description={
-                      line.description && !(uncategorisedOnly && title === line.description)
-                        ? line.description
-                        : undefined
-                    }
-                    amount={line.amount}
-                    amountTone={line.amountTone}
-                    onPress={() => router.push(`/transaction/${line.id}`)}
-                  />
+        <ScreenHeader
+          title="Транзакції"
+          subtitle="Уся історія, новіші вгорі"
+          back={() => router.back()}
+        />
 
-                  {/* The one tap behind the mark, as on Головний: picking stores the категорія
-                      without the editing screen ever opening. */}
-                  {line.uncategorised ? (
-                    <View style={styles.rowActions}>
-                      <RowAction
-                        title={categorising === line.id ? 'Згорнути' : 'Обрати категорію'}
-                        onPress={() => {
-                          setCategorising(categorising === line.id ? undefined : line.id);
-                          setCategoryListOpen(false);
-                        }}
-                      />
-                    </View>
-                  ) : null}
-                  {/* Only while the line is still «Без категорії»: the picker is keyed by id, and a line
-                      retyped elsewhere (a переказ, a дохід) keeps its id — its stale picker then refused
-                      the next tap with «категорію має лише витрата або повернення» (2026-09-22). */}
-                  {line.uncategorised && categorising === line.id ? (
-                    <Picker
-                      label="Категорія"
-                      rows={categoryRows}
-                      recentIds={recent.categories}
-                      selected={undefined}
-                      onSelect={(picked: string) => categorise(t, picked)}
-                      noun="categories"
-                      expanded={categoryListOpen}
-                      onExpandedChange={setCategoryListOpen}
-                    />
-                  ) : null}
-                </ListRow>
-              );
-            })}
-          </ListCard>
-          {shown.more ? (
-            <Action
-              variant="secondary"
-              title="Показати ще"
-              onPress={() => setPages((asked) => asked + 1)}
+        <Card style={styles.filters}>
+          <PausedSearchBar key={searchReset} onSearch={setQuery} />
+          <Choices
+            label="Рахунок"
+            choices={accountChoices}
+            selected={accountId}
+            onSelect={(picked: string) => ask(() => setAccountId(picked))}
+            scroll
+          />
+          <Choices
+            label="Категорія"
+            choices={categoryChoices}
+            selected={uncategorisedOnly ? ONLY_UNCATEGORISED : ANY}
+            onSelect={(picked: string) =>
+              ask(() => setUncategorisedOnly(picked === ONLY_UNCATEGORISED))
+            }
+            scroll
+          />
+          {/* Only the місяці something is actually recorded in: a month the owner has nothing in
+              could only ever produce «нічого не знайдено». */}
+          {stored.months.length > 0 ? (
+            <Choices
+              label="Місяць"
+              choices={monthChoices}
+              selected={month}
+              onSelect={(picked: string) => ask(() => setMonth(picked))}
+              scroll
             />
-          ) : (
-            <ThemedText type="small" themeColor="textMuted">
-              Це вся історія.
-            </ThemedText>
-          )}
+          ) : null}
+          {narrowed ? (
+            <Action variant="secondary" title="Показати все" onPress={clearNarrowing} />
+          ) : null}
+        </Card>
         </>
-      )}
+      }
+      data={shown.transactions}
+      keyExtractor={(t) => t.id}
+      renderRow={renderRow}
+      empty={
+        nothing ? (
+          <ThemedText type="small" themeColor="textSecondary">
+            {nothing}
+          </ThemedText>
+        ) : null
+      }
+      footer={
+        shown.transactions.length === 0 ? null : shown.more ? (
+          <Action variant="secondary" title="Показати ще" onPress={showNext} />
+        ) : (
+          <ThemedText type="small" themeColor="textMuted">
+            Це вся історія.
+          </ThemedText>
+        )
+      }>
       <RuleOfferSheet
         offer={ruleOffer.offer}
         targetLabel={
@@ -390,8 +405,35 @@ export default function TransactionsScreen() {
         onAccept={ruleOffer.accept}
         onDecline={ruleOffer.decline}
       />
-    </Screen>
+    </ListScreen>
   );
+}
+
+/**
+ * The search field, owning its text: every letter appears at once, and `onSearch` hears the text
+ * after `searchDelayMs` of quiet — at once when the field is cleared.
+ */
+function PausedSearchBar({ onSearch }: { onSearch: (text: string) => void }) {
+  const [typed, setTyped] = useState('');
+  const [searched, setSearched] = useState('');
+  useEffect(() => {
+    if (typed === searched) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setSearched(typed);
+      onSearch(typed);
+    }, searchDelayMs(searched, typed));
+    return () => clearTimeout(timer);
+  }, [onSearch, searched, typed]);
+  const change = (text: string) => {
+    setTyped(text);
+    if (searchDelayMs(searched, text) === 0) {
+      setSearched(text);
+      onSearch(text);
+    }
+  };
+  return <SearchBar value={typed} onChange={change} placeholder="опис, категорія або сума" />;
 }
 
 const styles = StyleSheet.create({

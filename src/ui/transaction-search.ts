@@ -149,6 +149,70 @@ export function showMore(
 
 
 /**
+ * How long typing must pause before the list is searched again (transaction-search, "Typing a
+ * search is never held up by the search"; app-speed-pass design D6).
+ */
+export const SEARCH_PAUSE_MS = 250;
+
+/**
+ * How long to wait before `next` — what the field now holds — becomes the search: at once when the
+ * field was cleared, so the unsearched list comes back without a pause, and after
+ * `SEARCH_PAUSE_MS` of quiet otherwise, so fast typing searches once rather than once per letter.
+ * `previous` is what the field held before this change; the answer does not depend on it today,
+ * and it is there so a rule that does (a paste, say) has one place to live.
+ */
+export function searchDelayMs(_previous: string, next: string): number {
+  return next.trim() === '' ? 0 : SEARCH_PAUSE_MS;
+}
+
+/**
+ * The pages «Транзакції» shows, and what storage looked like when they were read: the stamp is
+ * taken *before* the read that produced `transactions`, so a commit during that read makes the next
+ * stamp differ (app-speed-pass design D6).
+ */
+export interface ShownPages extends ShownTransactions {
+  readonly stamp: string;
+}
+
+/** What a page read needs: the search in force, and storage's change stamp. */
+export interface PagePorts {
+  readonly read: (limit: number, offset: number) => readonly Transaction[];
+  readonly stamp: () => string;
+}
+
+/** Up to `limit` rows from the top — `showMore` from nothing — with the stamp taken first. */
+function readFromTop(ports: PagePorts, limit: number): ShownPages {
+  const stamp = ports.stamp();
+  return { ...showMore([], ports.read, limit), stamp };
+}
+
+/** The first page of a search — what a new question starts with. */
+export function firstPage(ports: PagePorts, size: number = PAGE_SIZE): ShownPages {
+  return readFromTop(ports, size);
+}
+
+/**
+ * «Показати ще». With nothing written since `shown` was read, only the next page is read and it
+ * follows the rows already there. With something written in between, the rows shown and the next
+ * page are read again together, in one read, so no транзакція is shown twice and none is skipped.
+ */
+export function nextPage(shown: ShownPages, ports: PagePorts, size: number = PAGE_SIZE): ShownPages {
+  const stamp = ports.stamp();
+  if (stamp !== shown.stamp) {
+    return readFromTop(ports, shown.transactions.length + size);
+  }
+  return { ...showMore(shown.transactions, ports.read, size), stamp };
+}
+
+/**
+ * Coming back to «Транзакції», or a write made from it: as many rows as were shown — never fewer
+ * than a page — read again in one read, not page by page and never back to the first page.
+ */
+export function rereadPages(shown: ShownPages, ports: PagePorts, size: number = PAGE_SIZE): ShownPages {
+  return readFromTop(ports, Math.max(shown.transactions.length, size));
+}
+
+/**
  * What the screen says instead of a list, or `null` when there is a list to show. Two different
  * situations and two different sentences: a device that has recorded nothing at all is not a
  * search that found nothing, and telling the owner the second when the first is true would send

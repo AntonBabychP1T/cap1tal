@@ -32,6 +32,8 @@ export default function SettingsScreen() {
    */
   const [driveConnected] = useReloadOnFocus(
     useCallback(() => isConnected(driveBackupState.read()), []),
+    // Not read until the tab is first opened; the note waits for it.
+    { whileUnseen: undefined },
   );
 
   return (
@@ -58,9 +60,11 @@ export default function SettingsScreen() {
         ))}
       </ListCard>
 
-      <ThemedText type="small" themeColor="textMuted">
-        {outboundTrafficNote(driveConnected)}
-      </ThemedText>
+      {driveConnected === undefined ? null : (
+        <ThemedText type="small" themeColor="textMuted">
+          {outboundTrafficNote(driveConnected)}
+        </ThemedText>
+      )}
     </Screen>
   );
 }

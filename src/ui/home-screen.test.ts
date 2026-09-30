@@ -358,7 +358,9 @@ describe('Головний as the overview', () => {
 
   it('Scenario: The section stops at five', () => {
     expect(main).toContain('const FEED_SIZE = 5;');
-    expect(main).toContain('transactionsRepo.listLatest(FEED_SIZE)');
+    // The стрічка is the head of the stored history since app-speed-pass, which is in `listLatest`'s
+    // order by construction (stored-history.test.ts pins the two equal).
+    expect(main).toContain('feed: latest.slice(0, FEED_SIZE)');
   });
 
   it('Scenario: The whole history is one tap from the feed', () => {
@@ -381,7 +383,7 @@ describe('Головний as the overview', () => {
     // Returning from the entry screen is a navigation focus, and the стрічка is re-read on it —
     // whenever «Останні 5 транзакцій» is visible; hidden, the read is skipped entirely (design D6).
     expect(main).toContain('useReloadOnFocus(');
-    expect(main).toContain('plan.needsFeed ? transactionsRepo.listLatest(FEED_SIZE) : []');
+    expect(main).toContain('plan.needsFeed ? history.transactions.slice(0, RECENT_WINDOW) : []');
   });
 
   it('Scenario: A back-dated транзакція takes its own place', () => {
@@ -389,7 +391,10 @@ describe('Головний as the overview', () => {
     // by date, then by recording recency (proven in `transactions-repo.test.ts`, "The latest
     // listing is newest first"). So today's транзакція stands first and one dated a week ago
     // stands where its date puts it, without the screen deciding anything.
-    expect(main).toContain('plan.needsFeed ? transactionsRepo.listLatest(FEED_SIZE) : []');
+    // The стрічка is the head of the stored history since app-speed-pass, which is in `listLatest`'s
+    // order by construction (stored-history.test.ts pins the two equal).
+    expect(main).toContain('plan.needsFeed ? history.transactions.slice(0, RECENT_WINDOW) : []');
+    expect(main).toContain('feed: latest.slice(0, FEED_SIZE)');
     expect(main).toContain('stored.feed.map((t, index) =>');
     expect(main).not.toContain('stored.feed.sort');
     expect(main).not.toContain('[...stored.feed]');
@@ -892,15 +897,37 @@ describe('monobank among what needs attention', () => {
 describe('what Головний itself wires', () => {
   const main = readFileSync(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
 
+  it('Scenario: Typing into a чернетка redraws only that чернетка', () => {
+    // The typed сума is `DraftRow`'s own state, so a keystroke re-renders that row alone — the
+    // screen, the статок, the категорії widget and the стрічка never see it (app-speed-pass D7).
+    const screenBody = main.slice(main.indexOf('export default function MainScreen'), main.indexOf('function DraftRow('));
+    expect(screenBody).not.toMatch(/draftAmounts|setDraftAmounts/);
+    expect(screenBody).toContain('<DraftRow');
+    const row = main.slice(main.indexOf('function DraftRow('));
+    expect(row).toContain("const [amount, setAmount] = useState('')");
+    expect(row).toContain('onChangeText={setAmount}');
+  });
+
+  it('the day-rollover check runs only while Головний is in sight', () => {
+    // Behaviour-neutral (app-speed-pass design D9): the interval and the resume listener are set up
+    // by a focus effect, so they stop when Головний is out of sight and its next focus reads anyway.
+    const interval = main.indexOf('setInterval(rolledOver');
+    const effect = main.lastIndexOf('useFocusEffect(', interval);
+    expect(effect).toBeGreaterThan(-1);
+    expect(main.slice(effect, interval)).not.toContain('useEffect(');
+    expect(main.slice(effect, interval)).toContain("AppState.addEventListener('change'");
+  });
+
   it('Scenario: A run that begins while Головний is open reaches the line', () => {
     // Subscribed, not read during render: neither opening the app nor coming back to it is a
     // navigation focus, so a run started by the shell would otherwise never reach this screen.
     expect(main).toContain('onSyncState(');
     expect(main).toContain('setSyncing(syncInFlight())');
-    // The same signal re-reads storage, which is how транзакції a run imported appear in the
-    // стрічка without the owner leaving Головний.
+    // The same signal re-reads storage once the run finishes, which is how транзакції a run
+    // imported appear in the стрічка without the owner leaving Головний. Through `reloadWhenSeen`
+    // since app-speed-pass: at once in sight, on the next focus behind a pushed screen.
     const at = main.indexOf('onSyncState(');
-    expect(main.slice(at, at + 200)).toContain('reload()');
+    expect(main.slice(at, at + 200)).toContain('reloadWhenSeen()');
   });
 
   it('Scenario: A pull inside the quiet interval still syncs', () => {

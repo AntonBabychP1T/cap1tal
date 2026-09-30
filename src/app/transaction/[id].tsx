@@ -18,7 +18,7 @@ import {
 import type { Account } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { useRuleOffer } from '@/hooks/use-rule-offer';
@@ -196,7 +196,7 @@ export default function EditTransactionScreen() {
       );
       // A транзакція was edited. Nothing already earned is ever taken back by it (design D2);
       // only what the change newly makes true is earned.
-      evaluateProgress();
+      judgeProgressLater();
     },
     [original],
   );
@@ -326,7 +326,7 @@ export default function EditTransactionScreen() {
         onPress: () => {
           transactionsRepo.remove(original.id);
           // A транзакція was deleted. The engine only ever adds: nothing is unearned by this.
-          evaluateProgress();
+          judgeProgressLater();
           router.back();
         },
       },

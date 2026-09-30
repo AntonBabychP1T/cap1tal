@@ -6,7 +6,7 @@ import type {
 } from '../db/net-worth-repo';
 import type { Account, AccountKind } from '../domain/account';
 import type { CurrentValue } from '../domain/investments';
-import { money, type CurrencyCode } from '../domain/money';
+import { money, type CurrencyCode, type Money } from '../domain/money';
 import {
   currentNetWorth,
   netWorthChange,
@@ -657,6 +657,8 @@ export function netWorthWidgetModel(input: {
   readonly accounts: readonly Account[];
   readonly transactions: readonly Transaction[];
   readonly currentValues: ReadonlyMap<string, CurrentValue>;
+  /** Every рахунок's розрахунковий баланс over `transactions`, when the caller already has it. */
+  readonly balances?: ReadonlyMap<string, Money>;
   readonly monthlyMovement: readonly AccountMonthMovement[];
   readonly firstDates: readonly AccountFirstDate[];
   readonly firstDateMovement: readonly AccountFirstDateMovement[];
@@ -689,6 +691,7 @@ export function netWorthWidgetModel(input: {
     accounts: input.accounts,
     transactions: input.transactions,
     currentValues: input.currentValues,
+    ...(input.balances ? { balances: input.balances } : {}),
   });
   const readouts = current.status === 'ready' ? currencyReadouts(current.totals) : [];
   const approximate: ApproximateNetWorth =

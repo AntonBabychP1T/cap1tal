@@ -29,11 +29,11 @@ const main = source('../app/(tabs)/index.tsx');
 
 describe('the drain runs when the app runs', () => {
   it('Scenario: A notification captured while the app was closed becomes a чернетка', () => {
-    // Two triggers, counted rather than merely present: `void collect();` appears once per
-    // trigger, so dropping either one fails here instead of silently halving the requirement's
-    // WHEN. On mount — an app that was not running collects what waited for it…
-    expect([...layout.matchAll(/void collect\(\);/g)]).toHaveLength(2);
-    expect(layout).toMatch(/useEffect\(\(\) => \{\s*void collect\(\);\s*\}, \[collect\]\);/);
+    // Two triggers, each present, so dropping either one fails here instead of silently halving
+    // the requirement's WHEN. On launch — an app that was not running collects what waited for it,
+    // among the launch chores once the first screen is drawn (app-speed-pass design D5)…
+    expect(layout).toMatch(/startLaunchChores\(\{[\s\S]*?run: collect \}/);
+    expect([...layout.matchAll(/void collect\(\);/g)]).toHaveLength(1);
     // …and on every return to the foreground, which is the other half of it. The listener itself
     // is `src/hooks/use-on-foreground.ts`, written once for both of this feature's call sites.
     expect(layout).toContain('useOnForeground(');
@@ -122,7 +122,8 @@ describe('Головний shows чернетки only while some are pending', 
     // The drain runs in the shell, on opening and on foreground — neither is a navigation focus,
     // so `useReloadOnFocus` alone would leave the чернетка invisible until the owner left the tab
     // and came back. That is exactly the "built but invisible" this change exists to end.
-    expect(main).toContain('onCapturesStored(reload)');
+    // `reloadWhenSeen` since app-speed-pass: at once in sight, on the next focus otherwise.
+    expect(main).toContain('onCapturesStored(reloadWhenSeen)');
   });
 
 

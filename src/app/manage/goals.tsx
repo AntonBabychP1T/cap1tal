@@ -13,7 +13,7 @@ import {
 } from '@/db/repos';
 import type { CurrencyCode } from '@/domain/money';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { formatMinorUnits } from '@/ui/amount-input';
 import { failureAlert } from '@/ui/failure-alert';
@@ -130,7 +130,7 @@ export default function GoalsScreen() {
         );
         // A ціль-накопичення was created or edited: one of the named moments. Setting a ліміт is
         // not one — a ліміт is a ціль витрат and no досягнення is defined about one.
-        evaluateProgress();
+        judgeProgressLater();
       } else {
         // The ціль витрат is the ліміт: one row, written under the name the owner used.
         limitsRepo.set(spendingFromDraft(draft.fields));
@@ -155,7 +155,7 @@ export default function GoalsScreen() {
             goalsRepo.remove(row.id);
             // A ціль-накопичення was deleted. Nothing it earned is taken back; a ціль recreated
             // later is a new ціль under a new id, and earns its own.
-            evaluateProgress();
+            judgeProgressLater();
             reload();
           },
         },

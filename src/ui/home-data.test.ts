@@ -76,7 +76,9 @@ describe('every named trigger reaches reload()', () => {
   });
 
   it('Scenario: capture — a чернетка stored while the tab already has focus still reaches the screen', () => {
-    expect(screen).toContain('onCapturesStored(reload)');
+    // Through `reloadWhenSeen` since app-speed-pass: read at once while Головний is in sight, and
+    // on its next focus while it is not — never lost, never read behind a pushed screen.
+    expect(screen).toContain('onCapturesStored(reloadWhenSeen)');
   });
 
   it('Scenario: date rollover — checked both on resume and while the screen never left the foreground', () => {

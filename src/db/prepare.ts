@@ -46,3 +46,28 @@ export function prepareConnection(exec: StatementRunner, options?: PrepareConnec
   }
   exec('PRAGMA foreign_keys = ON');
 }
+
+/**
+ * Whether the connection behind `db` is inside a transaction right now — the one fact the
+ * stamp-keyed memo must know before it may remember anything (app-speed-pass design D1): a read
+ * inside a write transaction can see rows a later rollback takes away, and a rollback moves no
+ * change counter back.
+ *
+ * Both drivers answer it from SQLite's autocommit flag, under different names: `expo-sqlite`'s
+ * `isInTransactionSync()`, `better-sqlite3`'s `inTransaction`. A handle with no `$client` is a
+ * drizzle transaction handle (`tx`), which is by definition inside one; so is anything this cannot
+ * recognise, because bypassing the memo is always safe and remembering is not.
+ */
+export function inTransaction(db: object): boolean {
+  const client = (db as { $client?: unknown }).$client;
+  if (typeof client !== 'object' || client === null) {
+    return true;
+  }
+  if ('isInTransactionSync' in client && typeof client.isInTransactionSync === 'function') {
+    return Boolean((client.isInTransactionSync as () => boolean).call(client));
+  }
+  if ('inTransaction' in client && typeof client.inTransaction === 'boolean') {
+    return client.inTransaction;
+  }
+  return true;
+}

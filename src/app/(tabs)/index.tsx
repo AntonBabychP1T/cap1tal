@@ -27,7 +27,6 @@ import {
 } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
-  accounts as accountsRepo,
   categories as categoriesRepo,
   dashboardLayout as dashboardLayoutRepo,
   investments as investmentsRepo,
@@ -38,15 +37,16 @@ import {
   rates as ratesRepo,
   rules as rulesRepo,
   sources as sourcesRepo,
+  storedHistory,
   transactions as transactionsRepo,
 } from '@/db/repos';
-import { computeBalances } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { syncEvent } from '@/ui/read-policy';
 import { useRuleOffer } from '@/hooks/use-rule-offer';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
@@ -57,6 +57,7 @@ import {
   dismissPendingDraft,
   draftLines,
   type DraftAnswer,
+  type DraftLine,
 } from '@/ui/drafts-section';
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { CategoryWidget } from '@/components/category-widget';
@@ -70,7 +71,7 @@ import { homeViewModel } from '@/ui/home-screen';
 import { syncCoverage } from '@/ui/monobank-screen';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { failureAlert, refusalAlert } from '@/ui/failure-alert';
-import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
+import { judgeProgressLater, onProgressJudged, progressScreenData } from '@/hooks/progress-ports';
 import {
   PROGRESS_ROUTE,
   progressViewModel,
@@ -151,9 +152,13 @@ export default function MainScreen() {
     [router],
   );
 
-  const [stored, reload] = useReloadOnFocus(
+  const [stored, reload, reloadWhenSeen] = useReloadOnFocus(
     useCallback(() => {
-      const accounts = accountsRepo.list();
+      // The whole stored history, read at most once per change stamp (app-speed-pass design D1):
+      // every balance, Статок, the month, the стрічка and the ліміти below are cut from this one
+      // answer, and a return with nothing written in between reads none of it again.
+      const history = storedHistory.read();
+      const accounts = history.accounts;
       const now = new Date();
       const month = currentMonth(now);
       const today = todayIso(now);
@@ -163,9 +168,9 @@ export default function MainScreen() {
       // and a newly introduced one is simply not among `plan.visibleIds` yet (design D6).
       const layout = dashboardLayoutRepo.read();
       const plan = homeDashboardReadPlan(layout.items);
-      // Read once and shared: every balance below and Статок both need the whole history, and a
-      // query per рахунок made every return to Головний stall (bug report 2026-09-29).
-      const allTransactions = transactionsRepo.listAll();
+      // The latest транзакції, newest first — the head of the history, already in the latest
+      // listing's order, so the стрічка is its first five without a second read.
+      const latest = plan.needsFeed ? history.transactions.slice(0, RECENT_WINDOW) : [];
 
       return {
         month,
@@ -176,13 +181,13 @@ export default function MainScreen() {
         // The розрахунковий баланс of each рахунок — computed from транзакції, never stored —
         // still decides whether an unarchived one exists at all, for the invitation below. Not
         // gated by any widget: the invitation is fixed, not a widget (design D5).
-        balances: computeBalances(accounts, allTransactions),
+        balances: history.balances(),
         // The month behind «Витрачено» and «Топ категорій» — the same bounded read Місяць does
         // for the same month, shared by both widgets and read once between them.
-        monthTransactions: plan.needsMonthTransactions ? transactionsRepo.listMonth(month) : [],
+        monthTransactions: plan.needsMonthTransactions ? (history.byMonth().get(month) ?? []) : [],
         // Статок's current reading needs every transaction ever recorded — the same read the
         // balances above already made.
-        allTransactions: plan.needsNetWorth ? allTransactions : [],
+        allTransactions: plan.needsNetWorth ? history.transactions : [],
         investmentValues: plan.needsNetWorth ? investmentsRepo.all() : new Map(),
         // Статок's bounded history reads — O(accounts x months), never O(transactions).
         netWorthMonthly: plan.needsNetWorth ? netWorthRepo.monthlyMovement(today) : [],
@@ -192,9 +197,12 @@ export default function MainScreen() {
           ? netWorthRepo.accountsWithFutureRecords(today)
           : new Set<string>(),
         rates: ratesRepo.all(),
-        feed: plan.needsFeed ? transactionsRepo.listLatest(FEED_SIZE) : [],
+        feed: latest.slice(0, FEED_SIZE),
         // Deeper than the стрічка, and for one purpose: the категорії the picker offers first.
-        latest: plan.needsFeed ? transactionsRepo.listLatest(RECENT_WINDOW) : [],
+        latest,
+        // Which months are over a ліміт is judged from the same history, month by month in
+        // `listMonth`'s order — never a read per month the стрічка touches.
+        byMonth: history.byMonth,
         // The read-only прогrес reading — evaluates nothing, marks nothing seen (design D6).
         progressData: plan.needsProgress ? progressScreenData(now) : undefined,
         // Everything stored that still carries «Без категорії» — counted, not listed. Always
@@ -247,17 +255,19 @@ export default function MainScreen() {
    *
    * Subscribed rather than read during render: a run that *begins* while Головний is already open
    * has to reach the line, and neither opening the app nor coming back to it is a navigation
-   * focus. The same signal reloads what the screen shows, so транзакції a run imported appear
-   * without the owner leaving it.
+   * focus. The same signal re-reads what the screen shows once a run finishes, so транзакції a run
+   * imported appear without the owner leaving it — and, while Головний is out of sight, when the
+   * owner comes back to it rather than behind a pushed screen. A run *starting* has written nothing
+   * and reads nothing (app-speed-pass design D4).
    */
   const [syncing, setSyncing] = useState(() => syncInFlight());
   useEffect(
     () =>
       onSyncState(() => {
         setSyncing(syncInFlight());
-        reload();
+        if (syncEvent(syncInFlight())) reloadWhenSeen();
       }),
-    [reload],
+    [reloadWhenSeen],
   );
 
   /**
@@ -296,14 +306,15 @@ export default function MainScreen() {
           });
           // The sync committed, or it did not; either way the зведення is read once and only
           // what is newly true is earned.
-          evaluateProgress();
-          reload();
+          judgeProgressLater();
+          // A pull can outlast the owner's stay on Головний: re-read now in sight, or on return.
+          reloadWhenSeen();
         },
       });
     } finally {
       setPulling(false);
     }
-  }, [configured, reload, stored.links.length]);
+  }, [configured, reload, reloadWhenSeen, stored.links.length]);
 
   /**
    * Opening Головний again shows it from its top — the month's status. Restoring the scroll
@@ -350,7 +361,13 @@ export default function MainScreen() {
    * stored. This is how a чернетка reaches the screen in the session that captured it instead of
    * waiting for the owner to leave the tab and come back.
    */
-  useEffect(() => onCapturesStored(reload), [reload]);
+  useEffect(() => onCapturesStored(reloadWhenSeen), [reloadWhenSeen]);
+
+  /**
+   * A досягнення judged after a save (or a прогін) reaches this screen: at once in sight, on the
+   * next focus otherwise (app-speed-pass design D5).
+   */
+  useEffect(() => onProgressJudged(reloadWhenSeen), [reloadWhenSeen]);
 
   /**
    * The one reload trigger with no event of its own: the local calendar date moving on while
@@ -363,27 +380,32 @@ export default function MainScreen() {
    * turning into October 1 while the screen was never once backgrounded. Both call the same
    * `reload()` every other trigger here calls, so a rollover the owner sees is exactly as coherent
    * as one they navigated back to.
+   *
+   * Both run only while Головний is in sight: out of sight nothing on it is looked at, and its next
+   * focus reads anyway (app-speed-pass design D9).
    */
-  useEffect(() => {
-    const rolledOver = () => {
-      if (hasDateRolledOver(stored.today, new Date())) {
-        reload();
-      }
-    };
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        rolledOver();
-      }
-    });
-    // Coarse on purpose: a month card that is at most a minute late past midnight costs nothing
-    // an owner sitting on Головний at that exact moment would notice, and a shorter interval
-    // would only spend battery checking a date that changes once a day.
-    const interval = setInterval(rolledOver, 60000);
-    return () => {
-      subscription.remove();
-      clearInterval(interval);
-    };
-  }, [reload, stored.today]);
+  useFocusEffect(
+    useCallback(() => {
+      const rolledOver = () => {
+        if (hasDateRolledOver(stored.today, new Date())) {
+          reload();
+        }
+      };
+      const subscription = AppState.addEventListener('change', (state) => {
+        if (state === 'active') {
+          rolledOver();
+        }
+      });
+      // Coarse on purpose: a month card that is at most a minute late past midnight costs nothing
+      // an owner sitting on Головний at that exact moment would notice, and a shorter interval
+      // would only spend battery checking a date that changes once a day.
+      const interval = setInterval(rolledOver, 60000);
+      return () => {
+        subscription.remove();
+        clearInterval(interval);
+      };
+    }, [reload, stored.today]),
+  );
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
@@ -473,10 +495,24 @@ export default function MainScreen() {
       overLimitByMonth({
         feed: stored.feed,
         limits: stored.limits,
-        monthTransactions: (month) => transactionsRepo.listMonth(month),
+        monthTransactions: (month) => stored.byMonth().get(month) ?? [],
       }),
-    [stored.feed, stored.limits],
+    [stored],
   );
+
+  /**
+   * The стрічка's lines, once per read rather than on every render — typing a сума into a чернетка
+   * or opening a picker redraws nothing here (app-speed-pass design D7).
+   */
+  const feedLines = useMemo(() => {
+    const now = new Date();
+    return new Map(
+      stored.feed.map((t) => {
+        const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
+        return [t.id, { line, subtitle: feedSubtitle(line, now) }] as const;
+      }),
+    );
+  }, [byId, categoryIconKeys, categoryNames, overLimit, sourceNames, stored.feed]);
 
   /** «Топ категорій витрат»: the same місячна breakdown, ranked and currency-selected. */
   const [requestedCategoryCurrency, setRequestedCategoryCurrency] = useState<string>();
@@ -505,6 +541,7 @@ export default function MainScreen() {
         ? netWorthWidgetModel({
             accounts: stored.accounts,
             transactions: stored.allTransactions,
+            balances: stored.balances,
             currentValues: stored.investmentValues,
             monthlyMovement: stored.netWorthMonthly,
             firstDates: stored.netWorthFirstDates,
@@ -520,6 +557,7 @@ export default function MainScreen() {
       requestedHistory,
       stored.accounts,
       stored.allTransactions,
+      stored.balances,
       stored.investmentValues,
       stored.netWorthFirstDateMovement,
       stored.netWorthFirstDates,
@@ -576,7 +614,7 @@ export default function MainScreen() {
         transactionsRepo.save(recategorise(t, picked), new Date());
         // A транзакція was recorded — one of the named moments the прогрес is evaluated at. It is
         // the storing that evaluates, never the drawing.
-        evaluateProgress();
+        judgeProgressLater();
         setCategorising(undefined);
         reload();
         // The категорія is already stored, never lost by a dismissed offer (design D5).
@@ -592,9 +630,6 @@ export default function MainScreen() {
     [reload, reportBug, ruleOffer],
   );
 
-  /** What the owner has typed as the сума of a raw чернетка, per чернетка. */
-  const [draftAmounts, setDraftAmounts] = useState<Record<string, string>>({});
-
   const settleDraft = useCallback(
     (draftId: string, answer: DraftAnswer) => {
       if (answer.kind === 'amount-required' || answer.kind === 'rejected') {
@@ -606,16 +641,15 @@ export default function MainScreen() {
         );
         return;
       }
-      setDraftAmounts(({ [draftId]: _answered, ...rest }) => rest);
       // A чернетка was confirmed or dismissed: confirming one stores a транзакція.
-      evaluateProgress();
+      judgeProgressLater();
       reload();
     },
     [reload],
   );
 
   const confirmDraftLine = useCallback(
-    (draftId: string, needsAmount: boolean) => {
+    (draftId: string, typedAmount: string | undefined) => {
       const draft = stored.drafts.find((pending) => pending.id === draftId);
       if (!draft) {
         return;
@@ -626,7 +660,7 @@ export default function MainScreen() {
           confirmPendingDraft(
             draft,
             DRAFT_PORTS,
-            needsAmount ? draftAmounts[draftId] : undefined,
+            typedAmount,
           ),
         );
       } catch (error) {
@@ -636,7 +670,7 @@ export default function MainScreen() {
         void raiseAlert('local-save', { attended: attended() }, ALERT_PORTS);
       }
     },
-    [draftAmounts, reportBug, settleDraft, stored.drafts],
+    [reportBug, settleDraft, stored.drafts],
   );
 
   const dismissDraftLine = useCallback(
@@ -717,14 +751,7 @@ export default function MainScreen() {
             ) : (
               <ListCard>
                 {stored.feed.map((t, index) => {
-                  const line = transactionLine(
-                    t,
-                    byId,
-                    categoryNames,
-                    sourceNames,
-                    overLimit,
-                    categoryIconKeys,
-                  );
+                  const { line, subtitle } = feedLines.get(t.id)!;
                   return (
                     <ListRow key={line.id} last={index === stored.feed.length - 1} style={styles.row}>
                       <TransactionRow
@@ -734,7 +761,7 @@ export default function MainScreen() {
                         title={feedTitle(line)}
                         titleTone={line.overLimit ? 'textDanger' : undefined}
                         titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
-                        subtitle={feedSubtitle(line, new Date())}
+                        subtitle={subtitle}
                         description={line.description}
                         amount={line.amount}
                         amountTone={line.amountTone}
@@ -976,53 +1003,13 @@ export default function MainScreen() {
       {draftsExpanded && drafts.length > 0 ? (
         <ListCard>
           {drafts.map((line, index) => (
-            <ListRow key={line.id} last={index === drafts.length - 1} style={styles.row}>
-              <View style={styles.rowTop}>
-                <View style={styles.rowLabel}>
-                  <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {`${line.accountName} · ${line.date}`}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textMuted">
-                    {line.text}
-                  </ThemedText>
-                  {/* The foreign сума the notification named: information, never a proposal. */}
-                  {line.original ? (
-                    <ThemedText type="small" themeColor="textMuted">
-                      {line.original}
-                    </ThemedText>
-                  ) : null}
-                </View>
-                {line.amount ? (
-                  <ThemedText tabular style={styles.amount}>
-                    {line.amount}
-                  </ThemedText>
-                ) : null}
-              </View>
-
-              {/* A raw чернетка has no сума of its own; it confirms only with one the owner
-                  supplies, in the рахунок's currency and under the manual-entry rules. */}
-              {line.needsAmount ? (
-                <Field
-                  label="Сума"
-                  value={draftAmounts[line.id] ?? ''}
-                  onChangeText={(typed: string) =>
-                    setDraftAmounts((current) => ({ ...current, [line.id]: typed }))
-                  }
-                  keyboardType="decimal-pad"
-                  placeholder="0,00"
-                  hint={line.currency}
-                />
-              ) : null}
-
-              <View style={styles.rowActions}>
-                <RowAction
-                  title="Підтвердити"
-                  onPress={() => confirmDraftLine(line.id, line.needsAmount)}
-                />
-                <RowAction title="Відхилити" onPress={() => dismissDraftLine(line)} />
-              </View>
-            </ListRow>
+            <DraftRow
+              key={line.id}
+              line={line}
+              last={index === drafts.length - 1}
+              onConfirm={confirmDraftLine}
+              onDismiss={dismissDraftLine}
+            />
           ))}
         </ListCard>
       ) : null}
@@ -1059,6 +1046,73 @@ export default function MainScreen() {
         onDecline={ruleOffer.decline}
       />
     </Screen>
+  );
+}
+
+/**
+ * One pending чернетка on Головний, owning what the owner types as its сума: a keystroke redraws
+ * this row and nothing else — not the статок, the категорії or the стрічка (app-shell, "A long list
+ * draws only what is near the screen"; app-speed-pass design D7). A settled чернетка leaves the
+ * list, and its typed сума goes with it.
+ */
+function DraftRow({
+  line,
+  last,
+  onConfirm,
+  onDismiss,
+}: {
+  line: DraftLine;
+  last: boolean;
+  onConfirm: (draftId: string, typedAmount: string | undefined) => void;
+  onDismiss: (line: DraftLine) => void;
+}) {
+  const [amount, setAmount] = useState('');
+  return (
+    <ListRow last={last} style={styles.row}>
+      <View style={styles.rowTop}>
+        <View style={styles.rowLabel}>
+          <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {`${line.accountName} · ${line.date}`}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textMuted">
+            {line.text}
+          </ThemedText>
+          {/* The foreign сума the notification named: information, never a proposal. */}
+          {line.original ? (
+            <ThemedText type="small" themeColor="textMuted">
+              {line.original}
+            </ThemedText>
+          ) : null}
+        </View>
+        {line.amount ? (
+          <ThemedText tabular style={styles.amount}>
+            {line.amount}
+          </ThemedText>
+        ) : null}
+      </View>
+
+      {/* A raw чернетка has no сума of its own; it confirms only with one the owner
+          supplies, in the рахунок's currency and under the manual-entry rules. */}
+      {line.needsAmount ? (
+        <Field
+          label="Сума"
+          value={amount}
+          onChangeText={setAmount}
+          keyboardType="decimal-pad"
+          placeholder="0,00"
+          hint={line.currency}
+        />
+      ) : null}
+
+      <View style={styles.rowActions}>
+        <RowAction
+          title="Підтвердити"
+          onPress={() => onConfirm(line.id, line.needsAmount ? amount : undefined)}
+        />
+        <RowAction title="Відхилити" onPress={() => onDismiss(line)} />
+      </View>
+    </ListRow>
   );
 }
 

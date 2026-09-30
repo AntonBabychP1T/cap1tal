@@ -836,7 +836,7 @@ describe('Головний shows itself from its top', () => {
     // Nothing binds the reset to scrolling itself, and the feed is read exactly as before.
     expect(main).not.toContain('onScroll');
     expect(main).not.toContain('scrollEnabled');
-    expect(main).toContain('transactionsRepo.listLatest(FEED_SIZE)');
+    expect(main).toContain('feed: latest.slice(0, FEED_SIZE)');
   });
 
   it('Only Головний asks to be scrolled back', () => {

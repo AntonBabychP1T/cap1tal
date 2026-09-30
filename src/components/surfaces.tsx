@@ -1,5 +1,7 @@
 import {
+  FlatList,
   KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -153,6 +155,93 @@ export function Fab({ label = '+', onPress }: { label?: string; onPress: () => v
         {label}
       </ThemedText>
     </Pressable>
+  );
+}
+
+/**
+ * `Screen` for a list that can hold more rows than fit on a few screens — «Транзакції», a рахунок's
+ * транзакції, a категорія's month (app-shell, "A long list draws only what is near the screen";
+ * app-speed-pass design D7). The same frame — background, safe area, the 16pt gutter, the keyboard
+ * rules, pull-to-refresh — around a `FlatList` that draws only the rows on or near the screen and
+ * more as the owner scrolls. Everything above the rows (header, search, filters, summaries) is
+ * `header` and scrolls with them, so the page scrolls exactly as it did.
+ *
+ * The rows read as one `ListCard`, as they did when they were mapped inside one: each is a segment
+ * of that card, the first carrying its top edge and the last its bottom. `renderRow` draws what was
+ * inside the card — usually a `ListRow`.
+ */
+export function ListScreen<T>({
+  header,
+  data,
+  keyExtractor,
+  renderRow,
+  empty,
+  footer,
+  refreshControl,
+  overlay,
+  children,
+}: {
+  header: React.ReactNode;
+  data: readonly T[];
+  keyExtractor: (item: T) => string;
+  renderRow: (item: T, index: number) => React.ReactElement;
+  /** What stands in place of the rows when there are none. */
+  empty?: React.ReactNode;
+  /** What follows the rows — «Показати ще», «Це вся історія». */
+  footer?: React.ReactNode;
+  refreshControl?: React.ReactElement<RefreshControlProps>;
+  /** What stands over the list instead of scrolling with it — the «+», as on `Screen`. */
+  overlay?: React.ReactNode;
+  /** Anything that does not scroll: a sheet, a dialog. */
+  children?: React.ReactNode;
+}) {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const layout = overlayLayout({
+    safeAreaBottom: insets.bottom,
+    fabSize: FAB_SIZE,
+    handleSize: HANDLE_SIZE,
+  });
+  const last = data.length - 1;
+  return (
+    <ThemedView style={styles.screen}>
+      <SafeAreaView style={styles.screen} edges={['top']}>
+        <KeyboardAvoidingView style={styles.screen} behavior="padding">
+          <FlatList
+            data={data}
+            keyExtractor={keyExtractor}
+            renderItem={({ item, index }) => (
+              <ThemedView
+                type="backgroundElement"
+                style={[
+                  styles.listSegment,
+                  { borderColor: theme.cardEdge },
+                  index === 0 && styles.listSegmentFirst,
+                  index === last && styles.listSegmentLast,
+                ]}>
+                {renderRow(item, index)}
+              </ThemedView>
+            )}
+            ListHeaderComponent={<View style={styles.listHeader}>{header}</View>}
+            ListEmptyComponent={empty ? <View>{empty}</View> : null}
+            ListFooterComponent={footer ? <View style={styles.listFooter}>{footer}</View> : null}
+            refreshControl={refreshControl}
+            contentContainerStyle={[
+              styles.listContent,
+              overlay ? { paddingBottom: layout.scrollBottomPadding } : null,
+            ]}
+            keyboardShouldPersistTaps="handled"
+            // What "only what is near the screen" means here: about one screen of rows first, a
+            // window of seven screens kept drawn, and rows far off-screen detached on Android.
+            initialNumToRender={15}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS === 'android'}
+          />
+        </KeyboardAvoidingView>
+        {overlay}
+        {children}
+      </SafeAreaView>
+    </ThemedView>
   );
 }
 
@@ -800,6 +889,26 @@ export function HeroCard({
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { padding: Spacing.three, gap: Spacing.three },
+  listContent: { padding: Spacing.three },
+  listHeader: { gap: Spacing.three, marginBottom: Spacing.three },
+  listFooter: { marginTop: Spacing.three },
+  // One `ListCard`, cut into its rows: the side edges on every segment, the top and bottom edge and
+  // the card's radius on the first and the last.
+  listSegment: {
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Spacing.three + Spacing.one,
+  },
+  listSegmentFirst: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopLeftRadius: Radius.card,
+    borderTopRightRadius: Radius.card,
+  },
+  listSegmentLast: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomLeftRadius: Radius.card,
+    borderBottomRightRadius: Radius.card,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',

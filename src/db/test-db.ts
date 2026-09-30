@@ -151,3 +151,58 @@ export function openTestDbMigratedTo(count: number): StagedStorage {
 export function openFileDb(path: string): TestStorage {
   return open(path);
 }
+
+/**
+ * A second drizzle handle over the same connection that counts every row a statement hands back —
+ * the one honest way for a test to say "this read took one page from storage, not the history".
+ * Writes through it are the connection's own, so the change stamp sees them as usual.
+ */
+export function countingDb(storage: TestStorage): { readonly db: TestDb; rowsRead(): number; reset(): void } {
+  const client = storage.db.$client;
+  let rows = 0;
+  const counted = (statement: Database.Statement): Database.Statement => {
+    const proxy: Database.Statement = new Proxy(statement, {
+      get(target, prop) {
+        if (prop === 'all') {
+          return (...args: unknown[]) => {
+            const result = target.all(...args);
+            rows += result.length;
+            return result;
+          };
+        }
+        if (prop === 'get') {
+          return (...args: unknown[]) => {
+            const result = target.get(...args);
+            if (result !== undefined) rows += 1;
+            return result;
+          };
+        }
+        if (prop === 'raw' || prop === 'pluck' || prop === 'expand') {
+          return (...args: unknown[]) => {
+            (target[prop] as (...a: unknown[]) => unknown)(...args);
+            return proxy;
+          };
+        }
+        const value = Reflect.get(target, prop, target) as unknown;
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    return proxy;
+  };
+  const counting = new Proxy(client, {
+    get(target, prop) {
+      if (prop === 'prepare') {
+        return (source: string) => counted(target.prepare(source));
+      }
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+  return {
+    db: drizzle(counting, { schema }),
+    rowsRead: () => rows,
+    reset: () => {
+      rows = 0;
+    },
+  };
+}

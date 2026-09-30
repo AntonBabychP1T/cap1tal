@@ -25,7 +25,8 @@ import { syncPorts } from '@/hooks/monobank-ports';
 import { syncMonobankSyncTask } from '@/platform/monobank-sync-task';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { syncEvent } from '@/ui/read-policy';
+import { judgeProgressLater } from '@/hooks/progress-ports';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { todayIso } from '@/ui/dates';
 import { failureAlert } from '@/ui/failure-alert';
@@ -115,7 +116,7 @@ export default function MonobankScreen() {
     [router],
   );
 
-  const [stored, reload] = useReloadOnFocus(
+  const [stored, reload, reloadWhenSeen] = useReloadOnFocus(
     useCallback(
       () => ({
         accounts: accountsRepo.list(),
@@ -511,7 +512,7 @@ export default function MonobankScreen() {
         attended: attended(),
       });
       // A sync that committed anything moved the history the прогрес is read from.
-      evaluateProgress();
+      judgeProgressLater();
       setStatus(undefined);
       reload();
       if (started.kind === 'already-running') {
@@ -546,9 +547,10 @@ export default function MonobankScreen() {
     () =>
       onSyncState(() => {
         setElsewhere(syncInFlight());
-        reload();
+        // A run starting has written nothing; one finishing may have (app-speed-pass design D4).
+        if (syncEvent(syncInFlight())) reloadWhenSeen();
       }),
-    [reload],
+    [reloadWhenSeen],
   );
   /** What the sync card offers right now — the decision itself is in `monobank-screen.ts`. */
   const control = syncControl({ inFlight: elsewhere, busy });

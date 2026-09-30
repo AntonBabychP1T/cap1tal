@@ -1,12 +1,12 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet } from 'react-native';
 
 import { Action, Field } from '@/components/form';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { accounts as accountsRepo, progress as progressRepo } from '@/db/repos';
-import { evaluateProgress, progressScreenData } from '@/hooks/progress-ports';
+import { judgeProgressLater, onProgressJudged, progressScreenData } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import type { ChallengeAction } from '@/progress/challenges';
 import { proposeNorm } from '@/progress/norm';
@@ -39,7 +39,15 @@ export default function ChallengeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ key: string }>();
   const key = decodeURIComponent(params.key ?? '');
-  const [stored, reload] = useReloadOnFocus(useCallback(() => progressScreenData(), []));
+  const [stored, reload, reloadWhenSeen] = useReloadOnFocus(
+    useCallback(() => progressScreenData(), []),
+  );
+
+  /**
+   * A досягнення judged after a save (or a прогін) reaches this screen: at once in sight, on the
+   * next focus otherwise (app-speed-pass design D5).
+   */
+  useEffect(() => onProgressJudged(reloadWhenSeen), [reloadWhenSeen]);
   const [typed, setTyped] = useState('');
 
   const detail = useMemo(
@@ -106,7 +114,7 @@ export default function ChallengeScreen() {
     progressRepo.confirmNorm({ amount, confirmedAtMs: Date.now() });
     // A норма was confirmed — one of the named moments, and the one that makes every резерв and
     // інвестиційний milestone in that currency exist at all.
-    evaluateProgress();
+    judgeProgressLater();
     setTyped('');
     reload();
   }, [reload, step, stored.summary, typed]);

@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { Fragment, useCallback, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { Action, Choices, Field, RowAction } from '@/components/form';
@@ -18,13 +18,15 @@ import {
   investments as investmentsRepo,
   monobank as monobankRepo,
   rates as ratesRepo,
+  storedHistory,
   transactions as transactionsRepo,
 } from '@/db/repos';
-import { computeBalances, reconcile, type Account } from '@/domain/account';
+import { reconcile, type Account } from '@/domain/account';
+import type { CurrentValue } from '@/domain/investments';
 import type { Money } from '@/domain/money';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useTheme } from '@/hooks/use-theme';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { judgeProgressLater, onProgressJudged } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { useSinglePush } from '@/hooks/use-single-push';
 import { accountFromDraft, blankDraft, type AccountDraft } from '@/ui/account-form';
@@ -59,6 +61,19 @@ import { Radius, Spacing, TouchTarget } from '@/constants/theme';
 
 const CURRENCY_CHOICES = OFFERED_CURRENCIES.map((c) => ({ value: c, label: c }));
 
+/**
+ * What this tab holds until it is first opened: Android builds every tab at launch, and this one
+ * reads nothing until the owner looks at it (app-shell, "A tab reads storage only once it is first
+ * opened"). Every hook below runs over it without touching storage, and the tab draws an empty body.
+ */
+const UNSEEN = {
+  all: [],
+  balances: new Map<string, Money>(),
+  bankBalances: new Map<string, Money>(),
+  currentValues: new Map<string, CurrentValue>(),
+  rates: [],
+};
+
 export default function AccountsScreen() {
   const router = useRouter();
   /** A рахунок opens once, however many rows are tapped while its screen is opening. */
@@ -72,22 +87,18 @@ export default function AccountsScreen() {
     [router],
   );
 
-  const [stored, reload] = useReloadOnFocus(
+  const [stored, reload, reloadWhenSeen] = useReloadOnFocus(
     useCallback(() => {
-      const all = accountsRepo.list();
-      // One read and one pass for every рахунок, not a query per рахунок: 27 of them made every
-      // return to this tab stall (bug report 2026-09-29). An інвестиційний рахунок's розрахунковий
-      // баланс **is** its вкладено (`contributed`), so the one number serves both.
-      const balances = computeBalances(all, transactionsRepo.listAll());
-      // The bank's own side, joined at the screen and not on the `Account`: a link keyed by
-      // рахунок id, and the last known баланс банку of the monobank account it names.
-      const bankBalances = new Map<string, Money>();
-      for (const link of monobankRepo.listLinks()) {
-        const bankAccount = monobankRepo.getAccount(link.monobankAccountId);
-        if (bankAccount) {
-          bankBalances.set(link.accountId, bankAccount.bankBalance);
-        }
-      }
+      // The stored history, read at most once per change stamp (app-speed-pass design D1): every
+      // рахунок and its розрахунковий баланс, from one pass over the транзакції. An інвестиційний
+      // рахунок's розрахунковий баланс **is** its вкладено (`contributed`), so the one number serves
+      // both.
+      const history = storedHistory.read();
+      const all = history.accounts;
+      const balances = history.balances();
+      // The bank's own side, joined at the screen and not on the `Account`: the last known баланс
+      // банку of every linked рахунок, in one read.
+      const bankBalances = monobankRepo.bankBalances();
       // The поточні вартості, read on focus like everything else here: one row per інвестиційний
       // рахунок that has one, which is single digits.
       return {
@@ -98,11 +109,18 @@ export default function AccountsScreen() {
         rates: ratesRepo.all(),
       };
     }, []),
+    { whileUnseen: UNSEEN },
   );
 
   // The «≈ … грн» beside the totals is the only reason this screen touches the network, and its
   // absence changes nothing else here.
   useCurrentRates(reload);
+
+  /**
+   * A досягнення judged after a save (or a прогін) reaches this screen: at once in sight, on the
+   * next focus otherwise (app-speed-pass design D5).
+   */
+  useEffect(() => onProgressJudged(reloadWhenSeen), [reloadWhenSeen]);
 
   const groups = useMemo(() => groupAccountsByKind(stored.all), [stored.all]);
   /**
@@ -138,7 +156,7 @@ export default function AccountsScreen() {
       accountsRepo.save(accountFromDraft(draft, newId()));
       // A рахунок was created or edited: a початковий залишок moves the резерв with no транзакція
       // behind it, so this is one of the named moments.
-      evaluateProgress();
+      judgeProgressLater();
       setDraft(undefined);
       reload();
     } catch (error) {
@@ -174,7 +192,7 @@ export default function AccountsScreen() {
               });
               if (correction) {
                 transactionsRepo.save(correction, new Date());
-                evaluateProgress();
+                judgeProgressLater();
               }
               reload();
             } catch (error) {
@@ -259,6 +277,10 @@ export default function AccountsScreen() {
     },
     [reload, reportBug, rowsById],
   );
+
+  if (stored === UNSEEN) {
+    return <Screen>{null}</Screen>;
+  }
 
   return (
     <Screen>

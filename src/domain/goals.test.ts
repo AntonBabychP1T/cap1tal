@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { account } from './account';
+import { account, computeBalances } from './account';
 import {
   composition,
   compositionProblem,
@@ -36,6 +36,25 @@ const car: AccumulationGoal = {
 const today = '2026-08-28';
 
 describe('contribution', () => {
+  it('gives the same внесок from precomputed balances as from the whole history', () => {
+    const card = account({ id: 'card', name: 'mono', kind: 'spending', currency: 'UAH' });
+    const bonds = account({ id: 'bonds', name: 'ОВДП', kind: 'investment', currency: 'UAH' });
+    const history: Transaction[] = [
+      transfer({ id: 't1', date: '2026-08-20', fromAccountId: 'card', toAccountId: 'jar', left: money(1000000, 'UAH'), arrived: money(1000000, 'UAH') }),
+      transfer({ id: 't2', date: '2026-08-21', fromAccountId: 'card', toAccountId: 'bonds', left: money(300000, 'UAH'), arrived: money(300000, 'UAH') }),
+      expenseByDefault({ id: 'e1', date: '2026-08-22', accountId: 'card', amount: money(12345, 'UAH') }),
+    ];
+    const balances = computeBalances([jar, card, bonds], history);
+
+    for (const one of [jar, card, bonds]) {
+      expect(contribution(one, history, undefined, balances)).toEqual(contribution(one, history));
+    }
+    // A поточна вартість still replaces the баланс of an інвестиційний рахунок.
+    expect(contribution(bonds, history, money(310000, 'UAH'), balances)).toEqual(money(310000, 'UAH'));
+    // A рахунок the balances do not name is computed, never taken as zero.
+    expect(contribution(jar, history, undefined, new Map())).toEqual(money(6000000, 'UAH'));
+  });
+
   it('Scenario: A переказ into a рахунок of the склад moves the progress', () => {
     const card = account({ id: 'card', name: 'mono', kind: 'spending', currency: 'UAH' });
     const arrival: Transaction = transfer({

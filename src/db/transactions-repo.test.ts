@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account, classifyTransfer, computeBalance } from '../domain/account';
 import { proposeForTransfer } from '../ui/entry-form';
+import { monthsOf } from '../ui/months';
 import { transactionLine } from '../ui/transaction-line';
 import { money } from '../domain/money';
 import {
@@ -24,7 +25,7 @@ import {
   type Transfer,
 } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
-import { openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
+import { countingDb, openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
 
 /**
@@ -97,6 +98,30 @@ describe('transactionsRepo', () => {
 
   afterEach(() => {
     storage.close();
+  });
+
+  it('its memoized «Без категорії» count equals a direct count before and after a write', () => {
+    repo.save(
+      expenseByDefault({ id: 'u1', date: '2026-03-10', accountId: 'card', amount: money(100, 'UAH') }),
+      storedAt,
+    );
+    expect(repo.countUncategorised()).toBe(transactionsRepo(storage.db).countUncategorised());
+    expect(repo.countUncategorised()).toBe(1);
+
+    repo.setCategory('u1', 'food');
+
+    expect(repo.countUncategorised()).toBe(transactionsRepo(storage.db).countUncategorised());
+    expect(repo.countUncategorised()).toBe(0);
+  });
+
+  it('months() is monthsOf over the whole history, before and after a write', () => {
+    expect(repo.months()).toEqual([]);
+    repo.save(expenseByDefault({ id: 'm1', date: '2026-03-10', accountId: 'card', amount: money(100, 'UAH') }), storedAt);
+    repo.save(expenseByDefault({ id: 'm2', date: '2025-12-31', accountId: 'card', amount: money(100, 'UAH') }), storedAt);
+    expect(repo.months()).toEqual(monthsOf(repo.listAll()));
+    repo.save(expenseByDefault({ id: 'm3', date: '2026-04-01', accountId: 'card', amount: money(100, 'UAH') }), storedAt);
+    expect(repo.months()).toEqual(['2026-04', '2026-03', '2025-12']);
+    expect(repo.months()).toEqual(monthsOf(repo.listAll()));
   });
 
   it('setCategory changes the категорія and nothing else', () => {
@@ -390,6 +415,29 @@ describe('transactionsRepo — awaitingCounterpartIncome', () => {
 
     expect(repo.get('t-awaiting')).toEqual(settled);
     expect('awaitingCounterpartIncome' in (repo.get('t-awaiting') as object)).toBe(false);
+  });
+
+  it('Scenario: More перекази than one query can name are still read', () => {
+    // SQLite's bound-parameter ceiling is 32 766; binding every переказ id into one `IN (…)` list
+    // failed past it. Inserted in one transaction through the driver itself, so the setup is fast.
+    const COUNT = 33_000;
+    const client = storage.db.$client;
+    const insert = client.prepare(
+      `INSERT INTO transactions (id, type, date, created_at, from_account_id, to_account_id,
+         left_amount, left_currency, arrived_amount, arrived_currency)
+       VALUES (?, 'transfer', '2026-09-01', ?, 'card', 'wallet', 100, 'UAH', 100, 'UAH')`,
+    );
+    client.transaction(() => {
+      for (let i = 0; i < COUNT; i++) insert.run(`bulk-${i}`, storedAt.getTime());
+    })();
+    repo.save(awaitingTransfer, storedAt);
+
+    const all = repo.listAll();
+
+    expect(all).toHaveLength(COUNT + 1);
+    expect(all.filter((t) => t.type === 'transfer' && t.awaitingCounterpartIncome).map((t) => t.id)).toEqual([
+      't-awaiting',
+    ]);
   });
 
   it('removing an awaiting переказ leaves no row behind', () => {
@@ -1323,6 +1371,60 @@ describe('transactionsRepo references', () => {
 
     expect(() => repo.save(ghost, storedAt)).toThrow();
     expect(repo.get('ghost-refund')).toBeUndefined();
+  });
+});
+
+describe('transactionsRepo search — what a page reads', () => {
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    seedAccounts(storage);
+    const insert = storage.db.$client.prepare(
+      `INSERT INTO transactions (id, type, date, created_at, account_id, amount, currency, category_id, description)
+       VALUES (?, 'expense', ?, ?, 'card', ?, 'UAH', 'food', ?)`,
+    );
+    storage.db.$client.transaction(() => {
+      for (let i = 0; i < 10_000; i++) {
+        const day = String(1 + (i % 28)).padStart(2, '0');
+        const month = String(1 + (Math.floor(i / 28) % 12)).padStart(2, '0');
+        insert.run(`e${i}`, `202${3 + Math.floor(i / 2800)}-${month}-${day}`, storedAt.getTime() + i, 100 + i, i % 7 === 0 ? 'СІЛЬПО' : null);
+      }
+    })();
+  });
+
+  afterEach(() => storage.close());
+
+  it('Scenario: The unsearched listing reads one page from storage', () => {
+    const counting = countingDb(storage);
+    const page = transactionsRepo(counting.db).search({ limit: 51, offset: 0 });
+
+    expect(page).toHaveLength(51);
+    // Only the page's транзакції come out of storage.
+    expect(counting.rowsRead()).toBeLessThanOrEqual(51);
+    // And they are the first 51 of the latest listing, in its order.
+    expect(page).toEqual(transactionsRepo(storage.db).listLatest(51));
+
+    counting.reset();
+    const second = transactionsRepo(counting.db).search({ limit: 51, offset: 51 });
+    expect(counting.rowsRead()).toBeLessThanOrEqual(51);
+    expect(second).toEqual(transactionsRepo(storage.db).listLatest(102).slice(51));
+  });
+
+  it('a search pages its remembered matches, reading storage once', () => {
+    const counting = countingDb(storage);
+    const repo = transactionsRepo(counting.db);
+    const match = { text: 'сільпо', categoryIds: [], sourceIds: [] };
+
+    const first = repo.search({ match, limit: 50, offset: 0 });
+    const readForFirst = counting.rowsRead();
+    counting.reset();
+    const second = repo.search({ match, limit: 50, offset: 50 });
+
+    expect(readForFirst).toBeGreaterThan(50);
+    expect(counting.rowsRead()).toBe(1); // the change stamp, and nothing else
+    expect([...first, ...second]).toEqual(transactionsRepo(storage.db).search({ match, limit: 100, offset: 0 }));
   });
 });
 

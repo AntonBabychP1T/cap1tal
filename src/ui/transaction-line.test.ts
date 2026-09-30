@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
+import { accountsRepo } from '../db/accounts-repo';
+import { storedHistory } from '../db/stored-history';
+import { openTestDb, seedReferences } from '../db/test-db';
+import { transactionsRepo } from '../db/transactions-repo';
+
 import { account } from '../domain/account';
 import { namesById } from '../domain/category';
 import type { CategoryLimit } from '../domain/limits';
-import { money } from '../domain/money';
+import { MAX_AMOUNT_MINOR, money } from '../domain/money';
 import {
   expenseByDefault,
   refund,
@@ -665,5 +670,52 @@ describe('accountSideLine', () => {
       amount: '+19 550,00 UAH',
       amountTone: 'textPositive',
     });
+  });
+});
+
+describe('ліміт marks from the stored history', () => {
+  it('Scenario: Rows spanning two years are marked as the month-by-month reading marks them', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      seedReferences(db, { categories: ['food', 'fun'], sources: [] });
+      accountsRepo(db).save(account({ id: 'card', name: 'mono', kind: 'spending', currency: 'UAH' }));
+      const repo = transactionsRepo(db);
+      const at = new Date('2026-01-01T09:00:00.000Z');
+      const months: string[] = [];
+      for (let i = 0; i < 24; i++) {
+        const year = 2024 + Math.floor(i / 12);
+        const month = `${year}-${String(1 + (i % 12)).padStart(2, '0')}`;
+        months.push(month);
+        // Food goes over its ліміт in every third month; fun never does.
+        const food = i % 3 === 0 ? 600000 : 100000;
+        repo.save({ type: 'expense', id: `f${i}`, date: `${month}-05`, accountId: 'card', amount: money(food, 'UAH'), categoryId: 'food' }, at);
+        repo.save({ type: 'expense', id: `g${i}`, date: `${month}-06`, accountId: 'card', amount: money(1000, 'UAH'), categoryId: 'fun' }, at);
+        repo.save({ type: 'refund', id: `r${i}`, date: `${month}-07`, accountId: 'card', amount: money(500, 'UAH'), categoryId: 'food' }, at);
+      }
+      // One month holds a сума beyond the ceiling: it stays unjudged.
+      repo.save({ type: 'expense', id: 'huge', date: '2025-02-10', accountId: 'card', amount: money(MAX_AMOUNT_MINOR + 1, 'UAH'), categoryId: 'fun' }, at);
+      const limits: CategoryLimit[] = [
+        { categoryId: 'food', amount: money(500000, 'UAH') },
+        { categoryId: 'fun', amount: money(50000, 'UAH') },
+      ];
+      const feed = repo.listAll();
+
+      const fromHistory = overLimitByMonth({
+        feed,
+        limits,
+        monthTransactions: (month) => storedHistory(db).read().byMonth().get(month) ?? [],
+      });
+      const monthByMonth = overLimitByMonth({ feed, limits, monthTransactions: (month) => repo.listMonth(month) });
+
+      expect(fromHistory).toEqual(monthByMonth);
+      expect(fromHistory.has('2025-02')).toBe(false);
+      expect(fromHistory.get('2024-01')).toEqual(new Set(['food']));
+      expect(fromHistory.get('2024-02')).toEqual(new Set());
+      expect(new Set(feed.map((t) => t.date.slice(0, 7))).size).toBe(24);
+      expect(months).toHaveLength(24);
+    } finally {
+      storage.close();
+    }
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { account, type Account } from './account';
+import { account, computeBalances, type Account } from './account';
 import type { CurrentValue } from './investments';
 import { money } from './money';
 import {
@@ -137,6 +137,22 @@ describe('currentNetWorth', () => {
       }),
     );
     expect(reading.totals.get('UAH')).toEqual({ status: 'known', amount: money(93000, 'UAH') });
+  });
+
+  it('reads the same with precomputed balances as from the whole history', () => {
+    const cardOf150k = account({ ...card, openingBalance: money(150000, 'UAH') });
+    const debtor = account({ id: 'debtor3', name: 'debtor3', kind: 'debt', currency: 'UAH' });
+    const usd = account({ id: 'usd', name: 'долари', kind: 'savings', currency: 'USD' });
+    const accounts = [cardOf150k, debtor, usd];
+    const transactions = [
+      transfer({ id: 'lend', date: '2026-01-01', fromAccountId: 'card', toAccountId: 'debtor3', left: money(50000, 'UAH'), arrived: money(50000, 'UAH') }),
+      transfer({ id: 'fx', date: '2026-01-02', fromAccountId: 'card', toAccountId: 'usd', left: money(41000, 'UAH'), arrived: money(1000, 'USD') }),
+    ];
+    const balances = computeBalances(accounts, transactions);
+
+    expect(currentNetWorth({ accounts, transactions, currentValues: new Map(), balances })).toEqual(
+      currentNetWorth({ accounts, transactions, currentValues: new Map() }),
+    );
   });
 
   it('Scenario: Lending principal is a move and interest is income', () => {

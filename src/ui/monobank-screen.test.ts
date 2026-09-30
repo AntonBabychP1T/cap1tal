@@ -937,8 +937,9 @@ describe('a run this screen did not start', () => {
   it('Scenario: A run started elsewhere dates the accounts it completed', () => {
     // The same subscription reloads what the screen shows, so the moments a foreign run moved are
     // read back from storage rather than left at what they were when the screen opened.
+    // Through `reloadWhenSeen` since app-speed-pass: once the run finishes, in sight at once.
     const at = screen.indexOf('onSyncState(');
-    expect(screen.slice(at, at + 200)).toContain('reload()');
+    expect(screen.slice(at, at + 300)).toContain('reloadWhenSeen()');
   });
 
   it('says both foreign-run sentences in the owner`s language', () => {

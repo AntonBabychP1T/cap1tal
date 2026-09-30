@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import * as fc from 'fast-check';
+import { describe, expect, it, vi } from 'vitest';
 
 import { account, type Account } from '../domain/account';
 import { namesById } from '../domain/category';
@@ -14,7 +15,23 @@ import {
 } from '../domain/transaction';
 import type { Candidate } from '../progress/catalogue';
 import type { EarnedAchievement } from '../progress/earned';
-import { reportsViewModel } from './reports-screen';
+import { sealed, stampedMemo } from '../db/stamp';
+import { accountsRepo } from '../db/accounts-repo';
+import { openTestDb, seedReferences } from '../db/test-db';
+import { transactionsRepo } from '../db/transactions-repo';
+import * as reports from '../domain/reports';
+import { reportsHistory, reportsSelection, reportsViewModel } from './reports-screen';
+
+// Pass-through spies on the history derivations, so a test can count how often they run.
+vi.mock('../domain/reports', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../domain/reports')>();
+  return {
+    ...original,
+    historySeries: vi.fn(original.historySeries),
+    categoriesInHistory: vi.fn(original.categoriesInHistory),
+    categorySeries: vi.fn(original.categorySeries),
+  };
+});
 
 function candidate(over: Partial<Candidate> = {}): Candidate {
   return {
@@ -850,5 +867,81 @@ describe('the Звіти tab draws what this model decided', () => {
     }
     // What it reads is the same bounded, read-only shape «Прогрес» itself reads from.
     expect(screen).toContain('unseenAchievementsData');
+  });
+});
+
+describe('what a choice on Звіти re-derives', () => {
+  const history = [
+    spend('e1', '2026-05-10', 100000),
+    spend('e2', '2026-06-10', 200000, 'groceries'),
+    spend('e3', '2026-07-10', 300000, 'eating-out'),
+    spend('e4', '2026-08-10', 400000, 'groceries', 'USD'),
+  ];
+  const stored = { accounts: ACCOUNTS, transactions: history, categoryNames: names, goals: [], now: august };
+
+  it('Scenario: Tapping a month column does not rebuild the history', () => {
+    // Sealed: a selection that changed the history in place would throw here.
+    const derived = sealed(reportsHistory(stored));
+    vi.mocked(reports.historySeries).mockClear();
+    vi.mocked(reports.categoriesInHistory).mockClear();
+
+    const june = reportsSelection(derived, { chosenMonth: '2026-06' });
+    const july = reportsSelection(derived, { chosenMonth: '2026-07' });
+
+    expect(june.historyReadout?.month).toBe('2026-06');
+    expect(july.historyReadout?.month).toBe('2026-07');
+    expect(july.history.find((column) => column.selected)?.month).toBe('2026-07');
+    // The history by month and the категорії list are not derived again, and the цілі are the
+    // very same value.
+    expect(reports.historySeries).not.toHaveBeenCalled();
+    expect(reports.categoriesInHistory).not.toHaveBeenCalled();
+    expect(july.goals).toBe(derived.goals);
+  });
+
+  it('Scenario: A choice shows the same numbers a full derivation would', () => {
+    const derived = reportsHistory(stored);
+    const choice = fc.record(
+      {
+        shownCurrency: fc.constantFrom('UAH', 'USD', 'EUR'),
+        chosenCategoryId: fc.constantFrom('groceries', 'eating-out', 'nothing-here'),
+        chosenMonth: fc.constantFrom('2026-04', '2026-05', '2026-06', '2026-07', '2026-08'),
+      },
+      { requiredKeys: [] },
+    );
+    fc.assert(
+      fc.property(fc.array(choice, { minLength: 1, maxLength: 6 }), (choices) => {
+        // In any order: each choice, read from the one shared history, equals a derivation from
+        // scratch for that same choice.
+        for (const one of choices) {
+          expect(reportsSelection(derived, one)).toEqual(reportsViewModel({ ...stored, ...one }));
+        }
+      }),
+      { numRuns: 50 },
+    );
+  });
+
+  it('a second focus with nothing written re-derives nothing', () => {
+    const storage = openTestDb();
+    try {
+      seedReferences(storage.db, { categories: ['groceries'], sources: [] });
+      accountsRepo(storage.db).save(card);
+      transactionsRepo(storage.db).save(spend('e1', '2026-08-10', 1000, 'groceries'), new Date());
+      let derivations = 0;
+      const read = stampedMemo(storage.db, () => {
+        derivations += 1;
+        return reportsHistory({ ...stored, accounts: [card], transactions: transactionsRepo(storage.db).listAll() });
+      });
+
+      const first = read('2026-08-24');
+      const second = read('2026-08-24');
+      expect(second).toBe(first);
+      expect(derivations).toBe(1);
+
+      transactionsRepo(storage.db).save(spend('e2', '2026-08-11', 2000, 'groceries'), new Date());
+      expect(read('2026-08-24')).not.toBe(first);
+      expect(derivations).toBe(2);
+    } finally {
+      storage.close();
+    }
   });
 });

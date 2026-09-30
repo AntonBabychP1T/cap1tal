@@ -1,11 +1,24 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Category, Source } from '../domain/category';
 import { account } from '../domain/account';
 import { money } from '../domain/money';
 import { expenseByDefault, UNCATEGORISED_CATEGORY_ID, type Transaction } from '../domain/transaction';
+import { accountsRepo } from '../db/accounts-repo';
+import { storageStamp } from '../db/stamp';
+import {
+  countingDb,
+  openFileDb,
+  openTestDb,
+  seedReferences,
+  type TestDb,
+  type TestStorage,
+} from '../db/test-db';
+import { transactionsRepo } from '../db/transactions-repo';
 import { feedTitle, transactionLine } from './transaction-line';
 import {
   monthFromRoute,
@@ -16,6 +29,12 @@ import {
   showMore,
   uncategorisedFromRoute,
   accountFilterOrder,
+  firstPage,
+  nextPage,
+  rereadPages,
+  searchDelayMs,
+  SEARCH_PAUSE_MS,
+  type PagePorts,
 } from './transaction-search';
 
 const categories: readonly Category[] = [
@@ -180,8 +199,13 @@ describe('the shown list follows storage', () => {
     // Not a `useMemo`: with an empty query — the screen's own default — `searchCriteria('')` is
     // `undefined` on both sides of a focus reload, so a memo keeps the page it computed at mount
     // and the edited транзакція reads as it was.
-    expect(screen).toContain('const [shown, reload] = useReloadOnFocus(');
+    // Since app-speed-pass the pages live in `usePagedList`, which re-reads every row shown on each
+    // focus after the first and after the screen's own writes (design D6).
+    expect(screen).toContain('const [shown, showNext, reload] = usePagedList(');
     expect(screen).not.toMatch(/const shown = useMemo\(/);
+    const hook = readFileSync(new URL('../hooks/use-paged-list.ts', import.meta.url), 'utf8');
+    expect(hook).toMatch(/useFocusEffect\([\s\S]*?reload\(\)/);
+    expect(hook).toContain('rereadPages(shown, reading)');
   });
 
   it('The рахунок, категорія and місяць it reads beside them are re-read too', () => {
@@ -304,7 +328,8 @@ describe('categorising from «Транзакції»', () => {
   it('Scenario: One tap categorises from «Транзакції»', () => {
     // The feed's own flow: the same decisions, stored under the same id, the mark decides the offer.
     expect(screen).toContain('transactionsRepo.save(recategorise(t, picked), new Date())');
-    expect(screen).toContain('evaluateProgress()');
+    // Judged once the screen settles since app-speed-pass (design D5).
+    expect(screen).toContain('judgeProgressLater()');
     expect(screen).toMatch(/\.filter\(\(c\) => c\.id !== UNCATEGORISED_CATEGORY_ID\)/);
     expect(screen).toMatch(/line\.uncategorised \? \(\s*<View style=\{styles\.rowActions\}>/);
   });
@@ -314,7 +339,8 @@ describe('categorising from «Транзакції»', () => {
     // line that no longer carries «Без категорії» is simply not returned, and the rest keep order.
     const categorise = screen.slice(screen.indexOf('const categorise = useCallback('));
     expect(categorise.slice(0, categorise.indexOf('],'))).toContain('reload();');
-    expect(screen).toContain('const [shown, reload] = useReloadOnFocus(');
+    // `reload` re-reads as many rows as are shown, in one read (app-speed-pass design D6).
+    expect(screen).toContain('const [shown, showNext, reload] = usePagedList(');
   });
 });
 
@@ -339,5 +365,225 @@ describe('accountFilterOrder', () => {
 
   it('No history keeps the usual order', () => {
     expect(accountFilterOrder(all, [])).toEqual(all);
+  });
+});
+
+describe('the paused search', () => {
+  /**
+   * The screen's timer, played over a scripted run of keystrokes: each change (re)arms one timer
+   * for `searchDelayMs`, and a search runs when a timer fires undisturbed. Returns every search run.
+   */
+  function play(keystrokes: readonly { readonly at: number; readonly text: string }[]): string[] {
+    const searched: string[] = [];
+    let pending: { at: number; text: string } | undefined;
+    let field = '';
+    for (const key of keystrokes) {
+      if (pending && pending.at <= key.at) {
+        searched.push(pending.text);
+        pending = undefined;
+      }
+      const delay = searchDelayMs(field, key.text);
+      field = key.text;
+      if (delay === 0) {
+        pending = undefined;
+        searched.push(key.text);
+      } else {
+        pending = { at: key.at + delay, text: key.text };
+      }
+    }
+    if (pending) searched.push(pending.text);
+    return searched;
+  }
+
+  it('Scenario: Fast typing searches once', () => {
+    const typed = 'сільпо';
+    const keystrokes = [...typed].map((_, i) => ({ at: i * 80, text: typed.slice(0, i + 1) }));
+    // Every letter reaches the field as it is typed — the field is the screen's own state — and
+    // the list is searched once, for the whole word, after the pause.
+    expect(play(keystrokes)).toEqual(['сільпо']);
+    expect(searchDelayMs('сільп', 'сільпо')).toBe(SEARCH_PAUSE_MS);
+    expect(SEARCH_PAUSE_MS).toBe(250);
+  });
+
+  it('the field owns its text, so a keystroke redraws the field alone', () => {
+    const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+    const body = screen.slice(screen.indexOf('export default function'), screen.indexOf('function PausedSearchBar('));
+    expect(body).toContain('<PausedSearchBar key={searchReset} onSearch={setQuery} />');
+    expect(body).not.toMatch(/const \[typed, setTyped\]/);
+    const field = screen.slice(screen.indexOf('function PausedSearchBar('));
+    expect(field).toContain("const [typed, setTyped] = useState('')");
+    expect(field).toContain('searchDelayMs(searched, typed)');
+  });
+
+  it('a pause between words searches at each pause', () => {
+    expect(
+      play([
+        { at: 0, text: 'с' },
+        { at: 100, text: 'сі' },
+        { at: 500, text: 'сіл' },
+      ]),
+    ).toEqual(['сі', 'сіл']);
+  });
+
+  it('Scenario: Clearing the field is immediate', () => {
+    expect(searchDelayMs('сільпо', '')).toBe(0);
+    expect(
+      play([
+        { at: 0, text: 'сільпо' },
+        { at: 1000, text: '' },
+      ]),
+    ).toEqual(['сільпо', '']);
+  });
+});
+
+describe('the pages «Транзакції» shows', () => {
+  const SIZE = 3;
+  const at = (i: number) => new Date(Date.UTC(2026, 2, 1, 9, 0, i));
+  let storage: TestStorage;
+
+  function seed(db: TestDb, count: number): void {
+    seedReferences(db, { categories: ['food'], sources: [] });
+    accountsRepo(db).save(account({ id: 'card', name: 'mono', kind: 'spending', currency: 'UAH' }));
+    for (let i = 0; i < count; i++) {
+      transactionsRepo(db).save(
+        expenseByDefault({
+          id: `e${String(i).padStart(2, '0')}`,
+          date: `2026-03-${String(1 + i).padStart(2, '0')}`,
+          accountId: 'card',
+          amount: money(100 + i, 'UAH'),
+          categoryId: 'food',
+          ...(i % 2 === 0 ? { description: `СІЛЬПО ${i}` } : {}),
+        }),
+        at(i),
+      );
+    }
+  }
+
+  /** One repository per handle, as the app has one — its search memo lives with it. */
+  function ports(db: TestDb, match?: { text: string }): PagePorts {
+    const repo = transactionsRepo(db);
+    return {
+      read: (limit, offset) =>
+        repo.search({
+          ...(match ? { match: { text: match.text, categoryIds: [], sourceIds: [] } } : {}),
+          limit,
+          offset,
+        }),
+      stamp: () => storageStamp(db),
+    };
+  }
+
+  const ids = (rows: readonly Transaction[]) => rows.map((t) => t.id);
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seed(storage.db, 12);
+  });
+
+  afterEach(() => storage.close());
+
+  it('Scenario: The third page reads one page', () => {
+    const counting = countingDb(storage);
+    const two = nextPage(firstPage(ports(counting.db), SIZE), ports(counting.db), SIZE);
+    counting.reset();
+
+    const three = nextPage(two, ports(counting.db), SIZE);
+
+    // The stamp, and one page plus the row that says whether more remain.
+    expect(counting.rowsRead()).toBe(1 + SIZE + 1);
+    expect(ids(three.transactions)).toEqual(ids(firstPage(ports(storage.db), 3 * SIZE).transactions));
+    expect(three.more).toBe(true);
+  });
+
+  it('Scenario: More of a search reads nothing already read', () => {
+    const counting = countingDb(storage);
+    const search = ports(counting.db, { text: 'сільпо' });
+    const one = firstPage(search, SIZE);
+    counting.reset();
+
+    const two = nextPage(one, search, SIZE);
+
+    // The memoized matches, keyed on the criteria, are sliced: the only rows read are two change
+    // stamps — the page's own and the memo's — and not one транзакція.
+    expect(counting.rowsRead()).toBe(2);
+    expect(ids(two.transactions)).toEqual(ids(firstPage(ports(storage.db, { text: 'сільпо' }), 2 * SIZE).transactions));
+  });
+
+  it('Scenario: A транзакція stored between pages is neither repeated nor lost', () => {
+    const two = nextPage(firstPage(ports(storage.db), SIZE), ports(storage.db), SIZE);
+    // A прогін stores a new транзакція, dated inside the pages already shown.
+    transactionsRepo(storage.db).save(
+      expenseByDefault({ id: 'late', date: '2026-03-11', accountId: 'card', amount: money(5, 'UAH'), categoryId: 'food' }),
+      at(99),
+    );
+
+    const three = nextPage(two, ports(storage.db), SIZE);
+
+    const shown = ids(three.transactions);
+    expect(new Set(shown).size).toBe(shown.length);
+    // Read again together with the next page: the newest-first listing's head, the new one in it.
+    expect(shown).toEqual(ids(transactionsRepo(storage.db).listLatest(3 * SIZE)));
+    expect(shown).toContain('late');
+  });
+
+  it('Scenario: Coming back from a транзакція keeps the pages shown — the screen wiring', () => {
+    // A focus re-reads the категорії and джерела a search is built from, which rebuilds the read
+    // for the same question. The pages start over only when the question itself — as a value —
+    // changes, never on a new read's identity (diff review, app-speed-pass).
+    const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+    expect(screen).toMatch(/const question = JSON\.stringify\(\{ criteria: criteria \?\? null, accountId, month, uncategorisedOnly \}\);/);
+    expect(screen).toContain('usePagedList(question, pagePorts)');
+    const hook = readFileSync(new URL('../hooks/use-paged-list.ts', import.meta.url), 'utf8');
+    expect(hook).toContain('if (state.question !== question) {');
+    expect(hook).not.toMatch(/state\.ports !== ports/);
+  });
+
+  it('Scenario: Coming back from a транзакція keeps the pages shown', () => {
+    const three = nextPage(nextPage(firstPage(ports(storage.db), SIZE), ports(storage.db), SIZE), ports(storage.db), SIZE);
+    const counting = countingDb(storage);
+
+    const back = rereadPages(three, ports(counting.db), SIZE);
+
+    expect(ids(back.transactions)).toEqual(ids(three.transactions));
+    expect(back.transactions).toHaveLength(3 * SIZE);
+    // One read: the stamp, the rows shown and the one that says more remain.
+    expect(counting.rowsRead()).toBe(1 + 3 * SIZE + 1);
+  });
+
+  it('a транзакція committed by another opening during a page read is neither repeated nor lost', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cap1tal-pages-'));
+    const app = openFileDb(join(dir, 'cap1tal.db'));
+    const background = openFileDb(join(dir, 'cap1tal.db'));
+    try {
+      seed(app.db, 12);
+      const base = ports(app.db);
+      let committed = false;
+      // The page read runs its SELECT, and the other opening commits before the read returns.
+      const racing: PagePorts = {
+        stamp: base.stamp,
+        read: (limit, offset) => {
+          const rows = base.read(limit, offset);
+          if (!committed) {
+            committed = true;
+            transactionsRepo(background.db).save(
+              expenseByDefault({ id: 'late', date: '2026-03-12', accountId: 'card', amount: money(5, 'UAH'), categoryId: 'food' }),
+              at(99),
+            );
+          }
+          return rows;
+        },
+      };
+      const one = firstPage(racing, SIZE);
+      const two = nextPage(one, base, SIZE);
+
+      const shown = ids(two.transactions);
+      expect(new Set(shown).size).toBe(shown.length);
+      expect(shown).toEqual(ids(transactionsRepo(app.db).listLatest(2 * SIZE)));
+      expect(shown).toContain('late');
+    } finally {
+      app.close();
+      background.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

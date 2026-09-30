@@ -8,11 +8,10 @@ import { Action, Choices, Field, RowAction } from '@/components/form';
 import { Banner, Card, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
-  accounts as accountsRepo,
   categories as categoriesRepo,
   imports as importsRepo,
   sources as sourcesRepo,
-  transactions as transactionsRepo,
+  storedHistory,
 } from '@/db/repos';
 import { formatMoney } from '@/ui/amount-input';
 import { dateOfEpochMs } from '@/ui/dates';
@@ -52,7 +51,7 @@ import {
 import { COLLAPSE_LABEL, narrow, NOTHING_FOUND, PICKER_SIZE, type Named } from '@/ui/shortlist';
 
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
 
@@ -81,10 +80,11 @@ export default function SaldoImportScreen() {
   const [flow, setFlow] = useState<FlowState>(() =>
     startFlow({
       existing: {
-        accounts: accountsRepo.list(),
+        accounts: storedHistory.read().accounts,
         categories: categoriesRepo.list(),
         sources: sourcesRepo.list(),
-        transactions: transactionsRepo.listAll(),
+        // The stored history, read at most once per change stamp (app-speed-pass design D1).
+        transactions: storedHistory.read().transactions,
       },
       ...(importsRepo.committedAt() ? { previouslyCommittedAt: importsRepo.committedAt() } : {}),
     }),
@@ -116,7 +116,7 @@ export default function SaldoImportScreen() {
       .then((written) => {
         // The імпорт committed: the evaluation that follows earns what the brought history proves,
         // each досягнення dated from that history rather than from today.
-        evaluateProgress();
+        judgeProgressLater();
         setFlow((current) => committed(current, written));
         void clearAlert('saldo-import', ALERT_PORTS);
       })

@@ -6,20 +6,23 @@ import { Choices } from '@/components/form';
 import { Card, Chevron, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
-  accounts as accountsRepo,
   categories as categoriesRepo,
   goals as goalsRepo,
   investments as investmentsRepo,
   limits as limitsRepo,
   rates as ratesRepo,
-  transactions as transactionsRepo,
+  rememberedRead,
+  storedHistory,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
-import { unseenAchievementsData } from '@/hooks/progress-ports';
+import { onProgressJudged, unseenAchievementsData } from '@/hooks/progress-ports';
+import { todayIso } from '@/ui/dates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { PROGRESS_ROUTE } from '@/ui/progress-screen';
 import {
-  reportsViewModel,
+  reportsHistory,
+  reportsSelection,
+  type ReportsHistory,
   type ChartAxis,
   type HistoryReadout,
   type ReportsBar,
@@ -332,58 +335,84 @@ function HistoryNumbers({ readout }: { readout: HistoryReadout }) {
   );
 }
 
+/**
+ * Everything on Звіти that no choice changes — the history by month, the категорії it carries, the
+ * цілі — derived at most once per change stamp and day, not on every focus (reports-screen,
+ * "Choosing on Звіти re-derives only what the choice changes"; app-speed-pass design D7). Every
+ * input is storage, so the stamp is its whole key; the day covers `now`.
+ */
+const readReportsHistory = rememberedRead((): ReportsHistory => {
+  // The stored history, read at most once per change stamp (app-speed-pass design D1). Every
+  // рахунок and every категорія, archived included: the history keeps showing what it already
+  // carries, and classifying an old переказ needs its вид.
+  const history = storedHistory.read();
+  const categories = categoriesRepo.list();
+  // Nothing when a рахунок is beyond the safe range: each ціль's внески are then computed on their
+  // own, and only a ціль that holds that рахунок meets the refusal.
+  const balances = history.balancesIfSafe();
+  // The quiet badge beside Прогрес — read-only, same as opening Прогрес itself would read, and
+  // reading it here marks nothing seen (see progress-ports.ts).
+  const unseen = unseenAchievementsData();
+  return reportsHistory({
+    accounts: history.accounts,
+    transactions: history.transactions,
+    ...(balances ? { balances } : {}),
+    categoryNames: namesById(categories),
+    categories,
+    goals: goalsRepo.list(),
+    // Every ліміт is a ціль витрат (design D1), and a склад spanning currencies needs the stored
+    // rates to be approximated at all. Both are read here and changed nowhere.
+    limits: limitsRepo.list(),
+    rates: ratesRepo.all(),
+    // An інвестиційний рахунок's внесок to a ціль is its поточна вартість where the app holds one;
+    // the дата is the ціль's own screen's concern, so only the суми come this far.
+    currentValues: investmentsRepo.amounts(),
+    progressCandidates: unseen.candidates,
+    earnedAchievements: unseen.earned,
+    now: new Date(),
+  });
+});
+
+/**
+ * What this tab holds until it is first opened: Android builds every tab at launch, and this one
+ * reads nothing until the owner looks at it (app-shell, "A tab reads storage only once it is first
+ * opened"). Every hook below runs over it without touching storage, and the tab draws an empty body.
+ */
+const UNSEEN: ReportsHistory = reportsHistory({
+  accounts: [],
+  transactions: [],
+  categoryNames: new Map(),
+  goals: [],
+  now: new Date(),
+});
+
 export default function ReportsScreen() {
   const router = useRouter();
-  const [stored] = useReloadOnFocus(
-    useCallback(
-      () => ({
-        // Every рахунок and every категорія, archived included: the history keeps showing what it
-        // already carries, and classifying an old переказ needs its вид.
-        accounts: accountsRepo.list(),
-        transactions: transactionsRepo.listAll(),
-        categories: categoriesRepo.list(),
-        goals: goalsRepo.list(),
-        // Every ліміт is a ціль витрат (design D1), and a склад spanning currencies needs the
-        // stored rates to be approximated at all. Both are read here and changed nowhere.
-        limits: limitsRepo.list(),
-        rates: ratesRepo.all(),
-        // An інвестиційний рахунок's внесок to a ціль is its поточна вартість where the app holds
-        // one; the дата is the ціль's own screen's concern, so only the суми come this far.
-        currentValues: investmentsRepo.amounts(),
-        // The quiet badge beside Прогрес — read-only, same as opening Прогрес itself would read,
-        // and reading it here marks nothing seen (see progress-ports.ts).
-        ...unseenAchievementsData(),
-      }),
-      [],
-    ),
+  const [stored, , reloadWhenSeen] = useReloadOnFocus(
+    useCallback(() => readReportsHistory(todayIso(new Date())), []),
+    { whileUnseen: UNSEEN },
   );
+
+  /**
+   * A досягнення judged after a save (or a прогін) reaches this screen: at once in sight, on the
+   * next focus otherwise (app-speed-pass design D5).
+   */
+  useEffect(() => onProgressJudged(reloadWhenSeen), [reloadWhenSeen]);
 
   const [shownCurrency, setShownCurrency] = useState<string>();
   const [chosenCategoryId, setChosenCategoryId] = useState<string>();
   /** The month whose numbers are spelled out. Undefined until tapped — the model reads the newest. */
   const [chosenMonth, setChosenMonth] = useState<string>();
 
-  const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
+  // Only what the choice changes is derived again on a tap; the history above is not.
   const model = useMemo(
-    () =>
-      reportsViewModel({
-        accounts: stored.accounts,
-        transactions: stored.transactions,
-        categoryNames,
-        goals: stored.goals,
-        limits: stored.limits,
-        categories: stored.categories,
-        rates: stored.rates,
-        currentValues: stored.currentValues,
-        progressCandidates: stored.candidates,
-        earnedAchievements: stored.earned,
-        shownCurrency,
-        chosenCategoryId,
-        chosenMonth,
-        now: new Date(),
-      }),
-    [categoryNames, chosenCategoryId, chosenMonth, shownCurrency, stored],
+    () => reportsSelection(stored, { shownCurrency, chosenCategoryId, chosenMonth }),
+    [chosenCategoryId, chosenMonth, shownCurrency, stored],
   );
+
+  if (stored === UNSEEN) {
+    return <Screen>{null}</Screen>;
+  }
 
   return (
     <Screen>

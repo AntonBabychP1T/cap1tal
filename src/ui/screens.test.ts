@@ -364,25 +364,28 @@ describe('where the прогрес is evaluated, and where it is not', () => {
     // runs a sync. It calls it on no render, no focus and no scroll: `useReloadOnFocus` and the
     // effects around it never reach it.
     expect(home).toContain("from '@/hooks/progress-ports';");
-    expect(home).toContain('evaluateProgress');
+    // Deferred since app-speed-pass (`judgeProgressLater`, design D5): judged once the screen has
+    // settled, still only on the store paths.
+    expect(home).toContain('judgeProgressLater');
     // On no effect and on no focus reader: the two calls are inside the two store paths.
-    expect(home).not.toMatch(/useEffect\(\(\) => \{\s*evaluateProgress/);
-    expect(home).not.toMatch(/useReloadOnFocus\([\s\S]{0,900}?evaluateProgress/);
+    expect(home).not.toMatch(/useEffect\(\(\) => \{\s*(evaluateProgress|judgeProgress)/);
+    expect(home).not.toMatch(/useReloadOnFocus\([\s\S]{0,900}?(evaluateProgress|judgeProgress)/);
   });
 
   it('every named moment calls the evaluation, and each is a store rather than a draw', () => {
-    // The ten moments of the achievements capability, each at the place that already performs it.
+    // The ten moments of the achievements capability, each at the place that already performs it —
+    // judged once the screen settles since app-speed-pass (design D5), at launch among the chores.
     const moments: [string, RegExp][] = [
-      ['_layout.tsx', /seedStarterSet\(db\);[\s\S]*?evaluateProgress\(\)/],
-      [join('transaction', 'new.tsx'), /transactionsRepo\.save\(t, now\);[\s\S]{0,500}?evaluateProgress\(\)/],
-      [join('transaction', '[id].tsx'), /transactionsRepo\.remove\(original\.id\);[\s\S]{0,500}?evaluateProgress\(\)/],
-      [join('(tabs)', 'accounts.tsx'), /accountsRepo\.save\([\s\S]{0,500}?evaluateProgress\(\)/],
-      [join('account', '[id].tsx'), /accountsRepo\.save\([\s\S]{0,500}?evaluateProgress\(\)/],
-      [join('manage', 'goals.tsx'), /goalsRepo\.save\([\s\S]{0,500}?evaluateProgress\(\)/],
+      ['_layout.tsx', /seedStarterSet\(db\);[\s\S]*?run: judgeProgressNow/],
+      [join('transaction', 'new.tsx'), /transactionsRepo\.save\(t, now\);[\s\S]{0,500}?judgeProgressLater\(\)/],
+      [join('transaction', '[id].tsx'), /transactionsRepo\.remove\(original\.id\);[\s\S]{0,500}?judgeProgressLater\(\)/],
+      [join('(tabs)', 'accounts.tsx'), /accountsRepo\.save\([\s\S]{0,500}?judgeProgressLater\(\)/],
+      [join('account', '[id].tsx'), /accountsRepo\.save\([\s\S]{0,500}?judgeProgressLater\(\)/],
+      [join('manage', 'goals.tsx'), /goalsRepo\.save\([\s\S]{0,500}?judgeProgressLater\(\)/],
       // Through `commitImport`, which is `importsRepo.commit` with the журнал around it.
-      [join('manage', 'saldo-import.tsx'), /commitImport\(importsRepo[\s\S]{0,500}?evaluateProgress\(\)/],
-      [join('manage', 'backup.tsx'), /'restored'[\s\S]{0,500}?evaluateProgress\(\)/],
-      [join('manage', 'monobank.tsx'), /startSync\(\{[\s\S]{0,900}?evaluateProgress\(\)/],
+      [join('manage', 'saldo-import.tsx'), /commitImport\(importsRepo[\s\S]{0,500}?judgeProgressLater\(\)/],
+      [join('manage', 'backup.tsx'), /'restored'[\s\S]{0,500}?judgeProgressLater\(\)/],
+      [join('manage', 'monobank.tsx'), /startSync\(\{[\s\S]{0,900}?judgeProgressLater\(\)/],
     ];
 
     for (const [file, pattern] of moments) {
@@ -592,8 +595,10 @@ describe('what an інвестиційний рахунок is worth reaches the
     for (const screen of [join('(tabs)', 'reports.tsx'), 'ai-analysis.tsx']) {
       expect(readScreen(screen), screen).toMatch(/currentValues:\s*investmentsRepo\.amounts\(\)/);
     }
+    // Since app-speed-pass the read goes straight into `reportsHistory`, derived once per change
+    // stamp (design D7), rather than through the focus value.
     expect(readScreen(join('(tabs)', 'reports.tsx'))).toMatch(
-      /currentValues:\s*stored\.currentValues/,
+      /reportsHistory\(\{[\s\S]*?currentValues:\s*investmentsRepo\.amounts\(\)/,
     );
     // `ai-analysis.tsx` spreads its whole `stored` into the пакет, so the read above is the whole
     // of the wiring there — asserted so a later refactor to named fields cannot drop this one.

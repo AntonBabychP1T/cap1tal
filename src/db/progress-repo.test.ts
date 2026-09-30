@@ -96,6 +96,24 @@ describe('the зведення прогресу', () => {
     repo = progressRepo(storage.db);
   });
 
+  it('its memoized зведення equals a direct reading before and after a write', () => {
+    txs.save(
+      expenseByDefault({ id: 'm1', date: '2026-05-03', accountId: 'card', amount: money(1000, 'UAH') }),
+      new Date('2026-05-03T09:00:00.000Z'),
+    );
+    const first = repo.readProgressSummary();
+    expect(first).toEqual(progressRepo(storage.db).readProgressSummary());
+    expect(repo.readProgressSummary()).toBe(first);
+
+    txs.save(
+      expenseByDefault({ id: 'm2', date: '2026-06-03', accountId: 'card', amount: money(2000, 'UAH') }),
+      new Date('2026-06-03T09:00:00.000Z'),
+    );
+    const second = repo.readProgressSummary();
+    expect(second).not.toEqual(first);
+    expect(second).toEqual(progressRepo(storage.db).readProgressSummary());
+  });
+
   it('Scenario: The зведення holds the same numbers as the місячна картина', () => {
     const salary: Income = {
       type: 'income',

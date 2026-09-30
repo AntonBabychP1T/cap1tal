@@ -75,6 +75,21 @@ describe('monobankRepo — accounts and links', () => {
     storage.close();
   });
 
+  it('bankBalances is the per-link getAccount loop, in one read', () => {
+    expect(repo.bankBalances()).toEqual(new Map());
+    repo.link({ monobankAccountId: 'mono-card', accountId: 'card', syncStartDate: '2026-08-28', cursorMs: boundaryMs });
+    repo.link({ monobankAccountId: 'mono-jar', accountId: 'usd', syncStartDate: '2026-08-28', cursorMs: boundaryMs });
+
+    // What Рахунки and a рахунок's screen built before, one query per link.
+    const looped = new Map<string, unknown>();
+    for (const link of repo.listLinks()) {
+      const bank = repo.getAccount(link.monobankAccountId);
+      if (bank) looped.set(link.accountId, bank.bankBalance);
+    }
+    expect(repo.bankBalances()).toEqual(looped);
+    expect(repo.bankBalances().size).toBe(2);
+  });
+
   it('Scenario: An existing same-currency рахунок is linked', () => {
     repo.link({
       monobankAccountId: 'mono-card',

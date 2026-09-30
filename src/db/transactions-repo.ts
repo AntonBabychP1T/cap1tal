@@ -22,27 +22,41 @@ import {
 import { toTransaction, toTransactionRow } from './mappers';
 import { counterpartIncomeAwaits, transactions, type TransactionRow } from './schema';
 import type { Storage } from './storage';
+import { stampedMemo } from './stamp';
 
 /**
  * `rows`, each turned into a `Transaction` — a переказ among them carrying
- * `awaitingCounterpartIncome` when its id is one of `awaitingIds`. One extra query per read
- * rather than a join on every one of them: only переказ rows can possibly await anything, and most
- * reads here return few enough of those that a second round trip is simpler than joining every
- * caller through `counterpart_income_awaits` (design D4).
+ * `awaitingCounterpartIncome` when its id awaits one. One extra query per read rather than a join
+ * on every one of them: only переказ rows can possibly await anything (design D4).
+ *
+ * How that query asks depends on how many rows it serves (app-speed-pass design D2). A read of a
+ * few rows names their перекази in an `IN (…)` list. A read of the whole history — `listAll`,
+ * `search` — reads `counterpart_income_awaits` whole instead: it holds one row per unresolved
+ * переказ, so it stays tiny, while an `IN` list of every stored переказ id is one large statement
+ * to prepare per read and fails outright past SQLite's bound-parameter ceiling (32 766).
  */
-function withAwaiting(db: Storage, rows: readonly TransactionRow[]): Transaction[] {
-  const transferIds = rows.filter((row) => row.type === 'transfer').map((row) => row.id);
-  const awaitingIds =
-    transferIds.length === 0
-      ? new Set<string>()
-      : new Set(
-          db
-            .select()
-            .from(counterpartIncomeAwaits)
-            .where(inArray(counterpartIncomeAwaits.transactionId, transferIds))
-            .all()
-            .map((row) => row.transactionId),
-        );
+function withAwaiting(
+  db: Storage,
+  rows: readonly TransactionRow[],
+  scope: 'rows' | 'whole-history' = 'rows',
+): Transaction[] {
+  const awaitingIds = new Set<string>();
+  if (scope === 'whole-history') {
+    for (const row of db.select().from(counterpartIncomeAwaits).all()) {
+      awaitingIds.add(row.transactionId);
+    }
+  } else {
+    const transferIds = rows.filter((row) => row.type === 'transfer').map((row) => row.id);
+    if (transferIds.length > 0) {
+      for (const row of db
+        .select()
+        .from(counterpartIncomeAwaits)
+        .where(inArray(counterpartIncomeAwaits.transactionId, transferIds))
+        .all()) {
+        awaitingIds.add(row.transactionId);
+      }
+    }
+  }
   return rows.map((row) => toTransaction(row, awaitingIds.has(row.id)));
 }
 
@@ -64,6 +78,43 @@ const uncategorised = and(
  * See design.md §1 (one table, five types) and §2 (calendar dates as TEXT 'YYYY-MM-DD').
  */
 export function transactionsRepo(db: Storage) {
+  // Remembered under the change stamp (app-speed-pass design D1): Головний counts on every focus,
+  // and with nothing written in between the count is the one it already has.
+  const countUncategorised = stampedMemo(db, () => {
+    const row = db.get<{ n: number }>(
+      sql`select count(*) as n from ${transactions} where ${uncategorised}`,
+    );
+    return row?.n ?? 0;
+  });
+
+  // The місяці holding at least one транзакція, newest first — `monthsOf`'s answer, from the date
+  // index alone (a covering scan, no row is read) and remembered under the change stamp
+  // (app-speed-pass design D6).
+  const months = stampedMemo(db, () =>
+    db
+      .all<{ month: string }>(
+        sql`select distinct substr(${transactions.date}, 1, 7) as month from ${transactions} order by month desc`,
+      )
+      .map((row) => row.month as Month),
+  );
+
+  // Every stored транзакція a search matches, newest first — read, narrowed in SQL and judged here
+  // (design D12 of transaction-search), remembered per criteria under the change stamp.
+  const searchMatches = stampedMemo(db, (key): Transaction[] => {
+    const criteria = JSON.parse(key) as SearchCriteria & { match: SearchMatch };
+    const narrowed = withAwaiting(
+      db,
+      db
+        .select()
+        .from(transactions)
+        .where(narrowing(criteria))
+        .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
+        .all(),
+      'whole-history',
+    );
+    return narrowed.filter((t) => satisfies(t, criteria.match));
+  });
+
   return {
     /**
      * Insert or replace under the same id: every per-type column is written, so retyping an
@@ -197,6 +248,7 @@ export function transactionsRepo(db: Storage) {
           .from(transactions)
           .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
           .all(),
+        'whole-history',
       );
     },
 
@@ -210,7 +262,9 @@ export function transactionsRepo(db: Storage) {
      * answer exactly (the сума on either leg, and the категорії and джерела named) — while rows
      * that could still match only by their опис are let through on `description IS NOT NULL` and
      * judged here. `limit`/`offset` are applied last, to the matches: a page is a page of results,
-     * not of candidates.
+     * not of candidates. With nothing typed there is nothing to judge, so storage pages the listing
+     * itself; with something typed the matches are remembered under the change stamp, and the next
+     * page slices them without reading storage again (app-speed-pass design D6).
      *
      * The ceiling is honest: this reads the narrowed rows into memory, which is right for the
      * hundreds-to-low-thousands this app holds. If it stops being right the next step is a
@@ -234,65 +288,25 @@ export function transactionsRepo(db: Storage) {
       limit: number;
       offset: number;
     }): Transaction[] {
-      const { match } = input;
-      const filters: SQL[] = [];
-
-      if (input.uncategorised) {
-        filters.push(uncategorised);
-      }
-      if (input.accountId) {
-        filters.push(
-          or(
-            eq(transactions.accountId, input.accountId),
-            eq(transactions.fromAccountId, input.accountId),
-            eq(transactions.toAccountId, input.accountId),
-          )!,
+      const { limit, offset, ...criteria } = input;
+      if (!criteria.match) {
+        // Nothing is judged after the read, so storage pages the listing itself, walking
+        // `transactions_order_idx` newest first — a page reads one page (app-speed-pass design D6).
+        return withAwaiting(
+          db,
+          db
+            .select()
+            .from(transactions)
+            .where(narrowing(criteria))
+            .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
+            .limit(limit)
+            .offset(offset)
+            .all(),
         );
       }
-      if (input.month) {
-        // Validates the month by validating its first day; a bad month cannot reach SQL.
-        const first = isoDate(`${input.month}-01`);
-        filters.push(and(gte(transactions.date, first), lte(transactions.date, `${input.month}-31`))!);
-      }
-      if (match) {
-        const alternatives: SQL[] = [];
-        if (match.amountMinor !== undefined) {
-          alternatives.push(
-            or(
-              eq(transactions.amount, match.amountMinor),
-              eq(transactions.leftAmount, match.amountMinor),
-              eq(transactions.arrivedAmount, match.amountMinor),
-            )!,
-          );
-        }
-        if (match.categoryIds.length > 0) {
-          alternatives.push(inArray(transactions.categoryId, [...match.categoryIds]));
-        }
-        if (match.sourceIds.length > 0) {
-          alternatives.push(inArray(transactions.sourceId, [...match.sourceIds]));
-        }
-        // Anything carrying an опис could still match on it, and only TypeScript can say whether
-        // it does — the fold Ukrainian needs is not SQLite's.
-        if (match.text !== '') {
-          alternatives.push(isNotNull(transactions.description));
-        }
-        // Nothing to match on at all: a search that names no text, no сума and no label matches
-        // nothing rather than everything.
-        filters.push(alternatives.length > 0 ? or(...alternatives)! : sqlFalse());
-      }
-
-      const narrowed = withAwaiting(
-        db,
-        db
-          .select()
-          .from(transactions)
-          .where(filters.length > 0 ? and(...filters) : undefined)
-          .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
-          .all(),
-      );
-
-      const matched = match ? narrowed.filter((t) => satisfies(t, match)) : narrowed;
-      return matched.slice(input.offset, input.offset + input.limit);
+      // A search's matches are remembered under the change stamp with the criteria as the key, so
+      // «Показати ще» slices what was already matched instead of reading the history again.
+      return searchMatches(JSON.stringify(criteria)).slice(offset, offset + limit);
     },
 
     /**
@@ -306,10 +320,12 @@ export function transactionsRepo(db: Storage) {
      * row, and naming it here would ask the owner to fix something this section never leads to.
      */
     countUncategorised(): number {
-      const row = db.get<{ n: number }>(
-        sql`select count(*) as n from ${transactions} where ${uncategorised}`,
-      );
-      return row?.n ?? 0;
+      return countUncategorised();
+    },
+
+    /** The місяці holding at least one транзакція, newest first — what «Транзакції» narrows by. */
+    months(): readonly Month[] {
+      return months();
     },
 
     /** Everything touching the account, transfers included on either leg. */
@@ -335,6 +351,78 @@ export function transactionsRepo(db: Storage) {
 
 export type TransactionsRepo = ReturnType<typeof transactionsRepo>;
 
+
+/** What a search names beyond its page: the text it matches and the narrowings around it. */
+interface SearchMatch {
+  /** Matched in the опис, case-insensitively, at any position. Empty matches no опис. */
+  text: string;
+  /** A сума in minor units, matched on either leg, whatever the currency. */
+  amountMinor?: number;
+  categoryIds: readonly string[];
+  sourceIds: readonly string[];
+}
+
+interface SearchCriteria {
+  match?: SearchMatch;
+  accountId?: string;
+  month?: Month;
+  uncategorised?: boolean;
+}
+
+/**
+ * The SQL half of a search: narrowed by рахунок, by місяць, by «Без категорії», and by the part of
+ * the match SQL can answer exactly — rows that could still match only by their опис are let
+ * through on `description IS NOT NULL` and judged by `satisfies`.
+ */
+function narrowing(input: SearchCriteria): SQL | undefined {
+  const { match } = input;
+  const filters: SQL[] = [];
+
+  if (input.uncategorised) {
+    filters.push(uncategorised);
+  }
+  if (input.accountId) {
+    filters.push(
+      or(
+        eq(transactions.accountId, input.accountId),
+        eq(transactions.fromAccountId, input.accountId),
+        eq(transactions.toAccountId, input.accountId),
+      )!,
+    );
+  }
+  if (input.month) {
+    // Validates the month by validating its first day; a bad month cannot reach SQL.
+    const first = isoDate(`${input.month}-01`);
+    filters.push(and(gte(transactions.date, first), lte(transactions.date, `${input.month}-31`))!);
+  }
+  if (match) {
+    const alternatives: SQL[] = [];
+    if (match.amountMinor !== undefined) {
+      alternatives.push(
+        or(
+          eq(transactions.amount, match.amountMinor),
+          eq(transactions.leftAmount, match.amountMinor),
+          eq(transactions.arrivedAmount, match.amountMinor),
+        )!,
+      );
+    }
+    if (match.categoryIds.length > 0) {
+      alternatives.push(inArray(transactions.categoryId, [...match.categoryIds]));
+    }
+    if (match.sourceIds.length > 0) {
+      alternatives.push(inArray(transactions.sourceId, [...match.sourceIds]));
+    }
+    // Anything carrying an опис could still match on it, and only TypeScript can say whether
+    // it does — the fold Ukrainian needs is not SQLite's.
+    if (match.text !== '') {
+      alternatives.push(isNotNull(transactions.description));
+    }
+    // Nothing to match on at all: a search that names no text, no сума and no label matches
+    // nothing rather than everything.
+    filters.push(alternatives.length > 0 ? or(...alternatives)! : sqlFalse());
+  }
+  return filters.length > 0 ? and(...filters) : undefined;
+}
 
 /** A predicate SQL can hold that is never true — «нічого не знайдено» as a query, not as a branch. */
 function sqlFalse(): SQL {

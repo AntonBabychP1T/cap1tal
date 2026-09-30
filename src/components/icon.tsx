@@ -11,6 +11,9 @@ import { useTheme } from '@/hooks/use-theme';
 
 export type { IconName };
 
+/** The artboard every glyph is drawn on — one string for every icon, not one per render. */
+const VIEW_BOX = `0 0 ${ICON_VIEWBOX} ${ICON_VIEWBOX}`;
+
 /**
  * One stroke glyph, drawn from `src/ui/icons.ts`.
  *
@@ -36,7 +39,7 @@ export function Icon({
   const theme = useTheme();
 
   return (
-    <Svg width={size} height={size} viewBox={`0 0 ${ICON_VIEWBOX} ${ICON_VIEWBOX}`} fill="none">
+    <Svg width={size} height={size} viewBox={VIEW_BOX} fill="none">
       {ICON_PATHS[name].map((d) => (
         <Path
           key={d}

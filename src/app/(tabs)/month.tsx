@@ -63,6 +63,21 @@ function Step({
  * `src/ui/months.ts` and `src/ui/approx-uah.ts`; this file is the wiring. See design.md §6.
  */
 
+/**
+ * What this tab holds until it is first opened: Android builds every tab at launch, and this one
+ * reads nothing until the owner looks at it (app-shell, "A tab reads storage only once it is first
+ * opened"). Every hook below runs over it without touching storage, and the tab draws an empty body.
+ */
+const UNSEEN = {
+  accounts: [],
+  transactions: [],
+  previousTransactions: [],
+  rates: [],
+  categories: [],
+  limits: [],
+  recorded: undefined,
+} as const;
+
 export default function MonthScreen() {
   const router = useRouter();
   const [shown, setShown] = useState(() => currentMonth(new Date()));
@@ -105,6 +120,7 @@ export default function MonthScreen() {
       }),
       [shown],
     ),
+    { whileUnseen: UNSEEN },
   );
 
   useCurrentRates(reload);
@@ -127,6 +143,10 @@ export default function MonthScreen() {
       }),
     [reach, shown, stored],
   );
+
+  if (stored === UNSEEN) {
+    return <Screen>{null}</Screen>;
+  }
 
   return (
     <Screen>

@@ -1,6 +1,7 @@
 import type { Account } from '../domain/account';
 import { contribution, isOverdue, type AccumulationGoal } from '../domain/goals';
 import type { CurrentValue } from '../domain/investments';
+import type { Money } from '../domain/money';
 import type { IsoDate, Transaction } from '../domain/transaction';
 import { formatMoney } from './amount-input';
 import { todayIso } from './dates';
@@ -73,6 +74,8 @@ export function goalScreenModel(input: {
   readonly rates: readonly { readonly currency: string; readonly rateMillionths: number }[];
   /** The поточні вартості by рахунок id, from `investments-repo`; empty on a device with none. */
   readonly currentValues?: ReadonlyMap<string, CurrentValue>;
+  /** Every рахунок's розрахунковий баланс over `transactions` — `storedHistory`'s `balances()`. */
+  readonly balances?: ReadonlyMap<string, Money>;
   readonly now: Date;
 }): GoalScreenModel {
   if (!input.goal) {
@@ -89,7 +92,7 @@ export function goalScreenModel(input: {
   const contributions: Contribution[] = held.map((account) => ({
     accountId: account.id,
     // The вартість's сума alone reaches the domain; its дата travels beside it, to the row below.
-    amount: contribution(account, input.transactions, values.get(account.id)?.amount),
+    amount: contribution(account, input.transactions, values.get(account.id)?.amount, input.balances),
   }));
 
   const progress = goalProgress({

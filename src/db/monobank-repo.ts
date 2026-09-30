@@ -1,4 +1,4 @@
-import { and, asc, eq, lte } from 'drizzle-orm';
+import { and, asc, eq, lte, sql } from 'drizzle-orm';
 
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
@@ -273,6 +273,22 @@ export function monobankRepo(db: Storage) {
     },
 
     listLinks: links,
+
+    /**
+     * The last known баланс банку of every linked рахунок, by рахунок id — what Рахунки and a
+     * рахунок's own screen show beside the розрахунковий баланс. One join rather than a
+     * `getAccount` per link (app-speed-pass design D9); the same answer, links taken in
+     * `listLinks`' order so a рахунок linked twice keeps the later one, as that loop did.
+     */
+    bankBalances(): Map<string, Money> {
+      const rows = db.all<{ accountId: string; amount: number; currency: string }>(sql`
+        SELECT l.account_id AS accountId, a.bank_balance_amount AS amount, a.currency AS currency
+        FROM ${monobankLinks} l
+        JOIN ${monobankAccounts} a ON a.id = l.monobank_account_id
+        ORDER BY l.monobank_account_id
+      `);
+      return new Map(rows.map((row) => [row.accountId, money(row.amount, row.currency)]));
+    },
 
     /**
      * What a successful client-info answer leaves behind: the bank's own identity for each

@@ -1,20 +1,19 @@
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, View } from 'react-native';
 
 import { Action, Choices, Field, ThemedSwitch } from '@/components/form';
 import { Banner, Card, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
-  accounts as accountsRepo,
   categories as categoriesRepo,
   goals as goalsRepo,
   investments as investmentsRepo,
   limits as limitsRepo,
   rates as ratesRepo,
   sources as sourcesRepo,
-  transactions as transactionsRepo,
+  storedHistory,
 } from '@/db/repos';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { analysisShare } from '@/platform/analysis-share-device';
@@ -55,14 +54,35 @@ import { Spacing } from '@/constants/theme';
  * файл and showing the preview all happen in memory; no файл exists outside the app's own private
  * storage until «Поділитися з AI» is pressed.
  */
+/**
+ * The file panel is a scroller of its own — bounded by `maxHeight`, `nestedScrollEnabled` — so its
+ * list windows on its own scrolling, not the screen's. React Native's nesting check cannot tell
+ * that apart from a list expanded inside the screen's column, where windowing would break, and
+ * warns on both. Hiding the outer `ScrollView`'s context from the panel is what says "this one is
+ * its own scroller". `ScrollView.Context` exists at runtime but is missing from the typings.
+ */
+const FilePanelScroll = (ScrollView as unknown as { Context?: React.Context<unknown> }).Context;
+
+/** The panel's list inside the hidden context — or as it is, should a build lack that context. */
+function FilePanelList({
+  scroll,
+  children,
+}: {
+  scroll: React.Context<unknown> | undefined;
+  children: React.ReactNode;
+}) {
+  return scroll ? <scroll.Provider value={null}>{children}</scroll.Provider> : <>{children}</>;
+}
+
 export default function AiAnalysisScreen() {
   const router = useRouter();
 
   const [stored] = useReloadOnFocus(
     useCallback(
       () => ({
-        accounts: accountsRepo.list(),
-        transactions: transactionsRepo.listAll(),
+        // The stored history, read at most once per change stamp (app-speed-pass design D1).
+        accounts: storedHistory.read().accounts,
+        transactions: storedHistory.read().transactions,
         // Archived категорії and джерела included: a транзакція keeps the label it was recorded
         // under, and the пакет names it rather than falling back to anything.
         categories: categoriesRepo.list(),
@@ -127,6 +147,13 @@ export default function AiAnalysisScreen() {
   }, [model]);
 
   const outcome = runOutcomeWords(run);
+
+  /**
+   * The файл as its lines, drawn only while they are on or near the panel: a whole history laid
+   * out as one text block froze the screen (app-speed-pass design D7). An empty line keeps its
+   * height; the text itself is exactly what leaves.
+   */
+  const fileLines = useMemo(() => (model.document ? model.document.text.split('\n') : []), [model.document]);
 
   return (
     <Screen>
@@ -243,11 +270,21 @@ export default function AiAnalysisScreen() {
       {showingFile && model.document ? (
         <Card style={styles.card}>
           {/* Raw text, and not a rendering of it: what is shown has to be exactly what leaves. */}
-          <ScrollView style={styles.file} nestedScrollEnabled>
-            <ThemedText type="small" themeColor="textSecondary">
-              {model.document.text}
-            </ThemedText>
-          </ScrollView>
+          <FilePanelList scroll={FilePanelScroll}>
+            <FlatList
+              style={styles.file}
+              nestedScrollEnabled
+              data={fileLines}
+              keyExtractor={(_, index) => String(index)}
+              renderItem={({ item }) => (
+                <ThemedText type="small" themeColor="textSecondary">
+                  {item === '' ? ' ' : item}
+                </ThemedText>
+              )}
+              initialNumToRender={30}
+              windowSize={5}
+            />
+          </FilePanelList>
         </Card>
       ) : null}
 

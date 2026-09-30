@@ -78,6 +78,11 @@ export function currentNetWorth(input: {
   readonly accounts: readonly Account[];
   readonly transactions: readonly Transaction[];
   readonly currentValues: ReadonlyMap<string, CurrentValue>;
+  /**
+   * `computeBalances` over the same `transactions`, when the caller already has it — so the reading
+   * does not fold the whole history once per рахунок (app-speed-pass design D7).
+   */
+  readonly balances?: ReadonlyMap<string, Money>;
 }): NetWorthReading {
   if (input.accounts.length === 0) {
     return { status: 'empty' };
@@ -86,7 +91,7 @@ export function currentNetWorth(input: {
   const contributions: AccountContribution[] = input.accounts.map((account) => {
     const currentValue = input.currentValues.get(account.id);
     const usesCurrentValue = account.kind === 'investment' && currentValue !== undefined;
-    const amount = contribution(account, input.transactions, currentValue?.amount);
+    const amount = contribution(account, input.transactions, currentValue?.amount, input.balances);
     return {
       accountId: account.id,
       currency: account.currency,

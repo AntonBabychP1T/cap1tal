@@ -7,6 +7,7 @@ import type { BugReport } from '../reporting/report';
 import { reportingRepo, type NewBugReport, type ReportingRepo } from './reporting-repo';
 import { toAccountRow } from './mappers';
 import { accounts, bugReportScreenshots } from './schema';
+import { storageStamp } from './stored-history';
 import { openTestDb, seedReferences, type TestStorage } from './test-db';
 
 const BASE = new Date('2026-09-02T14:00:00.000Z').getTime();
@@ -52,6 +53,17 @@ describe('the журнал in storage', () => {
       ['screen', '/(tabs)/accounts'],
     ]);
     expect(repo.tail()[0]?.at.getTime()).toBe(BASE);
+  });
+
+  it('Scenario: A журнал entry between two reads does not cause a re-read', () => {
+    // An entry, and the prune past the bound, are written outside the change stamp: the журнал
+    // feeds no memoized read, so recording a screen must not rebuild the stored history.
+    const stamp = storageStamp(storage.db);
+    for (let i = 0; i < JOURNAL_LIMIT + 3; i++) {
+      repo.append(entry({ id: `j${i}`, at: new Date(BASE + i) }));
+    }
+    expect(repo.tail()).toHaveLength(JOURNAL_LIMIT);
+    expect(storageStamp(storage.db)).toBe(stamp);
   });
 
   it('round-trips an entry of every kind there is', () => {
@@ -321,8 +333,8 @@ describe('what the репорт says about the phone', () => {
   });
 
   it('says how many migrations this database has had applied', () => {
-    // The four committed migrations, since `openTestDb` runs the real migrator over the real folder.
-    expect(repo.migrationsApplied()).toBe(4);
+    // The five committed migrations, since `openTestDb` runs the real migrator over the real folder.
+    expect(repo.migrationsApplied()).toBe(5);
   });
 });
 

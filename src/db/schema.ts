@@ -168,6 +168,12 @@ export const transactions = sqliteTable(
     index('transactions_account_idx').on(t.accountId),
     index('transactions_from_account_idx').on(t.fromAccountId),
     index('transactions_to_account_idx').on(t.toAccountId),
+    // The «Без категорії» count on every Головний focus, category search and ліміти
+    // (app-speed-pass design D3).
+    index('transactions_category_idx').on(t.categoryId),
+    // The newest-first order every listing sorts by — date, then recording moment, then id — so
+    // SQLite walks the index instead of building a temporary sort.
+    index('transactions_order_idx').on(t.date, t.createdAt, t.id),
   ],
 );
 

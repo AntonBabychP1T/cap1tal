@@ -229,6 +229,40 @@ describe('rulesRepo — a правило-переказ', () => {
     expect(repo.list()).toEqual([]);
   });
 
+  it('a розбір over 5 000 транзакції moves exactly the matching ones', () => {
+    // Behaviour-neutral (app-speed-pass design D9): the moves are matched to stored транзакції by id
+    // through a map; the outcome is the one the scan per move gave.
+    seedReservedCategories(storage.db);
+    const txs = transactionsRepo(storage.db);
+    const at = new Date('2026-03-02T09:00:00.000Z');
+    storage.db.transaction(
+      (tx) => {
+        const write = transactionsRepo(tx);
+        for (let i = 0; i < 5000; i++) {
+          const description = i % 5 === 0 ? 'Оплата СІЛЬПО' : i % 5 === 1 ? 'округлення балансу' : 'АТБ';
+          write.save(
+            expenseByDefault({ id: `e${i}`, date: '2026-03-02', accountId: 'platinum', amount: money(100 + i, 'UAH'), description }),
+            at,
+          );
+        }
+      },
+      { behavior: 'immediate' },
+    );
+
+    repo.save(silpo);
+    repo.save(reserve);
+
+    const all = txs.listAll();
+    expect(all).toHaveLength(5000);
+    const byId = new Map(all.map((t) => [t.id, t]));
+    for (let i = 0; i < 5000; i++) {
+      const t = byId.get(`e${i}`)!;
+      if (i % 5 === 0) expect(t).toMatchObject({ type: 'expense', categoryId: 'groceries' });
+      else if (i % 5 === 1) expect(t).toMatchObject({ type: 'transfer', fromAccountId: 'platinum', toAccountId: 'reserve', left: money(100 + i, 'UAH') });
+      else expect(t).toMatchObject({ type: 'expense', categoryId: UNCATEGORISED_CATEGORY_ID });
+    }
+  });
+
   it('a правило-переказ round-trips within one open storage', () => {
     repo.save(reserve);
 

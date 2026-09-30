@@ -83,6 +83,26 @@ describe('netWorthRepo', () => {
     storage.close();
   });
 
+  it('its memoized readings equal a direct reading before and after a write', () => {
+    const direct = () => netWorthRepo(storage.db);
+    const readAll = (from: NetWorthRepo, today: '2026-06-30' | '2026-07-01') => ({
+      monthly: from.monthlyMovement(today),
+      firstDates: from.firstDates(today),
+      firstDateMovement: from.firstDateMovement(today),
+      future: [...from.accountsWithFutureRecords(today)],
+    });
+    transactions.save(income('i1', 'card', '2026-06-05', 10000), storedAt);
+    expect(readAll(repo, '2026-06-30')).toEqual(readAll(direct(), '2026-06-30'));
+    // The same answer, remembered, while nothing is written…
+    expect(repo.monthlyMovement('2026-06-30')).toBe(repo.monthlyMovement('2026-06-30'));
+
+    transactions.save(income('i2', 'jar', '2026-07-01', 500), storedAt);
+    // …and a fresh one after a write, whichever day is asked.
+    expect(readAll(repo, '2026-06-30')).toEqual(readAll(direct(), '2026-06-30'));
+    expect(readAll(repo, '2026-06-30').future).toEqual(['jar']);
+    expect(readAll(repo, '2026-07-01')).toEqual(readAll(direct(), '2026-07-01'));
+  });
+
   it('Scenario: The first date does not absorb its whole month', () => {
     transactions.save(income('i-june5', 'card', '2026-06-05', 10000), storedAt);
     transactions.save(

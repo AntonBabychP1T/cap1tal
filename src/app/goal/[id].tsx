@@ -5,11 +5,10 @@ import { StyleSheet, View } from 'react-native';
 import { Card, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
-  accounts as accountsRepo,
   goals as goalsRepo,
   investments as investmentsRepo,
   rates as ratesRepo,
-  transactions as transactionsRepo,
+  storedHistory,
 } from '@/db/repos';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { goalScreenModel } from '@/ui/goal-screen';
@@ -36,8 +35,13 @@ export default function GoalScreen() {
       () => ({
         goal: goalsRepo.get(id),
         // Every рахунок, archived included: an archived one keeps feeding its ціль.
-        accounts: accountsRepo.list(),
-        transactions: transactionsRepo.listAll(),
+        // The stored history, read at most once per change stamp (app-speed-pass design D1), and
+        // every рахунок's баланс from it — no fold per рахунок of the склад.
+        accounts: storedHistory.read().accounts,
+        transactions: storedHistory.read().transactions,
+        // Nothing when some рахунок is beyond the safe range: the внески of this склад are then
+        // computed one by one, and only a ціль holding that рахунок meets the refusal.
+        balances: storedHistory.read().balancesIfSafe(),
         rates: ratesRepo.all(),
         // An інвестиційний рахунок's внесок is its поточна вартість where the app holds one; the
         // рахунки without one keep contributing their розрахунковий баланс (goals capability).
@@ -53,6 +57,7 @@ export default function GoalScreen() {
         goal: stored.goal,
         accounts: stored.accounts,
         transactions: stored.transactions,
+        balances: stored.balances,
         rates: stored.rates,
         currentValues: stored.currentValues,
         now: new Date(),

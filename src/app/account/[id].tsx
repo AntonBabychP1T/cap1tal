@@ -6,8 +6,8 @@ import { Action, Choices, Field, Picker } from '@/components/form';
 import {
   Card,
   Fab,
-  ListCard,
   ListRow,
+  ListScreen,
   Screen,
   ScreenHeader,
   SectionLabel,
@@ -27,7 +27,8 @@ import { account } from '@/domain/account';
 import { mergePreview, mergeRefusal } from '@/domain/account-merge';
 import { namesById } from '@/domain/category';
 import type { Money } from '@/domain/money';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import type { Transaction } from '@/domain/transaction';
+import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { useSinglePush } from '@/hooks/use-single-push';
@@ -81,11 +82,7 @@ export default function AccountMovementsScreen() {
       const found = all.find((a) => a.id === id);
       // The bank's own side, joined at the screen and not on the `Account`, exactly as Рахунки
       // does it: a link keyed by рахунок id names the monobank account whose баланс банку this is.
-      let bankBalance: Money | undefined;
-      for (const link of monobankRepo.listLinks()) {
-        if (link.accountId !== id) continue;
-        bankBalance = monobankRepo.getAccount(link.monobankAccountId)?.bankBalance;
-      }
+      const bankBalance: Money | undefined = monobankRepo.bankBalances().get(id);
       return {
         account: found,
         // Every рахунок, archived included: a переказ on this one names the other, and a line has
@@ -172,7 +169,7 @@ export default function AccountMovementsScreen() {
     try {
       accountsRepo.save(accountFromDraft(draft, newId()));
       // A рахунок was edited: its початковий залишок moves the резерв with no транзакція behind it.
-      evaluateProgress();
+      judgeProgressLater();
       setDraft(undefined);
       reload();
     } catch (error) {
@@ -190,7 +187,7 @@ export default function AccountMovementsScreen() {
         // Archiving takes no money away — an archived рахунок still counts toward the резерв — so
         // the зведення is the same and this evaluation writes nothing. It is here because the
         // moment is named, not because it is expected to earn.
-        evaluateProgress();
+        judgeProgressLater();
         setDraft(undefined);
         reload();
       } catch (error) {
@@ -231,7 +228,7 @@ export default function AccountMovementsScreen() {
           onPress: () => {
             try {
               transactionsRepo.save(answer.correction, new Date());
-              evaluateProgress();
+              judgeProgressLater();
               setActual('');
               setReconciling(false);
               reload();
@@ -282,7 +279,7 @@ export default function AccountMovementsScreen() {
       const merge = (dropCorrections: boolean) => () => {
         try {
           mergeAccounts({ fromId: from.id, intoId: into.id, dropCorrections });
-          evaluateProgress();
+          judgeProgressLater();
           router.replace(`/account/${into.id}`);
         } catch (error) {
           Alert.alert(
@@ -302,6 +299,26 @@ export default function AccountMovementsScreen() {
     [reportBug, router, stored.account, stored.accounts, stored.transactions],
   );
 
+  /**
+   * Every shown movement's line, told from this рахунок's side, once per page rather than on every
+   * render — one clock for the whole list, so «сьогодні» cannot change halfway down it
+   * (app-speed-pass design D7).
+   */
+  const accountId = stored.account?.id;
+  const lines = useMemo(() => {
+    const now = new Date();
+    return new Map(
+      accountId === undefined
+        ? []
+        : page.shown.map((t) => {
+            const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
+            // Told from this рахунок's side: its own name is the screen's title, and a переказ
+            // says whether it brought money in or took it out (design D3).
+            return [t.id, { line, side: accountSideLine(t, line, accountId, byId, now) }] as const;
+          }),
+    );
+  }, [accountId, byId, categoryIconKeys, categoryNames, overLimit, page.shown, sourceNames]);
+
   // A рахунок that has been deleted from under the screen — or an id that never named one — says
   // so rather than rendering a blank list of someone else's money.
   if (!stored.account || !movements) {
@@ -315,12 +332,31 @@ export default function AccountMovementsScreen() {
     );
   }
 
-  // One clock for the whole list, so «сьогодні» cannot change halfway down it.
-  const now = new Date();
   const a = stored.account;
 
+  /** One movement — drawn only while it is on or near the screen. */
+  const renderRow = (t: Transaction, index: number) => {
+    const { line, side } = lines.get(t.id)!;
+    return (
+      <ListRow key={line.id} last={index === page.shown.length - 1}>
+        <TransactionRow
+          icon={line.icon}
+          iconTone={line.iconTone}
+          marked={line.uncategorised}
+          title={side.title}
+          titleTone={line.overLimit ? 'textDanger' : undefined}
+          subtitle={side.subtitle}
+          description={line.description}
+          amount={side.amount}
+          amountTone={side.amountTone}
+          onPress={() => push(`/transaction/${line.id}`)}
+        />
+      </ListRow>
+    );
+  };
+
   return (
-    <Screen
+    <ListScreen
       // The same «+» Головний has, opening the form on this рахунок. An archived one is offered
       // for no new транзакція, so it has none — and neither does the screen while one of its own
       // forms is open: editing, звірка or обʼєднання end in a column of full-width buttons, and
@@ -330,209 +366,193 @@ export default function AccountMovementsScreen() {
         a.archived || draft || reconciling || merging ? undefined : (
           <Fab onPress={() => push({ pathname: '/transaction/new', params: { account: a.id } })} />
         )
-      }>
-      <ScreenHeader
-        title={movements.name}
-        subtitle={a.archived ? `${kindLabel(a.kind)} · в архіві` : kindLabel(a.kind)}
-        back={() => router.back()}
-      />
+      }
+      header={
+        <>
+          <ScreenHeader
+            title={movements.name}
+            subtitle={a.archived ? `${kindLabel(a.kind)} · в архіві` : kindLabel(a.kind)}
+            back={() => router.back()}
+          />
 
-      <Card style={styles.balances}>
-        <ThemedText type="overline">Розрахунковий баланс</ThemedText>
-        <ThemedText type="subtitle" tabular>
-          {movements.balance}
-        </ThemedText>
-        {/* The bank's figure under the рахунок's own, named so neither is mistaken for the
-            other. Only a linked рахунок has one. */}
-        {movements.bankBalance ? (
-          <View style={styles.line}>
-            <ThemedText type="small" themeColor="textSecondary">
-              останній баланс банку
+          <Card style={styles.balances}>
+            <ThemedText type="overline">Розрахунковий баланс</ThemedText>
+            <ThemedText type="subtitle" tabular>
+              {movements.balance}
             </ThemedText>
-            <ThemedText type="small" tabular themeColor="textSecondary">
-              {movements.bankBalance}
-            </ThemedText>
-          </View>
-        ) : null}
-        {/* The two things done to a рахунок, side by side under its balance, so the рухи follow
-            directly. «Звірити» only for an unarchived one: a коригування is a транзакція. */}
-        {draft || reconciling ? null : (
-          <View style={styles.actions}>
-            {a.archived ? null : (
-              <View style={styles.action}>
-                <Action variant="secondary" title="Звірити" onPress={() => setReconciling(true)} />
+            {/* The bank's figure under the рахунок's own, named so neither is mistaken for the
+                other. Only a linked рахунок has one. */}
+            {movements.bankBalance ? (
+              <View style={styles.line}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  останній баланс банку
+                </ThemedText>
+                <ThemedText type="small" tabular themeColor="textSecondary">
+                  {movements.bankBalance}
+                </ThemedText>
+              </View>
+            ) : null}
+            {/* The two things done to a рахунок, side by side under its balance, so the рухи follow
+                directly. «Звірити» only for an unarchived one: a коригування is a транзакція. */}
+            {draft || reconciling ? null : (
+              <View style={styles.actions}>
+                {a.archived ? null : (
+                  <View style={styles.action}>
+                    <Action variant="secondary" title="Звірити" onPress={() => setReconciling(true)} />
+                  </View>
+                )}
+                <View style={styles.action}>
+                  <Action
+                    variant="secondary"
+                    title="Редагувати"
+                    onPress={() => setDraft(draftFrom(a))}
+                  />
+                </View>
               </View>
             )}
-            <View style={styles.action}>
+          </Card>
+
+          {/* Звірити, offered for every unarchived рахунок — готівка included. An archived one is
+              offered for no new транзакція, and a коригування is a транзакція like any other. Closed
+              until asked for: it is the rare action here, and open it pushed the рухи the owner came
+              for a third of a screen down (accounts-screen, "Звірити opens when the owner asks"). */}
+          {a.archived ? null : reconciling ? (
+            <Card style={styles.form}>
+              <ThemedText type="overline">Звірити</ThemedText>
+              <Field
+                label="Фактичний залишок"
+                value={actual}
+                onChangeText={setActual}
+                keyboardType="numbers-and-punctuation"
+                placeholder="0,00"
+                hint={`${a.currency} — скільки насправді на рахунку`}
+                autoFocus
+              />
+              <Action title="Звірити" onPress={confirmReconcile} />
               <Action
                 variant="secondary"
-                title="Редагувати"
-                onPress={() => setDraft(draftFrom(a))}
+                title="Скасувати"
+                onPress={() => {
+                  setActual('');
+                  setReconciling(false);
+                }}
               />
-            </View>
-          </View>
-        )}
-      </Card>
-
-      {/* Звірити, offered for every unarchived рахунок — готівка included. An archived one is
-          offered for no new транзакція, and a коригування is a транзакція like any other. Closed
-          until asked for: it is the rare action here, and open it pushed the рухи the owner came
-          for a third of a screen down (accounts-screen, "Звірити opens when the owner asks"). */}
-      {a.archived ? null : reconciling ? (
-        <Card style={styles.form}>
-          <ThemedText type="overline">Звірити</ThemedText>
-          <Field
-            label="Фактичний залишок"
-            value={actual}
-            onChangeText={setActual}
-            keyboardType="numbers-and-punctuation"
-            placeholder="0,00"
-            hint={`${a.currency} — скільки насправді на рахунку`}
-            autoFocus
-          />
-          <Action title="Звірити" onPress={confirmReconcile} />
-          <Action
-            variant="secondary"
-            title="Скасувати"
-            onPress={() => {
-              setActual('');
-              setReconciling(false);
-            }}
-          />
-        </Card>
-      ) : null}
-
-      {draft ? (
-        <Card style={styles.form}>
-          <ThemedText type="overline">Редагувати рахунок</ThemedText>
-          <Field
-            label="Назва"
-            value={draft.name}
-            onChangeText={(name) => setDraft({ ...draft, name })}
-            placeholder="mono black"
-          />
-          <Choices
-            label="Вид"
-            choices={KIND_CHOICES}
-            selected={draft.kind}
-            onSelect={(kind) => setDraft({ ...draft, kind })}
-            disabled
-          />
-          <Choices
-            label="Валюта"
-            choices={CURRENCY_CHOICES}
-            selected={draft.currency}
-            onSelect={(currency) => setDraft({ ...draft, currency })}
-            disabled
-          />
-          <ThemedText type="small" themeColor="textSecondary">
-            Вид і валюту після створення змінити не можна.
-          </ThemedText>
-          <Field
-            label="Початковий залишок"
-            value={draft.opening}
-            onChangeText={(opening) => setDraft({ ...draft, opening })}
-            keyboardType="numbers-and-punctuation"
-            placeholder="0,00"
-            hint={`${draft.currency} — необовʼязково`}
-          />
-          <Action title="Зберегти" onPress={save} />
-          <Action
-            variant="secondary"
-            title={a.archived ? 'Повернути з архіву' : 'До архіву'}
-            onPress={() => setArchived(!a.archived)}
-          />
-          <Action
-            variant="secondary"
-            title="Обʼєднати з іншим рахунком"
-            onPress={() => {
-              setDraft(undefined);
-              setMerging(true);
-            }}
-          />
-          <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
-        </Card>
-      ) : null}
-
-      {/* Two рахунки that are the same money — a monobank банка linked on its own рахунок beside
-          the one the owner kept by hand — become the one picked here. */}
-      {merging ? (
-        <Card style={styles.form}>
-          <ThemedText type="overline">Обʼєднати з іншим рахунком</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {`Усе з «${a.name}» — транзакції, привʼязка monobank — перейде в обраний рахунок, а «${a.name}» зникне.`}
-          </ThemedText>
-          {mergeTargets(a, stored.accounts).length === 0 ? (
-            <ThemedText type="small" themeColor="textSecondary">
-              {`Немає іншого рахунку в ${a.currency}.`}
-            </ThemedText>
-          ) : (
-            <Picker
-              label="У який рахунок"
-              rows={mergeTargets(a, stored.accounts).map((one) => ({
-                id: one.id,
-                name: accountChoiceLabel(one),
-              }))}
-              recentIds={[]}
-              selected={undefined}
-              onSelect={confirmMerge}
-              noun="accounts"
-              expanded={mergeListOpen}
-              onExpandedChange={setMergeListOpen}
-            />
-          )}
-          <Action
-            variant="secondary"
-            title="Скасувати"
-            onPress={() => {
-              setMergeListOpen(false);
-              setMerging(false);
-            }}
-          />
-        </Card>
-      ) : null}
-
-      <SectionLabel>Рухи</SectionLabel>
-      {movements.emptyMessage ? (
-        <ThemedText type="small" themeColor="textSecondary">
-          {movements.emptyMessage}
-        </ThemedText>
-      ) : (
-        <>
-          <ListCard>
-            {page.shown.map((t, index) => {
-              const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
-              // Told from this рахунок's side: its own name is the screen's title, and a переказ
-              // says whether it brought money in or took it out (design D3).
-              const side = accountSideLine(t, line, a.id, byId, now);
-              return (
-                <ListRow key={line.id} last={index === page.shown.length - 1}>
-                  <TransactionRow
-                    icon={line.icon}
-                    iconTone={line.iconTone}
-                    marked={line.uncategorised}
-                    title={side.title}
-                    titleTone={line.overLimit ? 'textDanger' : undefined}
-                    subtitle={side.subtitle}
-                    description={line.description}
-                    amount={side.amount}
-                    amountTone={side.amountTone}
-                    onPress={() => push(`/transaction/${line.id}`)}
-                  />
-                </ListRow>
-              );
-            })}
-          </ListCard>
-          {page.more ? (
-            <Action
-              variant="secondary"
-              title="Показати ще"
-              onPress={() => setPages((asked) => asked + 1)}
-            />
+            </Card>
           ) : null}
+
+          {draft ? (
+            <Card style={styles.form}>
+              <ThemedText type="overline">Редагувати рахунок</ThemedText>
+              <Field
+                label="Назва"
+                value={draft.name}
+                onChangeText={(name) => setDraft({ ...draft, name })}
+                placeholder="mono black"
+              />
+              <Choices
+                label="Вид"
+                choices={KIND_CHOICES}
+                selected={draft.kind}
+                onSelect={(kind) => setDraft({ ...draft, kind })}
+                disabled
+              />
+              <Choices
+                label="Валюта"
+                choices={CURRENCY_CHOICES}
+                selected={draft.currency}
+                onSelect={(currency) => setDraft({ ...draft, currency })}
+                disabled
+              />
+              <ThemedText type="small" themeColor="textSecondary">
+                Вид і валюту після створення змінити не можна.
+              </ThemedText>
+              <Field
+                label="Початковий залишок"
+                value={draft.opening}
+                onChangeText={(opening) => setDraft({ ...draft, opening })}
+                keyboardType="numbers-and-punctuation"
+                placeholder="0,00"
+                hint={`${draft.currency} — необовʼязково`}
+              />
+              <Action title="Зберегти" onPress={save} />
+              <Action
+                variant="secondary"
+                title={a.archived ? 'Повернути з архіву' : 'До архіву'}
+                onPress={() => setArchived(!a.archived)}
+              />
+              <Action
+                variant="secondary"
+                title="Обʼєднати з іншим рахунком"
+                onPress={() => {
+                  setDraft(undefined);
+                  setMerging(true);
+                }}
+              />
+              <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
+            </Card>
+          ) : null}
+
+          {/* Two рахунки that are the same money — a monobank банка linked on its own рахунок beside
+              the one the owner kept by hand — become the one picked here. */}
+          {merging ? (
+            <Card style={styles.form}>
+              <ThemedText type="overline">Обʼєднати з іншим рахунком</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {`Усе з «${a.name}» — транзакції, привʼязка monobank — перейде в обраний рахунок, а «${a.name}» зникне.`}
+              </ThemedText>
+              {mergeTargets(a, stored.accounts).length === 0 ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  {`Немає іншого рахунку в ${a.currency}.`}
+                </ThemedText>
+              ) : (
+                <Picker
+                  label="У який рахунок"
+                  rows={mergeTargets(a, stored.accounts).map((one) => ({
+                    id: one.id,
+                    name: accountChoiceLabel(one),
+                  }))}
+                  recentIds={[]}
+                  selected={undefined}
+                  onSelect={confirmMerge}
+                  noun="accounts"
+                  expanded={mergeListOpen}
+                  onExpandedChange={setMergeListOpen}
+                />
+              )}
+              <Action
+                variant="secondary"
+                title="Скасувати"
+                onPress={() => {
+                  setMergeListOpen(false);
+                  setMerging(false);
+                }}
+              />
+            </Card>
+          ) : null}
+
+          <SectionLabel>Рухи</SectionLabel>
         </>
-      )}
-    </Screen>
+      }
+      data={movements.emptyMessage ? [] : page.shown}
+      keyExtractor={(t) => t.id}
+      renderRow={renderRow}
+      empty={
+        movements.emptyMessage ? (
+          <ThemedText type="small" themeColor="textSecondary">
+            {movements.emptyMessage}
+          </ThemedText>
+        ) : null
+      }
+      footer={
+        !movements.emptyMessage && page.more ? (
+          <Action
+            variant="secondary"
+            title="Показати ще"
+            onPress={() => setPages((asked) => asked + 1)}
+          />
+        ) : null
+      }
+    />
   );
 }
 

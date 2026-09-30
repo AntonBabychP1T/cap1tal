@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 
 import type { IsoDate, Month } from '../domain/transaction';
 import type { Storage } from './storage';
+import { stampedMemo } from './stamp';
 
 /** Net signed effect on one рахунок's баланс across one calendar month, in its own currency. */
 export interface AccountMonthMovement {
@@ -62,7 +63,7 @@ const MOVEMENTS = sql`
  * that caller cannot already compute in one query: history, not membership.
  */
 export function netWorthRepo(db: Storage) {
-  return {
+  const direct = {
     /**
      * Net signed movement per рахунок per calendar month, транзакції dated on or before `today`
      * only — a future-dated транзакція never enters a historical aggregate (net-worth, "Future
@@ -130,6 +131,25 @@ export function netWorthRepo(db: Storage) {
       `);
       return new Set(rows.map((r) => r.accountId));
     },
+  };
+
+  // Each reading is a function of storage and `today` alone, so it is remembered under the change
+  // stamp with the day as its key (app-speed-pass design D1): Головний asks all four on every
+  // focus, and with nothing written in between the answer is the one it already has.
+  const monthlyMovement = stampedMemo(db, (today) => direct.monthlyMovement(today as IsoDate));
+  const firstDates = stampedMemo(db, (today) => direct.firstDates(today as IsoDate));
+  const firstDateMovement = stampedMemo(db, (today) => direct.firstDateMovement(today as IsoDate));
+  const accountsWithFutureRecords = stampedMemo(db, (today) =>
+    direct.accountsWithFutureRecords(today as IsoDate),
+  );
+
+  return {
+    monthlyMovement: (today: IsoDate): readonly AccountMonthMovement[] => monthlyMovement(today),
+    firstDates: (today: IsoDate): readonly AccountFirstDate[] => firstDates(today),
+    firstDateMovement: (today: IsoDate): readonly AccountFirstDateMovement[] =>
+      firstDateMovement(today),
+    accountsWithFutureRecords: (today: IsoDate): ReadonlySet<string> =>
+      accountsWithFutureRecords(today),
   };
 }
 

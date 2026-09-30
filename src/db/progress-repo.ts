@@ -26,6 +26,7 @@ import type {
   ProgressSummary,
 } from '../progress/summary';
 import { challengeDecisions, earnedAchievements, spendingNorms } from './schema';
+import { stampedMemo } from './stamp';
 import type { Storage } from './storage';
 
 /**
@@ -211,150 +212,155 @@ export function progressRepo(db: Storage) {
     }
   }
 
-  return {
+  /**
+   * The whole history as one зведення. Four readings, none of which returns a транзакція: the
+   * місяці, the totals per вид рахунку, the extent of the history, and the чернетки still waiting.
+   * A function of storage alone, so it is remembered under the change stamp (app-speed-pass design
+   * D1): Головний and the прогрес judgement ask for it again and again between writes.
+   */
+  const readProgressSummary = stampedMemo(db, (): ProgressSummary => {
+    const monthRows = db.all<MonthAggregate>(sql`
+      SELECT month,
+             currency,
+             SUM(spent) AS spent,
+             SUM(income) AS income,
+             SUM(invested) AS invested,
+             SUM(saved) AS saved,
+             COUNT(DISTINCT counted) AS transactions,
+             SUM(uncategorised) AS uncategorised,
+             SUM(unsourced) AS unsourced
+      FROM (${MONTH_LEGS})
+      GROUP BY month, currency
+      ORDER BY month, currency
+    `);
+
     /**
-     * The whole history as one зведення. Four readings, none of which returns a транзакція: the
-     * місяці, the totals per вид рахунку, the extent of the history, and the чернетки still
-     * waiting.
+     * The розрахунковий баланс of every рахунок — `computeBalance`'s own arithmetic, in SQL: the
+     * opening balance, minus витрати, plus доходи, повернення and коригування (whose amount is
+     * signed), minus what left by a переказ and plus what arrived.
+     *
+     * One row per рахунок, never one per транзакція, and it answers both questions the зведення
+     * asks about balances: what each рахунок holds — which is what a ціль's progress is read
+     * from — and, summed below, what each (вид, currency) holds, which is what the резерв and the
+     * інвестиційний капітал are. Archived рахунки are included: archiving takes no money away.
      */
-    readProgressSummary(): ProgressSummary {
-      const monthRows = db.all<MonthAggregate>(sql`
-        SELECT month,
-               currency,
-               SUM(spent) AS spent,
-               SUM(income) AS income,
-               SUM(invested) AS invested,
-               SUM(saved) AS saved,
-               COUNT(DISTINCT counted) AS transactions,
-               SUM(uncategorised) AS uncategorised,
-               SUM(unsourced) AS unsourced
-        FROM (${MONTH_LEGS})
-        GROUP BY month, currency
-        ORDER BY month, currency
-      `);
+    const accountRows = db.all<AccountAggregate>(sql`
+      SELECT a.id AS id,
+             a.kind AS kind,
+             a.currency AS currency,
+             a.opening_amount
+             + COALESCE((SELECT SUM(CASE t.type WHEN 'expense' THEN -t.amount ELSE t.amount END)
+                         FROM transactions t
+                         WHERE t.account_id = a.id AND t.type <> 'transfer'), 0)
+             - COALESCE((SELECT SUM(t.left_amount) FROM transactions t
+                         WHERE t.from_account_id = a.id), 0)
+             + COALESCE((SELECT SUM(t.arrived_amount) FROM transactions t
+                         WHERE t.to_account_id = a.id), 0) AS balance
+      FROM accounts a
+      ORDER BY a.id
+    `);
 
-      /**
-       * The розрахунковий баланс of every рахунок — `computeBalance`'s own arithmetic, in SQL: the
-       * opening balance, minus витрати, plus доходи, повернення and коригування (whose amount is
-       * signed), minus what left by a переказ and plus what arrived.
-       *
-       * One row per рахунок, never one per транзакція, and it answers both questions the зведення
-       * asks about balances: what each рахунок holds — which is what a ціль's progress is read
-       * from — and, summed below, what each (вид, currency) holds, which is what the резерв and the
-       * інвестиційний капітал are. Archived рахунки are included: archiving takes no money away.
-       */
-      const accountRows = db.all<AccountAggregate>(sql`
-        SELECT a.id AS id,
-               a.kind AS kind,
-               a.currency AS currency,
-               a.opening_amount
-               + COALESCE((SELECT SUM(CASE t.type WHEN 'expense' THEN -t.amount ELSE t.amount END)
-                           FROM transactions t
-                           WHERE t.account_id = a.id AND t.type <> 'transfer'), 0)
-               - COALESCE((SELECT SUM(t.left_amount) FROM transactions t
-                           WHERE t.from_account_id = a.id), 0)
-               + COALESCE((SELECT SUM(t.arrived_amount) FROM transactions t
-                           WHERE t.to_account_id = a.id), 0) AS balance
-        FROM accounts a
-        ORDER BY a.id
-      `);
+    /**
+     * Витрачено per категорія — but only for the категорії that carry a ліміт, which is the one
+     * question anything asks of it. `categoryBreakdown`'s own arithmetic: a витрата adds, a
+     * повернення subtracts, and a negative коригування lands under the correction категорія,
+     * which appears here only if the owner has put a ліміт on it.
+     */
+    const limitedRows = db.all<LimitedCategoryAggregate>(sql`
+      SELECT month, currency, categoryId, SUM(spent) AS spent
+      FROM (
+        SELECT substr(t.date, 1, 7) AS month,
+               t.currency AS currency,
+               t.category_id AS categoryId,
+               CASE t.type WHEN 'expense' THEN t.amount ELSE -t.amount END AS spent
+        FROM transactions t
+        WHERE t.type IN ('expense', 'refund')
 
-      /**
-       * Витрачено per категорія — but only for the категорії that carry a ліміт, which is the one
-       * question anything asks of it. `categoryBreakdown`'s own arithmetic: a витрата adds, a
-       * повернення subtracts, and a negative коригування lands under the correction категорія,
-       * which appears here only if the owner has put a ліміт on it.
-       */
-      const limitedRows = db.all<LimitedCategoryAggregate>(sql`
-        SELECT month, currency, categoryId, SUM(spent) AS spent
-        FROM (
-          SELECT substr(t.date, 1, 7) AS month,
-                 t.currency AS currency,
-                 t.category_id AS categoryId,
-                 CASE t.type WHEN 'expense' THEN t.amount ELSE -t.amount END AS spent
-          FROM transactions t
-          WHERE t.type IN ('expense', 'refund')
+        UNION ALL
 
-          UNION ALL
+        SELECT substr(t.date, 1, 7), t.currency, ${CORRECTION_CATEGORY_ID}, -t.amount
+        FROM transactions t
+        WHERE t.type = 'correction' AND t.amount < 0
+      )
+      WHERE categoryId IN (SELECT category_id FROM category_limits)
+      GROUP BY month, currency, categoryId
+      ORDER BY month, currency, categoryId
+    `);
 
-          SELECT substr(t.date, 1, 7), t.currency, ${CORRECTION_CATEGORY_ID}, -t.amount
-          FROM transactions t
-          WHERE t.type = 'correction' AND t.amount < 0
-        )
-        WHERE categoryId IN (SELECT category_id FROM category_limits)
-        GROUP BY month, currency, categoryId
-        ORDER BY month, currency, categoryId
-      `);
+    const span = db.get<SpanAggregate>(sql`
+      SELECT COUNT(*) AS count, MIN(date) AS earliest, MAX(date) AS latest FROM transactions
+    `);
 
-      const span = db.get<SpanAggregate>(sql`
-        SELECT COUNT(*) AS count, MIN(date) AS earliest, MAX(date) AS latest FROM transactions
-      `);
+    // Every row of `notification_drafts` is a чернетка still waiting: settling one deletes it.
+    const draftRows = db.all<DraftAggregate>(sql`
+      SELECT substr(date, 1, 7) AS month, COUNT(*) AS waiting
+      FROM notification_drafts
+      GROUP BY month
+      ORDER BY month
+    `);
 
-      // Every row of `notification_drafts` is a чернетка still waiting: settling one deletes it.
-      const draftRows = db.all<DraftAggregate>(sql`
-        SELECT substr(date, 1, 7) AS month, COUNT(*) AS waiting
-        FROM notification_drafts
-        GROUP BY month
-        ORDER BY month
-      `);
-
-      const months: MonthRow[] = monthRows.map((row) => ({
-        month: row.month,
-        currency: row.currency,
-        spent: row.spent,
-        income: row.income,
-        invested: row.invested,
-        saved: row.saved,
-        transactions: row.transactions,
-        uncategorised: row.uncategorised,
-        unsourced: row.unsourced,
-      }));
-      const accountBalances: AccountRow[] = accountRows.map((row) => ({
-        id: row.id,
-        kind: toKind(row.kind),
-        currency: row.currency,
-        balance: row.balance,
-      }));
-      // The (вид, currency) totals, folded from the rows above rather than read a second time:
-      // one reading, so the two can never disagree about the same money.
-      const totals = new Map<string, KindRow>();
-      for (const row of accountBalances) {
-        const at = `${row.kind}\u0000${row.currency}`;
-        const held = totals.get(at);
-        totals.set(
-          at,
-          held === undefined
-            ? { kind: row.kind, currency: row.currency, balance: row.balance }
-            : { ...held, balance: held.balance + row.balance },
-        );
-      }
-      const balances: KindRow[] = [...totals.values()].sort((a, b) =>
-        a.kind !== b.kind ? (a.kind < b.kind ? -1 : 1) : a.currency < b.currency ? -1 : 1,
+    const months: MonthRow[] = monthRows.map((row) => ({
+      month: row.month,
+      currency: row.currency,
+      spent: row.spent,
+      income: row.income,
+      invested: row.invested,
+      saved: row.saved,
+      transactions: row.transactions,
+      uncategorised: row.uncategorised,
+      unsourced: row.unsourced,
+    }));
+    const accountBalances: AccountRow[] = accountRows.map((row) => ({
+      id: row.id,
+      kind: toKind(row.kind),
+      currency: row.currency,
+      balance: row.balance,
+    }));
+    // The (вид, currency) totals, folded from the rows above rather than read a second time:
+    // one reading, so the two can never disagree about the same money.
+    const totals = new Map<string, KindRow>();
+    for (const row of accountBalances) {
+      const at = `${row.kind}\u0000${row.currency}`;
+      const held = totals.get(at);
+      totals.set(
+        at,
+        held === undefined
+          ? { kind: row.kind, currency: row.currency, balance: row.balance }
+          : { ...held, balance: held.balance + row.balance },
       );
-      const drafts: DraftRow[] = draftRows.map((row) => ({
-        month: row.month,
-        waiting: row.waiting,
-      }));
-      const limitedCategories: LimitedCategoryRow[] = limitedRows.map((row) => ({
-        month: row.month,
-        currency: row.currency,
-        categoryId: row.categoryId,
-        spent: row.spent,
-      }));
+    }
+    const balances: KindRow[] = [...totals.values()].sort((a, b) =>
+      a.kind !== b.kind ? (a.kind < b.kind ? -1 : 1) : a.currency < b.currency ? -1 : 1,
+    );
+    const drafts: DraftRow[] = draftRows.map((row) => ({
+      month: row.month,
+      waiting: row.waiting,
+    }));
+    const limitedCategories: LimitedCategoryRow[] = limitedRows.map((row) => ({
+      month: row.month,
+      currency: row.currency,
+      categoryId: row.categoryId,
+      spent: row.spent,
+    }));
 
-      return {
-        months,
-        accounts: accountBalances,
-        balances,
-        limitedCategories,
-        history: {
-          count: span?.count ?? 0,
-          // Absent, never a sentinel: an empty history has no earliest транзакція to name.
-          ...(span?.earliest ? { earliest: span.earliest } : {}),
-          ...(span?.latest ? { latest: span.latest } : {}),
-        },
-        drafts,
-      };
+    return {
+      months,
+      accounts: accountBalances,
+      balances,
+      limitedCategories,
+      history: {
+        count: span?.count ?? 0,
+        // Absent, never a sentinel: an empty history has no earliest транзакція to name.
+        ...(span?.earliest ? { earliest: span.earliest } : {}),
+        ...(span?.latest ? { latest: span.latest } : {}),
+      },
+      drafts,
+    };
+  });
+
+  return {
+    readProgressSummary(): ProgressSummary {
+      return readProgressSummary();
     },
 
     /**

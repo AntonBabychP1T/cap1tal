@@ -21,18 +21,40 @@ import { remindersRepo } from './reminders-repo';
 import { reportingRepo } from './reporting-repo';
 import { rulesRepo } from './rules-repo';
 import { sourcesRepo } from './sources-repo';
+import { stampedMemo, storageStamp, storedHistory as storedHistoryRepo } from './stored-history';
 import { transactionsRepo } from './transactions-repo';
 
 /**
  * The repositories the screens use, over the one device database. Screens hold no state of their
- * own beyond the form they are showing: they re-query on focus and after their own writes, which
- * synchronous SQLite makes trivial. See design.md §6.
+ * own beyond the form they are showing: they read when they come into sight and after their own
+ * writes (design.md §6, `useReloadOnFocus`).
+ *
+ * The reads a screen repeats between writes — the whole stored history, the «Без категорії» count,
+ * the статок reads, the зведення прогресу — are remembered in memory under storage's own change
+ * stamp (`stored-history.ts`, app-speed-pass design D1). Nothing is stored, and the key is what
+ * SQLite says changed rather than what a writer remembered to announce, so no screen can show a
+ * balance older than the last committed write.
  */
 export const accounts = accountsRepo(db);
 /** Folds one рахунок into another of the same money, atomically — see `account-merge-repo.ts`. */
 export const mergeAccounts = (input: Parameters<typeof mergeAccountsImpl>[1]) =>
   mergeAccountsImpl(db, input);
 export const transactions = transactionsRepo(db);
+/**
+ * The whole stored history — рахунки, транзакції, their місяці and balances — read at most once
+ * per change stamp, whoever asks first (see `stored-history.ts`). What a screen that needs all of
+ * it reads instead of `transactions.listAll()`.
+ */
+export const storedHistory = storedHistoryRepo(db);
+/**
+ * A read derived wholly from storage, remembered under the change stamp and `key` (the day, for one
+ * that also depends on `now`) — see `stampedMemo`. For a derivation too costly to repeat on every
+ * focus, such as Звіти's history (app-speed-pass design D7). Every input must come from storage.
+ */
+export const rememberedRead = <T,>(read: (key: string) => T): ((key?: string) => T) =>
+  stampedMemo(db, read);
+/** Storage's change stamp right now — what «Транзакції» keeps beside the pages it read. */
+export const storageStampNow = (): string => storageStamp(db);
 /** A retype or edit's whole write, atomically — see `counterpart-income-repo.ts`'s own doc. */
 export const persistRetyped = (
   written: Parameters<typeof persistRetypedImpl>[1],

@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
@@ -11,7 +11,9 @@ import {
   type Transaction,
 } from '../domain/transaction';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
+import { accountsRepo } from './accounts-repo';
 import { reportingRepo } from './reporting-repo';
+import { transactionsRepo } from './transactions-repo';
 import {
   accounts,
   alerts,
@@ -1881,6 +1883,79 @@ describe('migrations — the dashboard layout', () => {
       expect(db.select().from(dashboardLayout).all()).toEqual([]);
     } finally {
       staged.close();
+    }
+  });
+});
+
+describe('migrations — the категорія and newest-first order indexes', () => {
+  /** SQLite's own account of how it would run `query` — the plan's detail lines, joined. */
+  function planOf(storage: TestStorage, query: string, params: readonly unknown[] = []): string {
+    return storage.db.$client
+      .prepare(`EXPLAIN QUERY PLAN ${query}`)
+      .all(...params)
+      .map((row) => (row as { detail: string }).detail)
+      .join('\n');
+  }
+
+  it('Scenario: The migration keeps every stored транзакція', () => {
+    const staged = openTestDbMigratedTo(4);
+    try {
+      const { db } = staged;
+      seedReferences(db, { categories: ['food', UNCATEGORISED_CATEGORY_ID], sources: [] });
+      accountsRepo(db).save(account({ id: 'card', name: 'mono', kind: 'spending', currency: 'UAH' }));
+      accountsRepo(db).save(account({ id: 'usd', name: 'usd', kind: 'savings', currency: 'USD' }));
+      const repo = transactionsRepo(db);
+      const rows: Transaction[] = [
+        expenseByDefault({ id: 'e1', date: '2026-03-02', accountId: 'card', amount: money(1000, 'UAH'), categoryId: 'food' }),
+        expenseByDefault({ id: 'e2', date: '2026-03-02', accountId: 'card', amount: money(2000, 'UAH') }),
+        transfer({ id: 't1', date: '2026-03-05', fromAccountId: 'card', toAccountId: 'usd', left: money(41000, 'UAH'), arrived: money(1000, 'USD') }),
+      ];
+      rows.forEach((t, i) => repo.save(t, new Date(Date.UTC(2026, 2, 1, 9, i))));
+      const before = repo.listAll();
+      const indexNames = () =>
+        db
+          .all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'transactions'`)
+          .map((row) => row.name);
+      expect(indexNames()).not.toContain('transactions_order_idx');
+
+      staged.migrateToLatest();
+
+      expect(transactionsRepo(db).listAll()).toEqual(before);
+      expect(indexNames()).toEqual(expect.arrayContaining(['transactions_category_idx', 'transactions_order_idx']));
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('Scenario: The «Без категорії» count uses the категорія index', () => {
+    const storage = openTestDb();
+    try {
+      const plan = planOf(
+        storage,
+        `select count(*) as n from transactions where type in ('expense', 'refund') and category_id = ?`,
+        [UNCATEGORISED_CATEGORY_ID],
+      );
+      expect(plan).toMatch(/USING (COVERING )?INDEX transactions_category_idx/);
+    } finally {
+      storage.close();
+    }
+  });
+
+  it('Scenario: The latest транзакції are listed without a sort pass', () => {
+    const storage = openTestDb();
+    try {
+      // The same query `listLatest` builds, taken from the builder rather than retyped.
+      const query = storage.db
+        .select()
+        .from(transactions)
+        .orderBy(desc(transactions.date), desc(transactions.createdAt), desc(transactions.id))
+        .limit(5)
+        .toSQL();
+      const plan = planOf(storage, query.sql, query.params);
+      expect(plan).toMatch(/INDEX transactions_order_idx/);
+      expect(plan).not.toMatch(/TEMP B-TREE/);
+    } finally {
+      storage.close();
     }
   });
 });

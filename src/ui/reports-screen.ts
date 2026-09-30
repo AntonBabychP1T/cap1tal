@@ -300,11 +300,17 @@ function monthToRead(series: readonly MonthTotals[], chosen: Month | undefined):
   return fallback?.month ?? null;
 }
 
-export function reportsViewModel(input: {
+/** What Звіти reads from storage: everything the tab derives once per read. */
+export interface ReportsStored {
   /** Every рахунок, archived included: a transfer classified in any month may touch one. */
   accounts: readonly Account[];
-  /** The whole stored history — `transactionsRepo.listAll()`. */
+  /** The whole stored history — `storedHistory.read().transactions`. */
   transactions: readonly Transaction[];
+  /**
+   * Every рахунок's розрахунковий баланс over `transactions` — `storedHistory`'s `balances()` —
+   * so a ціль's внески are read rather than folded again per рахунок. Absent, they are computed.
+   */
+  balances?: ReadonlyMap<string, Money>;
   /** The категорії list as the screen loaded it, so the chooser reads the owner's own names. */
   categoryNames: ReadonlyMap<string, string>;
   goals: readonly AccumulationGoal[];
@@ -324,18 +330,44 @@ export function reportsViewModel(input: {
    * is.
    */
   currentValues?: ReadonlyMap<string, Money>;
+  /** Every досягнення the catalogue can currently name — for the badge beside Прогрес, and only that. */
+  progressCandidates?: readonly Candidate[];
+  /** The earned rows, for the same badge; unseen ones are what it counts. */
+  earnedAchievements?: readonly EarnedAchievement[];
+  now: Date;
+}
+
+/** What the owner has chosen on Звіти — the only inputs a tap changes. */
+export interface ReportsChoice {
   /** What the owner switched to; ignored when the history does not hold it. */
   shownCurrency?: CurrencyCode;
   /** What the owner chose; ignored when the history does not carry it. */
   chosenCategoryId?: string;
   /** The month whose numbers are spelled out; ignored when the span does not hold it. */
   chosenMonth?: Month;
-  /** Every досягнення the catalogue can currently name — for the badge beside Прогрес, and only that. */
-  progressCandidates?: readonly Candidate[];
-  /** The earned rows, for the same badge; unseen ones are what it counts. */
-  earnedAchievements?: readonly EarnedAchievement[];
-  now: Date;
-}): ReportsViewModel {
+}
+
+/**
+ * Everything on Звіти that does not depend on a choice, derived once per read of storage
+ * (reports-screen, "Choosing on Звіти re-derives only what the choice changes"; app-speed-pass
+ * design D7): the history by month in every currency, the категорії the history carries, and the
+ * цілі with their progress.
+ */
+export interface ReportsHistory {
+  readonly month: Month;
+  readonly series: ReadonlyMap<CurrencyCode, readonly MonthTotals[]>;
+  readonly currencies: readonly CurrencyCode[];
+  readonly categoryChoices: readonly { readonly id: string; readonly label: string }[];
+  readonly goals: ReportsGoalGroups;
+  readonly emptyHistoryMessage: string | null;
+  readonly emptyGoalsMessage: string | null;
+  readonly progressBadge: ReportsViewModel['progressBadge'];
+  /** Read again only for the chosen категорія's series. */
+  readonly transactions: readonly Transaction[];
+  readonly categoryNames: ReadonlyMap<string, string>;
+}
+
+export function reportsHistory(input: ReportsStored): ReportsHistory {
   const month = currentMonth(input.now);
   const series = historySeries({
     accounts: input.accounts,
@@ -344,44 +376,11 @@ export function reportsViewModel(input: {
   });
 
   const currencies = [...series.keys()].sort(byCurrency);
-  // The first of them is UAH when UAH occurs and the alphabetically first one otherwise — the
-  // ordering above says both at once.
-  const shownCurrency =
-    input.shownCurrency && currencies.includes(input.shownCurrency)
-      ? input.shownCurrency
-      : (currencies[0] ?? null);
 
-  const offered = categoriesInHistory(input.transactions)
+  const categoryChoices = categoriesInHistory(input.transactions)
     .map((id) => ({ id, name: categoryLabel(id, input.categoryNames) }))
     .sort(byName)
     .map(({ id, name }) => ({ id, label: name }));
-
-  const chosenCategoryId =
-    input.chosenCategoryId && offered.some((c) => c.id === input.chosenCategoryId)
-      ? input.chosenCategoryId
-      : null;
-
-  // Both charts span exactly the months `historyMonths` decided, so one picked month governs both:
-  // June's history above August's Groceries would be two answers to one question.
-  const shownSeries = shownCurrency ? series.get(shownCurrency)! : [];
-  const readMonth = monthToRead(shownSeries, input.chosenMonth);
-
-  const categoryMonths =
-    chosenCategoryId && shownCurrency
-      ? (categorySeries({
-          categoryId: chosenCategoryId,
-          transactions: input.transactions,
-          currentMonth: month,
-          currencies: [shownCurrency],
-        }).get(shownCurrency) ?? [])
-      : [];
-  const categoryScale = largest(categoryMonths.map((m) => m.amount));
-  const categoryChart: CategoryColumn[] = categoryMonths.map((m) => ({
-    month: m.month,
-    label: shortMonthLabel(m.month),
-    selected: m.month === readMonth,
-    ...bar(m.amount, categoryScale),
-  }));
 
   const today = todayIso(input.now);
   const accountsById = new Map(input.accounts.map((a) => [a.id, a]));
@@ -395,7 +394,7 @@ export function reportsViewModel(input: {
         ? [
             {
               accountId: id,
-              amount: contribution(account, input.transactions, currentValues.get(id)),
+              amount: contribution(account, input.transactions, currentValues.get(id), input.balances),
             },
           ]
         : [];
@@ -470,6 +469,65 @@ export function reportsViewModel(input: {
     spending,
   };
 
+  return {
+    month,
+    series,
+    currencies,
+    categoryChoices,
+    goals,
+    emptyHistoryMessage: emptyHistoryMessageFor(currencies.length, input.transactions.length > 0),
+    emptyGoalsMessage:
+      accumulation.length === 0 && spending.length === 0 ? 'Цілей поки немає.' : null,
+    progressBadge: unseenAchievementsBadge(
+      input.earnedAchievements ?? [],
+      input.progressCandidates ?? [],
+    ),
+    transactions: input.transactions,
+    categoryNames: input.categoryNames,
+  };
+}
+
+/**
+ * What a choice changes, and nothing else: the currency shown, the highlighted and spelled-out
+ * month, and the chosen категорія's series. Every number equals what a full derivation gives.
+ */
+export function reportsSelection(derived: ReportsHistory, choice: ReportsChoice): ReportsViewModel {
+  const { month, series, currencies } = derived;
+  // The first of them is UAH when UAH occurs and the alphabetically first one otherwise — the
+  // ordering the history's currencies already carry says both at once.
+  const shownCurrency =
+    choice.shownCurrency && currencies.includes(choice.shownCurrency)
+      ? choice.shownCurrency
+      : (currencies[0] ?? null);
+
+  const offered = derived.categoryChoices;
+  const chosenCategoryId =
+    choice.chosenCategoryId && offered.some((c) => c.id === choice.chosenCategoryId)
+      ? choice.chosenCategoryId
+      : null;
+
+  // Both charts span exactly the months `historyMonths` decided, so one picked month governs both:
+  // June's history above August's Groceries would be two answers to one question.
+  const shownSeries = shownCurrency ? series.get(shownCurrency)! : [];
+  const readMonth = monthToRead(shownSeries, choice.chosenMonth);
+
+  const categoryMonths =
+    chosenCategoryId && shownCurrency
+      ? (categorySeries({
+          categoryId: chosenCategoryId,
+          transactions: derived.transactions,
+          currentMonth: month,
+          currencies: [shownCurrency],
+        }).get(shownCurrency) ?? [])
+      : [];
+  const categoryScale = largest(categoryMonths.map((m) => m.amount));
+  const categoryChart: CategoryColumn[] = categoryMonths.map((m) => ({
+    month: m.month,
+    label: shortMonthLabel(m.month),
+    selected: m.month === readMonth,
+    ...bar(m.amount, categoryScale),
+  }));
+
   const historyScale = historyScaleOf(shownSeries);
   const history = shownCurrency ? historyColumns(shownSeries, historyScale, readMonth) : [];
   const historyHasNegative = history.some((column) => column.bars.some((b) => b.negative));
@@ -481,7 +539,7 @@ export function reportsViewModel(input: {
   const readCategory = categoryChart.find((column) => column.selected);
 
   return {
-    currencies,
+    currencies: [...currencies],
     shownCurrency,
     canSwitchCurrency: currencies.length > 1,
     history,
@@ -497,10 +555,10 @@ export function reportsViewModel(input: {
         }
       : null,
     historyHasNegative,
-    categoryChoices: offered,
+    categoryChoices: [...offered],
     chosenCategoryId,
     chosenCategoryLabel: chosenCategoryId
-      ? categoryLabel(chosenCategoryId, input.categoryNames)
+      ? categoryLabel(chosenCategoryId, derived.categoryNames)
       : null,
     categoryChart,
     categoryAxis:
@@ -511,15 +569,19 @@ export function reportsViewModel(input: {
       ? { month: readCategory.month, label: readCategory.label, amount: readCategory.amount }
       : null,
     categoryChartHasNegative,
-    goals,
-    emptyHistoryMessage: emptyHistoryMessageFor(currencies.length, input.transactions.length > 0),
-    emptyGoalsMessage:
-      accumulation.length === 0 && spending.length === 0 ? 'Цілей поки немає.' : null,
-    progressBadge: unseenAchievementsBadge(
-      input.earnedAchievements ?? [],
-      input.progressCandidates ?? [],
-    ),
+    goals: derived.goals,
+    emptyHistoryMessage: derived.emptyHistoryMessage,
+    emptyGoalsMessage: derived.emptyGoalsMessage,
+    progressBadge: derived.progressBadge,
   };
+}
+
+/**
+ * The whole tab in one call: the history and the selection, derived together. What a full
+ * re-derivation gives — the tests compare the split against it.
+ */
+export function reportsViewModel(input: ReportsStored & ReportsChoice): ReportsViewModel {
+  return reportsSelection(reportsHistory(input), input);
 }
 
 /**

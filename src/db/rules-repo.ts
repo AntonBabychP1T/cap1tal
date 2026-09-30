@@ -77,6 +77,8 @@ export function rulesRepo(db: Storage) {
         const all = tx.select().from(rules).all().map(toRule);
         const knownAccounts = tx.select().from(accounts).all();
         const moves = sweepUncategorised(all, stored, knownAccounts);
+        // By id once, rather than a scan of the whole history per move (app-speed-pass design D9).
+        const storedById = new Map(stored.map((t) => [t.id, t]));
         const write = transactionsRepo(tx);
         let transferred = 0;
         let absorbed = 0;
@@ -86,7 +88,7 @@ export function rulesRepo(db: Storage) {
             write.setCategory(move.id, move.categoryId);
             continue;
           }
-          const original = stored.find((t) => t.id === move.id);
+          const original = storedById.get(move.id);
           if (original === undefined || original.type !== 'expense') {
             continue;
           }

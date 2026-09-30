@@ -15,7 +15,9 @@ import {
   offered,
   type Challenge,
 } from '@/progress/challenges';
+import { judgeAfterSettle } from '@/progress/deferred-judgement';
 import { runEvaluation, type RunPorts } from '@/progress/run';
+import { deviceIdle } from '@/platform/idle-device';
 import type { ProgressSummary } from '@/progress/summary';
 import type { EarnedAchievement } from '@/progress/earned';
 import { todayIso } from '@/ui/dates';
@@ -96,6 +98,49 @@ export function evaluateProgress(): EarnedAchievement[] {
     reportFailure('progress-evaluate', error);
     return [];
   }
+}
+
+/** Who hears that a judging earned something — the screens that show досягнення. */
+const judgedListeners = new Set<() => void>();
+
+/**
+ * Subscribes to «a judging earned something»; returns the unsubscribe. Screens pass their
+ * `reloadWhenSeen`, so the one in sight shows the new досягнення at once and the hidden ones on
+ * their next focus (app-speed-pass design D5).
+ */
+export function onProgressJudged(listener: () => void): () => void {
+  judgedListeners.add(listener);
+  return () => {
+    judgedListeners.delete(listener);
+  };
+}
+
+function announceProgressJudged(): void {
+  for (const listener of [...judgedListeners]) {
+    listener();
+  }
+}
+
+/**
+ * What every screen calls at the named moments instead of `evaluateProgress()`: the same judging,
+ * with the same verdict, run once the screen has settled rather than inside the tap that stored
+ * something (app-shell, "Work that follows a save or the launch never holds up the screen"). When
+ * it earns anything, `onProgressJudged` tells the screens.
+ */
+export function judgeProgressLater(): void {
+  judgeAfterSettle({
+    schedule: (work) => deviceIdle.afterScreenSettles(work),
+    judge: evaluateProgress,
+    announce: announceProgressJudged,
+  });
+}
+
+/**
+ * The same judging and announcement, now — for a caller that is itself already running after the
+ * screen settled: the launch chores.
+ */
+export function judgeProgressNow(): void {
+  judgeAfterSettle({ schedule: (work) => work(), judge: evaluateProgress, announce: announceProgressJudged });
 }
 
 /** Everything «Прогрес» and the two detail screens read. Nothing here evaluates or writes. */

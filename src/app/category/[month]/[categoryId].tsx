@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { Card, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
+import { Card, ListRow, ListScreen, ScreenHeader } from '@/components/surfaces';
 import { TransactionRow } from '@/components/transaction-row';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -12,6 +12,7 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
+import type { Transaction } from '@/domain/transaction';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { categoryMonthHeading, categoryTransactions } from '@/ui/category-transactions';
 import { currentMonth, monthLabel } from '@/ui/months';
@@ -68,72 +69,89 @@ export default function CategoryMonthScreen() {
     [categoryId, month, names, stored.limits, stored.transactions],
   );
 
-  // One clock for the whole list, so «сьогодні» cannot change halfway down it.
-  const now = new Date();
+  /**
+   * Every row's line, once per list rather than on every render — one clock for the whole list, so
+   * «сьогодні» cannot change halfway down it (app-speed-pass design D7).
+   */
+  const lines = useMemo(() => {
+    const now = new Date();
+    return new Map(
+      listed.map((t) => {
+        const line = transactionLine(t, byId, names, new Map(), new Map(), categoryIconKeys);
+        return [t.id, { line, subtitle: feedSubtitle(line, now) }] as const;
+      }),
+    );
+  }, [byId, categoryIconKeys, listed, names]);
+
+  /** One транзакція of the month — drawn only while it is on or near the screen. */
+  const renderRow = (t: Transaction, index: number) => {
+    const { line, subtitle } = lines.get(t.id)!;
+    return (
+      <ListRow key={line.id} last={index === listed.length - 1}>
+        <TransactionRow
+          icon={line.icon}
+          iconTone={line.iconTone}
+          title={feedTitle(line)}
+          subtitle={subtitle}
+          description={line.description}
+          amount={line.amount}
+          amountTone={line.amountTone}
+          onPress={() => router.push(`/transaction/${line.id}`)}
+        />
+      </ListRow>
+    );
+  };
+
   return (
-    <Screen>
-      <ScreenHeader
-        title={heading.label}
-        subtitle={monthLabel(month)}
-        danger={heading.overLimit}
-        back={() => router.back()}
-      />
+    <ListScreen
+      header={
+        <>
+          <ScreenHeader
+            title={heading.label}
+            subtitle={monthLabel(month)}
+            danger={heading.overLimit}
+            back={() => router.back()}
+          />
 
-      {/* The сума this list is a drill-down of, one line per currency, and — when the ліміт was
-          exceeded — by how much. Both are decided in `category-transactions.ts`. */}
-      {heading.spent.length > 0 ? (
-        <Card style={styles.heading}>
-          {heading.spent.map((amount) => (
-            <View key={amount} style={styles.headingLine}>
-              <ThemedText type="small" themeColor="textSecondary">
-                Витрачено
-              </ThemedText>
-              <ThemedText tabular style={styles.amount}>
-                {amount}
-              </ThemedText>
-            </View>
-          ))}
-          {heading.overrun ? (
-            <ThemedText type="small" themeColor="textDanger">
-              {heading.overrun}
-            </ThemedText>
+          {/* The сума this list is a drill-down of, one line per currency, and — when the ліміт was
+              exceeded — by how much. Both are decided in `category-transactions.ts`. */}
+          {heading.spent.length > 0 ? (
+            <Card style={styles.heading}>
+              {heading.spent.map((amount) => (
+                <View key={amount} style={styles.headingLine}>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Витрачено
+                  </ThemedText>
+                  <ThemedText tabular style={styles.amount}>
+                    {amount}
+                  </ThemedText>
+                </View>
+              ))}
+              {heading.overrun ? (
+                <ThemedText type="small" themeColor="textDanger">
+                  {heading.overrun}
+                </ThemedText>
+              ) : null}
+              {/* A month that ended at or below its ліміт says so; one that went over states its
+                  overrun above instead, and never both. */}
+              {heading.settled ? (
+                <ThemedText type="small" themeColor="textPositive">
+                  {heading.settled}
+                </ThemedText>
+              ) : null}
+            </Card>
           ) : null}
-          {/* A month that ended at or below its ліміт says so; one that went over states its
-              overrun above instead, and never both. */}
-          {heading.settled ? (
-            <ThemedText type="small" themeColor="textPositive">
-              {heading.settled}
-            </ThemedText>
-          ) : null}
-        </Card>
-      ) : null}
-
-      {listed.length === 0 ? (
+        </>
+      }
+      data={listed}
+      keyExtractor={(t) => t.id}
+      renderRow={renderRow}
+      empty={
         <ThemedText type="small" themeColor="textSecondary">
           У цій категорії за місяць нічого немає.
         </ThemedText>
-      ) : (
-        <ListCard>
-          {listed.map((t, index) => {
-            const line = transactionLine(t, byId, names, new Map(), new Map(), categoryIconKeys);
-            return (
-              <ListRow key={line.id} last={index === listed.length - 1}>
-                <TransactionRow
-                  icon={line.icon}
-                  iconTone={line.iconTone}
-                  title={feedTitle(line)}
-                  subtitle={feedSubtitle(line, now)}
-                  description={line.description}
-                  amount={line.amount}
-                  amountTone={line.amountTone}
-                  onPress={() => router.push(`/transaction/${line.id}`)}
-                />
-              </ListRow>
-            );
-          })}
-        </ListCard>
-      )}
-    </Screen>
+      }
+    />
   );
 }
 

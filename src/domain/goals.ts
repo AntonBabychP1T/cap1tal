@@ -48,15 +48,23 @@ export interface AccumulationGoal {
  *
  * The дата a вартість carries is deliberately not here: this computes a сума, and a дата is not
  * one. It travels beside the вартість to the screens that state it.
+ *
+ * `balances`, when given, is `computeBalances` over the same `transactions`: every рахунок's
+ * баланс, computed once for all of them.
  */
 export function contribution(
   account: Account,
   transactions: readonly Transaction[],
   currentValue?: Money,
+  balances?: ReadonlyMap<string, Money>,
 ): Money {
-  return account.kind === 'investment' && currentValue !== undefined
-    ? currentValue
-    : computeBalance(account, transactions);
+  if (account.kind === 'investment' && currentValue !== undefined) {
+    return currentValue;
+  }
+  // The розрахунковий баланс already computed for every рахунок in one pass, when the caller has
+  // it — the same number `computeBalance` gives, without folding the whole history once per рахунок
+  // (app-speed-pass design D7). A рахунок missing from it is computed here, never assumed zero.
+  return balances?.get(account.id) ?? computeBalance(account, transactions);
 }
 
 /**

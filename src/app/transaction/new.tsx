@@ -33,7 +33,7 @@ import {
   type EntryType,
 } from '@/ui/entry-form';
 import { failureAlert } from '@/ui/failure-alert';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { judgeProgressLater } from '@/hooks/progress-ports';
 import { newId } from '@/ui/id';
 import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
 import { PICKER_SIZE } from '@/ui/shortlist';
@@ -256,7 +256,7 @@ export default function NewTransactionScreen() {
         transactionsRepo.save(t, now);
       }
       // A транзакція was recorded: one of the named moments the прогрес is evaluated at.
-      evaluateProgress();
+      judgeProgressLater();
       // Recording by hand is the one thing that moves the memory — for a переказ, the рахунок the
       // money left, which is the one this picker names. Nothing else in the app calls `remember`.
       if (fromId) {

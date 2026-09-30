@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_BUSY_TIMEOUT_MS, prepareConnection, type StatementRunner } from './prepare';
+import {
+  DEFAULT_BUSY_TIMEOUT_MS,
+  inTransaction,
+  prepareConnection,
+  type StatementRunner,
+} from './prepare';
 
 function recordingRunner(): { run: StatementRunner; statements: string[] } {
   const statements: string[] = [];
@@ -38,5 +43,19 @@ describe('prepareConnection', () => {
     const { run, statements } = recordingRunner();
     prepareConnection(run, { busyTimeoutMs: 100 });
     expect(statements[0]).toBe('PRAGMA busy_timeout = 100');
+  });
+});
+
+describe('inTransaction', () => {
+  it("reads each driver's own flag", () => {
+    expect(inTransaction({ $client: { isInTransactionSync: () => true } })).toBe(true);
+    expect(inTransaction({ $client: { isInTransactionSync: () => false } })).toBe(false);
+    expect(inTransaction({ $client: { inTransaction: true } })).toBe(true);
+    expect(inTransaction({ $client: { inTransaction: false } })).toBe(false);
+  });
+
+  it('treats a handle it cannot recognise — a drizzle `tx` — as inside a transaction', () => {
+    expect(inTransaction({})).toBe(true);
+    expect(inTransaction({ $client: {} })).toBe(true);
   });
 });

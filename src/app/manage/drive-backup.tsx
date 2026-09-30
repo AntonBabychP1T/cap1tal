@@ -36,7 +36,7 @@ import { backup as backupRepo, driveBackupState } from '@/db/repos';
 import { driveBackupPorts } from '@/hooks/drive-backup-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { judgeProgressLater } from '@/hooks/progress-ports';
 import { syncDriveBackupTask } from '@/platform/drive-backup-task';
 import {
   ANOTHER_LINE_MESSAGE,
@@ -356,7 +356,7 @@ export default function DriveBackupScreen() {
           void syncDriveBackupTask();
         }
         // The restored history brought its own earned set; the evaluation earns what it still proves.
-        evaluateProgress();
+        judgeProgressLater();
         setTyped('');
         say(undefined);
       } else {

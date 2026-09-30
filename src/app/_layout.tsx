@@ -22,7 +22,9 @@ import {
   rules as rulesRepo,
 } from '@/db/repos';
 import { fillMissingCategoryIcons, seedStarterSet } from '@/db/seed';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { judgeProgressLater, judgeProgressNow } from '@/hooks/progress-ports';
+import { deviceIdle } from '@/platform/idle-device';
+import { startLaunchChores } from '@/ui/launch-chores';
 import { useOnForeground } from '@/hooks/use-on-foreground';
 import { useStorageMigrations } from '@/hooks/use-storage-migrations';
 import {
@@ -179,36 +181,6 @@ export default function RootLayout() {
   // See .claude/rules/database.md.
   const { success, error } = useStorageMigrations(db, migrations);
 
-  // Right after the migrations: the owner's starter категорії and джерела. Create-if-missing, so
-  // running it on every open costs one statement and can never undo a rename or an archive — see
-  // src/db/seed.ts.
-  //
-  // Not before the first screen read, though — `useReloadOnFocus` reads during render, and a
-  // child renders before this effect runs. On a genuinely fresh install the very first paint can
-  // therefore show only the three reserved rows migration 0003 inserted; the next focus has the
-  // whole list. Nothing can be recorded at that moment anyway (no рахунок exists yet), so the
-  // window is real but empty.
-  useEffect(() => {
-    if (success) {
-      seedStarterSet(db);
-      fillMissingCategoryIcons(db);
-    }
-  }, [success]);
-
-  /**
-   * The прогрес, evaluated once when the app starts — after the migrations, like every other read
-   * in this file. On a phone that already holds two years of history this is the evaluation that
-   * earns everything the history proves, in one go and dated where the history dates it.
-   *
-   * It is the only place a *screen* triggers an evaluation without the owner having stored
-   * anything, and it is deliberately not on any render or focus path: nothing here re-runs when
-   * Головний is opened, left and returned to.
-   */
-  useEffect(() => {
-    if (success) {
-      evaluateProgress();
-    }
-  }, [success]);
 
   /**
    * The журнал gets its storage, once — after the migrations, like every other read in this file.
@@ -294,11 +266,6 @@ export default function RootLayout() {
     }
   }, [success]);
 
-  /** Opening the app: whatever waited while it was not running. */
-  useEffect(() => {
-    void collect();
-  }, [collect]);
-
   /** And every return to it, which is the other half of the requirement's WHEN. */
   useOnForeground(
     useCallback(() => {
@@ -353,7 +320,7 @@ export default function RootLayout() {
     });
     // A sync that committed anything moved the history; one that committed nothing leaves the
     // зведення as it was and this evaluation writes nothing.
-    evaluateProgress();
+    judgeProgressLater();
   }, [success]);
 
   /**
@@ -366,8 +333,6 @@ export default function RootLayout() {
       reportFailure('monobank-sync', thrown);
     });
   }, [syncNow]);
-
-  useEffect(syncQuietly, [syncQuietly]);
 
   useOnForeground(syncQuietly);
 
@@ -422,7 +387,7 @@ export default function RootLayout() {
         run,
       })
         .then(() => {
-          evaluateProgress();
+          judgeProgressLater();
         })
         .catch((thrown: unknown) => {
           reportFailure('monobank-sync', thrown);
@@ -465,9 +430,53 @@ export default function RootLayout() {
     });
   }, [success]);
 
-  useEffect(backUpQuietly, [backUpQuietly]);
-
   useOnForeground(backUpQuietly);
+
+  /**
+   * The launch chores, started once the first screen is drawn and ready for a tap rather than
+   * inside the frame that draws it (app-shell, "Work that follows a save or the launch never holds
+   * up the screen"; app-speed-pass design D5). In the order they always ran; `startLaunchChores`
+   * starts the asynchronous ones without waiting on each other, as their separate effects did.
+   *
+   * - The owner's starter категорії and джерела, and the icons older rows lack. Create-if-missing,
+   *   so running it on every open costs one statement and can never undo a rename or an archive —
+   *   see src/db/seed.ts. On a genuinely fresh install the very first paint can therefore show only
+   *   the reserved rows; nothing can be recorded at that moment anyway (no рахунок exists yet).
+   * - The прогрес, judged once when the app starts. On a phone that already holds two years of
+   *   history this earns everything the history proves, in one go and dated where the history
+   *   dates it; what it earns is announced, so Головний shows it without being left. It is the only
+   *   place a *screen* triggers a judging without the owner having stored anything, and it is on no
+   *   render or focus path.
+   * - Opening the app: the captured notifications that waited while it was not running.
+   * - The monobank sync, when it is due.
+   * - The Google Drive бекап, when it is due.
+   *
+   * The returns to the foreground keep their own triggers above; only the launch moved.
+   */
+  const launched = useRef(false);
+  useEffect(() => {
+    if (!success || launched.current) {
+      return;
+    }
+    launched.current = true;
+    startLaunchChores({
+      schedule: (work) => deviceIdle.afterScreenSettles(work),
+      report: reportFailure,
+      chores: [
+        {
+          name: 'seed',
+          run: () => {
+            seedStarterSet(db);
+            fillMissingCategoryIcons(db);
+          },
+        },
+        { name: 'progress-evaluate', run: judgeProgressNow },
+        { name: 'notification-drain', run: collect },
+        { name: 'monobank-sync', run: syncQuietly },
+        { name: 'backup', run: backUpQuietly },
+      ],
+    });
+  }, [backUpQuietly, collect, success, syncQuietly]);
 
   /**
    * The нагадування, re-asserted rather than checked, once the migrations have run — the storage

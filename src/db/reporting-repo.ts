@@ -24,6 +24,7 @@ import {
   type JournalRow,
 } from './schema';
 import type { Storage } from './storage';
+import { outsideStamp } from './stamp';
 
 /**
  * The журнал and the репорти про помилки in storage.
@@ -192,27 +193,33 @@ export function reportingRepo(db: Storage) {
      * The prune is here and not at the call site so the singleton in `src/ui/journal.ts` has one
      * call to make and cannot forget the second half. `rowid NOT IN (the newest `JOURNAL_LIMIT`)` rather than
      * `OFFSET JOURNAL_LIMIT`: the same total order the reading uses, expressed once.
+     *
+     * Written outside the change stamp (`outsideStamp`, app-speed-pass design D1): the журнал
+     * records every screen opened, and no memoized read is made from it — the bug report reads it
+     * directly — so an entry must not make Головний read the whole history again.
      */
     append(entry: JournalEntry): void {
-      db.insert(journal)
-        .values({
-          id: entry.id,
-          at: entry.at,
-          kind: checkKind(entry.kind),
-          name: entry.name,
-          detail: entry.detail ?? null,
-          run: entry.run ?? null,
-          tookMs: entry.tookMs ?? null,
-          // JSON in one column rather than a side table: written once, read once, never queried
-          // and never aggregated — the same trade `bug_reports`' JSON columns already make.
-          countsJson: entry.counts === undefined ? null : JSON.stringify(entry.counts),
-        })
-        .run();
-      db.run(
-        sql`DELETE FROM ${journal} WHERE rowid NOT IN (
-              SELECT rowid FROM ${journal} ORDER BY ${journal.at} DESC, rowid DESC LIMIT ${JOURNAL_LIMIT}
-            )`,
-      );
+      outsideStamp(db, () => {
+        db.insert(journal)
+          .values({
+            id: entry.id,
+            at: entry.at,
+            kind: checkKind(entry.kind),
+            name: entry.name,
+            detail: entry.detail ?? null,
+            run: entry.run ?? null,
+            tookMs: entry.tookMs ?? null,
+            // JSON in one column rather than a side table: written once, read once, never queried
+            // and never aggregated — the same trade `bug_reports`' JSON columns already make.
+            countsJson: entry.counts === undefined ? null : JSON.stringify(entry.counts),
+          })
+          .run();
+        db.run(
+          sql`DELETE FROM ${journal} WHERE rowid NOT IN (
+                SELECT rowid FROM ${journal} ORDER BY ${journal.at} DESC, rowid DESC LIMIT ${JOURNAL_LIMIT}
+              )`,
+        );
+      });
     },
 
     /** The whole журнал, oldest first — `JOURNAL_LIMIT` rows at most, so nothing to page. */

@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Card, Chevron, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { progress as progressRepo } from '@/db/repos';
-import { progressScreenData } from '@/hooks/progress-ports';
+import { onProgressJudged, progressScreenData } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { progressViewModel } from '@/ui/progress-screen';
 
@@ -28,7 +28,15 @@ import { Spacing } from '@/constants/theme';
  */
 export default function ProgressScreen() {
   const router = useRouter();
-  const [stored, reload] = useReloadOnFocus(useCallback(() => progressScreenData(), []));
+  const [stored, reload, reloadWhenSeen] = useReloadOnFocus(
+    useCallback(() => progressScreenData(), []),
+  );
+
+  /**
+   * A досягнення judged after a save (or a прогін) reaches this screen: at once in sight, on the
+   * next focus otherwise (app-speed-pass design D5).
+   */
+  useEffect(() => onProgressJudged(reloadWhenSeen), [reloadWhenSeen]);
 
   /**
    * Opening «Прогрес» is being shown them. One write for all of them, so twelve retroactive

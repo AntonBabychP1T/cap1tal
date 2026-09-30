@@ -6,7 +6,7 @@ import { Action } from '@/components/form';
 import { Banner, Card, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { backup as backupRepo } from '@/db/repos';
-import { evaluateProgress } from '@/hooks/progress-ports';
+import { judgeProgressLater } from '@/hooks/progress-ports';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
@@ -69,7 +69,7 @@ export default function BackupScreen() {
     if (next.kind === 'restored') {
       // A відновлення landed: the бекап brought its own earned set, and the evaluation that
       // follows earns whatever the restored history still proves on top of it.
-      evaluateProgress();
+      judgeProgressLater();
     }
     // A cancelled chooser and a refused file are neither: nothing was attempted, and the owner is
     // holding the file they picked — the screen's own words are the whole answer.

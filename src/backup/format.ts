@@ -37,7 +37,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 4;
+export const BACKUP_SCHEMA_VERSION = 5;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
