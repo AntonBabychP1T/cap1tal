@@ -1,8 +1,9 @@
 import type { Href } from 'expo-router';
 
 /**
- * Everything the app is able to post, in one table: the daily нагадування and one сповіщення про
- * збій per action that can fail while nobody is watching.
+ * Everything the app is able to post, in one table: the daily нагадування, the нагадування про
+ * платіж of a розстрочка, and one сповіщення про збій per action that can fail while nobody is
+ * watching.
  *
  * The table *is* the privacy promise (design D4). Every title and body here is a parameterless
  * constant — there is no function taking a message, no template with a slot and no argument
@@ -61,6 +62,41 @@ export const REMINDER_NOTICE: Notice = {
   route: HOME_ROUTE,
 };
 
+/** Where a розстрочка is read and corrected — and where the warning of a платіж tomorrow leads. */
+export const INSTALLMENTS_ROUTE: NoticeRoute = '/manage/installments';
+
+/**
+ * The нагадування про платіж: the warning, the day before, that a розстрочка платіж is due
+ * (installments design D5). One constant like every notice here — no сума, no назва of what was
+ * bought and no рахунок: the phone's lock screen learns only that some платіж is tomorrow. It is
+ * arranged once per дата, and only the **id** differs between arrangements
+ * (`installmentDueId`), set on a copy of this constant, so no word of it is ever computed.
+ */
+export const INSTALLMENT_DUE_NOTICE: Notice = {
+  id: 'installment-due',
+  title: 'Завтра платіж за розстрочкою',
+  body: 'Перевірте, чи вистачить грошей на рахунку списання.',
+  route: INSTALLMENTS_ROUTE,
+};
+
+/** The prefix every arrangement of the нагадування про платіж is held under. */
+export const INSTALLMENT_DUE_PREFIX = `${INSTALLMENT_DUE_NOTICE.id}-`;
+
+/** The id of the нагадування про платіж arranged for `date` (the day before the платіж). */
+export function installmentDueId(date: string): string {
+  return `${INSTALLMENT_DUE_PREFIX}${date}`;
+}
+
+/** Whether an id the system holds is one of the нагадування про платіж. */
+export function isInstallmentDueId(id: string): boolean {
+  return id.startsWith(INSTALLMENT_DUE_PREFIX);
+}
+
+/** The notice arranged for `date`: the constant, under that date's id and nothing else changed. */
+export function installmentDueNotice(date: string): Notice {
+  return { ...INSTALLMENT_DUE_NOTICE, id: installmentDueId(date) };
+}
+
 /**
  * One сповіщення про збій per kind: the title is the action that failed, the body is where it is
  * explained and retried. Neither says why it failed — the reason is on that screen, where it can
@@ -113,7 +149,11 @@ export function alertNotice(kind: AlertKind): Notice {
 }
 
 /** Every notice the app can post — the нагадування and the сповіщення, walked as one list. */
-export const ALL_NOTICES: readonly Notice[] = [REMINDER_NOTICE, ...ALERT_KINDS.map(alertNotice)];
+export const ALL_NOTICES: readonly Notice[] = [
+  REMINDER_NOTICE,
+  INSTALLMENT_DUE_NOTICE,
+  ...ALERT_KINDS.map(alertNotice),
+];
 
 /** The routes a tap may land on: exactly the ones this table names, and nothing else. */
 const KNOWN_ROUTES: ReadonlySet<string> = new Set(ALL_NOTICES.map((notice) => notice.route));

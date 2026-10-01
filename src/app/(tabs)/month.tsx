@@ -16,11 +16,14 @@ import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
+  installments as installmentsRepo,
   limits as limitsRepo,
   rates as ratesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
+import { NO_INSTALLMENT_FACTS } from '@/domain/installments';
+import { settleInstallmentsOnFocus } from '@/hooks/installment-ports';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
@@ -81,6 +84,8 @@ const UNSEEN = {
   limits: [],
   recorded: undefined,
   month: undefined,
+  installments: [],
+  installmentFacts: NO_INSTALLMENT_FACTS,
 } as const;
 
 function MonthScreen() {
@@ -126,29 +131,37 @@ function MonthScreen() {
 
   const [stored, reload] = useReloadOnFocus(
     useCallback(
-      () => ({
-        // Every account, archived included: a month may hold a transfer touching one that has
-        // since been archived, and classifying it needs its вид (design decision 8).
-        accounts: accountsRepo.list(),
-        transactions: transactionsRepo.listMonth(shown),
-        // One more bounded month, so an empty screen can name the month that has numbers. Read
-        // unconditionally rather than in a second effect: it is one month, and the alternative is
-        // a reload the owner would watch happen.
-        previousTransactions: transactionsRepo.listMonth(prevMonth(shown)),
-        rates: ratesRepo.all(),
-        // Every category, archived included: a month keeps showing the categories its витрати
-        // already carry, and an archived one appears there like any other.
-        categories: categoriesRepo.list(),
-        // Every ліміт, so the breakdown can mark the categories this month went over.
-        limits: limitsRepo.list(),
-        // The first and last recorded дата — two values off the date index, never the history —
-        // which bound the arrows. Re-read with the rest on focus, so a транзакція recorded or
-        // deleted elsewhere moves the bounds the next time Місяць is looked at.
-        recorded: transactionsRepo.recordedSpan(),
-        // The month this answer is for, so the body is replaced when the new month's numbers
-        // arrive rather than one render earlier with the previous month's.
-        month: shown,
-      }),
+      () => {
+        // The платежі linked to what the debits already say, before the block below reads them
+        // (installments design D4). Writes nothing — and so moves no stamp — when nothing changed.
+        settleInstallmentsOnFocus();
+        return {
+          // Every account, archived included: a month may hold a transfer touching one that has
+          // since been archived, and classifying it needs its вид (design decision 8).
+          accounts: accountsRepo.list(),
+          transactions: transactionsRepo.listMonth(shown),
+          // One more bounded month, so an empty screen can name the month that has numbers. Read
+          // unconditionally rather than in a second effect: it is one month, and the alternative is
+          // a reload the owner would watch happen.
+          previousTransactions: transactionsRepo.listMonth(prevMonth(shown)),
+          rates: ratesRepo.all(),
+          // Every category, archived included: a month keeps showing the categories its витрати
+          // already carry, and an archived one appears there like any other.
+          categories: categoriesRepo.list(),
+          // Every ліміт, so the breakdown can mark the categories this month went over.
+          limits: limitsRepo.list(),
+          // The first and last recorded дата — two values off the date index, never the history —
+          // which bound the arrows. Re-read with the rest on focus, so a транзакція recorded or
+          // deleted elsewhere moves the bounds the next time Місяць is looked at.
+          recorded: transactionsRepo.recordedSpan(),
+          // The month this answer is for, so the body is replaced when the new month's numbers
+          // arrive rather than one render earlier with the previous month's.
+          month: shown,
+          // Every розстрочка: the «Розстрочки» block and «Вільно після розстрочок» read them.
+          installments: installmentsRepo.list(),
+          installmentFacts: installmentsRepo.facts(),
+        };
+      },
       [shown],
     ),
     { whileUnseen: UNSEEN },
@@ -171,6 +184,7 @@ function MonthScreen() {
         previousTransactions: stored.previousTransactions,
         now: new Date(),
         reach,
+        installments: { installments: stored.installments, facts: stored.installmentFacts },
       }),
     [reach, shown, stored],
   );
@@ -272,29 +286,39 @@ function MonthScreen() {
                         {group.note}
                       </ThemedText>
                     ) : null}
+                    {/* Directly beneath залишилось when залишилось leads. */}
+                    {leading.key === 'left' && group.freeAfterInstallments ? (
+                      <FreeAfterInstallments line={group.freeAfterInstallments} />
+                    ) : null}
                   </View>
                 ) : null}
                 <Divider />
                 <View style={styles.numberRows}>
                   {rest.map((row) => (
-                    <View key={row.key} style={styles.line}>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {row.label}
-                      </ThemedText>
-                      {row.key === 'spent' || row.key === 'left' ? (
-                        <ChangingFigure type="small" tabular style={styles.amount}>
-                          {row.amount}
-                        </ChangingFigure>
-                      ) : (
-                        <ThemedText
-                          type="small"
-                          tabular
-                          style={styles.amount}
-                          themeColor={row.key === 'income' ? 'textPositive' : undefined}>
-                          {row.amount}
+                    <Fragment key={row.key}>
+                      <View style={styles.line}>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {row.label}
                         </ThemedText>
-                      )}
-                    </View>
+                        {row.key === 'spent' || row.key === 'left' ? (
+                          <ChangingFigure type="small" tabular style={styles.amount}>
+                            {row.amount}
+                          </ChangingFigure>
+                        ) : (
+                          <ThemedText
+                            type="small"
+                            tabular
+                            style={styles.amount}
+                            themeColor={row.key === 'income' ? 'textPositive' : undefined}>
+                            {row.amount}
+                          </ThemedText>
+                        )}
+                      </View>
+                      {/* Directly beneath залишилось when витрачено leads and it is among these. */}
+                      {row.key === 'left' && group.freeAfterInstallments ? (
+                        <FreeAfterInstallments line={group.freeAfterInstallments} />
+                      ) : null}
+                    </Fragment>
                   ))}
                 </View>
               </Card>
@@ -342,6 +366,57 @@ function MonthScreen() {
           );
         })}
 
+        {/* The month's розстрочка платежі — also on an empty month, beside its statement. It
+            changes none of the six numbers; a tap opens «Розстрочки». */}
+        {model.installments ? (
+          <>
+            <SectionLabel>Розстрочки</SectionLabel>
+            <Tap
+              onPress={() => router.push('/manage/installments')}
+              accessibilityRole="button"
+              accessibilityLabel="Розстрочки">
+              <Card style={styles.breakdown}>
+                {model.installments.rows.map((row) => (
+                  <View key={row.key} style={styles.installment}>
+                    <View style={styles.line}>
+                      <ThemedText numberOfLines={1} style={styles.label}>
+                        {row.name}
+                      </ThemedText>
+                      <ThemedText tabular style={styles.amount}>
+                        {row.amount}
+                      </ThemedText>
+                    </View>
+                    <ThemedText
+                      type="small"
+                      themeColor={row.state === 'notFound' ? 'textDanger' : 'textSecondary'}>
+                      {`${row.date} · ${row.number} · ${row.stateLabel}`}
+                    </ThemedText>
+                  </View>
+                ))}
+                <Divider />
+                <View style={styles.line}>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Разом за місяць
+                  </ThemedText>
+                  <ThemedText type="small" tabular style={styles.amount}>
+                    {model.installments.total}
+                  </ThemedText>
+                </View>
+                {model.installments.unpaid ? (
+                  <View style={styles.line}>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Ще не сплачено
+                    </ThemedText>
+                    <ThemedText type="small" tabular style={styles.amount}>
+                      {model.installments.unpaid}
+                    </ThemedText>
+                  </View>
+                ) : null}
+              </Card>
+            </Tap>
+          </>
+        ) : null}
+
         {/* One «≈» line per monthly number, across every currency of that number — never one
             total per currency group. Absent whenever it cannot be honest. */}
         {model.approximate ? (
@@ -363,6 +438,20 @@ function MonthScreen() {
         ) : null}
       </SteppedBody>
     </Screen>
+  );
+}
+
+/** «Вільно після розстрочок» — a secondary line under залишилось, never the lead. */
+function FreeAfterInstallments({ line }: { line: { label: string; amount: string } }) {
+  return (
+    <View style={styles.line}>
+      <ThemedText type="small" themeColor="textSecondary">
+        {line.label}
+      </ThemedText>
+      <ThemedText type="small" tabular style={styles.amount}>
+        {line.amount}
+      </ThemedText>
+    </View>
   );
 }
 
@@ -407,6 +496,7 @@ const styles = StyleSheet.create({
     gap: Spacing.twoHalf,
   },
   label: { flex: 1, minWidth: 0 },
+  installment: { gap: Spacing.half },
   meter: { marginTop: Spacing.two - Spacing.half },
   amount: { fontWeight: 600 },
 });

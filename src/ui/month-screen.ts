@@ -8,7 +8,15 @@ import {
   monthlyPicture,
   type MonthlyNumbers,
 } from '../domain/monthly-picture';
-import type { Month, Transaction } from '../domain/transaction';
+import {
+  freeAfterInstallments,
+  installmentPartStates,
+  type Installment,
+  type InstallmentFacts,
+  type InstallmentPartStateKind,
+} from '../domain/installments';
+import { money } from '../domain/money';
+import { monthOf, type Month, type Transaction } from '../domain/transaction';
 import { byCurrency, formatMinorUnitsGrouped, formatMoney } from './amount-input';
 import { approximatePicture } from './approx-uah';
 import { categoryLabel } from './labels';
@@ -23,6 +31,8 @@ import {
 import type { MonobankRate } from '../monobank/currency';
 import { categoryIconDefinition } from './category-icons';
 import type { IconName } from './icons';
+import { shortCalendarLabel, todayIso } from './dates';
+import { formatHryvnia } from './receipt-screen';
 
 /**
  * Everything the Місяць screen renders, as strings — so what it says is under `verify` even though
@@ -91,7 +101,52 @@ export interface MonthCurrencyGroup {
   readonly lead: NumberKey;
   /** Says no дохід is recorded for the month yet — exactly when витрачено leads, `null` otherwise. */
   readonly note: string | null;
+  /**
+   * «Вільно після розстрочок» — only on the current month's UAH group, and only while a платіж of
+   * the month is still owed (month-screen, "The current month's UAH group states Вільно після
+   * розстрочок"). Drawn directly beneath залишилось wherever залишилось stands; never the lead.
+   */
+  readonly freeAfterInstallments?: { readonly label: string; readonly amount: string };
 }
+
+/** The name the reading goes by. */
+export const FREE_AFTER_INSTALLMENTS_LABEL = 'Вільно після розстрочок';
+
+/** One платіж of the month in the «Розстрочки» block. */
+export interface MonthInstallmentRow {
+  /** Unique within the month: the розстрочка's id and the платіж's number. */
+  readonly key: string;
+  /** The назва of its розстрочка. */
+  readonly name: string;
+  /** «платіж 5 з 10». */
+  readonly number: string;
+  /** «5 жовт.». */
+  readonly date: string;
+  /** «1 000,00 ₴». */
+  readonly amount: string;
+  readonly state: Exclude<InstallmentPartStateKind, 'closed'>;
+  /** «сплачено», «очікується», «списання не знайдено». */
+  readonly stateLabel: string;
+}
+
+/**
+ * The «Розстрочки» block of a month that holds a платіж not закрито (month-screen, "A month with
+ * платежі shows its розстрочки"). Tapping it opens the «Розстрочки» screen. It changes none of the
+ * six numbers.
+ */
+export interface MonthInstallmentsBlock {
+  readonly rows: readonly MonthInstallmentRow[];
+  /** «1 500,00 ₴» — every платіж of the month. */
+  readonly total: string;
+  /** «500,00 ₴» — what of that is not сплачено yet; `null` when all of it is. */
+  readonly unpaid: string | null;
+}
+
+const STATE_LABELS: Readonly<Record<Exclude<InstallmentPartStateKind, 'closed'>, string>> = {
+  paid: 'сплачено',
+  expected: 'очікується',
+  notFound: 'списання не знайдено',
+};
 
 /**
  * Why залишилось is not leading. Shown under витрачено, so the reason is on the screen. Exported
@@ -147,6 +202,8 @@ export interface MonthViewModel {
    * offer at all.
    */
   readonly previous: PreviousMonth | null;
+  /** The «Розстрочки» block, or `null` for a month in which no розстрочка has a платіж. */
+  readonly installments: MonthInstallmentsBlock | null;
 }
 
 /**
@@ -200,6 +257,8 @@ export function monthViewModel(input: {
    * month, as both did before the bounds existed.
    */
   reach?: ReachableMonths;
+  /** Every розстрочка and the states of their платежі; absent reads as none. */
+  installments?: { readonly installments: readonly Installment[]; readonly facts: InstallmentFacts };
 }): MonthViewModel {
   const picture = monthlyPicture({
     month: input.month,
@@ -251,6 +310,24 @@ export function monthViewModel(input: {
       };
     });
 
+  const today = todayIso(input.now);
+  const statuses = (input.installments?.installments ?? []).map((installment) =>
+    installmentPartStates(installment, input.installments!.facts, today),
+  );
+  const free = freeAfterInstallments(
+    picture.get('UAH')?.left,
+    statuses.flatMap((status) => status.parts),
+    input.month,
+    today,
+  );
+  if (free !== undefined) {
+    const at = groups.findIndex((group) => group.currency === 'UAH');
+    groups[at] = {
+      ...groups[at]!,
+      freeAfterInstallments: { label: FREE_AFTER_INSTALLMENTS_LABEL, amount: formatMoney(free) },
+    };
+  }
+
   const approximatePic = approximatePicture(picture, input.rates);
   const approximate = approximatePic
     ? NUMBER_KEYS.map((key) => ({
@@ -278,6 +355,54 @@ export function monthViewModel(input: {
           accounts: input.accounts,
           transactions: input.previousTransactions,
         }),
+    installments: installmentsBlockOf(statuses, input.month, input.now),
+  };
+}
+
+/**
+ * The month's платежі that are not закрито, by дата — then the розстрочка recorded first, then the
+ * number — with their total and what of it is not сплачено yet.
+ */
+function installmentsBlockOf(
+  statuses: readonly ReturnType<typeof installmentPartStates>[],
+  month: Month,
+  now: Date,
+): MonthInstallmentsBlock | null {
+  const parts = statuses
+    .flatMap((status) =>
+      status.parts
+        .filter((part) => monthOf(part.due) === month && part.state !== 'closed')
+        .map((part) => ({ status, part })),
+    )
+    .sort(
+      (a, b) =>
+        a.part.due.localeCompare(b.part.due) ||
+        a.status.installment.recordedAt - b.status.installment.recordedAt ||
+        a.part.number - b.part.number,
+    );
+  if (parts.length === 0) {
+    return null;
+  }
+  const uah = (amount: number) => formatHryvnia(money(amount, 'UAH'));
+  const total = parts.reduce((sum, { part }) => sum + part.amount, 0);
+  const unpaid = parts
+    .filter(({ part }) => part.state !== 'paid')
+    .reduce((sum, { part }) => sum + part.amount, 0);
+  return {
+    rows: parts.map(({ status, part }) => {
+      const state = part.state as Exclude<InstallmentPartStateKind, 'closed'>;
+      return {
+        key: `${status.installment.id}#${part.number}`,
+        name: status.installment.name,
+        number: `платіж ${part.number} з ${status.installment.partsCount}`,
+        date: shortCalendarLabel(part.due, now),
+        amount: uah(part.amount),
+        state,
+        stateLabel: STATE_LABELS[state],
+      };
+    }),
+    total: uah(total),
+    unpaid: unpaid === 0 ? null : uah(unpaid),
   };
 }
 

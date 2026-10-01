@@ -107,6 +107,42 @@ describe('accountsRepo', () => {
     );
   });
 
+  it('Scenario: A new рахунок records its creation day', () => {
+    repo.save(
+      account({ id: 'new', name: 'нова', kind: 'spending', currency: 'UAH', openingBalance: money(50000, 'UAH') }),
+      '2026-10-01',
+    );
+    expect(repo.get('new')!.openingDate).toBe('2026-10-01');
+  });
+
+  it('An edit keeps the stored дата and does not stamp one onto a рахунок without it', () => {
+    repo.save(card);
+    repo.save(account({ ...card, name: 'black' }), '2026-10-01');
+    expect(repo.get('card')!.openingDate).toBeUndefined();
+
+    repo.save(account({ ...card, openingDate: '2024-10-27' }), '2026-10-01');
+    repo.save(account({ ...repo.get('card')!, archived: true }), '2026-10-02');
+    expect(repo.get('card')!.openingDate).toBe('2024-10-27');
+  });
+
+  it('Scenario: A дата after today is rejected', () => {
+    repo.save(account({ ...card, openingDate: '2026-06-08' }), '2026-10-01');
+    expect(() => repo.save(account({ ...card, openingDate: '2026-10-05' }), '2026-10-01')).toThrow(
+      'дата початкового залишку не може бути в майбутньому',
+    );
+    expect(repo.get('card')!.openingDate).toBe('2026-06-08');
+  });
+
+  it('A дата later than the first транзакція is accepted', () => {
+    repo.save(card, '2026-10-01');
+    txs.save(
+      expenseByDefault({ id: 'e1', date: '2026-09-01', accountId: 'card', amount: money(100, 'UAH'), categoryId: 'food' }),
+      storedAt,
+    );
+    repo.save(account({ ...card, openingDate: '2026-09-20' }), '2026-10-01');
+    expect(repo.get('card')!.openingDate).toBe('2026-09-20');
+  });
+
   it('Scenario: Changing the kind is rejected', () => {
     repo.save(card);
     expect(card.kind).toBe('spending');

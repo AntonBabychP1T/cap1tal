@@ -4,6 +4,7 @@ import type { BackupStore } from '../backup/backup';
 import type { BackupDashboardLayout, BackupState } from '../backup/format';
 import { money } from '../domain/money';
 import { isoDate } from '../domain/transaction';
+import { toInstallment, toInstallmentRow } from './installments-repo';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
 import {
   accounts,
@@ -19,6 +20,11 @@ import {
   fiscalReceipts,
   goalAccounts,
   goals,
+  installmentPartLinks,
+  installmentPartMarks,
+  installmentRefusals,
+  installmentReminder,
+  installments,
   investmentValues,
   monobankAccounts,
   monobankImportedItems,
@@ -65,6 +71,13 @@ export function backupRepo(db: Storage): BackupStore {
       const reminder = db.select().from(dailyReminder).all()[0];
       const layout = db.select().from(dashboardLayout).all()[0];
       const haptics = db.select().from(hapticsPreference).all()[0];
+      const plans = db
+        .select()
+        .from(installments)
+        .orderBy(asc(installments.id))
+        .all()
+        .map(toInstallment);
+      const installmentReminderRow = db.select().from(installmentReminder).all()[0];
       return {
         accounts: db.select().from(accounts).orderBy(asc(accounts.id)).all().map(toAccount),
         categories: db
@@ -305,6 +318,35 @@ export function backupRepo(db: Storage): BackupStore {
           : {}),
         // Only when the owner has ever flipped «Вібрація»; untouched is on, and carries nothing.
         ...(haptics ? { haptics: { enabled: haptics.enabled } } : {}),
+        // Only when there is a розстрочка or the owner has touched its switch; otherwise the
+        // section is absent and restores to none, on. `asked` is this phone's own and never here.
+        ...(plans.length > 0 || installmentReminderRow
+          ? {
+              installments: {
+                plans,
+                links: db
+                  .select()
+                  .from(installmentPartLinks)
+                  .orderBy(asc(installmentPartLinks.installmentId), asc(installmentPartLinks.number))
+                  .all(),
+                marks: db
+                  .select()
+                  .from(installmentPartMarks)
+                  .orderBy(asc(installmentPartMarks.installmentId), asc(installmentPartMarks.number))
+                  .all(),
+                refusals: db
+                  .select()
+                  .from(installmentRefusals)
+                  .orderBy(
+                    asc(installmentRefusals.installmentId),
+                    asc(installmentRefusals.number),
+                    asc(installmentRefusals.transactionId),
+                  )
+                  .all(),
+                reminderEnabled: installmentReminderRow?.enabled ?? true,
+              },
+            }
+          : {}),
       };
     },
 
@@ -327,6 +369,10 @@ export function backupRepo(db: Storage): BackupStore {
       for (const goal of state.goals) if (goal.deadline !== undefined) isoDate(goal.deadline);
       for (const link of state.monobankLinks) isoDate(link.syncStartDate);
       for (const receipt of state.receipts) isoDate(receipt.issuedDate);
+      for (const plan of state.installments?.plans ?? []) {
+        isoDate(plan.firstDue);
+        if (plan.closedOn !== undefined) isoDate(plan.closedOn);
+      }
 
       db.transaction((tx) => {
         // Deleted in reference order: nothing is removed while something still points at it.
@@ -351,6 +397,13 @@ export function backupRepo(db: Storage): BackupStore {
         // above the чеки.
         tx.delete(goalAccounts).run();
         tx.delete(goals).run();
+        // The states of the платежі before the транзакції they name, the розстрочки before the
+        // рахунки and категорії they name — both `restrict` (installments design D2). The switch's
+        // row stays: only `enabled` is replaced below, `asked` is this phone's own.
+        tx.delete(installmentRefusals).run();
+        tx.delete(installmentPartMarks).run();
+        tx.delete(installmentPartLinks).run();
+        tx.delete(installments).run();
         tx.delete(categoryLimits).run();
         tx.delete(rules).run();
         tx.delete(transactionsTable).run();
@@ -596,6 +649,29 @@ export function backupRepo(db: Storage): BackupStore {
           // In the same transaction as the money: a restore that fails leaves this untouched too.
           // A бекап naming none leaves no row, which is on.
           tx.insert(hapticsPreference).values({ id: 'haptics', enabled: state.haptics.enabled }).run();
+        }
+        // After the транзакції, рахунки and категорії they name.
+        const section = state.installments;
+        for (const plan of section?.plans ?? []) {
+          tx.insert(installments).values(toInstallmentRow(plan)).run();
+        }
+        if (section && section.links.length > 0) {
+          tx.insert(installmentPartLinks).values([...section.links]).run();
+        }
+        if (section && section.marks.length > 0) {
+          tx.insert(installmentPartMarks).values([...section.marks]).run();
+        }
+        if (section && section.refusals.length > 0) {
+          tx.insert(installmentRefusals).values([...section.refusals]).run();
+        }
+        // The switch: the бекап's, or on for one written before розстрочки existed. `asked` is
+        // left exactly as this phone had it — a row is written only where `enabled` must change.
+        const enabled = section?.reminderEnabled ?? true;
+        const held = tx.select().from(installmentReminder).all()[0];
+        if (held) {
+          tx.update(installmentReminder).set({ enabled }).run();
+        } else if (!enabled) {
+          tx.insert(installmentReminder).values({ id: 1, enabled, asked: false }).run();
         }
       }, { behavior: 'immediate' });
     },

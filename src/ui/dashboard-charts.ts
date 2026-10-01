@@ -253,6 +253,144 @@ export function linePath(
     .join(' ');
 }
 
+// ─── The «Статок» screen's month charts (net-worth-history-screen design D7) ────────────────────
+
+/** The value range a chart is drawn over; never empty, so nothing ever divides by zero. */
+export interface ValueScale {
+  readonly min: number;
+  readonly max: number;
+}
+
+/**
+ * The scale over every known value — and zero, for bars, which grow from a zero line — padded
+ * symmetrically when every value is the same, so flat history still has a visible range (net-worth,
+ * "Negative and flat history").
+ */
+export function valueScale(values: readonly (number | undefined)[], includeZero: boolean): ValueScale {
+  const known = values.filter((v): v is number => v !== undefined);
+  if (includeZero) known.push(0);
+  if (known.length === 0) return { min: -1, max: 1 };
+  let min = Math.min(...known);
+  let max = Math.max(...known);
+  if (min === max) {
+    const pad = Math.max(Math.abs(min), 1);
+    min -= pad;
+    max += pad;
+  }
+  return { min, max };
+}
+
+/** `value`'s height on `scale`, 0 at its bottom and 1 at its top. */
+export function scaled(value: number, scale: ValueScale): number {
+  return (value - scale.min) / (scale.max - scale.min);
+}
+
+/** One bar between the zero line and its value, both normalized; `undefined` where it has none. */
+export interface Bar {
+  readonly index: number;
+  /** The lower and upper edge, 0..1 — a negative bar hangs below the zero line. */
+  readonly bottom: number;
+  readonly top: number;
+}
+
+export interface BarGeometry {
+  readonly scale: ValueScale;
+  /** Where the zero line sits, 0..1. */
+  readonly zero: number;
+  readonly bars: readonly (Bar | undefined)[];
+}
+
+/**
+ * Bars for the month-end level («Стовпці») and for each month's зміна («Зміна»): zero is always on
+ * the scale, a negative value is a bar down from the zero line, and an unknown month is no bar at
+ * all rather than a zero one. `scale` is given when a forecast shares it.
+ */
+export function barGeometry(values: readonly (number | undefined)[], scale?: ValueScale): BarGeometry {
+  const s = scale ?? valueScale(values, true);
+  const zero = scaled(0, s);
+  return {
+    scale: s,
+    zero,
+    bars: values.map((value, index) => {
+      if (value === undefined) return undefined;
+      const at = scaled(value, s);
+      return { index, bottom: Math.min(zero, at), top: Math.max(zero, at) };
+    }),
+  };
+}
+
+/**
+ * Which months are named under a chart of `count` months (net-worth-screen, "Every month is named
+ * and its direction readable without colour"): every one up to `maxLabels`, beyond that a regular
+ * interval that always includes the first and the last — the current — month.
+ */
+export function monthTickLabels(count: number, maxLabels: number): number[] {
+  if (count <= maxLabels) {
+    return Array.from({ length: count }, (_, i) => i);
+  }
+  const step = Math.ceil((count - 1) / (maxLabels - 1));
+  const indexes: number[] = [];
+  for (let i = 0; i < count - 1; i += step) indexes.push(i);
+  // The current month always; a regular label right before it gives way rather than crowd it.
+  if (count - 1 - indexes.at(-1)! < Math.ceil(step / 2)) indexes.pop();
+  indexes.push(count - 1);
+  return indexes;
+}
+
+export interface ForecastGeometry {
+  /** The one scale the recorded months and the projection share, so the two line up. */
+  readonly scale: ValueScale;
+  readonly recorded: readonly (number | undefined)[];
+  readonly projected: readonly { readonly value: number; readonly low: number; readonly high: number }[];
+}
+
+/**
+ * The recorded months and «Прогноз» on one scale (design D7): the projection's band is on it too,
+ * so neither is clipped and the dashed continuation starts where the recorded line ends.
+ */
+export function forecastGeometry(
+  recorded: readonly (number | undefined)[],
+  projection: readonly { readonly value: number; readonly low: number; readonly high: number }[],
+  includeZero: boolean,
+): ForecastGeometry {
+  const scale = valueScale(
+    [...recorded, ...projection.flatMap((p) => [p.value, p.low, p.high])],
+    includeZero,
+  );
+  return {
+    scale,
+    recorded: recorded.map((v) => (v === undefined ? undefined : scaled(v, scale))),
+    projected: projection.map((p) => ({
+      value: scaled(p.value, scale),
+      low: scaled(p.low, scale),
+      high: scaled(p.high, scale),
+    })),
+  };
+}
+
+/**
+ * Normalized heights as `linePath`'s runs, each at the centre of its own column of `slots`, from
+ * column `offset`: a run never crosses an unknown month.
+ */
+export function lineRuns(
+  ys: readonly (number | undefined)[],
+  slots: number,
+  offset = 0,
+): { x: number; y: number }[][] {
+  const runs: { x: number; y: number }[][] = [];
+  let run: { x: number; y: number }[] = [];
+  ys.forEach((y, i) => {
+    if (y === undefined) {
+      if (run.length > 0) runs.push(run);
+      run = [];
+      return;
+    }
+    run.push({ x: (offset + i + 0.5) / slots, y });
+  });
+  if (run.length > 0) runs.push(run);
+  return runs;
+}
+
 // ─── Morphing (app-motion-pass design D12) ──────────────────────────────────────────────────────
 
 /**

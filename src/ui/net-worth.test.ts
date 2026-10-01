@@ -3,28 +3,24 @@ import { describe, expect, it } from 'vitest';
 import type { StoredRate } from '../db/rates-repo';
 import { account } from '../domain/account';
 import { money } from '../domain/money';
-import type { AccountContribution, ChangeResult, CurrencyTotal, HistoryPoint } from '../domain/net-worth';
+import type { AccountContribution, CurrencyTotal } from '../domain/net-worth';
+import { expenseByDefault, transfer, type Income, type Transaction } from '../domain/transaction';
 import {
   ACCOUNTS_TOTAL_DIFFERENCE_EXPLANATION,
+  OVERFLOW_REASON,
+  TOTAL_HISTORY,
   accountBasisLines,
   approximateNetWorthUah,
-  TOTAL_HISTORY,
   buildHistoryInputs,
-  changeLabel,
-  chartedCombinedHistory,
-  chartedHistory,
-  combinedHistory,
-  combinedPointRows,
-  combinedSeriesFor,
+  changeLine,
   convertTotalsToUah,
   currencyReadouts,
-  historyPointLabel,
-  historyPointRows,
-  historySpanOf,
-  historySeriesFor,
+  historyChoices,
+  netWorthSeries,
   netWorthWidgetModel,
-  selectHistoryCurrency,
+  selectHistory,
 } from './net-worth';
+import { netWorthInputFrom } from './net-worth-test-fixtures';
 
 const now = new Date('2026-09-19T12:00:00.000Z');
 
@@ -190,340 +186,6 @@ describe('ACCOUNTS_TOTAL_DIFFERENCE_EXPLANATION', () => {
   });
 });
 
-const point = (date: string, uah?: number, reason?: 'gap' | 'overflow'): HistoryPoint => ({
-  date,
-  totals: new Map(
-    uah !== undefined
-      ? [['UAH', { status: 'known' as const, amount: money(uah, 'UAH') }]]
-      : reason
-        ? [['UAH', { status: 'unavailable' as const, reason }]]
-        : [],
-  ),
-});
-
-describe('historySeriesFor', () => {
-  it('Scenario: Point values remain exact — known points carry their exact value, evenly spaced', () => {
-    const points = [point('2026-06-05', 10000), point('2026-06-30', 8000), point('2026-09-19', 12000)];
-    expect(historySeriesFor(points, 'UAH')).toEqual([
-      { x: 0, value: 10000 },
-      { x: 0.5, value: 8000 },
-      { x: 1, value: 12000 },
-    ]);
-  });
-
-  it('Scenario: A gap becomes a missing value, never a fabricated one', () => {
-    const points = [point('2026-06-05', 10000), point('2026-07-31', undefined, 'gap')];
-    expect(historySeriesFor(points, 'UAH')).toEqual([
-      { x: 0, value: 10000 },
-      { x: 1, value: undefined },
-    ]);
-  });
-
-  it('A single point sits at x=0', () => {
-    expect(historySeriesFor([point('2026-09-19', 500)], 'UAH')).toEqual([{ x: 0, value: 500 }]);
-  });
-});
-
-describe('historyPointLabel', () => {
-  it('Scenario: Point values remain exact — a known point reads its exact value', () => {
-    expect(historyPointLabel(point('2026-06-30', 8000), 'UAH', now)).toBe('30 червня: 80,00 UAH');
-  });
-
-  it('Scenario: Undated opening money produces honest coverage gaps — a gap names itself', () => {
-    expect(historyPointLabel(point('2026-07-31', undefined, 'gap'), 'UAH', now)).toContain('невідомо');
-  });
-
-  it('An overflow point names itself distinctly from a gap', () => {
-    expect(historyPointLabel(point('2026-07-31', undefined, 'overflow'), 'UAH', now)).toContain(
-      'перевищує безпечне представлення',
-    );
-  });
-
-  it('A currency the point carries no entry for at all reads as unknown too', () => {
-    expect(historyPointLabel(point('2026-07-31', 100, undefined), 'EUR', now)).toContain('невідомо');
-  });
-});
-
-describe('selectHistoryCurrency', () => {
-  it('Scenario: History currency has a deterministic default', () => {
-    expect(selectHistoryCurrency(['EUR', 'UAH', 'USD'])).toBe('UAH');
-    expect(selectHistoryCurrency(['EUR', 'USD'])).toBe('EUR');
-    expect(selectHistoryCurrency([])).toBeUndefined();
-  });
-
-  it('A subsequent available choice survives, and a disappeared one falls back', () => {
-    expect(selectHistoryCurrency(['UAH', 'USD'], 'USD')).toBe('USD');
-    expect(selectHistoryCurrency(['UAH'], 'USD')).toBe('UAH');
-  });
-});
-
-describe('changeLabel', () => {
-  it('Scenario: Positive comparable baseline', () => {
-    const change: ChangeResult = {
-      status: 'available',
-      change: { currency: 'UAH', absolute: money(20000, 'UAH'), percent: 20, since: '2026-08-31' },
-    };
-    expect(changeLabel(change, now)).toBe('+200,00 UAH · +20,0% · від 31 серпня');
-  });
-
-  it('Scenario: Zero or negative denominator — absolute only, no percentage', () => {
-    const change: ChangeResult = {
-      status: 'available',
-      change: { currency: 'UAH', absolute: money(20000, 'UAH'), since: '2026-08-31' },
-    };
-    expect(changeLabel(change, now)).toBe('+200,00 UAH · від 31 серпня');
-  });
-
-  it('Scenario: No matching baseline means no change — each reason gets its own sentence', () => {
-    expect(changeLabel({ status: 'unavailable', reason: 'no-baseline' }, now)).not.toBe('');
-    expect(changeLabel({ status: 'unavailable', reason: 'valuation-substituted' }, now)).toContain(
-      'поточна вартість',
-    );
-    expect(changeLabel({ status: 'unavailable', reason: 'future-records' }, now)).toContain(
-      'майбутніми датами',
-    );
-  });
-});
-
-describe('buildHistoryInputs', () => {
-  it('groups the repo’s three flat readings by account, retaining accounts with none', () => {
-    const card = account({ id: 'card', name: 'card', kind: 'spending', currency: 'UAH' });
-    const jar = account({ id: 'jar', name: 'jar', kind: 'savings', currency: 'UAH' });
-    const inputs = buildHistoryInputs(
-      [card, jar],
-      [{ accountId: 'card', month: '2026-06', net: 1000 }],
-      [{ accountId: 'card', firstDate: '2026-06-05' }],
-      [{ accountId: 'card', net: 500 }],
-    );
-    expect(inputs).toEqual([
-      {
-        account: card,
-        firstDate: '2026-06-05',
-        firstDateNet: 500,
-        monthlyNet: new Map([['2026-06', 1000]]),
-      },
-      { account: jar, firstDate: undefined, firstDateNet: undefined, monthlyNet: new Map() },
-    ]);
-  });
-});
-
-describe('netWorthWidgetModel', () => {
-  it('Scenario: Empty and incomplete data are not zero money — no accounts at all', () => {
-    const model = netWorthWidgetModel({
-      accounts: [],
-      transactions: [],
-      currentValues: new Map(),
-      monthlyMovement: [],
-      firstDates: [],
-      firstDateMovement: [],
-      accountsWithFutureRecords: new Set(),
-      rates: [],
-      now,
-      today: '2026-09-19',
-    });
-    expect(model.emptyMessage).toBe('Ще немає рахунків');
-    expect(model.readouts).toEqual([]);
-  });
-
-  it('assembles current readouts, history and change from one consistent account', () => {
-    const card = account({
-      id: 'card',
-      name: 'card',
-      kind: 'spending',
-      currency: 'UAH',
-      openingBalance: money(100000, 'UAH'),
-    });
-    const model = netWorthWidgetModel({
-      accounts: [card],
-      transactions: [],
-      currentValues: new Map(),
-      monthlyMovement: [{ accountId: 'card', month: '2026-08', net: 20000 }],
-      firstDates: [{ accountId: 'card', firstDate: '2026-01-01' }],
-      firstDateMovement: [{ accountId: 'card', net: 0 }],
-      accountsWithFutureRecords: new Set(),
-      rates: [],
-      now,
-      today: '2026-09-19',
-    });
-    // Current: opening 100000 (no transactions passed here, contribution() falls back to it).
-    expect(model.readouts).toEqual([{ currency: 'UAH', text: '1 000,00 UAH', available: true }]);
-    expect(model.historyCurrencies).toEqual(['UAH']);
-    expect(model.historyCurrency).toBe('UAH');
-    expect(model.historyPoints.length).toBeGreaterThan(0);
-    // August 31 is a real known point (firstDate is January, well before it), so a comparable
-    // baseline exists and a change line is produced rather than an "unavailable" sentence.
-    expect(model.changeText).toBeDefined();
-    expect(model.changeText).toMatch(/^[+−]/);
-  });
-
-  it('The chart starts at the first point the history currency has a value for', () => {
-    // QA on the owner's data: a zero-opening USD рахунок from 28 жовтня 2024 started the whole
-    // history there, while every UAH рахунок is known only from February 2026 — the UAH chart
-    // spent ~70% of its width on a leading gap with no line in it.
-    const usd = account({
-      id: 'usd',
-      name: 'usd',
-      kind: 'spending',
-      currency: 'USD',
-      openingBalance: money(0, 'USD'),
-    });
-    const card = account({
-      id: 'card',
-      name: 'card',
-      kind: 'spending',
-      currency: 'UAH',
-      openingBalance: money(100000, 'UAH'),
-    });
-    const model = netWorthWidgetModel({
-      accounts: [usd, card],
-      transactions: [],
-      currentValues: new Map(),
-      monthlyMovement: [
-        { accountId: 'usd', month: '2024-10', net: 500 },
-        { accountId: 'card', month: '2026-02', net: 20000 },
-      ],
-      firstDates: [
-        { accountId: 'usd', firstDate: '2024-10-28' },
-        { accountId: 'card', firstDate: '2026-02-10' },
-      ],
-      firstDateMovement: [
-        { accountId: 'usd', net: 500 },
-        { accountId: 'card', net: 20000 },
-      ],
-      accountsWithFutureRecords: new Set(),
-      rates: [],
-      now,
-      today: '2026-09-19',
-    });
-    expect(model.historyCurrency).toBe('UAH');
-    // 10 лютого is not a candidate date (only the global first date, month-ends and today are), so
-    // the first UAH value is the February month-end.
-    expect(model.historySpan).toEqual({ first: '28 лютого', last: '19 вересня' });
-    expect(model.historySeries[0]).toEqual({ x: 0, value: 120000 });
-    expect(model.historySeries.every((p) => p.value !== undefined)).toBe(true);
-    // The point list still says why there is nothing before February — folded into one line.
-    expect(model.historyPoints[0]?.label).toBe(
-      '28 жовтня 2024 — 31 січня: невідомо — недостатньо даних за цей період',
-    );
-  });
-});
-
-describe('chartedHistory', () => {
-  it('drops the leading run of points with no value for the currency', () => {
-    const points = [
-      point('2024-10-28', undefined, 'gap'),
-      point('2024-10-31', undefined, 'gap'),
-      point('2026-02-28', 100),
-      point('2026-03-31', undefined, 'gap'),
-      point('2026-09-23', 200),
-    ];
-    expect(chartedHistory(points, 'UAH').map((p) => p.date)).toEqual([
-      '2026-02-28',
-      // An inner gap stays: it is a break in the line, not a stretch before the line begins.
-      '2026-03-31',
-      '2026-09-23',
-    ]);
-  });
-
-  it('keeps every point when the first one already has a value', () => {
-    const points = [point('2026-06-05', 1), point('2026-06-30', undefined, 'gap')];
-    expect(chartedHistory(points, 'UAH')).toEqual(points);
-  });
-
-  it('keeps every point when none has a value — nothing to start the axis at', () => {
-    const points = [point('2026-06-30', undefined, 'gap'), point('2026-07-31', undefined, 'gap')];
-    expect(chartedHistory(points, 'UAH')).toEqual(points);
-  });
-});
-
-describe('historyPointRows', () => {
-  const at = new Date(2026, 8, 23, 12, 0, 0);
-
-  it('Fifteen unknown month-ends read as one line', () => {
-    const points = [
-      point('2024-10-28', undefined, 'gap'),
-      point('2024-10-31', undefined, 'gap'),
-      point('2024-11-30', undefined, 'gap'),
-      point('2026-01-31', undefined, 'gap'),
-      point('2026-02-28', 16039349),
-      point('2026-09-23', 18744916),
-    ];
-    expect(historyPointRows(points, 'UAH', at).map((r) => r.label)).toEqual([
-      '28 жовтня 2024 — 31 січня: невідомо — недостатньо даних за цей період',
-      `28 лютого: 160${T}393,49 UAH`,
-      `23 вересня: 187${T}449,16 UAH`,
-    ]);
-  });
-
-  it('A run broken by a known point is two ranges', () => {
-    const points = [
-      point('2026-05-31', undefined, 'gap'),
-      point('2026-06-30', undefined, 'gap'),
-      point('2026-07-31', 100),
-      point('2026-08-31', undefined, 'gap'),
-      point('2026-09-23', undefined, 'gap'),
-    ];
-    expect(historyPointRows(points, 'UAH', at).map((r) => r.label)).toEqual([
-      '31 травня — 30 червня: невідомо — недостатньо даних за цей період',
-      '31 липня: 1,00 UAH',
-      '31 серпня — 23 вересня: невідомо — недостатньо даних за цей період',
-    ]);
-  });
-
-  it('A single unknown point reads as one date, not a range', () => {
-    const points = [point('2026-08-31', undefined, 'gap'), point('2026-09-23', 100)];
-    expect(historyPointRows(points, 'UAH', at)[0]?.label).toBe(
-      '31 серпня: невідомо — недостатньо даних за цей період',
-    );
-  });
-
-  it('Different reasons are never folded together', () => {
-    const points = [point('2026-07-31', undefined, 'gap'), point('2026-08-31', undefined, 'overflow')];
-    expect(historyPointRows(points, 'UAH', at)).toHaveLength(2);
-  });
-
-  it('Every row has a distinct key', () => {
-    const points = [point('2026-07-31', undefined, 'gap'), point('2026-08-31', 1), point('2026-09-23', 2)];
-    const keys = historyPointRows(points, 'UAH', at).map((r) => r.key);
-    expect(new Set(keys).size).toBe(keys.length);
-  });
-});
-
-describe('historySpanOf', () => {
-  const at = new Date(2026, 8, 23, 12, 0, 0);
-
-  it('The chart names its span', () => {
-    const points = [point('2024-10-28', undefined, 'gap'), point('2026-08-31', 1), point('2026-09-23', 2)];
-    expect(historySpanOf(points, at)).toEqual({ first: '28 жовтня 2024', last: '23 вересня' });
-  });
-
-  it('A single point has no span', () => {
-    expect(historySpanOf([point('2026-09-23', 2)], at)).toBeUndefined();
-    expect(historySpanOf([], at)).toBeUndefined();
-  });
-});
-
-/** A history point over several currencies: a number is a known total, a word is why it has none. */
-const multi = (date: string, totals: Record<string, number | 'gap' | 'overflow'>): HistoryPoint => ({
-  date,
-  totals: new Map(
-    Object.entries(totals).map(([currency, value]): [string, CurrencyTotal] => [
-      currency,
-      typeof value === 'number'
-        ? known(value, currency)
-        : { status: 'unavailable', reason: value },
-    ]),
-  ),
-});
-
-const usdRate = (millionths: number, at = '2026-09-19T08:00:00.000Z') => rate('USD', millionths, at);
-const HELD = ['UAH', 'USD'];
-
-const readyPoints = (result: ReturnType<typeof combinedHistory>) => {
-  if (result.status !== 'ready') throw new Error('expected a ready combined history');
-  return result.points;
-};
-
 describe('convertTotalsToUah', () => {
   it('sums known totals at the cached rates and names the oldest rate', () => {
     const totals = new Map<string, CurrencyTotal>([
@@ -538,395 +200,316 @@ describe('convertTotalsToUah', () => {
   });
 });
 
-describe('combinedHistory', () => {
-  const august = multi('2026-08-31', { UAH: 100000, USD: 10000 });
-  const today = multi('2026-09-19', { UAH: 100000, USD: 20000 });
 
+const usdRate = (millionths: number, at = '2026-09-19T08:00:00.000Z') => rate('USD', millionths, at);
+/** 41.25345 UAH per USD, as the spec's scenarios read it. */
+const USD_RATE = usdRate(41_253_450);
+const eurRate = (at = '2026-09-19T08:00:00.000Z') => rate('EUR', 45_000_000, at);
+
+const uah = (id: string, opening = 0, extra: { openingDate?: string; kind?: 'spending' | 'investment' | 'cash' } = {}) =>
+  account({ id, name: id, kind: extra.kind ?? 'spending', currency: 'UAH', openingBalance: money(opening, 'UAH'), ...(extra.openingDate ? { openingDate: extra.openingDate } : {}) });
+const foreign = (id: string, currency: string, opening = 0, openingDate?: string, archived = false) =>
+  account({ id, name: id, kind: 'savings', currency, openingBalance: money(opening, currency), archived, ...(openingDate ? { openingDate } : {}) });
+const earned = (id: string, accountId: string, date: string, amount: number, currency = 'UAH'): Income => ({
+  type: 'income',
+  id,
+  date,
+  accountId,
+  amount: money(amount, currency),
+  sourceId: 'salary',
+});
+const spent = (id: string, accountId: string, date: string, amount: number, currency = 'UAH'): Transaction =>
+  expenseByDefault({ id, date, accountId, amount: money(amount, currency), categoryId: 'food' });
+
+const seriesOf = (input: Parameters<typeof netWorthInputFrom>[0]) => netWorthSeries(netWorthInputFrom(input));
+const monthsOf = (input: Parameters<typeof netWorthInputFrom>[0]) => {
+  const reading = seriesOf(input).reading;
+  if (!reading) throw new Error('expected a reading');
+  return reading.months;
+};
+const endOf = (months: readonly { month: string; end?: number }[], month: string) =>
+  months.find((m) => m.month === month)?.end;
+
+describe('buildHistoryInputs', () => {
+  it('groups the repo’s flat readings by account, the розбивка included, retaining accounts with none', () => {
+    const inputs = buildHistoryInputs(
+      [uah('card'), uah('idle')],
+      [{ accountId: 'card', month: '2026-08', net: 700 }],
+      [{ accountId: 'card', firstDate: '2026-08-02' }],
+      [{ accountId: 'card', net: 1000 }],
+      [
+        { accountId: 'card', month: '2026-08', kind: 'income', net: 1000 },
+        { accountId: 'card', month: '2026-08', kind: 'spending', net: -300 },
+      ],
+    );
+    expect(inputs[0]).toMatchObject({ firstDate: '2026-08-02', firstDateNet: 1000 });
+    expect(inputs[0]!.monthlyNet.get('2026-08')).toBe(700);
+    expect(inputs[0]!.monthlyByKind?.get('2026-08')).toEqual({ income: 1000, spending: -300 });
+    expect(inputs[1]).toMatchObject({ firstDate: undefined });
+    expect(inputs[1]!.monthlyByKind).toBeUndefined();
+  });
+});
+
+describe('«Усе ≈ грн» month by month', () => {
   it('Scenario: Each date converts at the one current rate', () => {
-    const points = readyPoints(combinedHistory([august, today], HELD, [usdRate(41_253_450)]));
-    expect(points).toEqual([
-      { date: '2026-08-31', status: 'known', amount: 512535 },
-      { date: '2026-09-19', status: 'known', amount: 925069 },
-    ]);
+    const accounts = [uah('card', 100000, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 10000, '2026-08-01')];
+    const transactions = [{ type: 'income', id: 'i', date: '2026-09-05', accountId: 'usd', amount: money(10000, 'USD'), sourceId: 's' } as Income];
+    const months = monthsOf({ accounts, transactions, today: '2026-09-19', rates: [USD_RATE], requestedHistory: TOTAL_HISTORY });
+    expect(endOf(months, '2026-08')).toBe(512535);
+    expect(endOf(months, '2026-09')).toBe(925069);
     // The exact per-currency histories are untouched by the conversion.
-    expect(historySeriesFor([august, today], 'USD').map((p) => p.value)).toEqual([10000, 20000]);
+    const usdMonths = monthsOf({ accounts, transactions, today: '2026-09-19', rates: [USD_RATE], requestedHistory: 'USD' });
+    expect(usdMonths.map((m) => m.end)).toEqual([10000, 20000]);
   });
 
-  it('Scenario: Changing today’s rate revalues every point together', () => {
-    const points = readyPoints(combinedHistory([august, today], HELD, [usdRate(40_000_000)]));
-    expect(points.map((p) => p.status === 'known' && p.amount)).toEqual([500000, 900000]);
+  it("Scenario: Changing today's rate revalues every point together", () => {
+    const accounts = [uah('card', 100000, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 10000, '2026-08-01')];
+    const months = monthsOf({ accounts, today: '2026-09-19', rates: [usdRate(40_000_000)], requestedHistory: TOTAL_HISTORY });
+    expect(months.map((m) => m.end)).toEqual([500000, 500000]);
   });
 
   it('Scenario: Stale cached rates stay marked and nothing is requested', () => {
-    const result = combinedHistory(
-      [august, today],
-      HELD,
-      [usdRate(41_000_000, '2026-08-01T08:00:00.000Z')],
-    );
-    expect(result.status === 'ready' && result.oldestRateAt).toEqual(new Date('2026-08-01T08:00:00.000Z'));
-  });
-
-  it('Scenario: A missing rate withholds the whole history — including for a zero balance', () => {
-    const points = [multi('2026-08-31', { UAH: 100000, USD: 10000, EUR: 0 })];
-    expect(combinedHistory(points, ['UAH', 'EUR', 'USD'], [usdRate(41_000_000)])).toEqual({
-      status: 'withheld',
-      missing: ['EUR'],
+    const accounts = [uah('card', 100000, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 10000, '2026-08-01')];
+    const series = seriesOf({
+      accounts,
+      today: '2026-09-19',
+      rates: [usdRate(41_253_450, '2026-06-01T08:00:00.000Z')],
+      requestedHistory: TOTAL_HISTORY,
     });
+    expect(series.oldestRateAt).toEqual(new Date('2026-06-01T08:00:00.000Z'));
   });
 
-  it('Scenario: A missing rate names every currency without one', () => {
-    expect(combinedHistory([august], ['UAH', 'EUR', 'USD'], [])).toEqual({
-      status: 'withheld',
-      missing: ['EUR', 'USD'],
-    });
+  it('Scenario: A missing rate withholds the whole history', () => {
+    // UAH, USD and EUR held, no EUR rate — including when the EUR balance is zero.
+    const accounts = [uah('card', 1000, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 10, '2026-08-01'), foreign('eur', 'EUR', 0, '2026-08-01')];
+    const series = seriesOf({ accounts, today: '2026-09-19', rates: [USD_RATE], requestedHistory: TOTAL_HISTORY });
+    expect(series.reading).toBeUndefined();
+    expect(series.withheldMessage).toBe('Немає курсу EUR для сукупної історії.');
+    // The per-currency histories remain readable.
+    expect(seriesOf({ accounts, today: '2026-09-19', rates: [USD_RATE], requestedHistory: 'USD' }).reading?.months).toHaveLength(2);
   });
 
-  it('Scenario: An unknown currency makes the point a gap, not a partial sum', () => {
-    const points = readyPoints(
-      combinedHistory(
-        [
-          multi('2026-01-31', { UAH: 100000, USD: 'gap' }),
-          multi('2026-02-28', { UAH: 100000, USD: 'gap' }),
-          multi('2026-03-31', { UAH: 100000, USD: 10000 }),
-        ],
-        HELD,
-        [usdRate(41_000_000)],
-      ),
-    );
-    expect(points).toEqual([
-      { date: '2026-01-31', status: 'unavailable', reason: 'gap', currency: 'USD' },
-      { date: '2026-02-28', status: 'unavailable', reason: 'gap', currency: 'USD' },
-      { date: '2026-03-31', status: 'known', amount: 510000 },
-    ]);
+  it('Scenario: A currency first held later does not shorten the whole', () => {
+    const accounts = [
+      uah('black', 500000, { openingDate: '2024-10-28' }),
+      foreign('cash-eur', 'EUR', 30000, '2026-06-07'),
+      foreign('mono-eur', 'EUR', 2000, '2026-08-30'),
+    ];
+    const months = monthsOf({ accounts, today: '2026-09-19', rates: [eurRate()], requestedHistory: TOTAL_HISTORY });
+    expect(months[0]!.month).toBe('2024-10');
+    expect(months.every((m) => m.end !== undefined)).toBe(true);
+    // EUR contributes nothing before June 7 …
+    expect(endOf(months, '2026-05')).toBe(500000);
+    // … and its entries are steps marked «нові рахунки», never growth.
+    const june = months.find((m) => m.month === '2026-06')!;
+    expect(june.entered).toBe(1350000);
+    expect(june.change).toEqual({ status: 'available', absolute: 0, percent: 0 });
+    expect(months.find((m) => m.month === '2026-08')!.entered).toBe(90000);
   });
 
-  it('Scenario: A currency with no entry for a point is unknown, not zero', () => {
-    const points = readyPoints(
-      combinedHistory([multi('2026-01-31', { UAH: 100000 })], HELD, [usdRate(41_000_000)]),
-    );
-    expect(points[0]).toMatchObject({ status: 'unavailable', reason: 'gap', currency: 'USD' });
+  it('Scenario: A рахунок entering later is a step, not a gap', () => {
+    const accounts = [uah('card', 100000, { openingDate: '2025-12-01' }), foreign('usd', 'USD', 10000, '2026-03-10')];
+    const months = monthsOf({ accounts, today: '2026-04-15', rates: [USD_RATE], requestedHistory: TOTAL_HISTORY });
+    expect(endOf(months, '2026-01')).toBe(100000);
+    expect(endOf(months, '2026-02')).toBe(100000);
+    expect(endOf(months, '2026-03')).toBe(512535);
   });
 
   it('Scenario: Overflow is a gap that says so', () => {
-    const points = readyPoints(
-      combinedHistory(
-        [
-          multi('2026-01-31', { UAH: 'overflow', USD: 100 }),
-          multi('2026-02-28', { UAH: Number.MAX_SAFE_INTEGER - 1, USD: Number.MAX_SAFE_INTEGER - 1 }),
-        ],
-        HELD,
-        [usdRate(41_000_000)],
-      ),
+    const accounts = [uah('huge', Number.MAX_SAFE_INTEGER - 10, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 10000, '2026-08-01')];
+    const months = monthsOf({ accounts, today: '2026-09-19', rates: [USD_RATE], requestedHistory: TOTAL_HISTORY });
+    expect(months.map((m) => m.end)).toEqual([undefined, undefined]);
+    expect(months[1]!.change).toEqual({ status: 'unavailable', reason: 'overflow' });
+    expect(changeLine({ approximate: true, currency: 'UAH' }, months[1]!, '2026-08-31', now).text).toContain(OVERFLOW_REASON);
+    // The exact UAH history is still known: only the converted sum is unrepresentable.
+    expect(monthsOf({ accounts, today: '2026-09-19', rates: [USD_RATE], requestedHistory: 'UAH' })[1]!.end).toBe(
+      Number.MAX_SAFE_INTEGER - 10,
     );
-    expect(points.map((p) => p.status === 'unavailable' && p.reason)).toEqual(['overflow', 'overflow']);
-    expect(combinedPointRows(points, now).map((r) => r.label)).toEqual([
-      '31 січня — 28 лютого: сума перевищує безпечне представлення',
-    ]);
   });
 
-  it('Scenario: Leading gaps do not become empty chart', () => {
-    const points = readyPoints(
-      combinedHistory(
-        [
-          multi('2024-10-28', { UAH: 'gap', USD: 500 }),
-          multi('2024-10-31', { UAH: 'gap', USD: 500 }),
-          multi('2026-02-28', { UAH: 120000, USD: 500 }),
-          multi('2026-03-31', { UAH: 'gap', USD: 500 }),
-          multi('2026-09-19', { UAH: 200000, USD: 500 }),
-        ],
-        HELD,
-        [usdRate(40_000_000)],
-      ),
-    );
-    const charted = chartedCombinedHistory(points);
-    expect(charted.map((p) => p.date)).toEqual(['2026-02-28', '2026-03-31', '2026-09-19']);
-    expect(combinedSeriesFor(charted)).toEqual([
-      { x: 0, value: 140000 },
-      { x: 0.5, value: undefined },
-      { x: 1, value: 220000 },
-    ]);
-    // The point list still opens with the earlier unknown dates and why.
-    expect(combinedPointRows(points, now)[0]?.label).toBe('28 жовтня 2024 — 31 жовтня 2024: немає даних за UAH');
+  it('Scenario: An exchange moves money between currencies — the «≈» line is the rate difference', () => {
+    const accounts = [uah('card', 500000, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 0, '2026-08-01')];
+    const exchange = transfer({ id: 'fx', date: '2026-09-10', fromAccountId: 'card', toAccountId: 'usd', left: money(410000, 'UAH'), arrived: money(10000, 'USD') });
+    const september = monthsOf({ accounts, transactions: [exchange], today: '2026-09-30', rates: [USD_RATE], requestedHistory: TOTAL_HISTORY }).at(-1)!;
+    expect(september.breakdown.transfer).toBe(2535);
+    const b = september.breakdown;
+    expect(b.income + b.spending + b.correction + b.transfer + b.entered).toBe(2535);
   });
 
-  it('Scenario: The point list folds runs of the same reason only', () => {
-    const points = readyPoints(
-      combinedHistory(
-        [
-          multi('2026-01-31', { UAH: 100, USD: 'gap', EUR: 5 }),
-          multi('2026-02-28', { UAH: 100, USD: 'gap', EUR: 5 }),
-          multi('2026-03-31', { UAH: 100, USD: 5, EUR: 'gap' }),
-          multi('2026-04-30', { UAH: 100, USD: 5, EUR: 'gap' }),
-          multi('2026-05-31', { UAH: 100, USD: 5, EUR: 5 }),
-        ],
-        ['UAH', 'EUR', 'USD'],
-        [rate('USD', 40_000_000, '2026-09-19T08:00:00.000Z'), rate('EUR', 45_000_000, '2026-09-19T08:00:00.000Z')],
-      ),
-    );
-    const rows = combinedPointRows(points, new Date(2026, 8, 23, 12));
-    expect(rows.map((r) => r.label)).toEqual([
-      '31 січня — 28 лютого: немає даних за USD',
-      '31 березня — 30 квітня: немає даних за EUR',
-      '31 травня: ≈ 5,25 грн',
-    ]);
-  });
-
-  it('Scenario: Combined rows fold same-reason gaps and carry «≈» on every value', () => {
-    const rows = combinedPointRows(
-      [
-        { date: '2026-06-30', status: 'known', amount: -12345 },
-        { date: '2026-07-31', status: 'unavailable', reason: 'gap', currency: 'USD' },
-        { date: '2026-08-31', status: 'unavailable', reason: 'gap', currency: 'USD' },
-      ],
-      new Date(2026, 8, 23, 12),
-    );
-    expect(rows.map((r) => r.label)).toEqual([
-      '30 червня: ≈ −123,45 грн',
-      '31 липня — 31 серпня: немає даних за USD',
-    ]);
+  it('carries the rounding of the parts on «перекази й обмін», so they add up exactly', () => {
+    const accounts = [uah('card', 0, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 333, '2026-08-01')];
+    const transactions = [
+      earned('i1', 'usd', '2026-09-03', 333, 'USD'),
+      spent('e1', 'usd', '2026-09-04', 111, 'USD'),
+    ];
+    const months = monthsOf({ accounts, transactions, today: '2026-09-30', rates: [USD_RATE], requestedHistory: TOTAL_HISTORY });
+    for (const [i, m] of months.entries()) {
+      const before = i === 0 ? 0 : months[i - 1]!.end!;
+      const b = m.breakdown;
+      expect(b.income + b.spending + b.correction + b.transfer + b.entered).toBe(m.end! - before);
+    }
   });
 });
 
-describe('selectHistoryCurrency with the combined choice', () => {
-  it('Scenario: The combined choice is never the default and does not outlive its currencies', () => {
-    expect(selectHistoryCurrency(['UAH', 'USD'])).toBe('UAH');
-    expect(selectHistoryCurrency(['UAH', 'USD'], TOTAL_HISTORY)).toBe(TOTAL_HISTORY);
-    expect(selectHistoryCurrency(['UAH'], TOTAL_HISTORY)).toBe('UAH');
-    expect(selectHistoryCurrency(['EUR'], TOTAL_HISTORY)).toBe('EUR');
-    expect(selectHistoryCurrency([], TOTAL_HISTORY)).toBeUndefined();
-  });
-});
+describe('the «≈» change compares recorded-balance points', () => {
+  const line = (input: Parameters<typeof netWorthInputFrom>[0]) => {
+    const series = seriesOf(input);
+    const months = series.reading!.months;
+    return changeLine(series.reading!, months.at(-1)!, months.at(-2)?.date, now);
+  };
 
-describe('changeLabel for the combined history', () => {
-  const at = new Date(2026, 8, 19, 12);
-
-  it('Scenario: Positive comparable baseline (Усе ≈ грн) marks the amount «≈» after its sign', () => {
-    const change: ChangeResult = {
-      status: 'available',
-      change: { currency: 'UAH', absolute: money(20000, 'UAH'), percent: 20, since: '2026-08-31' },
-    };
-    expect(changeLabel(change, at, true)).toBe('+≈200,00 UAH · +20,0% · від 31 серпня');
-    expect(changeLabel(change, at)).toBe('+200,00 UAH · +20,0% · від 31 серпня');
+  it('Scenario: Positive comparable baseline', () => {
+    const accounts = [uah('card', 100000, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 0, '2026-08-01')];
+    const text = line({ accounts, transactions: [earned('i', 'card', '2026-09-10', 20000)], today: '2026-09-19', rates: [USD_RATE] }).text;
+    expect(text).toBe('+≈200 грн · +20,0% ▲ · від 31 серпня');
   });
 
-  it('a negative change keeps its sign before «≈»', () => {
-    const change: ChangeResult = {
-      status: 'available',
-      change: { currency: 'UAH', absolute: money(-30000, 'UAH'), since: '2026-08-31' },
-    };
-    expect(changeLabel(change, at, true)).toBe('−≈300,00 UAH · від 31 серпня');
+  it('Scenario: Zero or negative baseline has no percentage', () => {
+    const accounts = [uah('card', -10000, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 0, '2026-08-01')];
+    const result = line({ accounts, transactions: [earned('i', 'card', '2026-09-10', 30000)], today: '2026-09-19', rates: [USD_RATE] });
+    expect(result.text).toBe('+≈300 грн ▲ · від 31 серпня');
   });
 
-  it('the valuation reason drops «в цій валюті» when combined', () => {
-    const text = changeLabel({ status: 'unavailable', reason: 'valuation-substituted' }, at, true);
-    expect(text).toContain('поточна вартість');
-    expect(text).not.toContain('в цій валюті');
-  });
-});
-
-describe('netWorthWidgetModel: Усе ≈ грн', () => {
-  const uahCard = (opening: number, extra: Partial<Parameters<typeof account>[0]> = {}) =>
-    account({
-      id: 'card',
-      name: 'card',
-      kind: 'spending',
-      currency: 'UAH',
-      openingBalance: money(opening, 'UAH'),
-      ...extra,
+  it('Scenario: An entered поточна вартість does not withhold the change', () => {
+    const accounts = [uah('fund', 100000, { openingDate: '2026-08-01', kind: 'investment' }), foreign('usd', 'USD', 0, '2026-08-01')];
+    const result = line({
+      accounts,
+      transactions: [earned('i', 'fund', '2026-09-10', 20000)],
+      today: '2026-09-19',
+      rates: [USD_RATE],
+      currentValues: new Map([['fund', { amount: money(150000, 'UAH'), asOf: '2026-09-15' }]]),
     });
-  const usdJar = account({
-    id: 'usd',
-    name: 'usd',
-    kind: 'spending',
-    currency: 'USD',
-    openingBalance: money(0, 'USD'),
+    expect(result.text).toBe('+≈200 грн · +20,0% ▲ · від 31 серпня');
   });
-  const base = {
-    transactions: [],
-    currentValues: new Map(),
-    accountsWithFutureRecords: new Set<string>(),
-    now: new Date(2026, 8, 19, 12),
-    today: '2026-09-19',
-    requestedHistory: TOTAL_HISTORY,
-  } as const;
-  /** UAH opening from January, then `monthly` net through January; USD zero from January. */
-  const movement = (monthly: number) => ({
-    monthlyMovement: [{ accountId: 'card', month: '2026-01' as const, net: monthly }],
-    firstDates: [
-      { accountId: 'card', firstDate: '2026-01-01' as const },
-      { accountId: 'usd', firstDate: '2026-01-01' as const },
-    ],
-    firstDateMovement: [
-      { accountId: 'card', net: monthly },
-      { accountId: 'usd', net: 0 },
-    ],
+
+  it('Scenario: A missing baseline withholds the change', () => {
+    const accounts = [uah('huge', Number.MAX_SAFE_INTEGER - 10, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 10000, '2026-08-01')];
+    expect(line({ accounts, today: '2026-09-19', rates: [USD_RATE] }).text).toBe(
+      `Порівняння недоступне: ${OVERFLOW_REASON}.`,
+    );
   });
-  const rates = [rate('USD', 41_253_450, '2026-09-18T08:00:00.000Z')];
+});
+
+describe('selectHistory', () => {
+  it('Scenario: History currency has a deterministic default', () => {
+    const currencies = ['UAH', 'EUR', 'USD'];
+    expect(selectHistory(currencies, [USD_RATE, eurRate()])).toBe(TOTAL_HISTORY);
+    // A subsequent choice of USD survives refresh.
+    expect(selectHistory(currencies, [USD_RATE, eurRate()], 'USD')).toBe('USD');
+  });
+
+  it('Scenario: A missing rate makes UAH the default', () => {
+    expect(selectHistory(['UAH', 'EUR'], [])).toBe('UAH');
+    expect(selectHistory(['EUR', 'USD'], [USD_RATE])).toBe('EUR');
+  });
 
   it('Scenario: The combined choice is offered only when it adds something', () => {
-    const two = netWorthWidgetModel({ ...base, requestedHistory: '', accounts: [uahCard(0), usdJar], ...movement(0), rates });
-    expect(two.historyChoices.map((c) => c.label)).toEqual(['UAH', 'USD', 'Усе ≈ грн']);
-    const one = netWorthWidgetModel({ ...base, requestedHistory: '', accounts: [uahCard(0)], ...movement(0), rates });
-    expect(one.historyChoices.map((c) => c.label)).toEqual(['UAH']);
+    expect(historyChoices(['UAH', 'USD'], 'UAH').map((c) => c.id)).toEqual(['UAH', 'USD', TOTAL_HISTORY]);
+    expect(historyChoices(['UAH'], 'UAH').map((c) => c.id)).toEqual(['UAH']);
   });
 
-  it('Scenario: The combined choice is never the default and does not outlive its currencies', () => {
-    const first = netWorthWidgetModel({ ...base, requestedHistory: '', accounts: [uahCard(0), usdJar], ...movement(0), rates });
-    expect(first.historyTotalSelected).toBe(false);
-    expect(first.historyCurrency).toBe('UAH');
-    const removed = netWorthWidgetModel({ ...base, accounts: [uahCard(0)], ...movement(0), rates });
-    expect(removed.historyTotalSelected).toBe(false);
-    expect(removed.historyCurrency).toBe('UAH');
+  it('Scenario: The combined choice does not outlive its currencies', () => {
+    expect(selectHistory(['UAH', 'USD'], [USD_RATE], TOTAL_HISTORY)).toBe(TOTAL_HISTORY);
+    expect(selectHistory(['UAH'], [USD_RATE], TOTAL_HISTORY)).toBe('UAH');
   });
 
-  it('Scenario: The owner reads the whole статок in time — the exact headline and choices are unchanged', () => {
-    const accounts = [uahCard(100000), usdJar];
-    const currency = netWorthWidgetModel({ ...base, requestedHistory: 'USD', accounts, ...movement(0), rates });
-    const total = netWorthWidgetModel({ ...base, accounts, ...movement(0), rates });
-    expect(total.historyTotalSelected).toBe(true);
-    expect(total.historyCurrency).toBeUndefined();
-    expect(total.readouts).toEqual(currency.readouts);
-    expect(total.approximate).toEqual(currency.approximate);
-    expect(total.historyCurrencies).toEqual(currency.historyCurrencies);
-    expect(total.historyChoices.map((c) => c.id)).toEqual(['UAH', 'USD', TOTAL_HISTORY]);
-    expect(total.historyCaption).toBe(
-      'Історія розрахункових балансів · інвестиції за вкладеним · ≈ за поточним курсом, не за курсом на дату',
+  it('keeps a chosen «Усе ≈ грн» while a rate is missing, so the widget can say why', () => {
+    expect(selectHistory(['UAH', 'EUR'], [], TOTAL_HISTORY)).toBe(TOTAL_HISTORY);
+  });
+});
+
+describe('netWorthWidgetModel', () => {
+  it('Scenario: Empty and incomplete data are not zero money — no accounts at all', () => {
+    const model = netWorthWidgetModel(netWorthInputFrom({ accounts: [], today: '2026-10-01' }));
+    expect(model.emptyMessage).toBe('Ще немає рахунків');
+    expect(model.chartValues).toEqual([]);
+  });
+
+  it('Scenario: The widget answers "is it growing" at a glance', () => {
+    const accounts = [uah('card', 0, { openingDate: '2025-06-01' }), foreign('usd', 'USD', 0, '2025-06-01'), foreign('eur', 'EUR', 0, '2025-06-01')];
+    const transactions = [earned('a', 'card', '2025-06-02', 37500000), earned('b', 'card', '2026-10-01', 2640800)];
+    const model = netWorthWidgetModel(
+      netWorthInputFrom({ accounts, transactions, today: '2026-10-01', now: new Date('2026-10-01T12:00:00'), rates: [USD_RATE, eurRate()] }),
     );
-    expect(total.historySeries.length).toBeGreaterThan(0);
-    expect(total.historyPoints.every((r) => r.label.includes('≈') || r.label.includes('немає'))).toBe(true);
-    expect(total.historyRateFreshness).toBe('курс станом на 18 вересня');
-    expect(total.historyWithheldMessage).toBeUndefined();
-    // The per-currency caption is the one it always was.
-    expect(currency.historyCaption).toBe('Історія розрахункових балансів · інвестиції за вкладеним');
-    expect(currency.historyRateFreshness).toBeUndefined();
+    expect(model.headline).toBe('≈401 408 грн');
+    expect(model.exactLine).toBe('401 408,00 UAH · 0,00 EUR · 0,00 USD');
+    expect(model.changeText).toBe('+≈26 408 грн · +7,0% ▲ · від 30 вересня');
+    expect(model.changeDirection).toBe('up');
+    expect(model.chartValues).toHaveLength(12);
+    expect(model.chartTicks.map((t) => t.text)).toEqual(['лис', 'гру', 'січ', 'лют', 'бер', 'кві', 'тра', 'чер', 'лип', 'сер', 'вер', 'жов']);
+    expect(model.chartTicks.at(-1)!.current).toBe(true);
   });
 
-  it('Scenario: The combined choice is announced to TalkBack', () => {
-    const total = netWorthWidgetModel({ ...base, accounts: [uahCard(0), usdJar], ...movement(0), rates });
-    const chip = total.historyChoices.find((c) => c.id === TOTAL_HISTORY)!;
-    expect(chip).toMatchObject({
-      label: 'Усе ≈ грн',
-      accessibilityLabel: 'Усе, наближено в гривнях, обрано',
-      selected: true,
-    });
-    const other = netWorthWidgetModel({ ...base, requestedHistory: 'UAH', accounts: [uahCard(0), usdJar], ...movement(0), rates });
-    expect(other.historyChoices.find((c) => c.id === TOTAL_HISTORY)?.accessibilityLabel).toBe(
-      'Усе, наближено в гривнях',
+  it('Scenario: Future dates do not extend the curve — the headline discloses its future records', () => {
+    const accounts = [uah('card', 100000, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 0, '2026-08-01')];
+    const transactions = [spent('later', 'card', '2026-10-02', 5000)];
+    const model = netWorthWidgetModel(netWorthInputFrom({ accounts, transactions, today: '2026-09-19', requestedHistory: 'UAH' }));
+    expect(model.headline).toBe(`950,00 UAH`);
+    expect(model.chartValues.at(-1)).toBe(100000);
+    expect(model.futureLine).toBe('Є записи з майбутніми датами: вони вже в статку, але не в історії й не в зміні.');
+    // Another currency's reading has nothing to disclose.
+    expect(netWorthWidgetModel(netWorthInputFrom({ accounts, transactions, today: '2026-09-19', requestedHistory: 'USD' })).futureLine).toBeUndefined();
+  });
+
+  it('Scenario: Headline and history use different investment bases', () => {
+    const fund = uah('fund', 100000, { openingDate: '2026-08-01', kind: 'investment' });
+    const model = netWorthWidgetModel(
+      netWorthInputFrom({
+        accounts: [fund],
+        today: '2026-09-19',
+        currentValues: new Map([['fund', { amount: money(150000, 'UAH'), asOf: '2026-09-15' }]]),
+      }),
     );
-    expect(total.historyChartLabel).toContain('наближено в гривнях');
-    expect(total.historyPoints[0]?.label).toContain('≈');
+    expect(model.headline).toBe('1 500,00 UAH');
+    expect(model.chartValues.at(-1)).toBe(100000);
+    expect(model.investmentLine).toBe('інвестиції: +500,00 UAH понад вкладене, станом на 15 вересня');
+    expect(model.changeText).toBe('0,00 UAH · 0,0% · від 31 серпня');
+  });
+
+  it('Scenario: A missing rate falls back to UAH by default', () => {
+    const accounts = [uah('card', 100000, { openingDate: '2026-08-01' }), foreign('eur', 'EUR', 3000, '2026-08-01')];
+    const model = netWorthWidgetModel(netWorthInputFrom({ accounts, today: '2026-09-19' }));
+    expect(model.headline).toBe('1 000,00 UAH');
+    expect(model.chartValues).toEqual([100000, 100000]);
+    expect(model.headline).not.toContain('≈');
   });
 
   it('Scenario: A withheld combined history says why', () => {
-    const eur = account({ id: 'eur', name: 'eur', kind: 'spending', currency: 'EUR', openingBalance: money(0, 'EUR') });
-    const model = netWorthWidgetModel({ ...base, accounts: [uahCard(0), eur], ...movement(0), rates: [] });
-    expect(model.historyWithheldMessage).toBe('Немає курсу EUR для сукупної історії.');
-    expect(model.historySeries).toEqual([]);
-    expect(model.historyPoints).toEqual([]);
-    expect(model.historySpan).toBeUndefined();
+    const accounts = [uah('card', 100000, { openingDate: '2026-08-01' }), foreign('eur', 'EUR', 3000, '2026-08-01')];
+    const model = netWorthWidgetModel(netWorthInputFrom({ accounts, today: '2026-09-19', requestedHistory: TOTAL_HISTORY }));
+    expect(model.withheldMessage).toBe('Немає курсу EUR для сукупної історії.');
+    expect(model.chartValues).toEqual([]);
     expect(model.changeText).toBeUndefined();
-    // The currency choices still read their own histories.
-    const uah = netWorthWidgetModel({ ...base, requestedHistory: 'UAH', accounts: [uahCard(0), eur], ...movement(0), rates: [] });
-    expect(uah.historyWithheldMessage).toBeUndefined();
-    expect(uah.historyPoints.length).toBeGreaterThan(0);
+    expect(model.exactLine).toBe('1 000,00 UAH · 30,00 EUR');
   });
 
   it('Scenario: A currency held only in an archived рахунок still needs its rate', () => {
-    const eur = account({
-      id: 'eur',
-      name: 'eur',
-      kind: 'spending',
-      currency: 'EUR',
-      openingBalance: money(0, 'EUR'),
-      archived: true,
-    });
-    const model = netWorthWidgetModel({ ...base, accounts: [uahCard(0), eur], ...movement(0), rates: [] });
-    expect(model.historyWithheldMessage).toContain('EUR');
+    const accounts = [uah('card', 100000, { openingDate: '2026-08-01' }), foreign('old', 'EUR', 0, '2026-08-01', true)];
+    const model = netWorthWidgetModel(netWorthInputFrom({ accounts, today: '2026-09-19', requestedHistory: TOTAL_HISTORY }));
+    expect(model.withheldMessage).toBe('Немає курсу EUR для сукупної історії.');
   });
 
-  // baseline: 120000 opening, −`drop` through January → the August 31 point is 120000 − drop; the
-  // current reading is the opening, 120000 (no transactions are passed).
-  const withDrop = (drop: number, extra: Parameters<typeof netWorthWidgetModel>[0]['accountsWithFutureRecords'] = new Set()) =>
-    netWorthWidgetModel({
-      ...base,
-      accounts: [uahCard(120000), usdJar],
-      ...movement(-drop),
-      accountsWithFutureRecords: extra,
-      rates,
-    });
-
-  it('Scenario: Positive comparable baseline (Усе ≈ грн)', () => {
-    expect(withDrop(20000).changeText).toBe('+≈200,00 UAH · +20,0% · від 31 серпня');
-  });
-
-  it('Scenario: Zero or negative baseline has no percentage (Усе ≈ грн)', () => {
-    expect(withDrop(120000).changeText).toBe(`+≈1${T}200,00 UAH · від 31 серпня`);
-    expect(withDrop(130000).changeText).toBe(`+≈1${T}300,00 UAH · від 31 серпня`);
-  });
-
-  it('Scenario: A future-dated record withholds the change — on any рахунок held', () => {
-    expect(withDrop(20000, new Set(['usd'])).changeText).toBe(
-      'Порівняння недоступне: є записи з майбутніми датами.',
+  it('Scenario: The widget is announced to TalkBack', () => {
+    const accounts = [uah('card', 0, { openingDate: '2026-08-01' }), foreign('usd', 'USD', 0, '2026-08-01')];
+    const transactions = [earned('a', 'card', '2026-08-02', 37500000), earned('b', 'card', '2026-10-01', 2640800)];
+    const model = netWorthWidgetModel(
+      netWorthInputFrom({ accounts, transactions, today: '2026-10-01', now: new Date('2026-10-01T12:00:00'), rates: [USD_RATE] }),
+    );
+    expect(model.accessibilityLabel).toBe(
+      'Статок, усе наближено в гривнях. приблизно 401 408 гривень. зміна плюс приблизно 26 408 гривень, зростання, від 30 вересня. Відкриває Статок',
     );
   });
 
-  it('Scenario: A substituted valuation withholds the change — in any currency', () => {
-    const bonds = account({
-      id: 'usd',
-      name: 'usd bonds',
-      kind: 'investment',
-      currency: 'USD',
-      openingBalance: money(0, 'USD'),
-    });
-    const model = netWorthWidgetModel({
-      ...base,
-      accounts: [uahCard(120000), bonds],
-      ...movement(-20000),
-      currentValues: new Map([['usd', { amount: money(5000, 'USD'), asOf: '2026-09-01' }]]),
-      rates,
-    });
-    expect(model.changeText).toContain('поточна вартість');
-  });
-
-  it('Scenario: A missing baseline withholds the change — no older period is substituted', () => {
-    const model = netWorthWidgetModel({
-      ...base,
-      accounts: [uahCard(100000), usdJar],
-      monthlyMovement: [],
-      firstDates: [
-        { accountId: 'card', firstDate: '2026-09-05' },
-        { accountId: 'usd', firstDate: '2026-01-01' },
-      ],
-      firstDateMovement: [{ accountId: 'usd', net: 0 }, { accountId: 'card', net: 0 }],
-      rates,
-    });
-    expect(model.changeText).toBe('Порівняння з попереднім місяцем поки недоступне.');
-  });
-
-  it('Scenario: Today’s valuation never changes past points — the per-currency series is unchanged', () => {
-    const accounts = [uahCard(100000), usdJar];
-    const plain = netWorthWidgetModel({ ...base, requestedHistory: 'UAH', accounts, ...movement(0), rates });
-    const repriced = netWorthWidgetModel({
-      ...base,
-      requestedHistory: 'UAH',
-      accounts,
-      ...movement(0),
-      rates: [rate('USD', 1_000_000, '2026-09-18T08:00:00.000Z')],
-    });
-    expect(repriced.historySeries).toEqual(plain.historySeries);
-    expect(repriced.historyPoints).toEqual(plain.historyPoints);
-  });
-
-  it('a chosen combined history with no history at all draws nothing and says so', () => {
-    const model = netWorthWidgetModel({
-      ...base,
-      accounts: [uahCard(0), usdJar],
-      monthlyMovement: [],
-      firstDates: [],
-      firstDateMovement: [],
-      rates,
-    });
-    expect(model.historyUnavailableMessage).toBe('Історія поки недоступна.');
-    expect(model.historySeries).toEqual([]);
+  it("Scenario: Today's valuation never changes past points — the per-currency series is unchanged", () => {
+    const fund = uah('fund', 100000, { openingDate: '2026-08-01', kind: 'investment' });
+    const read = (value: number) =>
+      netWorthWidgetModel(
+        netWorthInputFrom({
+          accounts: [fund],
+          today: '2026-09-19',
+          currentValues: new Map([['fund', { amount: money(value, 'UAH'), asOf: '2026-09-15' }]]),
+        }),
+      ).chartValues;
+    expect(read(150000)).toEqual(read(170000));
   });
 });

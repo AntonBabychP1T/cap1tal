@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { account, type Account, type AccountKind } from '../domain/account';
 import { namesById } from '../domain/category';
+import { NO_INSTALLMENT_FACTS, type Installment, type InstallmentFacts } from '../domain/installments';
 import type { CategoryLimit } from '../domain/limits';
 import { money, type CurrencyCode } from '../domain/money';
 import {
@@ -681,5 +682,167 @@ describe('the breakdown sizes its bars against the month’s largest катег�
     expect(
       groupOf(model, 'UAH').breakdown.find((row) => row.categoryId === 'transport')?.share,
     ).toBe(0);
+  });
+});
+
+describe('the розстрочки on Місяць', () => {
+  const october = new Date(2026, 9, 10, 12);
+  const NBSP = ' ';
+  const iphone: Installment = {
+    id: 'i-iphone',
+    name: 'iPhone',
+    total: 1_000_000,
+    partsCount: 10,
+    part: 100_000,
+    firstDue: '2026-06-05',
+    debitAccountId: 'card',
+    paidBefore: 4,
+    recordedAt: 1,
+  };
+  const vacuum: Installment = {
+    id: 'i-vacuum',
+    name: 'Пилосос',
+    total: 150_000,
+    partsCount: 3,
+    part: 50_000,
+    firstDue: '2026-10-20',
+    debitAccountId: 'card',
+    paidBefore: 0,
+    recordedAt: 2,
+  };
+  const debit = expense(100_000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-10-05');
+  const linked: InstallmentFacts = {
+    ...NO_INSTALLMENT_FACTS,
+    links: [{ installmentId: iphone.id, number: 5, transactionId: debit.id }],
+  };
+
+  const october2026 = (
+    transactions: Transaction[],
+    installments: readonly Installment[],
+    facts: InstallmentFacts = linked,
+    month = '2026-10',
+    now = october,
+  ) =>
+    monthViewModel({
+      month,
+      accounts,
+      transactions,
+      rates: [],
+      categoryNames,
+      limits: [],
+      previousTransactions: [],
+      now,
+      installments: { installments, facts },
+    });
+
+  it('Scenario: October shows its two платежі', () => {
+    const model = october2026([debit, income(3_000_000, 'UAH', '2026-10-01')], [iphone, vacuum]);
+    expect(model.installments).toEqual({
+      rows: [
+        {
+          key: 'i-iphone#5',
+          name: 'iPhone',
+          number: 'платіж 5 з 10',
+          date: '5 жовт.',
+          amount: `1${NBSP}000,00${NBSP}₴`,
+          state: 'paid',
+          stateLabel: 'сплачено',
+        },
+        {
+          key: 'i-vacuum#1',
+          name: 'Пилосос',
+          number: 'платіж 1 з 3',
+          date: '20 жовт.',
+          amount: `500,00${NBSP}₴`,
+          state: 'expected',
+          stateLabel: 'очікується',
+        },
+      ],
+      total: `1${NBSP}500,00${NBSP}₴`,
+      unpaid: `500,00${NBSP}₴`,
+    });
+    // Витрачено is the month's транзакції alone.
+    expect(amountFor(model, 'UAH', 'spent')).toBe(`1${NBSP}000,00 UAH`);
+  });
+
+  it('Scenario: An empty month still shows what it owes', () => {
+    const november = new Date(2026, 10, 2, 12);
+    const model = october2026([], [iphone], NO_INSTALLMENT_FACTS, '2026-11', november);
+    expect(model.emptyMessage).toBe('У цьому місяці ще нічого не записано.');
+    expect(model.installments?.rows).toEqual([
+      expect.objectContaining({ name: 'iPhone', date: '5 лист.', state: 'expected' }),
+    ]);
+  });
+
+  it('Scenario: A month without платежі has no block', () => {
+    const model = october2026([debit], [iphone], linked, '2026-05', october);
+    expect(model.installments).toBeNull();
+    // Nor does a закрито платіж make one.
+    const closed = october2026([], [{ ...vacuum, closedOn: '2026-10-01' }], NO_INSTALLMENT_FACTS);
+    expect(closed.installments).toBeNull();
+  });
+
+  it('Scenario: What is free after the платіж still owed', () => {
+    // Залишилось 20 000,00: дохід 21 000,00 less the 1 000,00 debit of «iPhone».
+    const model = october2026([debit, income(2_100_000, 'UAH', '2026-10-01')], [iphone, vacuum]);
+    const uah = groupOf(model, 'UAH');
+    expect(uah.lead).toBe('left');
+    expect(amountFor(model, 'UAH', 'left')).toBe(`20${NBSP}000,00 UAH`);
+    expect(uah.freeAfterInstallments).toEqual({
+      label: 'Вільно після розстрочок',
+      amount: `19${NBSP}500,00 UAH`,
+    });
+  });
+
+  it('Scenario: Before the first дохід it sits beneath залишилось', () => {
+    const spent = expense(165_000, 'UAH', 'groceries', '2026-10-02');
+    const model = october2026([debit, spent], [iphone, vacuum]);
+    const uah = groupOf(model, 'UAH');
+    expect(uah.lead).toBe('spent');
+    expect(amountFor(model, 'UAH', 'left')).toBe(`−2${NBSP}650,00 UAH`);
+    expect(uah.freeAfterInstallments?.amount).toBe(`−3${NBSP}150,00 UAH`);
+  });
+
+  it('Scenario: No UAH group, no reading', () => {
+    const model = october2026([expense(1_000, 'USD', UNCATEGORISED_CATEGORY_ID, '2026-10-02')], [vacuum], NO_INSTALLMENT_FACTS);
+    expect(model.groups.map((g) => g.currency)).toEqual(['USD']);
+    expect(model.groups.every((g) => g.freeAfterInstallments === undefined)).toBe(true);
+    expect(model.installments?.unpaid).toBe(`500,00${NBSP}₴`);
+  });
+
+  it('Scenario: Not for a past month', () => {
+    const september: Installment = { ...vacuum, firstDue: '2026-09-20' };
+    const model = october2026(
+      [expense(1_000, 'UAH', 'groceries', '2026-09-02'), income(100_000, 'UAH', '2026-09-01')],
+      [september],
+      NO_INSTALLMENT_FACTS,
+      '2026-09',
+    );
+    expect(model.installments?.rows[0]?.state).toBe('notFound');
+    expect(groupOf(model, 'UAH').freeAfterInstallments).toBeUndefined();
+  });
+
+  it('Scenario: Nothing owed hides it', () => {
+    const model = october2026(
+      [debit, income(2_100_000, 'UAH', '2026-10-01')],
+      [iphone, vacuum],
+      { ...linked, marks: [{ installmentId: vacuum.id, number: 1 }] },
+    );
+    expect(groupOf(model, 'UAH').freeAfterInstallments).toBeUndefined();
+    expect(model.installments?.unpaid).toBeNull();
+  });
+});
+
+describe('the Місяць screen wiring of the розстрочки', () => {
+  const screen = readFileSync(new URL('../app/(tabs)/month.tsx', import.meta.url), 'utf8');
+
+  it('Scenario: The block leads to the screen', () => {
+    expect(screen).toContain("router.push('/manage/installments')");
+    expect(screen).toContain('model.installments');
+  });
+
+  it('settles the links before it reads them, and draws the reading under залишилось', () => {
+    expect(screen.indexOf('settleInstallmentsOnFocus()')).toBeLessThan(screen.indexOf('installmentsRepo.list()'));
+    expect(screen.match(/<FreeAfterInstallments /g)).toHaveLength(2);
   });
 });

@@ -23,13 +23,15 @@ its type, дата, рахунок or both рахунки, integer minor-unit с
 or джерело, опис and original-currency сума where it has one; the marker that a Saldo import was
 committed; the monobank accounts a token has shown with their links, sync boundaries, cursors, the
 moment each link last synced and imported item ids; and the відстежувані застосунки of bank
-notifications with the рахунок each lands on.
+notifications with the рахунок each lands on; and every фіскальний
+чек with its identity, values, source snapshot and every позиція чека, attached to the транзакція
+it was attached to.
 
 A ціль витрат SHALL need nothing of its own in a бекап: it is the ліміт of its категорія, which the
 бекап already carries, so restoring the ліміти restores the цілі витрат with them.
 
 Every identifier SHALL be carried verbatim, so a restored бекап refers to the same рахунки,
-категорії and джерела it was made from.
+категорії, джерела, транзакції and чеки it was made from.
 
 #### Scenario: Every transaction type survives the round trip
 
@@ -78,11 +80,18 @@ Every identifier SHALL be carried verbatim, so a restored бекап refers to t
 - **THEN** Ресторани carries a ліміт of 200000 minor units UAH and the ціль витрат «Ресторани» is
   there again, with one сума and not two
 
+#### Scenario: A чек comes back under its транзакція without the tax service
+
+- **WHEN** a бекап made on a device holding a витрата with an attached чек of eight позиції, one
+  carrying a barcode, is restored onto empty storage with no network
+- **THEN** the same витрата carries the same чек with the same eight позиції, barcode included, and
+  the source snapshot, and no lookup was made
+
 #### Scenario: Identifiers are preserved
 
 - **WHEN** a бекап is restored
-- **THEN** every рахунок, категорія, джерело, правило, ціль and транзакція carries the identifier
-  it carried when the бекап was made
+- **THEN** every рахунок, категорія, джерело, правило, ціль, транзакція and чек carries the
+  identifier it carried when the бекап was made
 
 ### Requirement: A бекап carries правила-перекази and awaiting перекази
 
@@ -157,6 +166,12 @@ on the device the бекап came from.
 - **THEN** «Авто» is a ціль-накопичення of 20000000 minor units UAH by 2026-12-31 whose склад holds
   exactly «Подушка», and its progress is «Подушка»'s розрахунковий баланс
 
+#### Scenario: A бекап written before чеки existed restores without them
+
+- **WHEN** a бекап that names no фіскальний чек, because it was written before чеки existed, is
+  restored
+- **THEN** its транзакції are restored and none of them carries a чек
+
 ### Requirement: A бекап proves it is undamaged before it is trusted
 
 A бекап whose integrity value does not match its contents, that is truncated, or that is not a
@@ -196,7 +211,9 @@ than a переказ that says it awaits a зустрічний дохід; a �
 рахунок the бекап does not contain, or naming both, or neither; a ліміт on a
 категорія it does not contain; a ціль whose склад names a рахунок the бекап does not contain; a
 ціль whose склад is empty; a ціль whose склад names one рахунок more than once; a ціль whose
-currency is neither UAH nor the single currency every рахунок of its склад is in; a сума
+currency is neither UAH nor the single currency every рахунок of its склад is in; a чек naming a
+транзакція it does not contain, two чеки naming one транзакція, or two чеки of one identity; a
+позиція naming a чек it does not contain; a сума
 that is not an integer in minor units, or a сума without its currency code. The contradiction
 SHALL be found before anything local is touched.
 
@@ -247,6 +264,12 @@ SHALL be found before anything local is touched.
   EUR рахунок is attempted
 - **THEN** the бекап is not refused for that reason, and the ціль is restored with all three
   рахунки
+
+#### Scenario: A чек pointing outside the бекап stops the restore
+
+- **WHEN** restoring a бекап holding a чек whose транзакція is not among the бекап's транзакції is
+  attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
 
 ### Requirement: What a restore would do is knowable before it does it
 
@@ -441,3 +464,111 @@ A бекап SHALL carry the owner's dashboard layout schema version, the ordere
 - **GIVEN** a бекап's dashboard layout names a widget identity this app version does not know and names «Статок» twice
 - **WHEN** the бекап is validated
 - **THEN** it is accepted as structurally valid, unlike a бекап that contradicts itself over accounts or rules — normalization, not backup validation, decides what is rendered — and restoring it succeeds
+
+### Requirement: A бекап carries the vibration preference
+
+A бекап SHALL carry whether the owner's «Вібрація» switch is on or off, when the owner has ever set
+it. Restoring SHALL replace the local preference with the бекап's as part of the same all-or-nothing
+restore, and the restored value SHALL govern the switch and every haptic from the owner's next
+action, with no restart. A бекап that does not carry it, including one written before the switch
+existed, SHALL still restore, and SHALL leave «Вібрація» on. A бекап whose vibration preference is
+not a plain on or off SHALL be refused whole.
+
+#### Scenario: Vibration off survives the round trip
+
+- **GIVEN** the owner has turned «Вібрація» off
+- **WHEN** a бекап is made and restored onto storage holding nothing
+- **THEN** «Вібрація» shows off, and storing a транзакція right after the restore plays no haptic
+
+#### Scenario: An older бекап restores with vibration on
+
+- **GIVEN** a valid бекап written before the vibration preference was carried, and a phone where
+  «Вібрація» is off
+- **WHEN** it is restored
+- **THEN** the restore succeeds and «Вібрація» shows on
+
+#### Scenario: The preference restores atomically with the money
+
+- **GIVEN** a бекап carrying «Вібрація» off, one of whose транзакції fails to restore
+- **WHEN** restore is attempted
+- **THEN** neither the vibration preference nor any рахунок, транзакція or other setting changes
+
+#### Scenario: A malformed vibration preference refuses the бекап
+
+- **GIVEN** a бекап whose integrity value matches, but whose vibration preference is the text "yes"
+  instead of on or off
+- **WHEN** restoring it is attempted
+- **THEN** it is refused whole and nothing local changes
+
+### Requirement: A бекап carries every рахунок's дата початкового залишку
+
+A бекап SHALL carry each рахунок's дата початкового залишку where it has one, and restoring it
+SHALL bring that дата back. A бекап made before the дата existed SHALL restore every рахунок with
+no дата rather than be refused.
+
+#### Scenario: The дата survives the round trip
+- **WHEN** a бекап of a рахунок with початковий залишок 30000 EUR dated 2026-06-08 is restored onto empty storage
+- **THEN** the рахунок has the same початковий залишок and дата початкового залишку
+
+#### Scenario: An older бекап restores without dates
+- **WHEN** a бекап written by the previous format, holding no дата, is restored
+- **THEN** every рахунок is restored with no дата початкового залишку and the restore is not refused
+
+### Requirement: A бекап carries the розстрочки
+
+A бекап SHALL carry every розстрочка with every value it holds, the states of its платежі — the
+транзакція each is linked to, the owner's marks and the транзакції the owner unlinked — and the
+switch of the нагадування про платіж, and restoring SHALL put them back exactly as they were. A
+розстрочка is the owner's word about money the statement never shows: dropped from a бекап, the
+restored phone would know every платіж as an ordinary витрата and nothing of what is still owed.
+
+A restore SHALL replace the розстрочки wholesale like every other part of the state. Whether the
+app has already asked for notification permission is the phone's own state: it SHALL NOT be carried,
+and a restore SHALL leave it as it was on the phone. A бекап written
+before розстрочки existed SHALL still restore, leaving the phone with none and the нагадування про
+платіж on.
+
+A бекап SHALL be refused whole, with nothing restored, when a розстрочка it carries names a
+рахунок or категорія the бекап does not contain, names a рахунок списання that is not a UAH рахунок,
+holds a value the installments capability refuses — an archived рахунок or категорія is no such
+value, since a card may be archived after its розстрочка was recorded — or links a платіж to a
+транзакція the бекап does not contain, that is not a UAH витрата on its рахунок списання, or that
+is linked to another платіж as well.
+
+#### Scenario: A розстрочка survives the round trip
+
+- **WHEN** a бекап made on a device holding «iPhone» with 4 сплачено раніше, платіж 5 linked to a
+  витрата and платіж 6 marked сплачено, with the нагадування про платіж off, is restored onto
+  storage holding nothing
+- **THEN** «iPhone» is back with the same values, платіж 5 is linked to the same витрата, платіж 6
+  is still marked, and the нагадування про платіж are off
+
+#### Scenario: A бекап written before розстрочки existed still restores
+
+- **WHEN** a бекап that names no розстрочка, because it was written before they existed, is
+  restored
+- **THEN** its рахунки, транзакції and settings are restored, there is no розстрочка, and the
+  нагадування про платіж are on
+
+#### Scenario: A розстрочка on a рахунок outside the бекап stops the restore
+
+- **WHEN** restoring a бекап whose розстрочка names a рахунок списання the бекап does not contain,
+  or a USD рахунок, is attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: One транзакція linked twice stops the restore
+
+- **WHEN** restoring a бекап in which one витрата is linked to платежі of two розстрочки is attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: A link outside the бекап stops the restore
+
+- **WHEN** restoring a бекап whose розстрочка links a платіж to a транзакція the бекап does not
+  contain is attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: A розстрочка on a since-archived рахунок restores
+
+- **WHEN** a бекап whose «iPhone» names a UAH рахунок списання that was archived after «iPhone» was
+  recorded is restored
+- **THEN** «iPhone» is back on that рахунок and nothing is refused

@@ -78,6 +78,11 @@ export interface RestorePreview {
 export interface BackupScreenPorts {
   readonly store: BackupStore;
   readonly files: BackupFilePort;
+  /**
+   * What must follow a restore that landed — the розстрочки' upkeep, so the restored платежі are
+   * linked and the phone holds the restored warnings (installments design D4). Never throws.
+   */
+  readonly afterRestore?: () => Promise<void>;
 }
 
 /**
@@ -164,7 +169,7 @@ export async function pickForRestore(ports: BackupScreenPorts): Promise<BackupSc
  * the replacement is one SQLite transaction.
  */
 export async function confirmRestore(
-  ports: Pick<BackupScreenPorts, 'store'>,
+  ports: Pick<BackupScreenPorts, 'store' | 'afterRestore'>,
   preview: RestorePreview,
 ): Promise<BackupScreenState> {
   const { accounts, transactions } = preview.header.figures;
@@ -185,6 +190,7 @@ export async function confirmRestore(
     if (outcome !== 'ok') {
       return { kind: 'failed', message: refusalMessage(outcome) };
     }
+    await ports.afterRestore?.();
     return {
       kind: 'restored',
       message: `Відновлено: ${countsOf(preview.header.figures)}.`,

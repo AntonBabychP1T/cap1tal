@@ -130,6 +130,13 @@ describe('currency selection sends no requests', () => {
     // Wired straight to `useState`'s own setter — no wrapping function that could reach a repo, a
     // reload or a network call between the tap and the state it changes.
     expect(screen).toContain('onSelectCurrency={setRequestedCategoryCurrency}');
-    expect(screen).toContain('onSelectHistory={setRequestedHistory}');
+    // Статок's reading is chosen on the «Статок» screen now (main-screen, "The Статок widget is a
+    // compact summary that opens «Статок»"): Головний only reads the shared in-memory selection,
+    // and the screen's chips write it — a store update, never a repository or a request.
+    expect(screen).not.toContain('onSelectHistory');
+    expect(screen).toContain('useNetWorthSelection()');
+    expect(readFileSync(new URL('../app/net-worth.tsx', import.meta.url), 'utf8')).toContain(
+      'netWorthSelection.set({ history: id })',
+    );
   });
 });

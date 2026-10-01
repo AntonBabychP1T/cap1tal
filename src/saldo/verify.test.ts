@@ -41,6 +41,24 @@ const wallet: FixtureRow[] = [
 ];
 
 describe('verify', () => {
+
+  it('Scenario: Mapping onto an existing рахунок proposes replacing its opening balance — the report shows both replacements', () => {
+    const found = reconciliationOf(
+      pair({ id: '1', account: 'mono black', journalType: 'DEBIT', amount: '123.00', other: 'Initial balance', otherType: 'EQUITY' }),
+      'Чорна',
+      {
+        decisions: {
+          accountRedirects: { [accountKey('mono black', 'UAH')]: { to: 'account', accountId: 'black' } },
+        },
+        existing: existingState({
+          accounts: [{ ...existingAccount({ id: 'black', name: 'Чорна', openingAmount: 5000 }), openingDate: isoDate('2026-02-01') }],
+        }),
+      },
+    );
+    expect(found.replacedOpeningBalance).toEqual(money(5000, 'UAH'));
+    expect(found.replacedOpeningDate).toBe('2026-02-01');
+    expect(found.openingDate).toBe('2024-10-27');
+  });
   it('Scenario: A fully interpreted рахунок reconciles exactly', () => {
     const row = reconciliationOf(wallet, 'гаманець');
     // 500 opening − 42 spent + 100 income + 12 refunded = 570.00

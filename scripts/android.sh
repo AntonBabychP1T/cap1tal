@@ -3,6 +3,7 @@
 #
 #   scripts/android.sh up        boot emulator → build → install → metro → launch  (default)
 #   scripts/android.sh build     gradle assembleDebug only
+#   scripts/android.sh release   gradle assembleRelease → app-release.apk (no device needed)
 #   scripts/android.sh install   install the last built APK
 #   scripts/android.sh launch    (re)start the app on the device
 #   scripts/android.sh metro     start the Metro dev server in the background
@@ -32,8 +33,13 @@ APK=android/app/build/outputs/apk/debug/app-debug.apk
 
 export ANDROID_HOME=${ANDROID_HOME:-$HOME/Library/Android/sdk}
 export ANDROID_SDK_ROOT=$ANDROID_HOME
-# AGP needs a JDK it knows; the machine default may be newer than Gradle supports.
-export JAVA_HOME=${JAVA_HOME:-$(/usr/libexec/java_home -v 21 2>/dev/null || echo "/Applications/Android Studio.app/Contents/jbr/Contents/Home")}
+# Android builds run on JDK 21, whatever the machine default is. On JDK 24+ every JVM start
+# prints a "restricted method" warning to stderr, and AGP fails the prefab step of any native
+# module (react-native-worklets first) on any stderr line. An inherited JAVA_HOME is not enough:
+# org.gradle.java.home in ~/.gradle/gradle.properties picks the daemon JVM over it, so every
+# gradlew call also passes it on the command line, which wins. CAP1TAL_JAVA_HOME overrides.
+export JAVA_HOME=${CAP1TAL_JAVA_HOME:-$(/usr/libexec/java_home -v 21 2>/dev/null || echo "/Applications/Android Studio.app/Contents/jbr/Contents/Home")}
+gradlew() { (cd android && ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" "$@"); }
 export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 
 mkdir -p "$RUN_DIR"
@@ -113,7 +119,15 @@ build() {
   # Only the ABI the device actually uses — a four-ABI build is ~4× the work.
   local abi; abi=$(adb shell getprop ro.product.cpu.abi 2>/dev/null | tr -d '\r'); abi=${abi:-arm64-v8a}
   say "gradle assembleDebug ($abi)"
-  (cd android && ./gradlew assembleDebug -PreactNativeArchitectures="$abi" --console=plain)
+  gradlew assembleDebug -PreactNativeArchitectures="$abi" --console=plain
+}
+
+# A standalone release APK (JS bundled in, all four ABIs) — what goes onto the real phone.
+release() {
+  ensure_native
+  say "gradle assembleRelease"
+  NODE_ENV=production gradlew assembleRelease --console=plain
+  say "wrote android/app/build/outputs/apk/release/app-release.apk"
 }
 
 install() {
@@ -197,6 +211,7 @@ launch() {
 case "${1:-up}" in
   up)      ensure_device; install; metro; launch; say "up — screenshot with: scripts/android.sh shot" ;;
   build)   ensure_device; build ;;
+  release) release ;;
   install) ensure_device; install ;;
   metro)   ensure_device; metro ;;
   launch)  ensure_device; launch ;;
@@ -227,6 +242,6 @@ case "${1:-up}" in
   logs)    ensure_device
            adb logcat -d -s ReactNative:V ReactNativeJS:V AndroidRuntime:E expo:V | tail -n "${2:-200}" ;;
   stop)    [ -f "$RUN_DIR/metro.pid" ] && kill "$(cat "$RUN_DIR/metro.pid")" 2>/dev/null || true
-           rm -f "$RUN_DIR/metro.pid"; (cd android 2>/dev/null && ./gradlew --stop) || true; say "stopped" ;;
+           rm -f "$RUN_DIR/metro.pid"; { [ -d android ] && gradlew --stop; } || true; say "stopped" ;;
   *)       die "unknown command: $1 (see the header of $0)" ;;
 esac

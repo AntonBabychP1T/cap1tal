@@ -362,6 +362,33 @@ describe('the restore preview, and the word that follows it', () => {
     expect(backupRepo(storage.db).snapshot().accounts).toHaveLength(12);
   });
 
+  it('runs what must follow a restore only once it has landed', async () => {
+    const shown = await preview();
+    let followed = 0;
+    const afterRestore = () => {
+      followed += 1;
+      return Promise.resolve();
+    };
+    await confirmRestore({ store: backupRepo(storage.db), afterRestore }, shown);
+    expect(followed).toBe(1);
+
+    const broken: RestorePreview = {
+      ...shown,
+      header: {
+        ...shown.header,
+        state: {
+          ...shown.header.state,
+          transactions: [
+            ...shown.header.state.transactions,
+            { transaction: { ...expense('t-last', '2026-08-30'), categoryId: 'зникла' }, storedAtMs: 0 },
+          ],
+        },
+      },
+    };
+    await confirmRestore({ store: backupRepo(storage.db), afterRestore }, broken);
+    expect(followed).toBe(1);
+  });
+
   it('Scenario: A failed restore changes nothing', async () => {
     const shown = await preview();
     const before = backupRepo(storage.db).snapshot();

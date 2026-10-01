@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 
+import type { MovementKind } from '../domain/net-worth';
 import type { IsoDate, Month } from '../domain/transaction';
 import type { Storage } from './storage';
 import { stampedMemo } from './stamp';
@@ -8,6 +9,14 @@ import { stampedMemo } from './stamp';
 export interface AccountMonthMovement {
   readonly accountId: string;
   readonly month: Month;
+  readonly net: number;
+}
+
+/** One рахунок's net effect in one calendar month from one `MovementKind` of транзакція. */
+export interface AccountMonthKindMovement {
+  readonly accountId: string;
+  readonly month: Month;
+  readonly kind: MovementKind;
   readonly net: number;
 }
 
@@ -29,25 +38,33 @@ export interface AccountFirstDateMovement {
  * a переказ contributes at most one row here per leg, never two for the same рахунок, because the
  * same-account-on-both-legs case is refused at creation.
  *
- * Kept as a `WITH` fragment and reused by every query below, so the four readings below can never
+ * Each row also names its `MovementKind` — витрата and повернення are both `spending`, each переказ
+ * leg `transfer` — for the розбивка (design D3).
+ *
+ * Kept as a `WITH` fragment and reused by every query below, so the five readings below can never
  * silently drift into disagreeing about what a транзакція's effect is (design D5;
  * differentially verified against `computeBalance` — task 2.3).
  */
 const MOVEMENTS = sql`
   SELECT t.account_id AS accountId, t.date AS date,
-         CASE t.type WHEN 'expense' THEN -t.amount ELSE t.amount END AS effect
+         CASE t.type WHEN 'expense' THEN -t.amount ELSE t.amount END AS effect,
+         CASE t.type WHEN 'income' THEN 'income'
+                     WHEN 'correction' THEN 'correction'
+                     ELSE 'spending' END AS kind
   FROM transactions t
   WHERE t.type IN ('expense', 'income', 'refund', 'correction')
 
   UNION ALL
 
-  SELECT t.from_account_id AS accountId, t.date AS date, -t.left_amount AS effect
+  SELECT t.from_account_id AS accountId, t.date AS date, -t.left_amount AS effect,
+         'transfer' AS kind
   FROM transactions t
   WHERE t.type = 'transfer'
 
   UNION ALL
 
-  SELECT t.to_account_id AS accountId, t.date AS date, t.arrived_amount AS effect
+  SELECT t.to_account_id AS accountId, t.date AS date, t.arrived_amount AS effect,
+         'transfer' AS kind
   FROM transactions t
   WHERE t.type = 'transfer'
 `;
@@ -81,10 +98,24 @@ export function netWorthRepo(db: Storage) {
     },
 
     /**
+     * `monthlyMovement` split by `MovementKind` — the same rows grouped once more, so the розбивка
+     * of a month adds up to exactly its movement (net-worth, "Each month's change has a розбивка",
+     * design D3). Bounded by рахунки × months × four kinds, never by транзакції.
+     */
+    monthlyMovementByType(today: IsoDate): readonly AccountMonthKindMovement[] {
+      return db.all<AccountMonthKindMovement>(sql`
+        WITH movements AS (${MOVEMENTS})
+        SELECT accountId, substr(date, 1, 7) AS month, kind, SUM(effect) AS net
+        FROM movements
+        WHERE date <= ${today}
+        GROUP BY accountId, month, kind
+      `);
+    },
+
+    /**
      * Each рахунок's earliest recorded транзакція date on or before `today` — absent for a
-     * рахунок with no such транзакція. A nonzero opening balance is anchored here: before this
-     * date the рахунок's historical contribution is unknown (net-worth, "Undated opening money
-     * produces honest coverage gaps").
+     * рахунок with no such транзакція. A рахунок enters history no later than this date (net-worth,
+     * "A рахунок enters Статок history at its дата початкового залишку").
      */
     firstDates(today: IsoDate): readonly AccountFirstDate[] {
       return db.all<AccountFirstDate>(sql`
@@ -134,9 +165,12 @@ export function netWorthRepo(db: Storage) {
   };
 
   // Each reading is a function of storage and `today` alone, so it is remembered under the change
-  // stamp with the day as its key (app-speed-pass design D1): Головний asks all four on every
+  // stamp with the day as its key (app-speed-pass design D1): Головний asks all five on every
   // focus, and with nothing written in between the answer is the one it already has.
   const monthlyMovement = stampedMemo(db, (today) => direct.monthlyMovement(today as IsoDate));
+  const monthlyMovementByType = stampedMemo(db, (today) =>
+    direct.monthlyMovementByType(today as IsoDate),
+  );
   const firstDates = stampedMemo(db, (today) => direct.firstDates(today as IsoDate));
   const firstDateMovement = stampedMemo(db, (today) => direct.firstDateMovement(today as IsoDate));
   const accountsWithFutureRecords = stampedMemo(db, (today) =>
@@ -145,6 +179,8 @@ export function netWorthRepo(db: Storage) {
 
   return {
     monthlyMovement: (today: IsoDate): readonly AccountMonthMovement[] => monthlyMovement(today),
+    monthlyMovementByType: (today: IsoDate): readonly AccountMonthKindMovement[] =>
+      monthlyMovementByType(today),
     firstDates: (today: IsoDate): readonly AccountFirstDate[] => firstDates(today),
     firstDateMovement: (today: IsoDate): readonly AccountFirstDateMovement[] =>
       firstDateMovement(today),

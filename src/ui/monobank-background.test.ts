@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { accountsRepo } from '../db/accounts-repo';
+import { installmentsRepo } from '../db/installments-repo';
 import { monobankRepo, type MonobankRepo } from '../db/monobank-repo';
 import { remindersRepo, type RemindersRepo } from '../db/reminders-repo';
 import { openTestDb, seedReferences, type TestStorage } from '../db/test-db';
@@ -21,6 +22,7 @@ import { inMemoryMonobankTokenStore, type MonobankTokenStore } from '../platform
 import { ALERT_NOTICES } from '../reminders/notices';
 import type { JournalEntry } from '../reporting/journal';
 import { startOfLocalDayMs } from './dates';
+import { settleAndReassert, settleAndReassertQuietly } from './installment-upkeep';
 import { bindTestJournal } from './journal';
 import {
   BACKGROUND_CHANCE,
@@ -789,4 +791,62 @@ describe('one chance the phone gives', () => {
     });
   });
 
+  describe('the розстрочки after a run', () => {
+    it('Scenario: A debit synced in the background withdraws the warning', async () => {
+      const { clientInfo } = linkCards(1);
+      repo.beginAttempt(new Date(CHANCE_AT - 20 * MINUTE));
+      repo.finishAttempt('complete');
+      const installments = installmentsRepo(storage.db);
+      // The платіж of 30 Aug, 125,50 ₴ on the linked card — exactly what the statement debits on
+      // 28 Aug.
+      installments.save({
+        id: 'i-kettle',
+        name: 'Чайник',
+        total: 25_100,
+        partsCount: 2,
+        part: 12_550,
+        firstDue: '2026-08-30',
+        debitAccountId: 'card-0',
+        paidBefore: 0,
+        recordedAt: CHANCE_AT - HOUR,
+      });
+      const upkeep = {
+        storage: installments,
+        notifications: phone,
+        // The morning of the debit, before the warning's 10:00 of 29 Aug.
+        now: () => new Date(2026, 7, 28, 8, 0),
+      };
+      await settleAndReassert(upkeep);
+      expect(await phone.scheduledIds()).toContain('installment-due-2026-08-29');
+
+      const bankPorts = bank({
+        clientInfo: () => ({ status: 200, body: clientInfo }),
+        statement: () => ({ status: 200, body: [statementItem('a1')] }),
+      });
+      const turn = await runBackgroundTurn({
+        ...turnPorts(bankPorts.fetchImpl),
+        afterRun: () => settleAndReassertQuietly(upkeep),
+      });
+
+      expect(turn).toMatchObject({ kind: 'ran', imported: 1 });
+      expect(installments.facts().links).toHaveLength(1);
+      expect(await phone.scheduledIds()).not.toContain('installment-due-2026-08-29');
+      expect(await phone.scheduledIds()).toContain('installment-due-2026-09-29');
+    });
+
+    it('journals a failing upkeep and still answers the run it rode on', async () => {
+      const { clientInfo } = linkCards(1);
+      repo.beginAttempt(new Date(CHANCE_AT - 20 * MINUTE));
+      repo.finishAttempt('complete');
+      const bankPorts = bank({ clientInfo: () => ({ status: 200, body: clientInfo }) });
+      const turn = await runBackgroundTurn({
+        ...turnPorts(bankPorts.fetchImpl),
+        afterRun: () => Promise.reject(new Error('storage went away')),
+      });
+      expect(turn).toMatchObject({ kind: 'ran', outcome: 'complete' });
+      expect(journalOf().some((entry) => entry.kind === 'failure' && entry.name === 'background-after-run')).toBe(
+        true,
+      );
+    });
+  });
 });

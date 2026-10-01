@@ -16,6 +16,7 @@ import {
 import { suggestKind } from '../monobank/link';
 import { accountsRepo } from './accounts-repo';
 import { monobankRepo, type FetchedMonobankAccount, type MonobankRepo } from './monobank-repo';
+import { netWorthRepo } from './net-worth-repo';
 import { monobankRequestPace, monobankSyncAttempt } from './schema';
 import { openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
@@ -179,6 +180,7 @@ describe('monobankRepo — accounts and links', () => {
       currency: monoJar.currency,
     });
     repo.createAccountAndLink({
+      today: '2026-10-01',
       account: created,
       monobankAccountId: 'mono-jar',
       syncStartDate: '2026-08-01',
@@ -186,7 +188,13 @@ describe('monobankRepo — accounts and links', () => {
     });
 
     expect(accountsRepo(storage.db).get('new-jar')).toEqual(
-      account({ id: 'new-jar', name: 'На відпустку', kind: 'savings', currency: 'USD' }),
+      account({
+        id: 'new-jar',
+        name: 'На відпустку',
+        kind: 'savings',
+        currency: 'USD',
+        openingDate: '2026-10-01',
+      }),
     );
     expect(repo.linkOf('mono-jar')).toEqual({
       monobankAccountId: 'mono-jar',
@@ -200,6 +208,39 @@ describe('monobankRepo — accounts and links', () => {
     });
   });
 
+  it('Scenario: A linked рахунок keeps its creation day while older транзакції arrive', () => {
+    repo.createAccountAndLink({
+      today: '2026-10-01',
+      account: account({ id: 'linked', name: 'white', kind: 'spending', currency: 'UAH' }),
+      monobankAccountId: 'mono-card',
+      syncStartDate: '2026-09-01',
+      cursorMs: boundaryMs,
+    });
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [
+        expenseByDefault({
+          id: 'old',
+          date: '2026-09-01',
+          accountId: 'linked',
+          amount: money(5000, 'UAH'),
+          categoryId: UNCATEGORISED_CATEGORY_ID,
+        }),
+      ],
+      newlySeenIds: ['item-old'],
+      bankBalance: money(0, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt,
+    });
+
+    expect(accountsRepo(storage.db).get('linked')!.openingDate).toBe('2026-10-01');
+    // Статок counts the рахунок from the earlier of the two — its first транзакція here.
+    expect(netWorthRepo(storage.db).firstDates('2026-10-01')).toEqual([
+      { accountId: 'linked', firstDate: '2026-09-01' },
+    ]);
+  });
+
   it('A рахунок created for a link that fails is not left behind', () => {
     repo.link({
       monobankAccountId: 'mono-jar',
@@ -211,6 +252,7 @@ describe('monobankRepo — accounts and links', () => {
 
     expect(() =>
       repo.createAccountAndLink({
+        today: '2026-10-01',
         account: orphan,
         monobankAccountId: 'mono-jar',
         syncStartDate: '2026-08-01',
@@ -1192,6 +1234,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
 
   it('Scenario: Accepting the set links every proposal at once', () => {
     repo.linkMany({
+      today: '2026-10-01',
       accepted: [
         { kind: 'existing', monobankAccountId: 'mono-card', accountId: 'card' },
         { kind: 'new', monobankAccountId: 'mono-jar', account: madeForJar },
@@ -1245,6 +1288,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
     // The second member joins a USD банка to a UAH рахунок — the one thing a link may never be.
     expect(() =>
       repo.linkMany({
+        today: '2026-10-01',
         accepted: [
           { kind: 'existing', monobankAccountId: 'mono-card', accountId: 'card' },
           { kind: 'existing', monobankAccountId: 'mono-jar', accountId: 'jar' },
@@ -1268,6 +1312,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
     // owner has already accepted the set and the first half of it is on disk.
     expect(() =>
       repo.linkMany({
+        today: '2026-10-01',
         accepted: [
           { kind: 'existing', monobankAccountId: 'mono-card', accountId: 'card' },
           { kind: 'existing', monobankAccountId: 'mono-white', accountId: 'card' },
@@ -1281,6 +1326,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
     // And one card onto two рахунки is refused the same way.
     expect(() =>
       repo.linkMany({
+        today: '2026-10-01',
         accepted: [
           { kind: 'existing', monobankAccountId: 'mono-card', accountId: 'card' },
           { kind: 'existing', monobankAccountId: 'mono-card', accountId: 'jar' },
@@ -1295,6 +1341,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
   it('A рахунок that does not exist is refused, and nothing is written', () => {
     expect(() =>
       repo.linkMany({
+        today: '2026-10-01',
         accepted: [
           { kind: 'existing', monobankAccountId: 'mono-card', accountId: 'card' },
           { kind: 'existing', monobankAccountId: 'mono-white', accountId: 'ghost' },
@@ -1307,7 +1354,7 @@ describe('monobankRepo.linkMany — a reviewed set, whole or not at all', () => 
   });
 
   it('An empty set writes nothing and refuses nothing', () => {
-    repo.linkMany({ accepted: [], syncStartDate: '2026-08-01', cursorMs: boundaryMs });
+    repo.linkMany({ accepted: [], syncStartDate: '2026-08-01', cursorMs: boundaryMs, today: '2026-10-01' });
     expect(repo.listLinks()).toEqual([]);
   });
 });

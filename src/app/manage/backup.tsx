@@ -23,6 +23,7 @@ import {
 } from '@/ui/backup-screen';
 
 import { Spacing } from '@/constants/theme';
+import { keepInstallmentsQuietly } from '@/hooks/installment-ports';
 
 /**
  * «Бекап» — where the owner saves their whole state to one file and brings it back from one.
@@ -37,7 +38,7 @@ import { Spacing } from '@/constants/theme';
  */
 
 /** The two singletons this section works over: the device's storage, and the device's files. */
-const PORTS = { store: backupRepo, files: backupFiles };
+const PORTS = { store: backupRepo, files: backupFiles, afterRestore: keepInstallmentsQuietly };
 
 export default function BackupScreen() {
   const router = useRouter();

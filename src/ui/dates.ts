@@ -84,6 +84,32 @@ export function calendarLabel(date: IsoDate, now: Date): string {
   return Number(year) === now.getFullYear() ? named : `${named} ${year}`;
 }
 
+/** The genitive month, shortened the way a дата is written beside a сума: «5 жовт.». */
+const SHORT_GENITIVE_MONTHS: readonly string[] = [
+  'січ.',
+  'лют.',
+  'бер.',
+  'квіт.',
+  'трав.',
+  'черв.',
+  'лип.',
+  'серп.',
+  'вер.',
+  'жовт.',
+  'лист.',
+  'груд.',
+];
+
+/**
+ * A calendar дата in few letters — «5 жовт.», and «5 жовт. 2027» once the year is no longer this
+ * one — for a line that also carries a сума, such as a розстрочка's next платіж.
+ */
+export function shortCalendarLabel(date: IsoDate, now: Date): string {
+  const [year, month, day] = isoDate(date).split('-');
+  const named = `${Number(day)} ${SHORT_GENITIVE_MONTHS[Number(month) - 1]}`;
+  return Number(year) === now.getFullYear() ? named : `${named} ${year}`;
+}
+
 /**
  * A транзакція's дата as a line of the стрічка says it: «сьогодні», «вчора», and otherwise
  * `calendarLabel`'s «21 вересня» / «11 серпня 2025» (app-shell, "A транзакція's дата reads as a

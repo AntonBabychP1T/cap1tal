@@ -16,6 +16,15 @@ export const accounts = sqliteTable('accounts', {
   currency: text('currency').notNull(),
   /** The opening balance, always in the account's own currency — hence no second column. */
   openingAmount: integer('opening_amount').notNull().default(0),
+  /**
+   * The дата початкового залишку — the day the opening balance holds from, `'YYYY-MM-DD'`, or NULL
+   * for a рахунок stored before it existed. It moves no balance; Статок's history counts the рахунок
+   * from it or from its first транзакція, whichever is earlier. No CHECK here, unlike the other date
+   * columns: adding one would make drizzle recreate `accounts`, the parent of nearly every foreign
+   * key in the schema. `account()` keeps it a calendar date and `accountsRepo.save` refuses one after
+   * today.
+   */
+  openingDate: text('opening_date'),
   /** Archived accounts keep history and balance; they are offered for no new transaction. */
   archived: integer('archived', { mode: 'boolean' }).notNull().default(sql`0`),
 });
@@ -1244,3 +1253,138 @@ export const investmentValues = sqliteTable(
 
 export type InvestmentValueRow = typeof investmentValues.$inferSelect;
 export type NewInvestmentValueRow = typeof investmentValues.$inferInsert;
+
+/**
+ * A розстрочка (installments design D1–D2): the owner's facts about one interest-free purchase paid
+ * in monthly платежі. Only the inputs are stored — the графік (each платіж's number, дата and сума)
+ * is a pure function of them in `src/domain/installments.ts`, so an edit is one row and the states
+ * of the платежі, kept by number in the three tables below, follow it for free.
+ *
+ * One currency column for both sums, and it is UAH — the CHECK, not only the repository, says so:
+ * monobank «Покупка частинами» is a гривня product, and a розстрочка in any other currency is a
+ * state the domain refuses. `debit_account_id` restricts like every reference to a рахунок, so a
+ * merge must move it (`account-merge-repo.ts`); `category_id` restricts like every reference to a
+ * категорія, which archive rather than delete.
+ */
+export const installments = sqliteTable(
+  'installments',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    totalMinor: integer('total_minor').notNull(),
+    currency: text('currency').notNull(),
+    partsCount: integer('parts_count').notNull(),
+    partMinor: integer('part_minor').notNull(),
+    firstDue: text('first_due').notNull(),
+    debitAccountId: text('debit_account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+    paidBefore: integer('paid_before').notNull(),
+    categoryId: text('category_id').references(() => categories.id, { onDelete: 'restrict' }),
+    /** Domain data: the tie-break between two розстрочки' платежі of one дата. */
+    recordedAt: integer('recorded_at', { mode: 'timestamp_ms' }).notNull(),
+    /** The дата it was closed early; NULL while it is not. */
+    closedOn: text('closed_on'),
+  },
+  (t) => [
+    check('installments_name_not_blank', sql`length(trim(${t.name})) > 0`),
+    check('installments_currency_uah', sql`${t.currency} = 'UAH'`),
+    check('installments_total_positive', sql`${t.totalMinor} > 0`),
+    check('installments_parts_count_range', sql`${t.partsCount} BETWEEN 2 AND 60`),
+    check('installments_part_positive', sql`${t.partMinor} > 0`),
+    check(
+      'installments_last_part_positive',
+      sql`${t.totalMinor} - (${t.partsCount} - 1) * ${t.partMinor} > 0`,
+    ),
+    check('installments_paid_before_range', sql`${t.paidBefore} >= 0 AND ${t.paidBefore} < ${t.partsCount}`),
+    check(
+      'installments_first_due_iso',
+      sql`${t.firstDue} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+    check(
+      'installments_closed_on_iso',
+      sql`${t.closedOn} IS NULL OR ${t.closedOn} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+    index('installments_debit_account_idx').on(t.debitAccountId),
+  ],
+);
+
+/**
+ * A платіж linked to its списання. The primary key is «one списання per платіж», the UNIQUE on
+ * `transaction_id` is «one платіж per транзакція» — both storage facts rather than checks. Removing
+ * the транзакція or the розстрочка cascades the link away: it means nothing without either.
+ */
+export const installmentPartLinks = sqliteTable(
+  'installment_part_links',
+  {
+    installmentId: text('installment_id')
+      .notNull()
+      .references(() => installments.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    transactionId: text('transaction_id')
+      .notNull()
+      .unique()
+      .references(() => transactions.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.installmentId, t.number] }),
+    check('installment_part_links_number_positive', sql`${t.number} >= 1`),
+  ],
+);
+
+/** A платіж the owner marked сплачено without a списання («Позначити сплаченим»). */
+export const installmentPartMarks = sqliteTable(
+  'installment_part_marks',
+  {
+    installmentId: text('installment_id')
+      .notNull()
+      .references(() => installments.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.installmentId, t.number] }),
+    check('installment_part_marks_number_positive', sql`${t.number} >= 1`),
+  ],
+);
+
+/**
+ * A транзакція the owner unlinked from a платіж («Відв'язати»): the app never links the two again by
+ * itself. Gone with either side.
+ */
+export const installmentRefusals = sqliteTable(
+  'installment_refusals',
+  {
+    installmentId: text('installment_id')
+      .notNull()
+      .references(() => installments.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    transactionId: text('transaction_id')
+      .notNull()
+      .references(() => transactions.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.installmentId, t.number, t.transactionId] }),
+    check('installment_refusals_number_positive', sql`${t.number} >= 1`),
+  ],
+);
+
+/**
+ * The switch of the нагадування про платіж, and whether the app has already asked for notification
+ * permission on their behalf. One row; an absent row reads as on and not asked.
+ *
+ * `asked` is this phone's own state — the port cannot tell "never asked" from "denied" — so the
+ * snapshot and the бекап carry `enabled` only, and a restore leaves `asked` as the phone had it
+ * (installments design D5, D8).
+ */
+export const installmentReminder = sqliteTable(
+  'installment_reminder',
+  {
+    id: integer('id').primaryKey(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull(),
+    asked: integer('asked', { mode: 'boolean' }).notNull(),
+  },
+  (t) => [check('installment_reminder_single_row', sql`${t.id} = 1`)],
+);
+
+export type InstallmentRow = typeof installments.$inferSelect;
+export type NewInstallmentRow = typeof installments.$inferInsert;

@@ -74,8 +74,13 @@ export function importRepo(db: Storage) {
           if (planned.existingId) {
             // An existing рахунок keeps its name, its вид and its archived flag; the import
             // replaces only the початковий залишок, which is the one thing Saldo knows better.
+            // …and its дата, where the export dates it; with no «Initial balance» entry there is
+            // no Saldo дата to propose, so the stored one stays.
             tx.update(accounts)
-              .set({ openingAmount: planned.openingBalance.amount })
+              .set({
+                openingAmount: planned.openingBalance.amount,
+                ...(planned.openingDate !== undefined ? { openingDate: planned.openingDate } : {}),
+              })
               .where(eq(accounts.id, planned.existingId))
               .run();
           } else {
@@ -88,6 +93,7 @@ export function importRepo(db: Storage) {
                     kind: planned.kind,
                     currency: planned.currency,
                     openingBalance: planned.openingBalance,
+                    ...(planned.openingDate !== undefined ? { openingDate: planned.openingDate } : {}),
                   }),
                 ),
               )

@@ -39,6 +39,7 @@ export function toAccountRow(a: Account): NewAccountRow {
     kind: a.kind,
     currency: a.currency,
     openingAmount: a.openingBalance.amount,
+    openingDate: a.openingDate ?? null,
     archived: a.archived,
   };
 }
@@ -50,6 +51,7 @@ export function toAccount(row: AccountRow): Account {
     kind: accountKind(row.kind),
     currency: row.currency,
     openingBalance: money(row.openingAmount, row.currency),
+    ...(row.openingDate !== null ? { openingDate: row.openingDate } : {}),
     archived: row.archived,
   });
 }

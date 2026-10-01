@@ -8,6 +8,8 @@ import m0003 from './0003_pink_wind_dancer.sql';
 import m0004 from './0004_shallow_daimon_hellstrom.sql';
 import m0005 from './0005_remarkable_bushwacker.sql';
 import m0006 from './0006_loose_drax.sql';
+import m0007 from './0007_strong_franklin_storm.sql';
+import m0008 from './0008_gorgeous_leopardon.sql';
 
   export default {
     journal,
@@ -18,7 +20,9 @@ m0002,
 m0003,
 m0004,
 m0005,
-m0006
+m0006,
+m0007,
+m0008
     }
   }
   

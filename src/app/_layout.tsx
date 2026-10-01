@@ -51,6 +51,7 @@ import { bindJournal, journal, reportFailure } from '@/ui/journal';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
 import { drainCaptures } from '@/ui/notification-drain';
 import { reconcileOnLaunch } from '@/ui/reminder-schedule';
+import { keepInstallmentsQuietly } from '@/hooks/installment-ports';
 import { sweepCaptures } from '@/ui/bug-report-here';
 import { screenCapture } from '@/platform/screen-capture-device';
 import { BugReportHere } from '@/components/bug-report-here';
@@ -494,6 +495,9 @@ export default function RootLayout() {
   useEffect(() => {
     if (success) {
       void reconcileOnLaunch(NOTIFY);
+      // The нагадування про платіж, the same way: link what arrived while the app was closed,
+      // then re-assert every warning (installments design D4, D5).
+      void keepInstallmentsQuietly();
     }
   }, [success]);
 
@@ -619,6 +623,12 @@ export default function RootLayout() {
               name="transactions"
               options={{ presentation: 'card', animation: animation('transactions') }}
             />
+            {/* «Статок»: the whole history month by month, opened from its widget on Головний and
+                pushed over the tabs like «Транзакції». */}
+            <Stack.Screen
+              name="net-worth"
+              options={{ presentation: 'card', animation: animation('net-worth') }}
+            />
             {/* «Прогрес» and its two details: pushed over the tabs like «Транзакції», never a
                 sixth tab. The key of a досягнення or a виклик reaches the route encoded. */}
             <Stack.Screen
@@ -670,6 +680,17 @@ export default function RootLayout() {
             <Stack.Screen
               name="manage/goals"
               options={{ presentation: 'card', animation: animation('manage/goals') }}
+            />
+            {/* «Розстрочки»: from Налаштування, from Місяць's block and from the warning of a
+                платіж tomorrow. */}
+            <Stack.Screen
+              name="manage/installments"
+              options={{ presentation: 'card', animation: animation('manage/installments') }}
+            />
+            {/* One розстрочка, pushed over «Розстрочки» as a ціль is over «Цілі». */}
+            <Stack.Screen
+              name="installment/[id]"
+              options={{ presentation: 'card', animation: animation('installment/[id]') }}
             />
             <Stack.Screen
               name="manage/reminders"

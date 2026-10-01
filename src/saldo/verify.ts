@@ -1,6 +1,6 @@
 import { account, computeBalance, type AccountKind } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
-import type { Transaction } from '../domain/transaction';
+import type { IsoDate, Transaction } from '../domain/transaction';
 import { isRealAccountType, legEffect, type SaldoTransaction } from './parse';
 import type { ImportPlan, UnexplainedRow } from './interpret';
 import { accountKey, EMPTY_EXISTING, type ExistingState, type RejectedRedirect } from './survey';
@@ -43,6 +43,10 @@ export interface AccountReconciliation {
   readonly reconciles: boolean;
   /** Set when the plan replaces a stored початковий залишок, so the owner sees what it was. */
   readonly replacedOpeningBalance?: Money;
+  /** The дата початкового залишку the plan writes, when the export dates the opening. */
+  readonly openingDate?: IsoDate;
+  /** Beside `replacedOpeningBalance`: the stored дата it replaces, absent when there was none. */
+  readonly replacedOpeningDate?: IsoDate;
 }
 
 export interface DebtBalance {
@@ -167,6 +171,10 @@ export function verify(input: {
         reconciles: difference === 0,
         ...(planAccount.replacedOpeningBalance
           ? { replacedOpeningBalance: planAccount.replacedOpeningBalance }
+          : {}),
+        ...(planAccount.openingDate ? { openingDate: planAccount.openingDate } : {}),
+        ...(planAccount.replacedOpeningDate
+          ? { replacedOpeningDate: planAccount.replacedOpeningDate }
           : {}),
       };
     });

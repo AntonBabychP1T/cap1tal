@@ -145,6 +145,39 @@ describe('a бекап is one versioned file holding the whole state', () => {
   });
 });
 
+describe('the дата початкового залишку in a бекап', () => {
+  it('carries a рахунок\'s дата and leaves it out where there is none', () => {
+    const before = state({
+      accounts: [{ ...uahAccount('a1', 'Картка'), openingDate: '2024-10-27' }, uahAccount('a2')],
+    });
+    const read = readBackup(makeBackup(before, MADE_AT).bytes);
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+    expect(read.state.accounts).toEqual(before.accounts);
+    expect('openingDate' in read.state.accounts[1]!).toBe(false);
+  });
+
+  it('Scenario: An older бекап restores without dates', () => {
+    // A рахунок as the previous format wrote it: no `openingDate` key at all.
+    const read = readBackup(
+      handMade({
+        ...state(),
+        accounts: [
+          { id: 'a1', name: 'Картка', kind: 'spending', currency: 'UAH', openingBalance: { amount: 803, currency: 'UAH' }, archived: false },
+        ],
+      }),
+    );
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+    expect(read.state.accounts[0]!.openingDate).toBeUndefined();
+    expect(read.state.accounts[0]!.openingBalance).toEqual(money(803, 'UAH'));
+  });
+
+  it('refuses a дата that is not a calendar date', () => {
+    expect(
+      refusal(handMade({ ...state(), accounts: [{ ...uahAccount('a1'), openingDate: '2026-02-30' }] })),
+    ).toMatchObject({ kind: 'inconsistent' });
+  });
+});
+
 describe('what a бекап is not asked to carry', () => {
   it('Scenario: A бекап carries no репорт', () => {
     // The type-level half of the exclusion, beside `format.test.ts`'s table-level half: a
@@ -516,5 +549,140 @@ describe('what a restore would do is knowable before it does it', () => {
     expect(read.state.transactions).toHaveLength(1);
     // Filled in as nothing, never invented.
     expect(read.state.watches).toEqual([]);
+  });
+});
+
+describe('a бекап carries the розстрочки', () => {
+  const iphone = {
+    id: 'i-iphone',
+    name: 'iPhone',
+    total: 1_000_000,
+    partsCount: 10,
+    part: 100_000,
+    firstDue: '2026-06-05',
+    debitAccountId: 'a1',
+    paidBefore: 4,
+    categoryId: 'c1',
+    recordedAt: 1_700_000_000_000,
+  };
+  const debit = (id: string, date: string, accountId = 'a1'): Transaction => ({
+    type: 'expense',
+    id,
+    date,
+    accountId,
+    amount: money(100_000, 'UAH'),
+    categoryId: 'c1',
+  });
+  const withInstallments = (over: Partial<BackupState> = {}) =>
+    state({
+      accounts: [uahAccount('a1', 'mono black'), uahAccount('a2', 'mono white')],
+      categories: [{ id: 'c1', name: 'Техніка', archived: false }],
+      transactions: [stored(debit('t5', '2026-10-05')), stored(debit('t6', '2026-11-05'))],
+      installments: {
+        plans: [iphone],
+        links: [{ installmentId: 'i-iphone', number: 5, transactionId: 't5' }],
+        marks: [{ installmentId: 'i-iphone', number: 6 }],
+        refusals: [{ installmentId: 'i-iphone', number: 7, transactionId: 't6' }],
+        reminderEnabled: false,
+      },
+      ...over,
+    });
+
+  function inconsistent(bad: BackupState): string {
+    const read = refusal(handMade(JSON.parse(canonicalJson(bad))));
+    expect(read.kind).toBe('inconsistent');
+    return read.kind === 'inconsistent' ? read.problem : '';
+  }
+
+  it('Scenario: A розстрочка survives the round trip', () => {
+    const before = withInstallments();
+    const read = readBackup(makeBackup(before, MADE_AT).bytes);
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+    expect(read.state.installments).toEqual(before.installments);
+    expect(read.state.installments?.reminderEnabled).toBe(false);
+  });
+
+  it('Scenario: A бекап written before розстрочки existed still restores', () => {
+    const older = { ...smallState() } as Record<string, unknown>;
+    delete older.installments;
+    const read = readBackup(handMade(JSON.parse(canonicalJson(older))));
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+    expect(read.state.installments).toBeUndefined();
+    expect(read.state.transactions).toHaveLength(1);
+  });
+
+  it('Scenario: A розстрочка on a рахунок outside the бекап stops the restore', () => {
+    const outside = withInstallments();
+    expect(
+      inconsistent({
+        ...outside,
+        installments: { ...outside.installments!, plans: [{ ...iphone, debitAccountId: 'a-gone' }], links: [] },
+      }),
+    ).toContain('рахунок');
+
+    const dollars = { ...uahAccount('usd', 'USD'), currency: 'USD', openingBalance: money(0, 'USD') };
+    expect(
+      inconsistent({
+        ...outside,
+        accounts: [...outside.accounts, dollars],
+        installments: { ...outside.installments!, plans: [{ ...iphone, debitAccountId: 'usd' }], links: [] },
+      }),
+    ).toContain('не в гривнях');
+  });
+
+  it('Scenario: One транзакція linked twice stops the restore', () => {
+    const vacuum = { ...iphone, id: 'i-vacuum', name: 'Пилосос', paidBefore: 0, firstDue: '2026-10-05' };
+    const twice = withInstallments();
+    expect(
+      inconsistent({
+        ...twice,
+        installments: {
+          ...twice.installments!,
+          plans: [iphone, vacuum],
+          links: [
+            { installmentId: 'i-iphone', number: 5, transactionId: 't5' },
+            { installmentId: 'i-vacuum', number: 1, transactionId: 't5' },
+          ],
+        },
+      }),
+    ).toContain('двох платежів');
+  });
+
+  it('Scenario: A link outside the бекап stops the restore', () => {
+    const outside = withInstallments();
+    expect(
+      inconsistent({
+        ...outside,
+        installments: {
+          ...outside.installments!,
+          links: [{ installmentId: 'i-iphone', number: 5, transactionId: 't-gone' }],
+        },
+      }),
+    ).toContain('транзакцію, якої в бекапі немає');
+  });
+
+  it('refuses a link to a витрата on another рахунок, and a value the domain refuses', () => {
+    const elsewhere = withInstallments({
+      transactions: [stored(debit('t5', '2026-10-05', 'a2')), stored(debit('t6', '2026-11-05'))],
+    });
+    expect(inconsistent(elsewhere)).toContain('не є витратою в гривнях з рахунку списання');
+
+    const broken = withInstallments();
+    expect(
+      inconsistent({
+        ...broken,
+        installments: { ...broken.installments!, plans: [{ ...iphone, paidBefore: 10 }] },
+      }),
+    ).toContain('щонайбільше 9 з 10');
+  });
+
+  it('Scenario: A розстрочка on a since-archived рахунок restores', () => {
+    const archived = withInstallments({
+      accounts: [{ ...uahAccount('a1', 'mono black'), archived: true }, uahAccount('a2', 'mono white')],
+      categories: [{ id: 'c1', name: 'Техніка', archived: true }],
+    });
+    const read = readBackup(makeBackup(archived, MADE_AT).bytes);
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+    expect(read.state.installments?.plans).toEqual([iphone]);
   });
 });

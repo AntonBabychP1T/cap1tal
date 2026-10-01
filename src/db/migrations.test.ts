@@ -1,7 +1,7 @@
 import { desc, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { account } from '../domain/account';
+import { account, type Account } from '../domain/account';
 import { money } from '../domain/money';
 import {
   expenseByDefault,
@@ -50,7 +50,7 @@ import {
   spendingNorms,
   transactions,
 } from './schema';
-import { openTestDb, openTestDbMigratedTo, seedReferences, type TestStorage } from './test-db';
+import { openTestDb, openTestDbMigratedTo, seedReferences, type StagedStorage, type TestStorage } from './test-db';
 
 const card = account({
   id: 'card',
@@ -232,6 +232,7 @@ describe('migrations', () => {
       'currency',
       'opening_amount',
       'archived',
+      'opening_date',
     ]);
   });
 
@@ -1766,13 +1767,25 @@ describe('migrations — where a half-paged window got to', () => {
   });
 });
 
+/**
+ * A рахунок as a device on a shape before `opening_date` (0008) wrote it: the query builder always
+ * names the current schema's full column set, so a staged database older than that column needs
+ * the raw statement.
+ */
+function insertLegacyAccount(db: StagedStorage['db'], a: Account): void {
+  db.run(sql`INSERT INTO accounts (id, name, kind, currency, opening_amount, archived)
+             VALUES (${a.id}, ${a.name}, ${a.kind}, ${a.currency}, ${a.openingBalance.amount},
+                     ${a.archived ? 1 : 0})`);
+}
+
 describe('migrations — правила-перекази and awaiting перекази', () => {
   it('Scenario: Stored rules and перекази survive the migration', () => {
     const staged = openTestDbMigratedTo(1);
     try {
       const { db } = staged;
       seedReferences(db, VOCABULARY);
-      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      insertLegacyAccount(db, card);
+      insertLegacyAccount(db, jar);
       // Written under the old shape alone: no `to_account_id` column exists yet, so the query
       // builder — which always addresses the current schema's full column set — cannot write this
       // row; raw SQL is what a device on the old shape actually wrote.
@@ -1906,8 +1919,8 @@ describe('migrations — the категорія and newest-first order indexes',
     try {
       const { db } = staged;
       seedReferences(db, { categories: ['food', UNCATEGORISED_CATEGORY_ID], sources: [] });
-      accountsRepo(db).save(account({ id: 'card', name: 'mono', kind: 'spending', currency: 'UAH' }));
-      accountsRepo(db).save(account({ id: 'usd', name: 'usd', kind: 'savings', currency: 'USD' }));
+      insertLegacyAccount(db, account({ id: 'card', name: 'mono', kind: 'spending', currency: 'UAH' }));
+      insertLegacyAccount(db, account({ id: 'usd', name: 'usd', kind: 'savings', currency: 'USD' }));
       const repo = transactionsRepo(db);
       const rows: Transaction[] = [
         expenseByDefault({ id: 'e1', date: '2026-03-02', accountId: 'card', amount: money(1000, 'UAH'), categoryId: 'food' }),
@@ -1998,7 +2011,7 @@ describe('migrations — when a link became позачерговий', () => {
     const staged = openTestDbMigratedTo(6);
     try {
       const { db } = staged;
-      accountsRepo(db).save(account({ id: 'black', name: 'mono', kind: 'spending', currency: 'UAH' }));
+      insertLegacyAccount(db, account({ id: 'black', name: 'mono', kind: 'spending', currency: 'UAH' }));
       db.run(sql`INSERT INTO monobank_accounts (id, kind, name, currency, bank_balance_amount, obtained_at)
                  VALUES ('mono-black', 'card', 'black', 'UAH', 100, 1790000000000)`);
       db.run(sql`INSERT INTO monobank_links (monobank_account_id, account_id, sync_start_date, cursor_ms,
@@ -2034,6 +2047,29 @@ describe('migrations — when a link became позачерговий', () => {
       expect(columns).toHaveLength(9);
     } finally {
       storage.close();
+    }
+  });
+});
+
+describe('migrations — the дата початкового залишку', () => {
+  it('Scenario: A рахунок stored before this change has no дата', () => {
+    const staged = openTestDbMigratedTo(8);
+    try {
+      const { db } = staged;
+      db.run(sql`INSERT INTO accounts (id, name, kind, currency, opening_amount, archived)
+                 VALUES ('cash-eur', 'готівка EUR', 'cash', 'EUR', 30000, 0)`);
+
+      staged.migrateToLatest();
+
+      const stored = accountsRepo(db).get('cash-eur')!;
+      expect(stored.openingDate).toBeUndefined();
+      expect(stored.openingBalance).toEqual(money(30000, 'EUR'));
+      const row = db.all<{ opening_date: string | null }>(
+        sql`SELECT opening_date FROM accounts WHERE id = 'cash-eur'`,
+      );
+      expect(row).toEqual([{ opening_date: null }]);
+    } finally {
+      staged.close();
     }
   });
 });

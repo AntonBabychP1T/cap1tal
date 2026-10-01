@@ -4,6 +4,7 @@ import type { CurrencyCode } from '../domain/money';
 import {
   FEES_CATEGORY_ID,
   UNCATEGORISED_CATEGORY_ID,
+  type IsoDate,
   type Transaction,
 } from '../domain/transaction';
 import {
@@ -115,6 +116,8 @@ export interface ExistingState {
     readonly kind: AccountKind;
     readonly currency: CurrencyCode;
     readonly openingBalance: { readonly amount: number; readonly currency: CurrencyCode };
+    /** The stored дата початкового залишку, which a plan onto this рахунок proposes to replace. */
+    readonly openingDate?: IsoDate;
     readonly archived: boolean;
   }[];
   readonly categories: readonly Category[];

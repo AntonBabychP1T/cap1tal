@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { ChangingFigure, TabFade, Tap } from '@/components/motion';
-import { Action, Choices, Field, RowAction } from '@/components/form';
+import { Action, Choices, DateField, Field, RowAction } from '@/components/form';
 import {
   Card,
   ListCard,
@@ -30,7 +30,13 @@ import { useTheme } from '@/hooks/use-theme';
 import { judgeProgressLater, onProgressJudged } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { useSinglePush } from '@/hooks/use-single-push';
-import { accountFromDraft, blankDraft, type AccountDraft } from '@/ui/account-form';
+import {
+  accountFromDraft,
+  blankDraft,
+  openingDateProblem,
+  showsOpeningDate,
+  type AccountDraft,
+} from '@/ui/account-form';
 import {
   accountRows,
   clearValueConfirmation,
@@ -154,7 +160,7 @@ function AccountsScreen() {
   const save = useCallback(() => {
     if (!draft) return;
     try {
-      accountsRepo.save(accountFromDraft(draft, newId()));
+      accountsRepo.save(accountFromDraft(draft, newId(), todayIso(new Date())), todayIso(new Date()));
       // A рахунок was created or edited: a початковий залишок moves the резерв with no транзакція
       // behind it, so this is one of the named moments.
       judgeProgressLater();
@@ -295,7 +301,7 @@ function AccountsScreen() {
           // them apart. The condition is the empty state's own, so exactly one is ever drawn.
           draft || groups.length === 0 ? undefined : (
             <Tap
-              onPress={() => setDraft(blankDraft())}
+              onPress={() => setDraft(blankDraft(todayIso(new Date())))}
               accessibilityLabel="Створити рахунок"
               accessibilityRole="button"
               style={styles.addTarget}>
@@ -336,7 +342,7 @@ function AccountsScreen() {
       {groups.length === 0 && !draft ? (
         <Card>
           <ThemedText>Ще жодного рахунку. Створіть перший.</ThemedText>
-          <Action title="Створити рахунок" onPress={() => setDraft(blankDraft())} />
+          <Action title="Створити рахунок" onPress={() => setDraft(blankDraft(todayIso(new Date())))} />
         </Card>
       ) : null}
 
@@ -505,6 +511,18 @@ function AccountsScreen() {
             placeholder="0,00"
             hint={`${draft.currency} — необовʼязково`}
           />
+          {showsOpeningDate(draft) ? (
+            <DateField
+              label="Станом на"
+              value={draft.openingDate}
+              onChange={(openingDate) => setDraft({ ...draft, openingDate })}
+              now={new Date()}
+              {...(() => {
+                const problem = openingDateProblem(draft, todayIso(new Date()));
+                return problem ? { hint: problem } : {};
+              })()}
+            />
+          ) : null}
           <Action title="Зберегти" onPress={save} />
           <Action variant="secondary" title="Скасувати" onPress={() => setDraft(undefined)} />
         </Card>

@@ -74,12 +74,14 @@ describe('interpret — початковий залишок', () => {
       amount: 12300,
       currency: 'UAH',
     });
+    // The fixture's entry is dated 2024-10-27 (`Transaction Date` 2024-10-27T13:55, UTC).
+    expect(accountNamed(plan, 'mono black').openingDate).toBe('2024-10-27');
   });
 
   it('Scenario: Merged accounts sum their initial balances', () => {
     const rows = [
       ...pair({ id: '1', account: 'mono black', journalType: 'DEBIT', amount: '123.00', other: 'Initial balance', otherType: 'EQUITY' }),
-      ...pair({ id: '2', account: 'Monobank UAH, Black', journalType: 'DEBIT', amount: '50.00', other: 'Initial balance', otherType: 'EQUITY' }),
+      ...pair({ id: '2', datetime: '2026-01-13T10:00:00.000', account: 'Monobank UAH, Black', journalType: 'DEBIT', amount: '50.00', other: 'Initial balance', otherType: 'EQUITY' }),
     ];
     const plan = planFrom(rows, {
       decisions: {
@@ -96,6 +98,7 @@ describe('interpret — початковий залишок', () => {
       amount: 17300,
       currency: 'UAH',
     });
+    expect(accountNamed(plan, 'Monobank UAH, Black').openingDate).toBe('2024-10-27');
   });
 
   it('Scenario: Mapping onto an existing рахунок proposes replacing its opening balance', () => {
@@ -116,7 +119,47 @@ describe('interpret — початковий залишок', () => {
     const рахунок = accountNamed(plan, 'Чорна');
     expect(рахунок.openingBalance).toEqual({ amount: 12300, currency: 'UAH' });
     expect(рахунок.replacedOpeningBalance).toEqual({ amount: 5000, currency: 'UAH' });
+    expect(рахунок.openingDate).toBe('2024-10-27');
+    // The stored рахунок had no дата, so there is none to name as replaced.
+    expect(рахунок.replacedOpeningDate).toBeUndefined();
     expect(рахунок.existingId).toBe('black');
+  });
+
+  it('Scenario: An entry dated after the first транзакція is moved back to it', () => {
+    const plan = planFrom([
+      ...pair({ id: '1', datetime: '2024-11-27T10:00:00.000', account: 'mono black', journalType: 'DEBIT', amount: '55000.00', other: 'Initial balance', otherType: 'EQUITY' }),
+      ...pair({ id: '2', datetime: '2024-11-19T10:00:00.000', account: 'mono black', journalType: 'CREDIT', amount: '25.00', other: 'Продукти', otherType: 'EXPENSES' }),
+    ]);
+    expect(accountNamed(plan, 'mono black').openingBalance).toEqual({ amount: 5500000, currency: 'UAH' });
+    expect(accountNamed(plan, 'mono black').openingDate).toBe('2024-11-19');
+  });
+
+  it('moves the дата back to a транзакція already stored on the existing рахунок', () => {
+    const plan = planFrom(
+      pair({ id: '1', account: 'mono black', journalType: 'DEBIT', amount: '123.00', other: 'Initial balance', otherType: 'EQUITY' }),
+      {
+        decisions: {
+          accountRedirects: { [accountKey('mono black', 'UAH')]: { to: 'account', accountId: 'black' } },
+        },
+        existing: {
+          ...existingState(),
+          accounts: [{ ...existingAccount({ id: 'black', name: 'Чорна' }), openingDate: '2026-02-01' }],
+          transactions: [
+            { type: 'expense', id: 'old', date: '2024-09-30', accountId: 'black', amount: { amount: 100, currency: 'UAH' }, categoryId: 'food' },
+          ],
+        },
+      },
+    );
+    const рахунок = accountNamed(plan, 'Чорна');
+    expect(рахунок.openingDate).toBe('2024-09-30');
+    expect(рахунок.replacedOpeningDate).toBe('2026-02-01');
+  });
+
+  it('dates no opening the export does not hold', () => {
+    const plan = planFrom(
+      pair({ id: '1', datetime: '2024-11-19T10:00:00.000', account: 'mono black', journalType: 'CREDIT', amount: '25.00', other: 'Продукти', otherType: 'EXPENSES' }),
+    );
+    expect(accountNamed(plan, 'mono black').openingDate).toBeUndefined();
   });
 
   it('subtracts an opening entry that credits the рахунок', () => {

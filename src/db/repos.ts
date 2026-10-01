@@ -10,6 +10,7 @@ import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { hapticsPreferenceRepo } from './haptics-preference-repo';
 import { importRepo } from './import-repo';
+import { installmentsRepo } from './installments-repo';
 import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
@@ -74,6 +75,8 @@ export const monobank = monobankRepo(db);
 /** The ліміти categories carry, and the цілі — what the owner wants, beside what already is. */
 export const limits = limitsRepo(db);
 export const goals = goalsRepo(db);
+/** Розстрочки — the plans behind the monthly debits, and the states of their платежі. */
+export const installments = installmentsRepo(db);
 /** The поточна вартість of each інвестиційний рахунок — what the owner last said it is worth. */
 export const investments = investmentsRepo(db);
 /** Статок's bounded local reads — monthly movement, first dates and the future-record flag. */

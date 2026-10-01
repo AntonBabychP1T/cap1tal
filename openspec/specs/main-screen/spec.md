@@ -231,16 +231,6 @@ A category action SHALL open its existing month-scoped transactions for the curr
 - **WHEN** «Ще 2» is tapped, then «Коригування» is opened
 - **THEN** the full current-month breakdown is reachable and the correction detail includes both signs though only negative corrections count as spent
 
-### Requirement: Статок exposes its basis beside its chart
-
-The Статок widget SHALL display net-worth's exact per-currency current values prominently, its eligible secondary approximate UAH value, its labelled reconstructible history and eligible comparison, with accessible account/basis/date details and an action to Рахунки.
-
-#### Scenario: Headline and history use different investment bases
-- **GIVEN** an investment with вкладено 100000 and dated current value 150000 minor units UAH
-- **WHEN** Статок is read
-- **THEN** its current contribution uses 150000, history uses вкладено, the difference is explained and no market-performance change is invented
-- **AND** the explanation lists the account and observation date, and «Рахунки» opens existing accounts
-
 ### Requirement: The dashboard remains accessible on compact Android
 
 The default dashboard SHALL preserve readable exact money, at least 48 × 48 dp touch targets, descriptive accessibility labels and non-color meaning on 360 × 640 dp Android, with disjoint FAB/report-handle/tab targets and scroll clearance for the last content.
@@ -262,8 +252,8 @@ Dashboard widgets SHALL use existing local data and existing refresh policies wi
 
 #### Scenario: Offline graphs need no request
 - **GIVEN** cached data/rates and no network
-- **WHEN** the owner opens, scrolls, switches chart currency and inspects a point
-- **THEN** local content works, no widget requests data, and only the pre-existing shared refresh/sync policies can attempt network activity
+- **WHEN** the owner opens and scrolls Головний, opens Статок, switches its reading and period, and selects a month
+- **THEN** local content works, no widget or screen requests data, and only the pre-existing shared refresh/sync policies can attempt network activity
 
 #### Scenario: A large history scrolls smoothly
 - **GIVEN** 50000 records, 30 accounts and 120 months on the documented compact Android test device
@@ -272,7 +262,7 @@ Dashboard widgets SHALL use existing local data and existing refresh policies wi
 
 #### Scenario: Data changes invalidate derived readings
 - **GIVEN** an already loaded dashboard
-- **WHEN** an edit, deletion, retype, valuation change, opening-balance edit, import, restore or committed sync changes its inputs
+- **WHEN** an edit, deletion, retype, valuation change, opening-balance or its дата edit, import, restore or committed sync changes its inputs
 - **THEN** the next displayed result uses one coherent updated reading and obsolete in-flight results cannot overwrite it
 
 ### Requirement: Recording opens from a «+» on Головний
@@ -1345,37 +1335,273 @@ SHALL only change the дата field; nothing is stored until «Записати
 - **WHEN** the owner has typed "2026-09" into the дата
 - **THEN** only «Сьогодні» and «Вчора» are offered and no day is named beside the label
 
-### Requirement: Статок's explanation and history say only what holds
+### Requirement: The Статок widget is a compact summary that opens «Статок»
 
-In Статок's account explanation, «вкладено» SHALL be written only beside an інвестиційний рахунок
-counted at its вкладено, and an інвестиційний рахунок counted at its поточна вартість SHALL keep
-«поточна вартість на <date>»; every рахунок of another вид SHALL show its сума with no basis word. A
-percentage in the change line SHALL use a decimal comma. In the list of history points, a run of
-consecutive points with no known value for the same reason SHALL read as one line naming the first
-and last date of the run and the reason, instead of one line per point. The history chart SHALL
-span the card's width and name the first and the last date it covers under it.
+The Статок widget SHALL be a compact summary of the selected history reading that opens the «Статок» screen when tapped, showing:
+- its current value prominently: the приблизний статок «≈ … грн» for «Усе ≈ грн», the exact amount for a currency;
+- beneath it, always, every exact per-currency current value on one line;
+- the change since the preceding month-end, as net-worth's change, with sign, an up or down mark, its percentage where it has one, its «від» date and any «нові рахунки» beside it;
+- the line on поточна вартість beyond вкладено, when one exists;
+- a chart of the current month and the eleven months before it, at each month-end and today, with each month named under it and the current month marked.
 
-#### Scenario: A card is not «вкладено»
+It SHALL carry no point list, account explanation or selector of its own; those, and the action to Рахунки, belong to the «Статок» screen, whose selection it reflects. When that selection is «Усе ≈ грн» and net-worth withholds it for a missing rate, the widget SHALL name each currency missing its rate in place of the chart and change, and still show every exact currency amount.
 
-- **WHEN** the explanation lists «mono black» (витратний), «інжур» (інвестиційний, no поточна
-  вартість) and «облігація $» (інвестиційний, поточна вартість on 2026-09-21)
-- **THEN** «mono black» shows its сума alone, «інжур» shows its сума with «вкладено», and
-  «облігація $» shows its сума with «поточна вартість на 21 вересня»
+#### Scenario: Headline and history use different investment bases
+- **GIVEN** an investment with вкладено 100000 and dated current value 150000 minor units UAH
+- **WHEN** Статок is read
+- **THEN** its current contribution uses 150000, the chart uses вкладено, the 50000 difference is read on its own line, and no market-performance change is invented
 
-#### Scenario: The percent reads as Ukrainian
+#### Scenario: The widget answers "is it growing" at a glance
+- **GIVEN** accounts in UAH, USD and EUR with cached rates, «Усе ≈ грн» as the default, no поточна вартість entered, the September 30 point ≈37500000 and today's point ≈40140800 minor units UAH on October 1
+- **WHEN** the owner reads Статок on Головний
+- **THEN** it shows «≈401 408 грн», the three exact currency amounts on one line, «+≈26 408 грн · +7,0% ▲ · від 30 вересня», and a chart whose months from листопад to жовтень are named under it
 
-- **WHEN** Статок grew by 72 028,07 UAH, 62,4 %, since 31 August
-- **THEN** the change line reads «+72 028,07 UAH · +62,4% · від 31 серпня»
+#### Scenario: Tapping opens the screen
+- **WHEN** the owner taps the Статок widget
+- **THEN** the «Статок» screen opens on the same selection, and returning shows Головний where it was
 
-#### Scenario: Fifteen unknown month-ends read as one line
+#### Scenario: A missing rate falls back to UAH by default
+- **GIVEN** accounts in UAH and EUR with no cached EUR rate and no choice made
+- **WHEN** Статок is read on Головний
+- **THEN** UAH is the selection, and the widget draws UAH's history with no «≈» line
 
-- **WHEN** the UAH history is unknown from 28 жовтня 2024 to 31 січня 2026 for lack of data and
-  known afterwards
-- **THEN** the point list opens with one line «28 жовтня 2024 — 31 січня: невідомо — недостатньо
-  даних за цей період» followed by the known points one per line
+#### Scenario: A withheld combined history says why
+- **GIVEN** «Усе ≈ грн» chosen on the «Статок» screen, and later no cached EUR rate for a held EUR рахунок
+- **WHEN** Статок is read on Головний
+- **THEN** the widget names EUR as missing its rate in place of the chart and change, and the exact UAH and EUR amounts are still shown
 
-#### Scenario: The chart names its span
+#### Scenario: The widget is announced to TalkBack
+- **GIVEN** «Усе ≈ грн» selected
+- **WHEN** TalkBack reads the Статок widget
+- **THEN** it says the whole статок approximated in гривнях, its current value, its change with direction in words and its date, and that a tap opens Статок
 
-- **WHEN** the UAH history runs from 28 жовтня 2024 to 23 вересня 2026
-- **THEN** the chart spans the card's width and reads «28 жовтня 2024» under its left end and
-  «23 вересня» under its right end
+### Requirement: «Потребує уваги» leads to the транзакції without a категорія
+
+The row of «Потребує уваги» that names how many транзакції are without a категорія SHALL open
+«Транзакції» with the «Без категорії» narrowing already in force, as the transaction-search
+capability defines — not on the whole history. The number the row names SHALL count exactly the
+транзакції that narrowing shows: the витрати and повернення carrying «Без категорії». The offer of
+the latest-transactions section to go to all транзакції SHALL keep opening the whole history.
+
+#### Scenario: «Переглянути» opens only what is waiting
+
+- **WHEN** «Потребує уваги» names three транзакції without a категорія among 188 stored and the
+  owner follows that row
+- **THEN** «Транзакції» opens narrowed to «Без категорії», showing those three and no other
+
+#### Scenario: A повернення in «Без категорії» is counted
+
+- **WHEN** the only транзакція carrying «Без категорії» is a повернення
+- **THEN** «Потребує уваги» names one транзакція without a категорія
+
+#### Scenario: The feed's way to all транзакції is not narrowed
+
+- **WHEN** the owner follows the latest-transactions section's offer to see all транзакції
+- **THEN** «Транзакції» opens on the whole history with no narrowing in force
+
+#### Scenario: The owner can still see everything from there
+
+- **WHEN** the owner has followed that row to «Транзакції»
+- **THEN** the «Без категорії» narrowing reads as in force and taking it off shows the whole
+  history
+
+### Requirement: Головний says how fresh the bank data is
+
+WHEN monobank is configured and at least one рахунок is linked, Головний SHALL state how fresh the
+bank data is, as a reading of the moments the monobank capability already keeps and never as a
+number of its own.
+
+WHEN a sync has completed for every linked рахунок, the line SHALL state the age of the **oldest**
+of those completed syncs — the age of the whole picture, not of its freshest corner — as an age
+rather than a timestamp: «щойно» under a minute, whole minutes under an hour, whole hours under a
+day, and the calendar moment beyond that. It is the same moment the monobank screen states, in
+shorter words.
+
+WHEN a sync has completed for some linked рахунки but not all, the line SHALL state how many of how
+many are synced instead of any age: an age read off the рахунки that did sync would tell the owner
+their picture is fresh while most of their money is missing from it.
+
+The line SHALL move only when a sync completes, so a failed run leaves it exactly where it was.
+
+The moment «Потребує уваги» decides its monobank row from SHALL be the same one this line reads:
+the oldest completed sync when every linked рахунок has synced, and **no moment at all** while any
+linked рахунок has never synced. A bank the app has never wholly heard from is not fresh data,
+whatever its freshest рахунок says, so a failing run over it is a failure over stale data and the
+row appears; deciding that row from the newest moment would hide exactly the situation the count
+above exists to state.
+
+WHEN a sync is going on, the line SHALL say that instead of stating an age or a count, and SHALL go
+back to its reading when the run ends — whoever started that run, and whether it started before or
+after Головний was opened.
+
+WHEN no linked рахунок has ever completed a sync, Головний SHALL say that plainly instead of
+showing an empty age. WHEN monobank is not configured, or no рахунок is linked, Головний SHALL
+show no freshness line at all — an owner who never connected a bank is told nothing about one.
+
+#### Scenario: Minutes are stated as minutes
+
+- **WHEN** every linked рахунок has synced and the oldest of those syncs was three minutes ago
+- **THEN** Головний says the data was updated 3 хв ago
+
+#### Scenario: A sync just now is «щойно»
+
+- **WHEN** every linked рахунок has synced and the oldest of those syncs was 20 seconds ago
+- **THEN** Головний says the data was updated «щойно»
+
+#### Scenario: Hours are stated as hours
+
+- **WHEN** every linked рахунок has synced and the oldest of those syncs was five hours ago
+- **THEN** Головний says the data was updated 5 год ago
+
+#### Scenario: Beyond a day it is a calendar moment
+
+- **WHEN** every linked рахунок has synced and the oldest of those syncs was yesterday at 21:14
+- **THEN** Головний states that moment as a date and time rather than as an age
+
+#### Scenario: The age is the oldest account's, not the newest
+
+- **WHEN** one linked рахунок synced a minute ago and another three days ago
+- **THEN** Головний states the age of the three-day-old sync
+
+#### Scenario: A partly synced bank is stated as a count
+
+- **WHEN** three of nine linked рахунки have completed a sync and six never have
+- **THEN** Головний says «Синхронізовано 3 з 9 рахунків», and states no age
+
+#### Scenario: The count reads as Ukrainian for every number of рахунки
+
+- **WHEN** one of three linked рахунки has completed a sync
+- **THEN** Головний says «Синхронізовано 1 з 3 рахунків» — the noun after «з» is the genitive
+  plural whatever the number is
+
+#### Scenario: A failing run over a partly synced bank needs the owner
+
+- **WHEN** six of nine linked рахунки have never completed a sync and the last run ended
+  unavailable
+- **THEN** «Потребує уваги» carries the monobank row, because a bank the app has never wholly
+  heard from is not fresh data
+
+#### Scenario: A pull that must wait out the request gap says a sync is going on
+
+- **WHEN** the owner pulls Головний down within a minute of the last request any run sent, so the
+  run they started sits out the rest of the gap before its first request
+- **THEN** the line says a sync is going on for the whole of that wait, and states its reading when
+  the run ends
+
+#### Scenario: A linked bank that has never synced says so
+
+- **WHEN** monobank is configured, one рахунок is linked and no sync has ever completed
+- **THEN** Головний says that no sync has happened yet rather than showing an empty age
+
+#### Scenario: Without monobank there is no line
+
+- **WHEN** monobank is not configured, or is configured with no linked рахунок
+- **THEN** Головний shows no freshness line
+
+#### Scenario: A run in flight is what the line says
+
+- **WHEN** a run started on opening is going on
+- **THEN** the line says a sync is going on rather than stating an age, and states the new reading
+  once the run ends
+
+#### Scenario: A run that begins while Головний is open reaches the line
+
+- **WHEN** Головний is already open and a run starts
+- **THEN** the line says a sync is going on without Головний being left and reopened
+
+#### Scenario: A failed run does not move the line
+
+- **WHEN** the line states an age of two hours and a run ends without reaching monobank
+- **THEN** the line still states the same completed sync, now two hours and a little older
+
+### Requirement: Pulling down on Головний refreshes it and syncs monobank now
+
+Головний SHALL respond to a pull-down by re-reading everything it shows from storage and, when
+monobank is configured with at least one linked рахунок, by starting a sync at once — the quiet
+interval governs only the runs the owner did not ask for, and this is one they asked for. While
+that run is going on the pull SHALL show that work is in progress, and it SHALL stop showing it
+when the run ends. Транзакції the run imported SHALL appear on Головний without the owner leaving
+it, and the freshness line SHALL state the new moment.
+
+A pull while monobank is not configured, or while no рахунок is linked, SHALL re-read storage,
+send no request and refuse nothing — no dialog, no error. A pull while a run is already going on
+SHALL NOT start a second one; it SHALL show the run that is already going on until it ends.
+
+#### Scenario: A pull imports and shows the result in place
+
+- **WHEN** the owner pulls down on Головний and the run that starts imports two транзакції
+- **THEN** both stand among the latest транзакції and the freshness line states the new moment,
+  without Головний being left
+
+#### Scenario: A pull inside the quiet interval still syncs
+
+- **WHEN** an attempt was recorded one minute ago and the owner pulls down
+- **THEN** a run starts
+
+#### Scenario: A pull without monobank changes nothing but the reading
+
+- **WHEN** monobank is not configured and the owner pulls down
+- **THEN** Головний re-reads what it shows, no request is sent, and nothing is refused
+
+#### Scenario: A pull during a run starts no second one
+
+- **WHEN** a run started on opening is still going on and the owner pulls down
+- **THEN** no second run starts and the pull shows the run already going on until it ends
+
+### Requirement: A sync the owner did not ask for is silent unless it needs them
+
+A sync started without the owner asking SHALL announce nothing while it needs nothing from them:
+no dialog, no toast, no сповіщення про збій, and nothing to dismiss. What it imported appearing
+among the latest транзакції and the freshness line moving are the whole of what it says. A run that
+failed while monobank does not need the owner SHALL be equally silent, and SHALL raise no
+сповіщення про збій in any case — it runs precisely while the app is in front of the owner, where
+«Потребує уваги» says it in more words than a notification may carry.
+
+WHEN such a run completes, any сповіщення про збій standing for monobank sync SHALL be cleared, as
+it is for a run the owner started: the action has succeeded, whoever asked for it.
+
+What Головний shows when monobank does need the owner is the «Потребує уваги» section's, which
+this change modifies to hold that row.
+
+#### Scenario: A successful automatic run says nothing
+
+- **WHEN** a run started on opening completes and imports three транзакції
+- **THEN** the three транзакції stand among the latest ones, the freshness line states the new
+  moment, and no dialog, toast or notification appears
+
+#### Scenario: An automatic run that imported nothing says nothing either
+
+- **WHEN** a run started on opening completes with no new транзакція
+- **THEN** Головний shows nothing about it beyond the freshness line's new moment
+
+#### Scenario: A failing automatic run posts no notification
+
+- **WHEN** a run started on opening ends unavailable
+- **THEN** no сповіщення про збій is posted and none is left standing for a later screen to clear
+
+#### Scenario: A run that works clears what an earlier failure left standing
+
+- **WHEN** a сповіщення про збій for monobank sync is outstanding and a run started on opening
+  completes
+- **THEN** that сповіщення is cleared
+
+### Requirement: Головний's bank freshness leaves out a рахунок the token no longer shows
+
+Головний's freshness line — its age and its «Синхронізовано N з M рахунків» count — and the moment
+«Потребує уваги» decides its monobank row from SHALL be read over the linked рахунки the newest
+stored client-info answer names, as the monobank-sync capability's «A рахунок the token no longer
+shows is set aside, not failed» requires; that requirement takes precedence over the wording «every
+linked рахунок» in «Головний says how fresh the bank data is». WHEN the phone holds no answer, or the
+newest one names none of the linked рахунки, every linked рахунок counts, exactly as before.
+
+#### Scenario: A closed card does not age the whole bank
+
+- **WHEN** eight linked рахунки synced three minutes ago and a ninth, which the newest stored answer
+  does not name, last synced two days ago
+- **THEN** Головний says the data was updated 3 хв ago, and «Потребує уваги» carries no monobank row
+
+#### Scenario: A token that shows nothing linked still reads stale
+
+- **WHEN** the newest stored answer names none of the two linked рахунки, last synced two days ago,
+  and the last прогін ended unavailable
+- **THEN** Головний states the two-day-old moment and «Потребує уваги» carries the monobank row

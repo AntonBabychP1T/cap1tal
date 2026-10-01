@@ -6,7 +6,11 @@ import {
   ALERT_NOTICES,
   ALL_NOTICES,
   HOME_ROUTE,
+  INSTALLMENT_DUE_NOTICE,
+  installmentDueId,
+  installmentDueNotice,
   isAlertKind,
+  isInstallmentDueId,
   noticeData,
   REMINDER_NOTICE,
   routeOf,
@@ -17,7 +21,7 @@ import {
 const WORDS: readonly string[] = ALL_NOTICES.flatMap((notice) => [notice.title, notice.body]);
 
 describe('what the app can post', () => {
-  it('is the нагадування and one сповіщення per action that can fail unwatched', () => {
+  it('is the нагадування, the нагадування про платіж and one сповіщення per action that can fail unwatched', () => {
     expect(ALERT_KINDS).toEqual([
       'collection',
       'monobank-sync',
@@ -25,7 +29,7 @@ describe('what the app can post', () => {
       'local-save',
       'backup',
     ]);
-    expect(ALL_NOTICES).toHaveLength(ALERT_KINDS.length + 1);
+    expect(ALL_NOTICES).toHaveLength(ALERT_KINDS.length + 2);
   });
 
   it('gives every notice a stable identifier of its own', () => {
@@ -34,7 +38,10 @@ describe('what the app can post', () => {
     // replaces rather than stacks and clearing dismisses exactly it (design D9).
     expect(new Set(ids).size).toBe(ids.length);
     expect(REMINDER_NOTICE.id).toBe('reminder');
-    expect(ids.filter((id) => id !== 'reminder').every((id) => id.startsWith('alert:'))).toBe(true);
+    expect(INSTALLMENT_DUE_NOTICE.id).toBe('installment-due');
+    expect(
+      ids.filter((id) => id !== 'reminder' && id !== 'installment-due').every((id) => id.startsWith('alert:')),
+    ).toBe(true);
   });
 
   it('says something in Ukrainian in every entry', () => {
@@ -150,5 +157,26 @@ describe('the notice of a kind', () => {
       const notice: Notice = ALERT_NOTICES[kind];
       expect(notice.id).toBe(`alert:${kind}`);
     }
+  });
+});
+
+describe('the нагадування про платіж', () => {
+  it('names no сума, no назва and no рахунок — only that a платіж is tomorrow', () => {
+    const words = [INSTALLMENT_DUE_NOTICE.title, INSTALLMENT_DUE_NOTICE.body];
+    for (const word of words) {
+      expect(word, word).not.toMatch(/\d/);
+      expect(word, word).not.toMatch(/₴|\b(UAH|грн)\b/);
+      expect(word, word).not.toMatch(/«/);
+    }
+    // Every arrangement is the same constant under its own date's id.
+    const arranged = installmentDueNotice('2026-10-04');
+    expect(arranged).toEqual({ ...INSTALLMENT_DUE_NOTICE, id: 'installment-due-2026-10-04' });
+    expect(installmentDueId('2026-10-04')).toBe('installment-due-2026-10-04');
+    expect(isInstallmentDueId(arranged.id)).toBe(true);
+    expect(isInstallmentDueId('reminder')).toBe(false);
+  });
+
+  it('sends its tap to «Розстрочки»', () => {
+    expect(routeOf(noticeData(installmentDueNotice('2026-10-04')))).toBe('/manage/installments');
   });
 });

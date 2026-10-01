@@ -220,6 +220,11 @@ export type AcceptedLink =
   | { readonly kind: 'existing'; readonly monobankAccountId: string; readonly accountId: string }
   | { readonly kind: 'new'; readonly monobankAccountId: string; readonly account: Account };
 
+/** A рахунок created by linking, dated the day it was created unless it already carries a дата. */
+function withCreationDay(created: Account, today: IsoDate): Account {
+  return created.openingDate === undefined ? { ...created, openingDate: today } : created;
+}
+
 export function monobankRepo(db: Storage) {
   /**
    * The links as the one-to-one rule needs to see them: every one that already exists, so
@@ -387,12 +392,20 @@ export function monobankRepo(db: Storage) {
       readonly monobankAccountId: string;
       readonly syncStartDate: IsoDate;
       readonly cursorMs: number;
+      /**
+       * The calendar day of linking: the new рахунок's дата початкового залишку when it carries none
+       * of its own — never `syncStartDate`. Older synced транзакції then reach back past it by
+       * themselves, since Статок counts the рахунок from the earlier of the two (accounts, "A linked
+       * рахунок keeps its creation day while older транзакції arrive").
+       */
+      readonly today: IsoDate;
     }): void {
       const monobankAccount = requireAccount(input.monobankAccountId);
       validateLink({ monobankAccount, account: input.account, links: links() });
       const syncStartDate = isoDate(input.syncStartDate);
+      const created = withCreationDay(input.account, isoDate(input.today));
       db.transaction((tx) => {
-        tx.insert(accounts).values(toAccountRow(input.account)).run();
+        tx.insert(accounts).values(toAccountRow(created)).run();
         insertLink(tx, {
           monobankAccountId: input.monobankAccountId,
           accountId: input.account.id,
@@ -417,6 +430,8 @@ export function monobankRepo(db: Storage) {
       readonly accepted: readonly AcceptedLink[];
       readonly syncStartDate: IsoDate;
       readonly cursorMs: number;
+      /** The calendar day of linking, recorded on every рахунок this set creates. */
+      readonly today: IsoDate;
     }): void {
       const syncStartDate = isoDate(input.syncStartDate);
       // The links as they would be after each accepted proposal, so the one-to-one rule is
@@ -431,7 +446,7 @@ export function monobankRepo(db: Storage) {
           planned.push({
             monobankAccountId: entry.monobankAccountId,
             accountId: entry.account.id,
-            created: entry.account,
+            created: withCreationDay(entry.account, isoDate(input.today)),
           });
         } else {
           const row = db.select().from(accounts).where(eq(accounts.id, entry.accountId)).get();

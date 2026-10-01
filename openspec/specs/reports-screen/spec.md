@@ -235,6 +235,13 @@ than leaving nothing spelled out.
 The spelled-out сума SHALL be the reports capability's own number for that month and currency,
 identical to the bar drawn for it.
 
+The mark on the picked month SHALL be fully visible. WHEN a chart is wider than the space it is
+drawn in and its marked month is not already whole inside that space, the chart SHALL be moved so
+that it is — on opening, whenever the picked month changes, and whenever the span the chart draws
+changes under it. A chart whose marked month is already whole SHALL NOT move: picking a month on
+the chart under the owner's finger SHALL leave that chart where it is. No month's mark SHALL be
+drawn under the edge the chart is clipped at.
+
 #### Scenario: The newest month is spelled out first
 
 - **WHEN** the owner opens «Звіти» on a history running June through August, every month holding
@@ -276,6 +283,32 @@ identical to the bar drawn for it.
 - **WHEN** any month is spelled out
 - **THEN** the сума spelled out for it is the same number the reports capability computes for that
   month, currency and chart
+
+#### Scenario: The chart opens on the month it marks
+
+- **WHEN** the owner opens «Звіти» on a history of twelve months, more than fit across the screen,
+  and the newest month holding a сума is the one spelled out
+- **THEN** that month's column and its mark are whole on screen without the owner scrolling
+
+#### Scenario: A mark never sits under the chart's edge
+
+- **WHEN** any month of either chart is marked
+- **THEN** its mark is drawn whole, not clipped by the edge of the chart's scrollable area
+
+#### Scenario: A pick on one chart brings the other to the same month
+
+- **WHEN** both charts are wider than the space they are drawn in, the history chart is scrolled to
+  a month the category chart does not currently show, and the owner picks that month on the history
+  chart
+- **THEN** the category chart moves so that month is whole on screen, and the history chart — where
+  the owner just tapped — does not move
+
+#### Scenario: A span that grows under the tab still shows its mark
+
+- **WHEN** «Звіти» is open on a history running February through September, and a транзакція is
+  recorded in the previous June so the span becomes June through September of the next year
+- **THEN** the chart shows the marked month whole again rather than staying where it was, which
+  after the span grew is a stretch of months the mark is not among
 
 ### Requirement: The Звіти tab offers AI-аналіз
 
@@ -345,3 +378,22 @@ created, in one tap.
 
 - **WHEN** the owner has no ціль and opens «Звіти»
 - **THEN** the цілі card says there is no ціль yet and offers «Створити ціль», which opens «Цілі»
+
+### Requirement: Choosing on Звіти re-derives only what the choice changes
+
+Choosing a month, a категорія or a currency on Звіти SHALL re-derive only the parts of the tab that
+depend on that choice: the highlighted month, the spelled-out month, the chosen категорія's
+series, and for a currency choice that currency's history series and its axis. The history by month, the list of категорії that appear in the history, and the цілі with
+their progress SHALL be derived once per read of storage, and SHALL NOT be derived again for a
+choice. Every number shown after a choice SHALL be exactly what a full re-derivation would show.
+
+#### Scenario: Tapping a month column does not rebuild the history
+
+- **WHEN** the owner taps a different month column on Звіти
+- **THEN** that month is highlighted and spelled out, and the history by month, the категорії list
+  and the цілі are not derived again
+
+#### Scenario: A choice shows the same numbers a full derivation would
+
+- **WHEN** any month, категорія and currency are chosen in any order
+- **THEN** every number on the tab equals the one derived from scratch for the same choice

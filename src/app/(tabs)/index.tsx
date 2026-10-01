@@ -44,6 +44,7 @@ import {
 import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { useHaptics } from '@/hooks/haptics-ports';
+import { useNetWorthSelection } from '@/hooks/net-worth-selection';
 import { useTheme } from '@/hooks/use-theme';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
@@ -559,8 +560,8 @@ function MainScreen() {
    * (design D6) — there is nothing correct this could compute from an empty history it never
    * asked for.
    */
-  // A currency code, or the combined «Усе ≈ грн» (`TOTAL_HISTORY`) — one selection, one state.
-  const [requestedHistory, setRequestedHistory] = useState<string>();
+  // A currency code, or the combined «Усе ≈ грн» — shared with the «Статок» screen (design D6).
+  const { history: requestedHistory } = useNetWorthSelection();
   const netWorth = useMemo(
     () =>
       stored.plan.needsNetWorth
@@ -879,12 +880,7 @@ function MainScreen() {
         return netWorth ? (
           // «Статок»: a derived reading of every recorded рахунок, not a new balance (net-worth,
           // "Статок is a reading of existing account contributions").
-          <NetWorthWidget
-            key={id}
-            model={netWorth}
-            onSelectHistory={setRequestedHistory}
-            onOpenAccounts={() => router.push('/accounts')}
-          />
+          <NetWorthWidget key={id} model={netWorth} onOpen={() => router.push('/net-worth')} />
         ) : null;
 
       case 'progress':

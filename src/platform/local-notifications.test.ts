@@ -2,10 +2,34 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { ALERT_NOTICES, REMINDER_NOTICE } from '../reminders/notices';
+import { ALERT_NOTICES, REMINDER_NOTICE, installmentDueNotice } from '../reminders/notices';
 import { inMemoryLocalNotifications } from './local-notifications';
 
 const at21 = { hour: 21, minute: 0 };
+
+describe('a dated arrangement — the нагадування про платіж', () => {
+  const at10 = { date: '2026-10-04', time: { hour: 10, minute: 0 } };
+
+  it('is held under its own id for its one day, and cancel by id removes it', async () => {
+    const port = inMemoryLocalNotifications();
+    const notice = installmentDueNotice('2026-10-04');
+    await port.scheduleAt(notice, at10);
+
+    expect(port.scheduled()).toEqual([
+      { id: 'installment-due-2026-10-04', at: { hour: 10, minute: 0 }, date: '2026-10-04' },
+    ]);
+    await port.cancelDaily(notice.id);
+    expect(await port.scheduledIds()).toEqual([]);
+  });
+
+  it('is not held at all by a phone that has not granted the permission', async () => {
+    for (const permission of ['denied', 'unsupported'] as const) {
+      const port = inMemoryLocalNotifications({ permission });
+      await port.scheduleAt(installmentDueNotice('2026-10-04'), at10);
+      expect(port.scheduled()).toEqual([]);
+    }
+  });
+});
 
 describe('the double the tests notify through', () => {
   it('records what was arranged, under the notice`s own id', async () => {

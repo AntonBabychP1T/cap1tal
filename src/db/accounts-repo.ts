@@ -1,6 +1,8 @@
 import { asc, eq } from 'drizzle-orm';
 
 import type { Account } from '../domain/account';
+import { Refusal } from '../domain/refusal';
+import type { IsoDate } from '../domain/transaction';
 import { toAccount, toAccountRow } from './mappers';
 import { accounts } from './schema';
 import type { Storage } from './storage';
@@ -20,8 +22,17 @@ export function accountsRepo(db: Storage) {
      * changing the currency would leave every stored amount in a currency the account no longer
      * has, and changing the kind would silently reclassify its whole history in the monthly
      * picture. Both are rejected rather than applied.
+     *
+     * `today` is the caller's calendar day, given by every in-app create or edit (accounts,
+     * "A рахунок records the дата of its початковий залишок"): a new рахунок with no дата of its own
+     * records it as its дата початкового залишку, and a дата after it is refused — the owner cannot
+     * date a balance they do not have yet. A дата later than the рахунок's first транзакція is
+     * accepted on purpose: Статок's history counts the рахунок from whichever is earlier.
      */
-    save(a: Account): void {
+    save(a: Account, today?: IsoDate): void {
+      if (today !== undefined && a.openingDate !== undefined && a.openingDate > today) {
+        throw new Refusal('дата початкового залишку не може бути в майбутньому');
+      }
       const existing = db.select().from(accounts).where(eq(accounts.id, a.id)).get();
       if (existing && existing.kind !== a.kind) {
         throw new Error(
@@ -33,7 +44,11 @@ export function accountsRepo(db: Storage) {
           `account "${a.id}" is in ${existing.currency}; the currency cannot be changed after creation`,
         );
       }
-      const row = toAccountRow(a);
+      const row = toAccountRow(
+        !existing && a.openingDate === undefined && today !== undefined
+          ? { ...a, openingDate: today }
+          : a,
+      );
       db.insert(accounts)
         .values(row)
         .onConflictDoUpdate({
@@ -41,6 +56,7 @@ export function accountsRepo(db: Storage) {
           set: {
             name: row.name,
             openingAmount: row.openingAmount,
+            openingDate: row.openingDate,
             archived: row.archived,
           },
         })

@@ -13,6 +13,7 @@ describe('the Налаштування sections', () => {
       'Правила',
       'Ліміти',
       'Цілі',
+      'Розстрочки',
       'Імпорт Saldo',
       'monobank',
       'Сповіщення банків',
@@ -21,6 +22,11 @@ describe('the Налаштування sections', () => {
       'Google Drive',
       'Репорти про помилки',
     ]);
+  });
+
+  it('Scenario: The section opens the screen', () => {
+    const installments = SETTINGS_SECTIONS.find((section) => section.title === 'Розстрочки')!;
+    expect(installments.href).toBe('/manage/installments');
   });
 
   it('Scenario: The bug-reports section opens the list', () => {

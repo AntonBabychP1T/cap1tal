@@ -33,6 +33,11 @@ The owner SHALL create an account by giving a назва, a вид (`spending`, 
 optional and default to zero. The created account SHALL appear on the screen and be offered when
 a transaction is recorded.
 
+«Рахунки» SHALL offer creating exactly one way at a time, under one name. While the screen is
+inviting the first рахунок in words, the wordless «+» in its header SHALL NOT also be drawn; once
+рахунки are on screen, that «+» SHALL be the offer. No two controls of this screen SHALL carry the
+same accessible name.
+
 #### Scenario: A created account is usable immediately
 
 - **WHEN** the owner creates a `cash` account "гаманець" in UAH without an opening balance
@@ -44,6 +49,18 @@ a transaction is recorded.
 - **WHEN** the owner opens Рахунки while no account exists
 - **THEN** no вид groups and no archived group are shown, and the screen offers creating the
   first рахунок
+
+#### Scenario: The empty screen offers creating once
+
+- **WHEN** the owner opens Рахунки while no account exists
+- **THEN** «Створити рахунок» is offered once, in the empty state's own words, and the header
+  carries no «+» beside it
+
+#### Scenario: A screen with рахунки offers the header «+»
+
+- **WHEN** the owner opens Рахунки while at least one рахунок exists
+- **THEN** the header offers creating, named «Створити рахунок» for a screen reader, and it is the
+  only control that offers it
 
 ### Requirement: An account can be renamed and archived from the screen
 
@@ -350,3 +367,19 @@ broken between its number and its currency.
 
 - **WHEN** the unarchived рахунки hold UAH, EUR and USD
 - **THEN** «Усього грошей» shows three lines, one per currency, each whole
+
+### Requirement: «Станом на» is set beside the початковий залишок
+
+The form that creates or edits a рахунок SHALL show «станом на» with the дата початкового залишку beside a nonzero початковий залишок. It SHALL default to today on creation and show the stored дата, or none, on editing, and SHALL be chosen with the same date control as a транзакція's дата. A rejected дата SHALL be explained in the form without losing what was typed.
+
+#### Scenario: The owner dates an old balance
+- **WHEN** the owner edits «готівка EUR» with початковий залишок 300 EUR and sets «станом на» to 8 червня 2026
+- **THEN** the рахунок's дата початкового залишку is 2026-06-08 and Статок's history counts it from that day, or from its first транзакція if that is earlier
+
+#### Scenario: A future date is explained in the form
+- **WHEN** the owner sets «станом на» to a day after today and saves
+- **THEN** the form says the дата cannot be in the future, keeps the typed назва and сума, and saves nothing
+
+#### Scenario: A zero opening asks for no date
+- **WHEN** the owner creates a рахунок without a початковий залишок
+- **THEN** no «станом на» is shown, and the рахунок still records the day it was created

@@ -6,6 +6,7 @@ import {
   accounts,
   entryDefaults,
   goalAccounts,
+  installments,
   investmentValues,
   monobankLinks,
   notificationDrafts,
@@ -21,9 +22,9 @@ import type { Storage } from './storage';
  *
  * Everything that names `from` is moved onto `into`: every транзакція leg, the monobank link, the
  * watched bank app, a чернетка awaiting confirmation, a правило-переказ's destination, the рахунок
- * the entry form remembers and a ціль's membership. Перекази between the two are deleted — each
- * would be a переказ from a рахунок to itself, which moves nothing and which storage refuses to
- * create. The opening balances add up, so the merged balance is both histories told as one.
+ * the entry form remembers, a ціль's membership and a розстрочка's рахунок списання. Перекази
+ * between the two are deleted — each would be a переказ from a рахунок to itself, which moves
+ * nothing and which storage refuses to create. The opening balances add up, so the merged balance is both histories told as one.
  *
  * Then `from` itself is deleted. This is the one place a рахунок is deleted rather than archived:
  * archiving keeps a рахунок because its history must stay somewhere, and here its history has
@@ -101,6 +102,11 @@ export function mergeAccounts(
         .run();
       tx.update(rules).set({ toAccountId: intoId }).where(eq(rules.toAccountId, fromId)).run();
       tx.update(entryDefaults).set({ accountId: intoId }).where(eq(entryDefaults.accountId, fromId)).run();
+      // A розстрочка follows its card: the транзакції moved above, so every link stays valid.
+      tx.update(installments)
+        .set({ debitAccountId: intoId })
+        .where(eq(installments.debitAccountId, fromId))
+        .run();
 
       // A ціль that counted both keeps counting the one; one that counted `from` now counts `into`.
       // `select()` without a projection, like every other repository: `Storage` is a union.
@@ -133,8 +139,15 @@ export function mergeAccounts(
         }
       }
 
+      // The earlier recorded дата початкового залишку, or none when neither has one: the moved
+      // opening has held since its own дата, so the kept рахунок's later one would make Статок's
+      // history count it too late (accounts, "Merged рахунки keep the earlier дата").
+      const dates = [into.openingDate, from.openingDate].filter((d) => d !== undefined).sort();
       tx.update(accounts)
-        .set({ openingAmount: into.openingBalance.amount + from.openingBalance.amount })
+        .set({
+          openingAmount: into.openingBalance.amount + from.openingBalance.amount,
+          openingDate: dates[0] ?? null,
+        })
         .where(eq(accounts.id, intoId))
         .run();
       tx.delete(accounts).where(eq(accounts.id, fromId)).run();

@@ -3,6 +3,7 @@ import * as TaskManager from 'expo-task-manager';
 import { AppState } from 'react-native';
 
 import { monobank as monobankRepo } from '@/db/repos';
+import { keepInstallmentsQuietly } from '@/hooks/installment-ports';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { evaluateProgress } from '@/hooks/progress-ports';
 import { ALERT_PORTS } from '@/hooks/use-alerting';
@@ -52,6 +53,9 @@ TaskManager.defineTask(MONOBANK_SYNC_TASK, async () => {
       // The last поштовх the capture layer noted: a chance or дочитування after one is due whatever
       // the тихий інтервал says (monobank-sync-freshness D6).
       nudgedAtMs: () => backgroundSync.nudgedAtMs(),
+      // A debit synced while the app is closed links its платіж and withdraws tomorrow's warning
+      // at the end of this same run (installments design D4).
+      afterRun: keepInstallmentsQuietly,
       run,
     });
     // What the system gave and what came of it — decided in `journalChance`, which is where it can

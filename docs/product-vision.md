@@ -73,7 +73,25 @@ the UI. Terms are defined in [glossary.md](glossary.md).
 - Lending is a transfer into that person's debt account: not spent, but no longer available (it
   reduces "left"). Repayment is a transfer back. Anything repaid above the principal is income
   ("interest").
-- No due dates, rates or schedules in v1.
+- No due dates, rates or schedules in v1 for debts to people (a розстрочка's графік is the one
+  schedule, see «Розстрочки» below).
+
+### Розстрочки (owner's decision, 2026-10-01)
+- The owner buys more and more through interest-free розстрочки — at monobank «Покупка частинами»
+  — because with inflation paying over a year is cheaper than paying today. Each is a fixed monthly
+  debit for months ahead.
+- A розстрочка is a **plan**, not a транзакція and not a рахунок. The owner enters it by hand:
+  what was bought, the full сума, the number of monthly платежі, the monthly платіж (offered as an
+  even split, the remainder on the last), the date of the first платіж, the рахунок it is debited
+  from, how many платежі are already paid, and optionally a категорія.
+- The monobank statement shows **only the monthly debits**, never the full purchase (owner's
+  observation; the purchase is visible only in the mono app's credits window), and the personal API
+  carries no розстрочка data. So each debit is simply the витрата of its month, the full purchase
+  is never counted anywhere, and the app links each debit to its платіж rather than creating
+  anything. The app never records a платіж by itself.
+- What the plan adds: which витрата is which платіж, what is still owed, how much of the current
+  month is already promised («Вільно після розстрочок» on Місяць), and a local warning the day
+  before a платіж.
 
 ### Categories, limits, goals
 - Categories are the owner's own flat list, seeded with a starter set.
@@ -98,6 +116,9 @@ the UI. Terms are defined in [glossary.md](glossary.md).
 - **[PROPOSED]** A transfer between accounts in different currencies carries two amounts — what left
   and what arrived. No separate rate is stored; the rate is whatever the bank gave.
 - An account's balance is computed from its transactions (opening balance plus everything since).
+  The opening balance carries the date it holds from (owner's decision, 2026-10-01): the day the
+  account was created in the app, the Saldo «Initial balance» date on import, or a date the owner
+  sets. The date moves no balance; it only says from when Статок's history counts the account.
   Where the bank exposes a balance, it is shown next to the computed one, with a "reconcile" action
   that creates a correction transaction for the difference. Every hryvnia stays explained.
 - When reality and the app disagree (cash recount, missing transaction), the owner records a
@@ -136,6 +157,10 @@ Not in v1: recurring or scheduled transactions, SMS parsing, other banks' APIs. 
     **[PROPOSED]** Equivalently: income = spent + invested + saved + lent + left. Money moved into a
     jar or lent out must not look available.
 - Monthly numbers are shown per currency, plus the approximate UAH equivalent. **[PROPOSED]**
+- **Вільно після розстрочок** (owner's decision, 2026-10-01) — for the current month only, in UAH:
+  left minus this month's розстрочка платежі still expected or not found (a платіж debited or marked
+  paid is not subtracted). A secondary reading beneath "left";
+  it changes none of the numbers above, and a платіж already debited is already inside "left".
 
 ## 9. Budgets
 
@@ -162,7 +187,17 @@ In v1:
   converted into hryvnia and shown as explicitly approximate; where a rate is missing it is shown
   as not countable rather than as a smaller number.
 
-Not in v1: forecasts ("at this pace you will have X left").
+- Статок (net worth) over time, month by month, as Saldo draws it (owner's decision, 2026-10-01):
+  each account enters the history at the date of its opening balance — or its first transaction,
+  when that is earlier — as a disclosed step («нові рахунки»), never as growth; a later account
+  never hides the history before it. With more than one currency held, the approximate «≈ грн»
+  whole is the default reading; the exact per-currency histories stay one tap away. Each month's
+  change is explained by income, spending, corrections, transfers and exchange, and new accounts.
+
+Not in v1: forecasts ("at this pace you will have X left") — with one exception (owner's decision,
+2026-10-01): an opt-in «Прогноз статку» on the «Статок» screen only, off whenever the screen opens,
+continuing the статок at the median monthly change of the last six complete months with a range,
+marked «≈ якщо темп збережеться», computed when shown, stored nowhere and feeding no other number.
 
 ## 12. Trust and privacy **[PROPOSED]**
 
@@ -225,6 +260,9 @@ Not in v1: forecasts ("at this pace you will have X left").
 - cap1tal may send a local notification when an action failed and needs attention: import, save,
   local or Google Drive backup, or notification capture/processing. The notification says only what
   action failed, exposes no bank text or secret on the lock screen, and leads to details and retry.
+- **Нагадування про платіж** (owner's decision, 2026-10-01): one local notification the day before
+  each expected розстрочка платіж, behind one switch, on by default. Like every notification of the
+  app it names no сума and no назва.
 - These are device-local notifications scheduled by the app. There is no remote push-notification
   service, marketing messaging or analytics channel.
 
@@ -233,17 +271,24 @@ Not in v1: forecasts ("at this pace you will have X left").
 1. Shared data, multiple users, cap1tal accounts, or live two-way sync between devices.
 2. Investment positions / instruments and automatic prices (only a hand-entered value per account).
 3. Loan details: due dates, interest rates, repayment schedules (only a debt account per person).
+   Narrowed 2026-10-01: an interest-free розстрочка carries a графік of monthly платежі (§4); debts
+   to people still have none, and nothing has an interest rate.
 4. "Money in transit" / bank holds as a separate state — a hold is just a transaction.
 5. Splitting one purchase across several categories.
-6. Recurring or scheduled transactions.
+6. Recurring or scheduled transactions. A розстрочка's графік is a plan the debits are linked to,
+   never a транзакція the app records by itself.
 7. Bank integrations beyond the monobank API and notification parsing (no PrivatBank API, no SMS).
 8. Category hierarchy and tags.
 9. Cloud services other than the owner's opt-in Google Drive backup.
-10. Forecasts ("at this pace…").
+10. Forecasts ("at this pace…"). «Вільно після розстрочок» subtracts contractually fixed платежі,
+    not a pace, and is not a forecast. Narrowed 2026-10-01: the opt-in «Прогноз статку» on the
+    «Статок» screen (§11) is the one forecast; nothing else — no other screen, no limit, ціль or
+    monthly number — projects a pace.
 11. Moving a transaction to a different month than its date.
 12. Payments or transfers initiated from the app — it records money, it never moves it.
 13. An overall monthly limit (only per-category limits).
-14. Remote push notifications; the daily reminder and actionable error alerts are local only.
+14. Remote push notifications; the daily reminder, the нагадування про платіж and actionable error
+    alerts are local only.
 15. An iOS build — but nothing in the product model may depend on Android or stand in the way of iOS.
 
 ## 15. How we know v1 worked **[PROPOSED]**

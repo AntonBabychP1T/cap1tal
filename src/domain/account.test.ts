@@ -233,6 +233,36 @@ describe('computeBalance', () => {
   });
 });
 
+describe('дата початкового залишку', () => {
+  it('Scenario: The дата moves no balance', () => {
+    const expense = expenseByDefault({
+      id: 'e1',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(30000, 'UAH'),
+      categoryId: 'food',
+    });
+    const base = {
+      id: 'card',
+      name: 'mono black',
+      kind: 'spending' as const,
+      currency: 'UAH',
+      openingBalance: money(100000, 'UAH'),
+    };
+    for (const openingDate of [undefined, '2024-10-27', '2026-03-11', '2026-10-01']) {
+      const opened = account({ ...base, ...(openingDate ? { openingDate } : {}) });
+      expect(computeBalance(opened, [expense])).toEqual(money(70000, 'UAH'));
+    }
+  });
+
+  it('keeps a calendar дата and refuses anything else', () => {
+    const base = { id: 'a', name: 'a', kind: 'cash' as const, currency: 'EUR' };
+    expect(account({ ...base, openingDate: '2026-06-08' }).openingDate).toBe('2026-06-08');
+    expect(account(base).openingDate).toBeUndefined();
+    expect(() => account({ ...base, openingDate: '2026-02-30' })).toThrow();
+  });
+});
+
 describe('computeBalances', () => {
   it('gives every рахунок exactly what computeBalance gives it, in one pass', () => {
     const cardOpened = account({

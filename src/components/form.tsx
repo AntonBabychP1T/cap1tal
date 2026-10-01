@@ -128,11 +128,17 @@ export function DateField({
   value,
   onChange,
   now,
+  label = 'Дата',
+  hint,
 }: {
   value: string;
   onChange: (value: string) => void;
   /** The screen's clock — what «сьогодні» is. */
   now: Date;
+  /** «Дата» for a транзакція; «Станом на» beside a рахунок's початковий залишок. */
+  label?: string;
+  /** Under the field: why what is typed cannot be saved, when it cannot. */
+  hint?: string;
 }) {
   const theme = useTheme();
   const [picking, setPicking] = useState(false);
@@ -155,7 +161,8 @@ export function DateField({
   return (
     <View style={styles.field}>
       <Field
-        label={offers.label ? `Дата · ${offers.label}` : 'Дата'}
+        label={offers.label ? `${label} · ${offers.label}` : label}
+        {...(hint ? { hint } : {})}
         value={value}
         onChangeText={onChange}
         autoCapitalize="none"

@@ -48,7 +48,12 @@ describe('validation refusals offer no репорт', () => {
   });
 
   it('A рахунок without a name', () => {
-    expect(offered(() => accountFromDraft(blankDraft(), 'a1'))).toEqual([REFUSAL_LABEL]);
+    expect(offered(() => accountFromDraft(blankDraft('2026-10-01'), 'a1', '2026-10-01'))).toEqual([REFUSAL_LABEL]);
+  });
+
+  it('A дата початкового залишку after today', () => {
+    const draft = { ...blankDraft('2026-10-01'), name: 'нова', opening: '500', openingDate: '2026-10-05' };
+    expect(offered(() => accountFromDraft(draft, 'a1', '2026-10-01'))).toEqual([REFUSAL_LABEL]);
   });
 
   it('A genuine failure still offers the репорт', () => {

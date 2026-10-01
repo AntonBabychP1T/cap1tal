@@ -50,6 +50,20 @@
       "when": 1790791762852,
       "tag": "0006_loose_drax",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790877027780,
+      "tag": "0007_strong_franklin_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790880481517,
+      "tag": "0008_gorgeous_leopardon",
+      "breakpoints": true
     }
   ]
 }

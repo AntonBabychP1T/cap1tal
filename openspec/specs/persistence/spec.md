@@ -5,7 +5,9 @@
 Keeps the owner's accounts and transactions on the device across app restarts — the stored history
 that the computed balance, the monthly picture and every future screen read. Storage is faithful:
 what comes back is exactly what was put in, down to the minor unit and currency code.
+
 ## Requirements
+
 ### Requirement: Accounts and transactions survive a restart
 
 Stored accounts and transactions SHALL remain readable after storage is closed and reopened; the
@@ -384,6 +386,16 @@ boundary, committed cursor and latest баланс банку, and SHALL read th
 restart. A monobank account and a рахунок SHALL each occur in at most one active link, and every
 stored balance SHALL carry the linked рахунок's currency.
 
+A link SHALL also store where a window it is half-way through has got to — the end of that window
+and the end its next request should ask for — or nothing at all for a link with no window in
+progress, which is what every link stored before this reads back as. The pair SHALL be written in
+the same transaction as the транзакції and imported ids of the answer that produced it, so a
+position can never outlive an answer that did not store, and SHALL be read back unchanged after a
+restart: it is what lets a рахунок too large for one прогін be finished by several.
+
+It SHALL NOT travel in a бекап, for the reason `last_attempted_at` does not: it describes how far
+*this* phone has read, and a phone restored from a бекап has read nothing.
+
 #### Scenario: A link resumes after restart
 
 - **WHEN** a UAH link with a confirmed boundary, committed cursor and баланс банку is stored and
@@ -396,6 +408,29 @@ stored balance SHALL carry the linked рахунок's currency.
 - **WHEN** storage already links monobank account M to рахунок A and an attempt is made to link M
   to рахунок B or another monobank account to A
 - **THEN** the attempted second link is rejected and the existing link remains unchanged
+
+#### Scenario: A half-paged window survives a restart
+
+- **WHEN** a link that stopped in the middle of a window is stored and storage is reopened
+- **THEN** the window it was paging and the page its next request should ask for read back
+  unchanged, beside the cursor that has not moved
+
+#### Scenario: A link with no window in progress remembers no position
+
+- **WHEN** a link whose last window answered short is stored and storage is reopened
+- **THEN** it carries no paging position at all, and reading one back is not an error
+
+#### Scenario: Existing links survive gaining the paging position
+
+- **WHEN** links, cursors, imported ids and bank balances stored under the previously committed
+  migrations alone are brought to the current storage shape
+- **THEN** all of them load unchanged, and each carries no paging position
+
+#### Scenario: A бекап carries no paging position
+
+- **WHEN** a бекап is made from a phone whose link is half-way through a window and is restored
+- **THEN** the restored link has the same boundary and cursor and no paging position, so its next
+  прогін plans that window afresh
 
 ### Requirement: Imported monobank item ids are remembered independently of transactions
 
@@ -764,7 +799,8 @@ links SHALL hold their moments independently.
 The system SHALL read the whole stored state as one snapshot: every рахунок, категорія, джерело,
 правило, ліміт, ціль **with the склад of рахунки it counts**, and транзакція, the marker of a
 committed Saldo import, every monobank account with its link, sync boundary, cursor, moment it last
-synced and imported item ids, and every відстежуваний застосунок with the рахунок it lands on —
+synced and imported item ids, every відстежуваний застосунок with the рахунок it lands on, and
+every фіскальний чек with its позиції and source snapshot —
 each exactly once, with the values that are stored. The snapshot SHALL NOT include the cached
 monobank rates, the fingerprints of captured notifications or any pending чернетка, and no monobank
 token SHALL be read to build it.
@@ -773,8 +809,8 @@ token SHALL be read to build it.
 
 - **WHEN** a device holding рахунки, категорії, джерела, правила, ліміти, цілі, транзакції of all
   five types across three months, a Saldo import marker, a monobank account with a link, a cursor,
-  a moment it last synced and two imported item ids, and one відстежуваний застосунок is read as a
-  snapshot
+  a moment it last synced, two imported item ids, one відстежуваний застосунок
+  and one чек with three позиції is read as a snapshot
 - **THEN** every one of those rows appears in the snapshot exactly once, with the values stored
 
 #### Scenario: A ціль's склад is in the snapshot
@@ -792,8 +828,8 @@ token SHALL be read to build it.
 
 The system SHALL replace the whole stored state with a snapshot as a single unit: after it, the
 рахунки, категорії, джерела, правила, ліміти, цілі **with their склади**, транзакції, Saldo import
-marker, monobank accounts, links, cursors, last-sync moments, imported item ids and відстежувані
-застосунки SHALL be exactly the snapshot's, and the pending чернетки and the рахунок the entry form
+marker, monobank accounts, links, cursors, last-sync moments, imported item ids, відстежувані
+застосунки and фіскальні чеки with their позиції SHALL be exactly the snapshot's, and the pending чернетки and the рахунок the entry form
 remembers SHALL be gone. No склад of a ціль the snapshot does not hold SHALL survive the
 replacement. The fingerprints of decided notifications and the cached monobank rates SHALL be left
 untouched. If any part cannot be stored, none of it SHALL be: everything that was stored before
@@ -801,18 +837,18 @@ SHALL be exactly what is stored after.
 
 #### Scenario: A replaced state is the snapshot's and nothing else
 
-- **WHEN** a snapshot holding one рахунок, three транзакції and one категорія is stored as a
-  replacement on a device holding four other рахунки, two hundred other транзакції and a pending
-  чернетка
-- **THEN** afterwards storage holds exactly that рахунок, those three транзакції and the
-  snapshot's категорії, джерела, правила, ліміти and цілі, and no чернетка
+- **WHEN** a snapshot holding one рахунок, three транзакції, one категорія and one чек with two
+  позиції is stored as a replacement on a device holding four other рахунки, two hundred other
+  транзакції, five other чеки and a pending чернетка
+- **THEN** afterwards storage holds exactly that рахунок, those three транзакції, that чек with its
+  two позиції and the snapshot's категорії, джерела, правила, ліміти and цілі, and no чернетка
 
 #### Scenario: A replacement that fails partway stores nothing
 
 - **WHEN** storing a snapshot whose last транзакція references a категорія the snapshot does not
   hold is attempted
-- **THEN** the replacement is rejected and every рахунок, транзакція, ліміт, ціль, правило and
-  monobank row the device held before is still there, unchanged
+- **THEN** the replacement is rejected and every рахунок, транзакція, ліміт, ціль, правило, чек
+  and monobank row the device held before is still there, unchanged
 
 #### Scenario: The rate cache and the fingerprints survive a replacement
 
@@ -1250,3 +1286,679 @@ SHALL be applied exactly once, and neither SHALL fail because the other applied 
   and a second opening starts applying the committed migrations
 - **THEN** both finish without an error, the migration is recorded as applied once, and storage
   holds accounts and every transaction type
+
+### Requirement: A read repeated between writes is answered without reading storage again
+
+Storage SHALL answer a read repeated with nothing written in between from the answer it gave
+before, without reading the stored rows again. Such reads include the whole stored history, every
+рахунок's розрахунковий баланс, the months holding at least one транзакція, the «Без категорії»
+count, the статок reads and the зведення прогресу. It SHALL reuse an answer only when no write can
+have been committed since that answer was read. A
+write through any repository, through a restore, or through another opening of the same storage
+(such as the фоновий прогін or the Drive бекап) SHALL make the next answer reflect it. That holds
+even when the write commits while the earlier answer was being read. A read taken while a write is
+still in progress on the app's own opening SHALL NOT be remembered for later. So no answer SHALL
+ever be older than the last committed write, or contain a write that was rolled back. Nothing
+about an answer SHALL be stored: it lives only as long as the app's process, and a caller SHALL
+NOT be able to change an answer another caller will receive. The app's own журнал, which records
+every screen opened, holds nothing any of these answers is made from. A журнал entry written in the
+app SHALL therefore not cause any of them to be read again.
+
+#### Scenario: A second read with nothing written in between reads nothing again
+
+- **WHEN** the whole history is read, nothing is written, and it is read again
+- **THEN** the second answer equals the first and no stored транзакція is read to produce it
+
+#### Scenario: A транзакція saved in between is in the next answer
+
+- **WHEN** the whole history is read, a витрата is saved, and the history is read again
+- **THEN** the second answer contains that витрата and its рахунок's розрахунковий баланс is lower by
+  its amount
+
+#### Scenario: A removal, a recategorisation and a restore are all seen
+
+- **WHEN** after a read a транзакція is removed, another gets a different категорія, two рахунки
+  are merged, or a бекап is restored
+- **THEN** the next read reflects each of them exactly as a fresh read of storage would
+
+#### Scenario: A write committed by the background opening is seen on the next read
+
+- **WHEN** the history is read in the app, and another opening of the same storage commits a
+  транзакція, as a фоновий прогін does
+- **THEN** the app's next read contains that транзакція
+
+#### Scenario: A write committed by the background opening during a read is seen on the next read
+
+- **WHEN** another opening of the same storage commits a транзакція after the app has started a read
+  but before that read has finished
+- **THEN** the app's next read contains that транзакція
+
+#### Scenario: A write that was rolled back changes nothing
+
+- **WHEN** after a read a write starts and is rolled back
+- **THEN** the next read equals the previous one
+
+#### Scenario: A read taken inside a write that is then rolled back is not remembered
+
+- **WHEN** a read is taken while a write on the app's own opening is in progress, and that write is
+  rolled back
+- **THEN** the next read does not contain what was rolled back
+
+#### Scenario: The «Без категорії» count and the статок reads follow a write
+
+- **WHEN** the «Без категорії» count and the статок are read, a транзакція is recategorised out of
+  «Без категорії», and both are read again
+- **THEN** the count is one lower and the статок equals a fresh read
+
+#### Scenario: A журнал entry between two reads does not cause a re-read
+
+- **WHEN** the whole history is read, the owner opens another screen (the журнал records it), and the
+  history is read again
+- **THEN** the second answer equals the first and no stored транзакція is read to produce it
+
+#### Scenario: One caller cannot change another caller's answer
+
+- **WHEN** a caller tries to change the list, a balance or a транзакція in an answer it received
+- **THEN** the change is refused and the next caller receives the answer as storage gave it
+
+### Requirement: Balances read between writes equal balances from the whole history
+
+The розрахунковий баланс served for each рахунок SHALL equal, in minor units and currency, the
+opening balance plus every stored транзакція's effect on that рахунок. A переказ counts on both of
+its legs, each in its own currency, and once on a рахунок it both leaves and reaches. Balances
+SHALL never be summed across currencies. A balance that is not a safe integer SHALL be refused,
+exactly as a fresh computation would refuse it. The refusal SHALL reach only a reader that asked
+for balances, not a reader that asked only for the history or the months.
+
+#### Scenario: Served balances agree with a fresh computation over any history
+
+- **WHEN** any generated set of рахунки is stored (including an archived рахунок and a рахунок-борг)
+  with транзакції: витрати, доходи, перекази across currencies and onto the same рахунок,
+  повернення, коригування, інвестиції, комісії
+- **THEN** every рахунок's served розрахунковий баланс equals the one computed from its opening
+  balance and the whole history
+
+#### Scenario: A переказ between currencies moves each leg in its own currency
+
+- **WHEN** a переказ leaves 4 000.00 UAH from a картка and arrives as 100.00 USD on a USD рахунок
+- **THEN** the картка's served balance falls by 400000 UAH minor units and the USD рахунок's rises
+  by 10000 USD minor units
+
+#### Scenario: A balance beyond the safe range is refused only to readers of balances
+
+- **WHEN** stored транзакції would take one рахунок's balance beyond the safe-integer range
+- **THEN** asking for balances is refused as a fresh computation would be, and asking for the whole
+  history or its months still succeeds
+
+### Requirement: Category lookups and the newest-first order are served by an index
+
+Storage SHALL keep an index over the транзакції's категорія and an index over the newest-first
+order (date, then recording moment, then identity). The «Без категорії» count and any listing in
+the newest-first order SHALL therefore be answered without scanning or sorting the whole table.
+Both indexes SHALL arrive by a new append-only migration that keeps every stored row.
+
+#### Scenario: The «Без категорії» count uses the категорія index
+
+- **WHEN** storage is asked how many транзакції are «Без категорії»
+- **THEN** the query plan searches the категорія index rather than scanning every транзакція
+
+#### Scenario: The latest транзакції are listed without a sort pass
+
+- **WHEN** storage lists the latest транзакції newest first
+- **THEN** the query plan walks the order index and builds no temporary sort
+
+#### Scenario: The migration keeps every stored транзакція
+
+- **WHEN** a database holding транзакції at the previous migration is brought to the current one
+- **THEN** every транзакція reads back unchanged and both indexes exist
+
+### Requirement: The whole history can be read whatever the number of перекази
+
+Reading the whole stored history SHALL succeed and mark every переказ that awaits its зустрічний
+дохід, however many перекази are stored. The count of перекази SHALL never be bounded by how many
+values a single storage query can carry.
+
+#### Scenario: More перекази than one query can name are still read
+
+- **WHEN** more перекази are stored than a single storage query can carry as values, and one of
+  them awaits its зустрічний дохід
+- **THEN** the whole history reads back complete and exactly that переказ is marked as awaiting
+
+### Requirement: How a репорт was opened survives a restart
+
+Storage SHALL keep, with every репорт про помилку, how it was opened — from the screen itself, from
+a failure dialog, from the crash fallback, or from «Репорти про помилки» — and SHALL load it back
+unchanged. A репорт stored before this was recorded SHALL load with no origin rather than a guessed
+one, and SHALL otherwise be unchanged.
+
+Storage SHALL likewise keep, with a репорт whose скріншот could not be taken, the reason it could
+not, and SHALL load it back unchanged. A репорт that has a скріншот, and a репорт that was never
+going to have one, SHALL both load with no such reason rather than an invented one.
+
+#### Scenario: The origin comes back
+
+- **WHEN** a репорт opened from the screen itself is stored and storage is reopened
+- **THEN** it loads with everything it held and with that origin
+
+#### Scenario: Each origin round-trips
+
+- **WHEN** one репорт of each origin is stored and read back
+- **THEN** each loads with exactly the origin it was stored with
+
+#### Scenario: The reason a скріншот could not be taken comes back
+
+- **WHEN** a репорт filed on a screen the app could not capture is stored and storage is reopened
+- **THEN** it loads with no скріншот and with the reason it has none, word for word as it was
+  stored, so the rendered text says the same thing it said before the restart
+
+#### Scenario: A репорт that has its скріншот holds no such reason
+
+- **WHEN** a репорт filed with a successful capture is stored and read back
+- **THEN** it loads with its скріншот and with no reason at all
+
+#### Scenario: A репорт stored before the origin existed loads without one
+
+- **WHEN** a репорт is stored under the previously committed migrations alone and the database is
+  brought to the current shape
+- **THEN** that репорт loads unchanged, with its lines, build, device, журнал, counts and
+  screenshots intact, with no origin and with no capture reason
+
+### Requirement: The two switches for filing from a screen survive a restart
+
+Storage SHALL keep whether the gesture and whether the handle are on, and SHALL load them back
+unchanged. A device on which neither has been touched SHALL load the gesture on and the handle off.
+
+#### Scenario: The switches come back
+
+- **WHEN** the gesture is turned off and the handle on, and storage is reopened
+- **THEN** the gesture loads off and the handle loads on
+
+#### Scenario: A fresh database has the defaults
+
+- **WHEN** all committed migrations are applied to an empty database
+- **THEN** the gesture loads on, the handle loads off, and nothing fails
+
+### Requirement: The origin, the capture reason and the switches arrive by a new migration that keeps stored rows
+
+The storage for how a репорт was opened, for why a скріншот could not be taken, and for the two
+switches SHALL be introduced by a new migration; committed migrations SHALL stay untouched.
+Every row stored under the previously committed migrations — рахунки, транзакції, категорії,
+джерела, правила, ліміти, цілі, monobank
+state, чернетки and their fingerprints, репорти, their screenshots and the журнал — SHALL
+survive the new migration unchanged.
+
+#### Scenario: Pre-migration rows survive unchanged
+
+- **WHEN** a рахунок, one транзакція of each type, a репорт with two screenshots and a журнал of
+  300 entries are stored under the previously committed migrations alone, and the database is
+  brought to the current shape
+- **THEN** all of them load unchanged, the репорт loads with no origin and no capture reason, and
+  the switches load at their defaults
+
+#### Scenario: A fresh database from migrations alone holds both
+
+- **WHEN** all committed migrations are applied in order to an empty database
+- **THEN** a репорт can be stored with its origin and its capture reason and read back, and both
+  switches can be set and read back
+
+### Requirement: Neither the origin, the capture reason nor the switches are in a бекап
+
+A бекап SHALL contain none of how a репорт was opened, why its скріншот could not be taken, or
+the two switches — for the reason the репорти, their screenshots and the журнал are already
+outside it: they describe this phone and its testing, not the owner's money. A відновлення SHALL
+leave all three exactly as they were on the phone.
+
+#### Scenario: A бекап carries none of them
+
+- **WHEN** a бекап is made on a phone holding two репорти with their origins and both switches
+  changed from their defaults
+- **THEN** the бекап contains no origin, no capture reason and no switch
+
+#### Scenario: A restore leaves them in place
+
+- **WHEN** a бекап is restored onto a phone whose gesture is off and whose handle is on
+- **THEN** the gesture is still off, the handle is still on, and the репорти keep their origins
+  and their capture reasons
+
+### Requirement: A фіскальний чек and its позиції survive a restart
+
+The system SHALL store each фіскальний чек — the транзакція it is attached to, its фіскальний
+номер реєстратора, фіскальний номер чека, the date and time it was issued, its dialect and
+document kind, its total as integer minor units with its currency code, the seller's name and
+point of sale when named, how it was acquired, the moment it was fetched and its source snapshot
+— together with every позиція чека in document order — line number, raw name, quantity in
+thousandths, unit name, unit price and line total as integer minor units with the currency code,
+line discount, barcode and УКТЗЕД code where present — and SHALL read all of it back unchanged
+after storage is closed and reopened. A транзакція SHALL hold at most one чек, and the identity of
+a чек — реєстратор, фіскальний номер чека and date issued — SHALL occur at most once. A чек
+referencing a транзакція id not present in storage SHALL be rejected.
+
+#### Scenario: A чек round-trips whole
+
+- **WHEN** a чек with eight позиції, one of them holding quantity 2000 thousandths of «шт», unit
+  price 2590, line total 5180 minor units UAH and barcode "40084725", and another holding no unit
+  price and no barcode, is stored and storage is reopened
+- **THEN** the чек and all eight позиції read back with the same values, absent values still
+  absent, in the same order
+
+#### Scenario: A second чек on a транзакція is rejected
+
+- **WHEN** a транзакція already holds a чек and another чек referencing it is stored
+- **THEN** storage rejects the second and the first is unchanged
+
+#### Scenario: The same identity is rejected twice
+
+- **WHEN** a чек with реєстратор "3000909908", number "696582" and date 2026-04-29 is stored and
+  another with the same three values referencing a different транзакція is stored
+- **THEN** storage rejects the second
+
+#### Scenario: An unknown транзакція id is rejected
+
+- **WHEN** a чек referencing a транзакція id that does not exist in storage is stored
+- **THEN** storage rejects it with an error and no позиція is stored
+
+### Requirement: A чек is stored as one unit and goes with its транзакція
+
+Storing a чек with its позиції SHALL be one unit: if any позиція cannot be stored, neither the чек
+nor any other позиція SHALL be. Removing a транзакція SHALL remove its чек and позиції with it;
+replacing a транзакція under its id SHALL leave its чек untouched. Removing a чек SHALL remove
+its позиції and nothing else.
+
+#### Scenario: A failed позиція stores no чек
+
+- **WHEN** storing a чек is attempted and its third позиція is rejected
+- **THEN** no чек and no позиція of it is stored
+
+#### Scenario: Removing the транзакція removes the чек
+
+- **WHEN** a транзакція holding a чек with nine позиції is removed and storage is reopened
+- **THEN** no чек with that identity and no позиція of it loads
+
+#### Scenario: Replacing the транзакція keeps the чек
+
+- **WHEN** a транзакція holding a чек is replaced under its id by a повернення with another сума
+- **THEN** the чек still loads attached to that id with its own values unchanged
+
+### Requirement: Чек storage arrives through append-only migrations
+
+The чек and позиція storage SHALL be introduced only by new migrations that preserve
+every existing рахунок, транзакція, категорія, джерело, правило, ліміт, ціль, monobank state,
+Saldo marker, watch, чернетка, fingerprint, reminder, alert and rate cache. A fresh database SHALL
+start with no чек and no позиція.
+
+#### Scenario: Existing data survives the migration
+
+- **WHEN** a database holding every stored shape is brought to the current storage shape
+- **THEN** every existing value loads unchanged, no транзакція holds a чек, and a чек with its
+  позиції can be stored
+
+#### Scenario: A fresh database starts empty of чеки
+
+- **WHEN** all committed migrations are applied in order to an empty database
+- **THEN** no чек and no позиція exists, and each can be stored
+
+### Requirement: The last sync attempt and how it ended survive a restart
+
+The moment of the last sync attempt and the outcome it was remembered as SHALL survive closing and
+reopening the app: reading them SHALL yield exactly what was last written. Exactly one attempt
+SHALL be kept — the latest — so writing a new one replaces the one before it rather than adding to
+a history. A device on which nothing has ever been attempted SHALL answer with the absence of an
+attempt, never with a moment of zero or an outcome standing in for one. An attempt whose run has
+not reported SHALL be readable as a moment with no outcome — a third answer, distinct both from
+an attempt that ended and from no attempt at all.
+
+Nothing of the token and nothing read from a statement SHALL be stored with the attempt: it is a
+moment and one of the outcomes the monobank capability names, and no more.
+
+#### Scenario: An attempt is read back as it was written
+
+- **WHEN** an attempt is remembered as rate-limited at a given moment and storage is reopened
+- **THEN** reading yields that same moment and rate-limited
+
+#### Scenario: A later attempt replaces the earlier one
+
+- **WHEN** an attempt remembered as unavailable is followed by one remembered as complete
+- **THEN** reading yields the later moment and complete, and the earlier attempt is not readable
+
+#### Scenario: An attempt without an outcome round-trips as one
+
+- **WHEN** an attempt is stored with a moment and no outcome and storage is reopened
+- **THEN** reading yields that moment and no outcome, and it is not read as an absent attempt
+
+#### Scenario: A device that never attempted says so
+
+- **WHEN** nothing has ever been attempted and storage is read
+- **THEN** the answer is that no attempt exists, and it is not a moment of zero
+
+### Requirement: The remembered attempt arrives through an append-only migration that keeps stored rows
+
+The storage for the remembered attempt SHALL arrive as a new migration applied on top of every
+committed one, leaving those unchanged. Applying it to a database already holding рахунки,
+транзакції, monobank links, imported item ids and per-account last-sync moments SHALL leave every
+one of those rows exactly as it was.
+
+#### Scenario: The migration adds storage and touches nothing
+
+- **WHEN** the new migration is applied to a database holding рахунки, транзакції, monobank links,
+  imported item ids and last-sync moments
+- **THEN** the attempt can be stored and read, and every previously stored row is unchanged
+
+#### Scenario: An empty database reaches the current shape
+
+- **WHEN** every committed migration is applied in order to an empty database
+- **THEN** the remembered attempt can be written and read back
+
+### Requirement: The remembered attempt stays on the phone that made it
+
+The remembered attempt SHALL NOT travel in a бекап, and restoring a бекап SHALL leave whatever
+attempt this device holds exactly as it was. It is what *this* phone last tried and how that went
+— operational state about one device, like the сповіщення про збій standing on it and the рахунок
+its entry form opens on — and a moment carried from another phone would make this one skip a sync
+it has never made, or claim a failure it never had.
+
+#### Scenario: A бекап carries no attempt
+
+- **WHEN** a бекап is made on a device whose last sync attempt is remembered
+- **THEN** the file contains no attempt, while every рахунок, транзакція and monobank link of that
+  device is in it
+
+#### Scenario: A restore leaves this phone's attempt alone
+
+- **WHEN** a бекап made on another device is restored onto a phone whose last attempt was
+  remembered ten minutes ago as complete
+- **THEN** that attempt is still remembered, with the same moment and the same outcome
+
+### Requirement: The moment of the last personal-API request survives a restart
+
+The moment at which this device last sent a **statement** request to the monobank personal API
+SHALL survive closing and reopening the app: reading it SHALL yield exactly what was last written. A
+client-info request, which the bank limits apart from the statement, SHALL NOT move it. Exactly one
+such moment SHALL be kept — the latest — so writing a newer one replaces it rather than adding to a
+history. A device that has never sent such a request SHALL answer with the absence of a moment,
+never with a moment of zero standing in for one.
+
+Nothing of the token, of an account, or of anything read from a statement SHALL be stored with it:
+it is a moment, and no more.
+
+#### Scenario: The moment is read back as it was written
+
+- **WHEN** the moment of a statement request is stored and storage is reopened
+- **THEN** reading yields that same moment
+
+#### Scenario: A later request replaces the earlier moment
+
+- **WHEN** one statement request's moment is stored and then a later one's is stored
+- **THEN** reading yields the later moment, and the earlier one is not readable
+
+#### Scenario: A device that never sent a request says so
+
+- **WHEN** no statement request has ever been sent and storage is read
+- **THEN** the answer is that no moment exists, and it is not a moment of zero
+
+### Requirement: The moment each link last had a turn survives a restart
+
+For every monobank link, the moment at which a run last sent a request about it SHALL survive
+closing and reopening the app, and SHALL be readable beside that link's own sync cursor and
+last-sync moment. A link no run has ever sent a request about SHALL be readable as having no such
+moment — distinct from a moment of zero, and distinct from a link that has had a turn but never
+completed a sync.
+
+The moment SHALL be kept independently of the moment a sync last *completed* for that link: a turn
+that ended in a failure moves the first and leaves the second exactly as it was.
+
+It belongs to the link: unlinking SHALL take it with the link, and linking the same monobank
+account again SHALL start it with no moment. Unlike that link's last-sync moment it SHALL NOT
+travel in a бекап — it is what *this* phone last asked the bank about that link, not something the
+owner's money or settings say — so a restored link SHALL read back as one that has never had a
+turn, while its cursor, its sync boundary and its last-sync moment are restored as they were.
+
+#### Scenario: A link's turn is read back as it was written
+
+- **WHEN** a turn is remembered for a link and storage is reopened
+- **THEN** reading that link yields the same moment
+
+#### Scenario: A link that has never had a turn says so
+
+- **WHEN** a link is created and no run has sent a request about it
+- **THEN** reading it yields no turn moment, and not a moment of zero
+
+#### Scenario: A failed turn moves only the turn
+
+- **WHEN** a link that completed a sync yesterday has a turn today that ends unavailable
+- **THEN** its turn moment is today and its last completed sync is still yesterday
+
+#### Scenario: Relinking starts the turns again
+
+- **WHEN** a monobank account that had turns is unlinked and linked again
+- **THEN** the new link has no turn moment, while the imported item ids of that monobank account
+  are still remembered
+
+#### Scenario: A restored link has had no turn
+
+- **WHEN** a бекап made on a device whose links have turn moments is restored elsewhere
+- **THEN** each restored link reads back with no turn moment, and with its cursor, its sync
+  boundary and its last-sync moment exactly as the бекап holds them
+
+### Requirement: The remembered request moment and per-link turns arrive through an append-only migration that keeps stored rows
+
+The storage for the remembered request moment and for each link's turn moment SHALL arrive as a new
+migration applied on top of every committed one, leaving those unchanged. Applying it to a database
+already holding рахунки, транзакції, monobank links, imported item ids, per-account last-sync
+moments and the remembered sync attempt SHALL leave every one of those rows exactly as it was, and
+every link it finds SHALL read back as one that has never had a turn.
+
+#### Scenario: The migration adds storage and touches nothing
+
+- **WHEN** the new migration is applied to a database holding рахунки, транзакції, monobank links,
+  imported item ids, last-sync moments and a remembered sync attempt
+- **THEN** the request moment and per-link turns can be stored and read, and every previously
+  stored row is unchanged
+
+#### Scenario: Links that existed before the migration have had no turn
+
+- **WHEN** the new migration is applied to a database holding links with last-sync moments
+- **THEN** each of those links reads back with its last-sync moment intact and with no turn moment
+
+#### Scenario: An empty database reaches the current shape
+
+- **WHEN** every committed migration is applied in order to an empty database
+- **THEN** the remembered request moment and a link's turn moment can be written and read back
+
+### Requirement: The remembered request moment stays on the phone that made it
+
+The remembered request moment SHALL NOT travel in a бекап, and restoring a бекап SHALL leave
+whatever moment this device holds exactly as it was. It is what *this* phone last asked the bank,
+operational state about one device like the remembered sync attempt and the сповіщення про збій
+standing on it; a moment carried from another phone would make this one wait out a request it
+never sent, or send one the bank will refuse. The per-link turn moments are out of the бекап for
+the same reason, though they are restored as absent rather than left alone, because a restore
+replaces every link there is.
+
+#### Scenario: A бекап carries no request moment
+
+- **WHEN** a бекап is made on a device that has sent a request
+- **THEN** the file contains no request moment, while every рахунок, транзакція and monobank link
+  of that device is in it
+
+#### Scenario: A restore leaves this phone's request moment alone
+
+- **WHEN** a бекап made on another device is restored onto a phone that sent a request a minute ago
+- **THEN** that moment is still remembered, unchanged
+
+### Requirement: The moment a link became позачерговий survives a restart and stays on this phone
+
+The moment each monobank link is позачерговий from, or its absence, SHALL survive a restart and be
+read back unchanged. It SHALL arrive through a new, append-only migration that adds it as absent for
+every link already stored and changes nothing else those rows hold. It is this phone's own
+knowledge of what it has not yet read, so it SHALL NOT be written into a бекап, and a link restored
+from one SHALL carry no such moment.
+
+#### Scenario: A позачерговий link is still позачерговий after a restart
+
+- **WHEN** a link became позачерговий at 10:05 and the app is restarted
+- **THEN** it is read back позачерговий from 10:05
+
+#### Scenario: The migration keeps what the links held
+
+- **WHEN** the migration runs over a database with nine links, their cursors, last-sync and last-turn
+  moments
+- **THEN** every link keeps them unchanged and none is позачерговий
+
+#### Scenario: A бекап does not carry it
+
+- **WHEN** a бекап is made while a link is позачерговий and restored on another phone
+- **THEN** the restored link is not позачерговий
+
+### Requirement: The нагадування's setting survives a restart
+
+The system SHALL store whether the daily нагадування is on and the time of day it is set for, and
+SHALL load the same values after storage is reopened. A device that was never asked SHALL load as
+off, and the change of a value SHALL replace it rather than add a second setting.
+
+#### Scenario: The setting round-trips
+
+- **WHEN** the нагадування is stored as on for 09:30 and storage is reopened
+- **THEN** it loads as on for 09:30
+
+#### Scenario: A device never asked loads as off
+
+- **WHEN** storage that was never told about the нагадування is opened
+- **THEN** it loads as off, with no time claimed to be set by the owner
+
+#### Scenario: Changing the setting leaves one setting
+
+- **WHEN** the нагадування is stored as on for 21:00 and then as on for 09:30, and storage is
+  reopened
+- **THEN** it loads as on for 09:30 and no other reminder setting exists
+
+### Requirement: Outstanding failures survive a restart, one per action
+
+The system SHALL store the outstanding сповіщення про збій as at most one per action, with the
+moment it was raised, and SHALL load the same set after storage is reopened. Raising an action
+that is already outstanding SHALL leave one, keeping the moment it was first raised; clearing an
+action SHALL remove only that action's.
+
+#### Scenario: An outstanding failure round-trips
+
+- **WHEN** a сповіщення про збій for the monobank sync is stored and storage is reopened
+- **THEN** exactly that one is outstanding, with the moment it was raised
+
+#### Scenario: Raising the same action twice stores one
+
+- **WHEN** the same action is raised twice and storage is reopened
+- **THEN** one сповіщення is outstanding for it, carrying the moment of the first raise
+
+#### Scenario: Clearing one leaves the others
+
+- **WHEN** two actions are outstanding, one is cleared, and storage is reopened
+- **THEN** only the other is outstanding
+
+### Requirement: Reminder and failure storage arrives through append-only migrations
+
+The reminder setting and the outstanding сповіщення SHALL be introduced only by new migrations
+that preserve every existing рахунок, транзакція, категорія, джерело, правило, ліміт, ціль,
+monobank state, Saldo state, notification watch, fingerprint, чернетка and rate cache. No text of
+a captured bank notification, no сума and no secret SHALL be stored with a сповіщення — the action
+that failed is the whole of what is kept.
+
+#### Scenario: Existing data survives the migration
+
+- **WHEN** a database holding every stored shape is brought to the current storage shape
+- **THEN** every existing value loads unchanged, and the reminder setting and a сповіщення can be
+  stored
+
+#### Scenario: A fresh database starts with nothing to announce
+
+- **WHEN** all committed migrations are applied in order to an empty database
+- **THEN** the нагадування loads as off, no сповіщення is outstanding, and each can be stored
+
+### Requirement: Розстрочки and the states of their платежі survive a restart
+
+Stored розстрочки SHALL remain readable after storage is closed and reopened, each with its назва,
+повна сума, кількість платежів, щомісячний платіж, дата першого платежу, рахунок списання,
+сплачено раніше, категорія where it has one, the moment it was recorded and the дата it was closed
+early where it was. For every платіж SHALL be kept, by number, the транзакція it is linked to, the
+owner's mark сплачено, and every транзакція the owner unlinked from it. The switch of the
+нагадування про платіж, and whether the app has already asked for notification permission on their
+behalf, SHALL survive likewise, reading as on when it was never set. The data SHALL
+live only on the device.
+
+#### Scenario: A розстрочка comes back whole
+
+- **WHEN** «iPhone» of 1000000 minor units UAH in 10 платежі of 100000 from 2026-06-05 on «mono
+  black» with 4 сплачено раніше, платіж 5 linked to a витрата, платіж 6 marked сплачено and one
+  витрата unlinked from платіж 7 is stored, and storage is closed and reopened
+- **THEN** all of it is read back exactly so
+
+#### Scenario: The switch defaults to on
+
+- **WHEN** storage that never stored the switch is read
+- **THEN** the нагадування про платіж read as on, and the app has not yet asked on their behalf
+
+### Requirement: A stored розстрочка refers only to what storage holds
+
+The system SHALL reject storing a розстрочка whose рахунок списання or категорія is not present in
+storage, or whose рахунок списання is not a UAH рахунок, and SHALL reject linking a платіж to a
+транзакція that is not present, is not a UAH витрата on the розстрочка's рахунок списання, or is
+already linked to another платіж. A rejected write SHALL leave storage as it was. Removing a
+транзакція SHALL remove its link and leave the платіж otherwise as it was.
+
+#### Scenario: A non-UAH рахунок списання is rejected
+
+- **WHEN** a розстрочка naming a USD рахунок as its рахунок списання is stored
+- **THEN** storage rejects it and holds no розстрочка
+
+#### Scenario: A транзакція links to one платіж at most
+
+- **WHEN** a витрата already linked to платіж 5 of «iPhone» is linked to платіж 1 of «Пилосос»
+- **THEN** storage rejects it and the витрата stays linked to платіж 5 of «iPhone» only
+
+#### Scenario: A removed транзакція releases its link
+
+- **WHEN** the витрата linked to платіж 5 is removed
+- **THEN** платіж 5 has no link, the розстрочка is otherwise unchanged, and nothing refuses the
+  removal
+
+### Requirement: A merged рахунок takes its розстрочки along
+
+When one рахунок is merged into another, every розстрочка whose рахунок списання was the merged
+рахунок SHALL name the рахунок it was merged into, with every link of its платежі kept.
+
+#### Scenario: Merging the card of a розстрочка
+
+- **WHEN** the UAH рахунок «mono black (Saldo)», рахунок списання of «iPhone», is merged into «mono
+  black»
+- **THEN** «iPhone» has «mono black» as its рахунок списання and its linked платежі are still
+  linked to the same витрати
+
+### Requirement: Розстрочки arrive by a new append-only migration
+
+Applying every committed migration in order to an empty database SHALL produce storage that holds
+розстрочки alongside everything the earlier migrations already hold. Rows stored under the earlier
+migrations SHALL survive the new one unchanged, and no розстрочка SHALL exist that the owner never
+recorded. Committed migrations SHALL NOT be edited.
+
+#### Scenario: Existing data survives the migration
+
+- **WHEN** рахунки, транзакції, категорії, ліміти and цілі stored under the earlier migrations are
+  read after the new migration is applied
+- **THEN** every row is exactly what it was and there is no розстрочка
+
+### Requirement: The snapshot carries the розстрочки
+
+The whole stored state read as one snapshot SHALL include every розстрочка, every state of its
+платежі and the switch of the нагадування про платіж, and replacing the stored state by a snapshot
+SHALL replace them with the snapshot's, as one unit with everything else. Whether the app has
+already asked for notification permission on behalf of the нагадування про платіж is the phone's
+own state: it SHALL NOT be part of the snapshot, and a replace SHALL leave it as it was.
+
+#### Scenario: Replacing the state replaces the розстрочки
+
+- **WHEN** storage holding «iPhone» is replaced by a snapshot holding only «Пилосос»
+- **THEN** storage holds «Пилосос» and no «iPhone»
+
+#### Scenario: A replace leaves whether the app already asked
+
+- **WHEN** storage whose app has already asked for notification permission is replaced by a
+  snapshot
+- **THEN** the app has still already asked

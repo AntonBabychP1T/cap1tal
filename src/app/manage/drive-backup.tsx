@@ -65,6 +65,7 @@ import {
 import { journal } from '@/ui/journal';
 
 import { Spacing } from '@/constants/theme';
+import { keepInstallmentsQuietly } from '@/hooks/installment-ports';
 
 /**
  * «Google Drive» — where the owner connects their account, reads whether their history is safe,
@@ -363,6 +364,8 @@ export default function DriveBackupScreen() {
         }
         // The restored history brought its own earned set; the evaluation earns what it still proves.
         judgeProgressLater();
+        // The restored розстрочки: link their платежі and arrange their warnings on this phone.
+        await keepInstallmentsQuietly();
         setTyped('');
         say(undefined);
       } else {

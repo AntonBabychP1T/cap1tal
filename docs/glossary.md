@@ -25,6 +25,11 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   all closed and nameless, so it puts them on a single «Борги» account per currency.
 - **Computed balance** (розрахунковий баланс) — opening balance plus every transaction since; the
   balance the app believes.
+- **Opening date** (дата початкового залишку) — the day from which a рахунок's початковий
+  залишок holds: the day the рахунок was created in the app, the Saldo «Initial balance» date on
+  import, or a дата the owner sets — never after today. It moves no баланс: the розрахунковий
+  баланс is the початковий залишок plus every транзакція whatever their dates. It only says from
+  when Історія статку counts the рахунок. A рахунок stored before it existed has none.
 - **Bank balance** (баланс банку) — the balance the bank reports where an API exists; shown next
   to the computed one, never overwriting it.
 - **Contributed** (вкладено) — for an інвестиційний рахунок: that рахунок's розрахунковий баланс —
@@ -201,6 +206,45 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   it is neither дохід nor інвестовано, it reaches залишилось nowhere, and it is listed here beside
   them only so it is never mistaken for one of them.
 
+## Розстрочки
+
+Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
+
+- **Розстрочка** (installment plan; code `installment`) — an interest-free purchase the owner pays
+  for in monthly платежі, such as monobank «Покупка частинами». A **plan** the owner enters by
+  hand: назва (what was bought), повна сума, кількість платежів (2–60), щомісячний платіж, дата
+  першого платежу, рахунок списання, сплачено раніше and optionally a категорія. In UAH. It is not
+  a транзакція and not a рахунок: its повна сума is counted nowhere, because the bank never debits
+  it — it debits the платежі.
+- **Платіж** (code `InstallmentPart` — a part, as monobank says «частинами»; never `Payment`, which
+  would read as a synonym of транзакція) — one scheduled monthly debit of a розстрочка: a number, a дата and a сума.
+  Every платіж but the last is the щомісячний платіж; the last is the повна сума minus the others,
+  so they add up exactly. The щомісячний платіж is offered as повна сума ÷ кількість rounded down.
+- **Графік** (schedule) — the платежі of a розстрочка: one a month on the day of the first, on the
+  month's last day where that day does not exist. Derived, never entered платіж by платіж.
+- **Рахунок списання** (debit account) — the UAH рахунок the платежі are debited from.
+- **Списання** (debit) — the витрата a платіж is linked to: the bank's monthly debit, arrived by
+  monobank, a notification or by hand. The app links a UAH витрата on the рахунок списання of the
+  exact сума within three days of the платіж's дата; the owner can unlink (remembered), pick one by
+  hand, or mark a платіж paid without one. Linking never creates or moves money; it only gives a
+  «Без категорії» витрата the розстрочка's категорія.
+- **Сплачено раніше** (paid before) — how many of the first платежі were already paid when the
+  розстрочка was recorded; they need no списання.
+- **Стан платежу** (payment state) — exactly one of: **сплачено** (linked, paid before or marked),
+  **закрито** (the розстрочка was closed early), **очікується** (no later than three days after its
+  дата), **списання не знайдено** (more than three days after it, with nothing linked).
+- **Залишок розстрочки** (remaining) — повна сума minus the scheduled сума of every сплачено
+  платіж, and 0 once the розстрочка is closed early. A розстрочка with all платежі сплачено is
+  **сплачена**.
+- **Закрити достроково** (close early) — the owner's word that a розстрочка is paid off: its
+  unpaid платежі become закрито and are no longer expected, counted or reminded of.
+- **Вільно після розстрочок** (free after installments) — for the current month only, in UAH:
+  залишилось minus the сума of this month's платежі that are очікується or списання не знайдено.
+  A secondary reading beneath залишилось; it changes no number of the monthly picture.
+- **Нагадування про платіж** (payment reminder) — one local notification at 10:00 the day before a
+  дата with an очікується платіж, one per дата, with a fixed text naming no сума and no назва.
+  Behind one switch, on until the owner turns it off.
+
 ## Net worth
 
 - **Статок** (net worth) — the sum, separately per currency, of every recorded рахунок's
@@ -215,22 +259,40 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   the currency that is missing — and never stands in place of the exact per-currency readings.
   Along the history it is also drawn as «Усе ≈ грн»: each dated per-currency баланс converted at
   that same current rate and summed, marked «≈», present only where every currency held (archived
-  included) is known and every non-UAH currency has a rate — never a partial sum.
+  included) is known and every non-UAH currency has a rate — never a partial sum. A currency first
+  held later contributes nothing before its рахунки enter, so it never shortens the whole.
 - **Історія статку** (net worth history) — per-currency розрахункові баланси reconstructed from
-  opening balances and dated транзакція effects alone, from the earliest recorded транзакція
-  through today, at month-ends and today. It never treats an інвестиційний рахунок's поточна
+  opening balances and dated транзакція effects alone, at the first date, month-ends and today.
+  Each рахунок enters it at its дата початкового залишку, or at its first транзакція when that is
+  earlier, or today when it has neither: before that it contributes nothing, from then its
+  початковий залишок plus its транзакції. An entry is a step marked «нові рахунки», never growth,
+  and a later рахунок never hides the history before it — only a sum too large to represent
+  exactly leaves a point without a value. It never treats an інвестиційний рахунок's поточна
   вартість, a баланс банку, свідчення досягнення or today's курс as a past market value — an
   інвестиційний рахунок's history is always its вкладено, named as such, whatever its current
-  reading uses. A рахунок with a nonzero opening balance and no dated транзакція on or before the
-  day in question produces an honest gap rather than an invented number, and a транзакція dated
-  after today is disclosed rather than folded into the curve. The one place today's курс touches
-  it is the separately marked «Усе ≈ грн» approximation above, which converts these unchanged
-  balances and alters none of them.
-- **Зміна статку** (net worth change) — the current exact статок against the preceding calendar
-  month-end in the same currency, shown only when both sides share the same reconstructed basis —
-  no поточна вартість substituted for either, no future-dated транзакція touching it — so it never
-  reads as an investment return it is not. On «Усе ≈ грн» it is the current приблизний статок
-  against that month-end's «≈» point at the same current rates, under the same conditions.
+  reading uses. A транзакція dated after today is disclosed rather than folded into the curve. The
+  one place today's курс touches it is the separately marked «Усе ≈ грн» approximation (see
+  Приблизний статок), which converts these unchanged balances, alters none of them, and is the
+  default reading whenever more than one currency is held and every rate is cached.
+- **Зміна статку** (net worth change) — today's point of Історія статку against the preceding
+  calendar month-end's, in the same currency and on the same recorded-balance basis, leaving out
+  the початкові залишки of рахунки that entered between them («нові рахунки», stated beside it).
+  An entered поточна вартість never enters or withholds it; how far поточна вартість differs from
+  вкладено is read on its own line. A percentage appears only over a strictly positive month-end.
+  On «Усе ≈ грн» it compares the two «≈» points at the same current rates.
+- **Розбивка зміни статку** (change breakdown) — a month's зміна per currency, read as parts that
+  add up to it exactly: дохід; витрати net of повернення; коригування; **перекази й обмін** — the
+  net of every переказ leg in that currency, zero for a переказ between two рахунки of one currency
+  and non-zero only for an exchange between currencies or legs of unequal amounts; and **нові
+  рахунки** — the початкові залишки of рахунки entering that month, which the зміна leaves out.
+  «Витрати» here is not Місяць's витрачено: коригування stay their own line. On «Усе ≈ грн» each
+  part is converted at the current rate, the rounding difference carried by перекази й обмін.
+- **Прогноз статку** (net worth forecast) — an opt-in continuation of Історія статку on the
+  «Статок» screen only, for the end of the current month and the five after it: from today's point
+  at the **темп** — the median зміна of the last six complete months — with a range from the
+  spread of the last twelve. Always marked «≈ якщо темп збережеться», withheld with fewer than six
+  complete months, computed when shown, stored nowhere, and never feeding Статок, a ціль, a
+  досягнення or any other number. It is not a promise and not a plan.
 
 ## Progress
 
@@ -267,7 +329,8 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   balance, every категорія, джерело, правило, ліміт and ціль, every транзакція, what the app has
   already imported, and every фіскальний чек with its позиції and the source document the tax
   service served — so a restored phone shows a чек without asking the tax service again. It also
-  holds the прогрес the owner has built up: кожне отримане досягнення зі своєю датою й свідченням,
+  holds every розстрочка with the states of its платежі — the owner's word about money no statement
+  shows — and the прогрес the owner has built up: кожне отримане досягнення зі своєю датою й свідченням,
   кожне рішення про виклик і кожна підтверджена місячна норма витрат — жодне з них не рахується з
   транзакцій, тож без них відновлений телефон виглядав би так, ніби нічого не досягнуто. It never
   holds the monobank token, the чернетки awaiting a word, or the text of the notifications behind
@@ -513,6 +576,8 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 | Restore (відновлення) | Import (імпорт) | an import adds to what is there; a restore replaces all of it with the бекап's |
 | Код відновлення | Відновлення | the код is a key written down — a thing the owner keeps; the відновлення is the act of putting a бекап back. Having the код restores nothing by itself, and a відновлення on the phone that made the бекап needs no код at all |
 | Reminder (нагадування) | Failure alert (сповіщення про збій) | the нагадування asks the owner to do something; the сповіщення says the app failed to |
+| Reminder (нагадування) | Нагадування про платіж | the нагадування invites recording, daily, at the owner's time; the нагадування про платіж warns of a розстрочка платіж tomorrow, at 10:00, only before one |
+| Розстрочка | Транзакція / рахунок-борг | a розстрочка is a plan the bank's debits are linked to: its повна сума is no витрата and no balance, and it owes money to a bank on a графік — a рахунок-борг is money the owner lent to a person, with no графік |
 | Failure alert (сповіщення про збій) | Bank notification (сповіщення банку) | one the app posts about itself; the other is what another bank's app posted and this app read |
 | Фіскальний чек | Квитанція | the чек is what the seller's реєстратор registered with the tax service and names the позиції; a квитанція (monobank's `receiptId`, check.gov.ua) only proves a payment happened and names no product — it cannot be used to find a чек |
 | Позиція чека | Транзакція | a позиція is detail under one транзакція; it has no категорія, no рахунок and no effect on any number the app computes |

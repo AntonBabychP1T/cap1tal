@@ -2,7 +2,14 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Linking, Platform } from 'react-native';
 
-import { REMINDER_NOTICE, noticeData, routeOf, type Notice, type NoticeRoute } from '../reminders/notices';
+import {
+  REMINDER_NOTICE,
+  isInstallmentDueId,
+  noticeData,
+  routeOf,
+  type Notice,
+  type NoticeRoute,
+} from '../reminders/notices';
 import type { TimeOfDay } from '../reminders/time';
 import type {
   LocalNotificationPermission,
@@ -78,8 +85,14 @@ function ensureChannels(): Promise<void> {
   return channelsReady;
 }
 
+/**
+ * The нагадування про платіж is a нагадування, not a сповіщення про збій, so it goes to the same
+ * channel as the daily one (installments design D5).
+ */
 function channelOf(notice: Notice): string {
-  return notice.id === REMINDER_NOTICE.id ? REMINDER_CHANNEL : ALERT_CHANNEL;
+  return notice.id === REMINDER_NOTICE.id || isInstallmentDueId(notice.id)
+    ? REMINDER_CHANNEL
+    : ALERT_CHANNEL;
 }
 
 /** The content of a notice, identically on both paths: its own words, and its route as data. */
@@ -175,6 +188,32 @@ export const localNotifications: LocalNotificationsPort = {
       });
     } catch {
       // Nothing is arranged, and the section already reports what the permission actually says.
+    }
+  },
+
+  /**
+   * One instant, computed in the phone's own zone right now — the `DATE` trigger takes an absolute
+   * moment. The launch path re-asserts every arrangement, which re-computes it after a flight.
+   */
+  async scheduleAt(notice: Notice, at: { readonly date: string; readonly time: TimeOfDay }): Promise<void> {
+    if (!supported()) {
+      return;
+    }
+    await ensureChannels();
+    const [year, month, day] = at.date.split('-').map(Number) as [number, number, number];
+    const moment = new Date(year, month - 1, day, at.time.hour, at.time.minute, 0, 0);
+    try {
+      await Notifications.scheduleNotificationAsync({
+        identifier: notice.id,
+        content: contentOf(notice),
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          channelId: channelOf(notice),
+          date: moment,
+        },
+      });
+    } catch {
+      // Nothing is arranged; the next launch re-asserts it.
     }
   },
 

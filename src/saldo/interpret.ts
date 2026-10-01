@@ -60,10 +60,19 @@ export interface PlannedAccount {
   readonly kind: AccountKind;
   readonly currency: CurrencyCode;
   readonly openingBalance: Money;
+  /**
+   * The дата початкового залишку: the earliest phone date of the «Initial balance» entries mapped
+   * onto this рахунок, moved back to its first planned or stored транзакція when that is earlier.
+   * Absent when the export holds no such entry for it (saldo-import, "Initial balance legs become
+   * the початковий залишок").
+   */
+  readonly openingDate?: IsoDate;
   /** Set when this is a рахунок that already exists rather than one the plan creates. */
   readonly existingId?: string;
   /** The початковий залишок the plan proposes to replace, so the report can show it. */
   readonly replacedOpeningBalance?: Money;
+  /** Beside `replacedOpeningBalance`: the stored дата it replaces, absent when there was none. */
+  readonly replacedOpeningDate?: IsoDate;
 }
 
 /** One транзакція of the plan, with the export rows it came from. */
@@ -262,6 +271,8 @@ export function interpret(input: {
   const placed: Placed[] = [];
   const unexplained: UnexplainedRow[] = [];
   const openingContributions = new Map<string, number>();
+  /** The earliest phone date of the «Initial balance» entries per рахунок. */
+  const openingDates = new Map<string, IsoDate>();
   /** The «Борги» рахунки the plan needs, by currency, in the order the export reaches for them. */
   const debtAccounts = new Map<string, ResolvedAccount>();
 
@@ -499,6 +510,10 @@ export function interpret(input: {
             account.id,
             (openingContributions.get(account.id) ?? 0) + legEffect(leg).amount,
           );
+          const earliest = openingDates.get(account.id);
+          if (leg.date !== '' && (earliest === undefined || leg.date < earliest)) {
+            openingDates.set(account.id, leg.date);
+          }
         }
       }
       continue;
@@ -686,18 +701,47 @@ export function interpret(input: {
       planned.set(account.id, account);
     }
   }
+  // Each рахунок's first транзакція — planned, or already stored on an existing one — which an
+  // «Initial balance» dated after it is moved back to: a balance cannot hold from a day later than
+  // money already moved on it.
+  const firstMovement = new Map<string, IsoDate>();
+  const touch = (accountId: string, date: IsoDate): void => {
+    const first = firstMovement.get(accountId);
+    if (first === undefined || date < first) firstMovement.set(accountId, date);
+  };
+  for (const { planned: entry } of placed) {
+    for (const accountId of accountsTouched(entry.transaction)) touch(accountId, entry.transaction.date);
+  }
+  const plannedIdOfExisting = new Map(
+    [...planned.values()].flatMap((a) => (a.existingId ? [[a.existingId, a.id] as const] : [])),
+  );
+  for (const t of existing.transactions) {
+    for (const storedId of accountsTouched(t)) {
+      const plannedId = plannedIdOfExisting.get(storedId);
+      if (plannedId !== undefined) touch(plannedId, t.date);
+    }
+  }
+
   const accounts: PlannedAccount[] = [...planned.values()].map(
     (account) => {
       const stored = account.existingId ? existingAccounts.get(account.existingId) : undefined;
+      const entered = openingDates.get(account.id);
+      const first = firstMovement.get(account.id);
+      const openingDate =
+        entered === undefined ? undefined : first !== undefined && first < entered ? first : entered;
       return {
         id: account.id,
         name: account.name,
         kind: account.kind,
         currency: account.currency,
         openingBalance: money(openingContributions.get(account.id) ?? 0, account.currency),
+        ...(openingDate !== undefined ? { openingDate } : {}),
         ...(account.existingId ? { existingId: account.existingId } : {}),
         ...(stored
-          ? { replacedOpeningBalance: money(stored.openingBalance.amount, stored.currency) }
+          ? {
+              replacedOpeningBalance: money(stored.openingBalance.amount, stored.currency),
+              ...(stored.openingDate !== undefined ? { replacedOpeningDate: stored.openingDate } : {}),
+            }
           : {}),
       };
     },
@@ -769,4 +813,9 @@ function debtAccountFor(
       currency,
     }
   );
+}
+
+/** The рахунки one транзакція moves: its own, or both legs of a переказ. */
+function accountsTouched(t: Transaction): readonly string[] {
+  return t.type === 'transfer' ? [t.fromAccountId, t.toAccountId] : [t.accountId];
 }

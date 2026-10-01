@@ -101,7 +101,16 @@ Each line SHALL show what the latest-transactions feed shows — сума with i
 (both for a переказ), дата, категорія or джерело, and the опис when one exists — and SHALL carry
 the same marks: «Без категорії» highlighted, a категорія over its ліміт for that транзакція's
 own month shown over limit. Tapping a line SHALL open that транзакція for editing exactly as the
-feed does. The screen SHALL create, change and delete nothing of its own.
+feed does.
+
+A line in «Без категорії» SHALL offer the same one-tap categorisation the latest-transactions feed
+offers from its mark, under the same rules: an unarchived категорія picked from the same short
+picker, «Без категорії» itself not among the choices, stored on that транзакція without opening
+editing, the mark gone with the pick. WHILE the «Без категорії» narrowing is in force, the
+categorised line SHALL leave the list at once, and the lines already shown SHALL keep their order.
+
+Beyond that one categorisation, the screen SHALL create, change and delete nothing of its own; it
+SHALL NOT, as part of this requirement, store or offer a правило.
 
 #### Scenario: A found транзакція is edited
 
@@ -113,6 +122,20 @@ feed does. The screen SHALL create, change and delete nothing of its own.
 - **WHEN** the results hold a витрата in «Без категорії» and a витрата in a категорія over its
   ліміт for that витрата's month
 - **THEN** the first is highlighted as uncategorised and the second shows its категорія over limit
+
+#### Scenario: One tap categorises from «Транзакції»
+
+- **WHEN** the owner uses the mark on a витрата in «Без категорії» on «Транзакції» and picks
+  «Продукти»
+- **THEN** the same витрата now carries «Продукти» without the editing screen having opened, and
+  its mark is gone
+
+#### Scenario: A categorised line leaves the uncategorised list
+
+- **WHEN** the list is narrowed to «Без категорії» and shows «СІЛЬПО Київ», «Uklon» and «Rozetka»,
+  and the owner picks «Транспорт» on «Uklon»
+- **THEN** the list shows «СІЛЬПО Київ» and «Rozetka» in that order, and Головний's «Потребує
+  уваги» names one fewer
 
 #### Scenario: Searching changes nothing stored
 
@@ -202,3 +225,183 @@ dp Android viewport at the default font.
   owner opens «Транзакції»
 - **THEN** the рахунок row reads «Всі», «гаманець», «РЕЗЕРВ», «mono white» and then the other
   рахунки in their usual order
+
+### Requirement: Letter case is folded one way, whatever the phone's language
+
+Wherever a search compares what the owner typed with an опис or a name without regard to letter
+case, the case SHALL be folded by one mapping that depends on no language setting of the phone,
+and that mapping SHALL agree with Ukrainian casing on every character, so that the same опис and
+the same typed text are found alike on every phone and in the test suite.
+
+#### Scenario: Ukrainian letters fold as before
+
+- **WHEN** a витрата carries the опис «ҐАНОК ЇЖАК Єнот І» and the owner searches for «ґанок їжак єнот і»
+- **THEN** that витрата is shown
+
+#### Scenario: The fold agrees with Ukrainian casing on every character
+
+- **GIVEN** any single character
+- **WHEN** it is folded by the search's case mapping and by Ukrainian casing
+- **THEN** both give the same text
+
+#### Scenario: A phone set to Turkish still finds a Latin опис
+
+- **GIVEN** the phone's language is Turkish, where a capital «I» lower-cases to a dotless «ı»
+- **WHEN** a витрата carries the опис «BILLA» and the owner searches for «billa»
+- **THEN** that витрата is shown
+
+### Requirement: Typing a search is never held up by the search
+
+What the owner types into the «Транзакції» search SHALL appear in the field at once, character by
+character. The list SHALL be searched again only once typing has paused for 250 ms, and once per
+pause, never once per character. Clearing the field SHALL show the unsearched list at once. The
+result of a search SHALL be exactly what the same text would find if it were typed in one go.
+
+#### Scenario: Fast typing searches once
+
+- **WHEN** the owner types «сільпо» without pausing
+- **THEN** every letter appears as it is typed and the list is searched once, for «сільпо», after
+  the pause
+
+#### Scenario: Clearing the field is immediate
+
+- **WHEN** the owner clears a search
+- **THEN** the unsearched list is shown without waiting for a pause
+
+### Requirement: Showing more reads only what it adds
+
+Asking for more транзакції SHALL read only the next page and add it after the rows already shown,
+without reading the pages already shown again, as long as nothing was written since they were read.
+WHEN something was written in between, the rows already shown and the next page SHALL be read
+together in one read, so that no транзакція is shown twice and none is skipped. Coming back to
+«Транзакції», or a write made from it, SHALL keep as many rows shown as before, read in one read,
+and SHALL NOT fall back to the first page. WHEN nothing is searched, the listing SHALL be taken from
+storage directly, in the newest-first order, without reading the rest of the history. Which
+транзакції are shown, their order and the «nothing more» end SHALL be exactly as before.
+
+#### Scenario: The third page reads one page
+
+- **WHEN** two pages are shown, nothing is written, and the owner asks for more
+- **THEN** only the third page is read, and it follows the first two in the same order they would
+  have had if all three were read at once
+
+#### Scenario: More of a search reads nothing already read
+
+- **WHEN** a search for «сільпо» shows one page, nothing is written, and the owner asks for more
+- **THEN** the next matches follow without the stored транзакції being read again
+
+#### Scenario: A транзакція stored between pages is neither repeated nor lost
+
+- **WHEN** two pages are shown, a прогін stores a new транзакція, and the owner asks for more
+- **THEN** the list shows every транзакція once, the new one in its newest-first place, and none is
+  skipped
+
+#### Scenario: Coming back from a транзакція keeps the pages shown
+
+- **WHEN** three pages are shown, the owner opens a транзакція from the third page and goes back
+- **THEN** «Транзакції» still shows three pages' worth of транзакції, read in one read
+
+#### Scenario: The unsearched listing reads one page from storage
+
+- **WHEN** the owner opens «Транзакції» with 10 000 транзакції stored and nothing searched
+- **THEN** the listing read takes only the first page's транзакції from storage
+
+### Requirement: Limit marks on the list need no read per month
+
+The over-ліміт marks on the shown rows SHALL be judged from the whole history already read between
+writes. They SHALL NOT be judged from a separate storage read for each month the shown rows span.
+Every mark SHALL be the same as the month-by-month reading would give, including a month left
+unjudged because it holds a сума beyond the ceiling.
+
+#### Scenario: Rows spanning two years are marked as the month-by-month reading marks them
+
+- **WHEN** a search shows транзакції from 24 different months, some in an over-ліміт категорія and
+  one month holding a сума beyond the ceiling
+- **THEN** no month is read from storage on its own to mark them, each row is marked exactly as the
+  month-by-month reading marks it, and the ceiling month stays unjudged
+
+### Requirement: The list narrows to «Без категорії»
+
+The «Транзакції» screen SHALL let the owner narrow the list to the транзакції without a категорія:
+exactly the витрати and повернення carrying «Без категорії» — every line the list marks as
+uncategorised, and the same set «Потребує уваги» on Головний counts, so the count there, the marks
+and the list here SHALL name the same транзакції. A дохід carrying «Без джерела», a переказ, a
+коригування, and a витрата or повернення in any other категорія SHALL NOT be shown under it.
+
+The narrowing SHALL combine with the search, the рахунок and the місяць like the other narrowings,
+SHALL be visible while in force, and SHALL be cleared together with them. Like them it SHALL only
+ever remove транзакції from the result, never add or reorder them; the empty result SHALL be the
+«nothing found» the screen already says for a narrowing that matches nothing.
+
+#### Scenario: Only the uncategorised витрати are shown
+
+- **WHEN** a витрата «СІЛЬПО Київ» in «Без категорії», a витрата «АТБ» in «Продукти», a дохід in
+  «Без джерела» and a переказ are stored and the owner narrows to «Без категорії»
+- **THEN** only «СІЛЬПО Київ» is shown
+
+#### Scenario: A повернення in «Без категорії» is a question too
+
+- **WHEN** a повернення carrying «Без категорії» and a повернення in «Продукти» are stored and the
+  owner narrows to «Без категорії»
+- **THEN** only the first is shown, marked as uncategorised, and «Потребує уваги» counts it
+
+#### Scenario: The list and Головний's count agree
+
+- **WHEN** six stored витрати and one повернення carry «Без категорії» and «Потребує уваги» names
+  seven
+- **THEN** «Транзакції» narrowed to «Без категорії» shows exactly those seven
+
+#### Scenario: «Без категорії» combines with a рахунок and a місяць
+
+- **WHEN** the owner narrows to «Без категорії», to «гаманець» and to March 2026
+- **THEN** only the транзакції in «Без категорії» touching «гаманець» and dated in March 2026 are shown,
+  in the same order as before
+
+#### Scenario: Clearing takes «Без категорії» off with the rest
+
+- **WHEN** the list is narrowed to «Без категорії» and to «гаманець» and the owner clears the
+  narrowing
+- **THEN** the full history is shown again without leaving the screen
+
+#### Scenario: Nothing left uncategorised says so
+
+- **WHEN** no stored транзакція carries «Без категорії» and the owner narrows to «Без категорії»
+- **THEN** the screen states that nothing was found and the narrowing stays in force
+
+### Requirement: «Транзакції» can be opened already narrowed to «Без категорії»
+
+The system SHALL be able to open «Транзакції» with the «Без категорії» narrowing already in force.
+The narrowing SHALL be an **initial value and not a lock**: it is shown like one the owner chose,
+and the owner may take it off or add a search, a рахунок or a місяць to it. Opening «Транзакції»
+without asking for it SHALL leave it off, and anything asked for that is not this narrowing SHALL
+narrow nothing.
+
+#### Scenario: Opened narrowed, and widened by hand
+
+- **WHEN** «Транзакції» is opened asking for «Без категорії»
+- **THEN** only the транзакції in «Без категорії» are shown, the narrowing reads as in force, and the
+  owner can take it off to see the whole history
+
+#### Scenario: Anything else asked for narrows nothing
+
+- **WHEN** «Транзакції» is opened asking for «продукти», for an empty value or for nothing at all
+- **THEN** the whole history is shown and no «Без категорії» narrowing is in force
+
+### Requirement: Under «Без категорії» a line leads with its опис
+
+WHILE the «Без категорії» narrowing is in force, each line that carries an опис SHALL lead with that
+опис, as stored, in the place and weight the line
+otherwise gives its категорія, since every line in that list carries the same категорія and only
+the опис tells them apart. The line SHALL still carry the «Без категорії» mark, its сума with its
+currency, its рахунок and its дата. A line without an опис SHALL read exactly as it does with the
+narrowing off. With the narrowing off, every line SHALL read as the latest-transactions feed reads.
+
+#### Scenario: The опис is what the owner reads first
+
+- **WHEN** the list is narrowed to «Без категорії» and holds a витрата with the опис «Uklon»
+- **THEN** its line leads with «Uklon», marked as uncategorised, with its сума, рахунок and дата
+
+#### Scenario: A line without an опис keeps its usual title
+
+- **WHEN** the list is narrowed to «Без категорії» and holds a витрата recorded by hand with no опис
+- **THEN** its line reads as it does in the latest-transactions feed

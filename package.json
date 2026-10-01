@@ -10,6 +10,7 @@
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
+    "build:apk": "bash scripts/android.sh release",
     "web": "expo start --web",
     "verify": "bash scripts/verify.sh",
     "spec:validate": "openspec validate --all --no-interactive",

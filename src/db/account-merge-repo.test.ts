@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
 import { money } from '../domain/money';
-import { transfer, type Correction } from '../domain/transaction';
+import { expenseByDefault, transfer, type Correction } from '../domain/transaction';
 import { mergeAccounts } from './account-merge-repo';
 import { accountsRepo } from './accounts-repo';
 import { entryDefaultsRepo } from './entry-defaults-repo';
+import { installmentsRepo } from './installments-repo';
 import { investmentsRepo } from './investments-repo';
 import { monobankRepo, type FetchedMonobankAccount } from './monobank-repo';
 import { notificationsRepo } from './notifications-repo';
@@ -145,6 +146,24 @@ describe('mergeAccounts', () => {
     expect(investments.get('third')).toBeUndefined();
   });
 
+  it('Scenario: Merged рахунки keep the earlier дата', () => {
+    const accounts = accountsRepo(storage.db);
+    accounts.save(account({ ...bond, openingDate: '2026-08-30' }));
+    accounts.save(account({ id: 'cash', name: 'готівка $', kind: 'cash', currency: 'USD', openingDate: '2026-06-08' }));
+    mergeAccounts(storage.db, { fromId: 'cash', intoId: 'bond' });
+    expect(accounts.get('bond')?.openingDate).toBe('2026-06-08');
+
+    // Into one with no дата: the folded рахунок's дата is the only one, so it is kept.
+    accounts.save(account({ id: 'cash2', name: 'гаманець $', kind: 'cash', currency: 'USD', openingDate: '2026-06-08' }));
+    mergeAccounts(storage.db, { fromId: 'cash2', intoId: 'card' });
+    expect(accounts.get('card')?.openingDate).toBe('2026-06-08');
+
+    // Neither has one: none.
+    accounts.save(account({ id: 'cash3', name: 'скарбничка $', kind: 'cash', currency: 'USD' }));
+    mergeAccounts(storage.db, { fromId: 'cash3', intoId: 'jar' });
+    expect(accounts.get('jar')?.openingDate).toBeUndefined();
+  });
+
   it('refuses two linked рахунки and writes nothing', () => {
     const monobank = monobankRepo(storage.db);
     monobank.upsertAccounts(
@@ -172,5 +191,37 @@ describe('mergeAccounts', () => {
     );
     expect(() => mergeAccounts(storage.db, { fromId: 'uah', intoId: 'bond' })).toThrow('валюти різні');
     expect(accountsRepo(storage.db).get('uah')).toBeDefined();
+  });
+
+  it('Scenario: Merging the card of a розстрочка', () => {
+    const saldoBlack = account({ id: 'saldo-black', name: 'mono black (Saldo)', kind: 'spending', currency: 'UAH' });
+    const black = account({ id: 'black', name: 'mono black', kind: 'spending', currency: 'UAH' });
+    accountsRepo(storage.db).save(saldoBlack);
+    accountsRepo(storage.db).save(black);
+    const installments = installmentsRepo(storage.db);
+    installments.save({
+      id: 'i-iphone',
+      name: 'iPhone',
+      total: 1_000_000,
+      partsCount: 10,
+      part: 100_000,
+      firstDue: '2026-10-05',
+      debitAccountId: 'saldo-black',
+      paidBefore: 0,
+      recordedAt: storedAt.getTime(),
+    });
+    transactionsRepo(storage.db).save(
+      expenseByDefault({ id: 'debit', date: '2026-10-05', accountId: 'saldo-black', amount: money(100_000, 'UAH') }),
+      storedAt,
+    );
+    installments.settle('2026-10-05');
+    const links = installments.facts().links;
+    expect(links).toHaveLength(1);
+
+    mergeAccounts(storage.db, { fromId: 'saldo-black', intoId: 'black' });
+
+    expect(installments.get('i-iphone')?.debitAccountId).toBe('black');
+    expect(installments.facts().links).toEqual(links);
+    expect(installments.settle('2026-10-06')).toBe(false);
   });
 });

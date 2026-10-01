@@ -9,6 +9,7 @@ import {
   freshnessLabel,
   momentLabel,
   parseTypedDate,
+  shortCalendarLabel,
   pickedDate,
   pickerInstant,
   shiftIsoDate,
@@ -335,5 +336,14 @@ describe('dateStepOffers', () => {
     // Typed day first with dots, it is the same day and steps the same way.
     expect(dateStepOffers('22.09.2026', now).label).toBe('вчора');
     expect(dateStepOffers('22.09.2026', now).back).toBe('2026-09-21');
+  });
+});
+
+describe('shortCalendarLabel', () => {
+  it('says a дата in few letters, with the year only when it is not this one', () => {
+    const now = new Date(2026, 9, 1, 12);
+    expect(shortCalendarLabel('2026-10-05', now)).toBe('5 жовт.');
+    expect(shortCalendarLabel('2026-11-05', now)).toBe('5 лист.');
+    expect(shortCalendarLabel('2027-01-31', now)).toBe('31 січ. 2027');
   });
 });

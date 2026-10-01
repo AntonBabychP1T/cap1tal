@@ -3,6 +3,15 @@ import { identityKey, receiptIdentity } from '../domain/fiscal-receipt';
 import type { Category, Source } from '../domain/category';
 import type { CategoryLimit } from '../domain/limits';
 import { compositionProblem, type AccumulationGoal } from '../domain/goals';
+import {
+  INSTALLMENT_CURRENCY,
+  installmentRefusal,
+  isDebitOn,
+  type Installment,
+  type InstallmentPartLink,
+  type InstallmentPartMark,
+  type RefusedDebit,
+} from '../domain/installments';
 import { MAX_AMOUNT_MINOR, money, type CurrencyCode, type Money } from '../domain/money';
 import { isoDate, type IsoDate, type Transaction } from '../domain/transaction';
 import type { TimeOfDay } from '../reminders/time';
@@ -37,7 +46,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 7;
+export const BACKUP_SCHEMA_VERSION = 9;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -145,6 +154,16 @@ export const BACKUP_TABLES: readonly string[] = [
   // The «Вібрація» switch: a choice the owner made, which travels like the layout
   // (app-motion-pass design D14).
   'haptics_preference',
+  // Розстрочки: the owner's word about money no statement shows — dropped from a бекап, a restored
+  // phone would know every платіж as an ordinary витрата and nothing of what is still owed. With
+  // them the states of their платежі, and the switch of the нагадування про платіж. Of
+  // `installment_reminder` only `enabled` travels: `asked` is whether *this* phone already asked for
+  // notification permission, which a restore leaves as the phone had it (installments design D8).
+  'installments',
+  'installment_part_links',
+  'installment_part_marks',
+  'installment_refusals',
+  'installment_reminder',
 ];
 
 /**
@@ -322,6 +341,19 @@ export interface BackupInvestmentValue {
 }
 
 /**
+ * The розстрочки (installments design D8): every plan, the states of its платежі — links, marks and
+ * the транзакції the owner unlinked — and the switch of the нагадування про платіж. Whether the app
+ * already asked for notification permission is this phone's own state and is not here.
+ */
+export interface BackupInstallments {
+  readonly plans: readonly Installment[];
+  readonly links: readonly InstallmentPartLink[];
+  readonly marks: readonly InstallmentPartMark[];
+  readonly refusals: readonly RefusedDebit[];
+  readonly reminderEnabled: boolean;
+}
+
+/**
  * The owner's whole state, in the shape a бекап carries and storage restores. Every instant is
  * epoch milliseconds rather than a `Date`, because this value is written to a file and read back
  * from one: a shape that survives `JSON.parse` unchanged needs no second mapping layer to be the
@@ -359,6 +391,12 @@ export interface BackupState {
    * no row, which is on. A бекап written before the switch existed restores the same way.
    */
   readonly haptics?: { readonly enabled: boolean };
+  /**
+   * The розстрочки; absent on a бекап written before they existed, or on a device that never
+   * recorded one nor touched the switch — which restores to none, with the нагадування про платіж
+   * on. An optional section, so `BACKUP_FORMAT_VERSION` stays.
+   */
+  readonly installments?: BackupInstallments;
 }
 
 /** The whole file: the marker, the versions, the moment, the integrity value and the contents. */
@@ -492,6 +530,12 @@ function accountAt(value: unknown, at: string): Account {
     kind,
     currency,
     openingBalance,
+    // The дата початкового залишку: absent on a рахунок without one, and on every рахунок of a бекап
+    // written before it existed — which restores with none rather than being refused. An optional
+    // field, so `BACKUP_FORMAT_VERSION` stays.
+    ...(row.openingDate === undefined || row.openingDate === null
+      ? {}
+      : { openingDate: dateAt(row.openingDate, `${at}.openingDate`) }),
     archived: booleanAt(row.archived, `${at}.archived`),
   };
 }
@@ -847,6 +891,52 @@ function investmentValueAt(value: unknown, at: string): BackupInvestmentValue {
   };
 }
 
+function installmentAt(value: unknown, at: string): Installment {
+  const row = objectAt(value, at);
+  return {
+    id: stringAt(row.id, `${at}.id`),
+    name: stringAt(row.name, `${at}.name`),
+    total: integerAt(row.total, `${at}.total`),
+    partsCount: integerAt(row.partsCount, `${at}.partsCount`),
+    part: integerAt(row.part, `${at}.part`),
+    firstDue: dateAt(row.firstDue, `${at}.firstDue`),
+    debitAccountId: stringAt(row.debitAccountId, `${at}.debitAccountId`),
+    paidBefore: integerAt(row.paidBefore, `${at}.paidBefore`),
+    ...optionalString(row, 'categoryId', at),
+    recordedAt: integerAt(row.recordedAt, `${at}.recordedAt`),
+    ...(row.closedOn === undefined || row.closedOn === null
+      ? {}
+      : { closedOn: dateAt(row.closedOn, `${at}.closedOn`) }),
+  };
+}
+
+function installmentPartAt(value: unknown, at: string): InstallmentPartMark {
+  const row = objectAt(value, at);
+  return {
+    installmentId: stringAt(row.installmentId, `${at}.installmentId`),
+    number: integerAt(row.number, `${at}.number`),
+  };
+}
+
+function installmentLinkAt(value: unknown, at: string): InstallmentPartLink {
+  const row = objectAt(value, at);
+  return {
+    ...installmentPartAt(value, at),
+    transactionId: stringAt(row.transactionId, `${at}.transactionId`),
+  };
+}
+
+function installmentsAt(value: unknown, at: string): BackupInstallments {
+  const row = objectAt(value, at);
+  return {
+    plans: listAt(row, 'plans', installmentAt),
+    links: listAt(row, 'links', installmentLinkAt),
+    marks: listAt(row, 'marks', installmentPartAt),
+    refusals: listAt(row, 'refusals', installmentLinkAt),
+    reminderEnabled: booleanAt(row.reminderEnabled, `${at}.reminderEnabled`),
+  };
+}
+
 function watchAt(value: unknown, at: string): BackupWatch {
   const row = objectAt(value, at);
   return {
@@ -906,7 +996,109 @@ export function parseState(value: unknown): BackupState {
             enabled: booleanAt(objectAt(data.haptics, 'haptics').enabled, 'haptics.enabled'),
           },
         }),
+    // A бекап written before розстрочки existed names none, and restores to none with the
+    // нагадування про платіж on (backup-file, "A бекап written before розстрочки existed still
+    // restores").
+    ...(data.installments === undefined || data.installments === null
+      ? {}
+      : { installments: installmentsAt(data.installments, 'installments') }),
   };
+}
+
+/**
+ * The розстрочки checked against the rest of the бекап (backup-file, "A бекап carries the
+ * розстрочки"): each names a UAH рахунок списання and a категорія the бекап holds and nothing the
+ * domain refuses — an archived рахунок or категорія excepted, since a card may be archived after
+ * its розстрочка was recorded — and every платіж state names a платіж that exists. A link names a
+ * транзакція the бекап holds that is a UAH витрата on that рахунок, linked to no other платіж.
+ */
+function checkInstallments(
+  state: BackupState,
+  accounts: ReadonlyMap<string, Account>,
+  categories: ReadonlySet<string>,
+): void {
+  const section = state.installments;
+  if (!section) {
+    return;
+  }
+  const plans = new Map<string, Installment>();
+  for (const plan of section.plans) {
+    const what = `розстрочка «${plan.name}»`;
+    if (plans.has(plan.id)) {
+      fail(`${what} названа двічі`);
+    }
+    plans.set(plan.id, plan);
+    const account = accounts.get(plan.debitAccountId);
+    if (!account) {
+      fail(`${what} посилається на рахунок, якого в бекапі немає`);
+    }
+    if (account.currency !== INSTALLMENT_CURRENCY) {
+      fail(`${what} списується з рахунку «${account.name}», який не в гривнях`);
+    }
+    if (plan.categoryId !== undefined && !categories.has(plan.categoryId)) {
+      fail(`${what} посилається на категорію, якої в бекапі немає`);
+    }
+    const refusal = installmentRefusal(plan, {
+      account,
+      ...(plan.categoryId === undefined ? {} : { category: { name: plan.categoryId, archived: false } }),
+      existing: {
+        debitAccountId: plan.debitAccountId,
+        ...(plan.categoryId === undefined ? {} : { categoryId: plan.categoryId }),
+      },
+    });
+    if (refusal) {
+      fail(`${what}: ${refusal.message}`);
+    }
+  }
+  const planOf = (part: InstallmentPartMark, kind: string): Installment => {
+    const plan = plans.get(part.installmentId);
+    if (!plan) {
+      fail(`${kind} посилається на розстрочку, якої в бекапі немає`);
+    }
+    if (part.number < 1 || part.number > plan.partsCount) {
+      fail(`${kind} розстрочки «${plan.name}» називає платіж ${part.number}, якого немає`);
+    }
+    return plan;
+  };
+  const transactions = new Map(state.transactions.map((entry) => [entry.transaction.id, entry.transaction]));
+  const linkedParts = new Set<string>();
+  const linkedTransactions = new Set<string>();
+  for (const link of section.links) {
+    const plan = planOf(link, 'списання');
+    const what = `списання платежу ${link.number} розстрочки «${plan.name}»`;
+    const key = `${link.installmentId}|${link.number}`;
+    if (linkedParts.has(key)) {
+      fail(`${what} назване двічі`);
+    }
+    linkedParts.add(key);
+    if (linkedTransactions.has(link.transactionId)) {
+      fail(`транзакція «${link.transactionId}» є списанням двох платежів`);
+    }
+    linkedTransactions.add(link.transactionId);
+    const t = transactions.get(link.transactionId);
+    if (!t) {
+      fail(`${what} посилається на транзакцію, якої в бекапі немає`);
+    }
+    const candidate = {
+      id: t.id,
+      type: t.type,
+      date: t.date,
+      createdAt: 0,
+      ...(t.type === 'transfer' ? {} : { accountId: t.accountId, amount: t.amount }),
+    };
+    if (!isDebitOn(candidate, plan.debitAccountId)) {
+      fail(`${what} не є витратою в гривнях з рахунку списання`);
+    }
+  }
+  for (const mark of section.marks) {
+    planOf(mark, 'позначка сплаченого');
+  }
+  for (const refused of section.refusals) {
+    planOf(refused, 'відвʼязане списання');
+    if (!transactions.has(refused.transactionId)) {
+      fail(`відвʼязане списання посилається на транзакцію, якої в бекапі немає`);
+    }
+  }
 }
 
 /**
@@ -1020,6 +1212,7 @@ export function checkConsistent(state: BackupState): void {
     }
     valued.add(value.accountId);
   }
+  checkInstallments(state, accounts, categories);
   for (const account of state.monobankAccounts) {
     if (account.bankBalance.currency !== account.currency) {
       fail(`рахунок monobank «${account.name}» тримає баланс в іншій валюті, ніж сам рахунок`);

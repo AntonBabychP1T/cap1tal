@@ -11,6 +11,7 @@ import {
   type Transaction,
   UNCATEGORISED_CATEGORY_ID,
 } from '../domain/transaction';
+import { monthFigures, netWorthHistory, type AccountHistoryInput } from '../domain/net-worth';
 import { accountsRepo } from './accounts-repo';
 import { netWorthRepo, type NetWorthRepo } from './net-worth-repo';
 import { openTestDb, seedReferences, type TestStorage } from './test-db';
@@ -196,6 +197,30 @@ describe('netWorthRepo', () => {
     ).toBe(1500);
   });
 
+  it('splits a month by kind: витрата and повернення together, each переказ leg its own', () => {
+    transactions.save(
+      expenseByDefault({ id: 'e1', date: '2026-04-01', accountId: 'jar', amount: money(3000, 'UAH'), categoryId: 'food' }),
+      storedAt,
+    );
+    transactions.save(
+      refund({ id: 'r1', date: '2026-04-02', accountId: 'jar', amount: money(1500, 'UAH'), categoryId: 'food' }),
+      storedAt,
+    );
+    transactions.save(
+      transfer({ id: 't1', date: '2026-04-03', fromAccountId: 'jar', toAccountId: 'card', left: money(700, 'UAH'), arrived: money(700, 'UAH') }),
+      storedAt,
+    );
+    const rows = repo
+      .monthlyMovementByType('2026-09-19')
+      .filter((r) => r.month === '2026-04')
+      .map((r) => [r.accountId, r.kind, r.net]);
+    expect(rows.sort()).toEqual([
+      ['card', 'transfer', 700],
+      ['jar', 'spending', -1500],
+      ['jar', 'transfer', -700],
+    ]);
+  });
+
   it('Scenario: A no-transaction account appears in none of these readings', () => {
     // net-worth-repo answers only what it can compute from `transactions`; a рахунок the caller
     // knows about (from the accounts list) but that carries no транзакція yet is simply absent
@@ -240,6 +265,92 @@ function touchingAccount(all: readonly Transaction[], accountId: string): Transa
       (t.type === 'transfer' && (t.fromAccountId === accountId || t.toAccountId === accountId)),
   );
 }
+
+/**
+ * What the domain reads from this repository, for every stored рахунок — the grouping
+ * `src/ui/net-worth.ts` does, restated so these tests stay inside `src/db`.
+ */
+function historyInputs(storage: TestStorage, today: string): AccountHistoryInput[] {
+  const repo = netWorthRepo(storage.db);
+  const firsts = new Map(repo.firstDates(today).map((r) => [r.accountId, r.firstDate]));
+  const firstNets = new Map(repo.firstDateMovement(today).map((r) => [r.accountId, r.net]));
+  const monthly = repo.monthlyMovement(today);
+  return accountsRepo(storage.db)
+    .list()
+    .map((a) => ({
+      account: a,
+      firstDate: firsts.get(a.id),
+      firstDateNet: firstNets.get(a.id),
+      monthlyNet: new Map(monthly.filter((r) => r.accountId === a.id).map((r) => [r.month, r.net])),
+    }));
+}
+
+describe('history through the repository: what a транзакція does to a рахунок', () => {
+  let storage: TestStorage;
+  let transactions: TransactionsRepo;
+  const today = '2026-09-19';
+  const uahAt = (date: string) =>
+    netWorthHistory({ accounts: historyInputs(storage, today), today }).find((p) => p.date === date)!.totals.get('UAH');
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, { categories: ['food', 'fees'], sources: ['salary'] });
+    transactions = transactionsRepo(storage.db);
+  });
+  afterEach(() => storage.close());
+
+  it('Scenario: Transactions retain their account effects', () => {
+    accountsRepo(storage.db).save(card);
+    transactions.save(income('i', 'card', '2026-08-02', 10000), storedAt);
+    transactions.save(expenseByDefault({ id: 'e', date: '2026-08-03', accountId: 'card', amount: money(3000, 'UAH'), categoryId: 'food' }), storedAt);
+    transactions.save(refund({ id: 'r', date: '2026-08-04', accountId: 'card', amount: money(1000, 'UAH'), categoryId: 'food' }), storedAt);
+    transactions.save(correctionOf('c1', 'card', '2026-08-05', -200), storedAt);
+    transactions.save(correctionOf('c2', 'card', '2026-08-06', 500), storedAt);
+    expect(uahAt('2026-08-31')).toEqual({ status: 'known', amount: money(8300, 'UAH') });
+  });
+
+  it('Scenario: Transfers retain both legs and fees are counted once', () => {
+    accountsRepo(storage.db).save(account({ ...card, openingBalance: money(100000, 'UAH'), openingDate: '2026-08-01' }));
+    accountsRepo(storage.db).save(account({ ...jar, openingDate: '2026-08-01' }));
+    // The fee accepted as its own витрата, the переказ normalized to 99500 on each leg…
+    transactions.save(transfer({ id: 't', date: '2026-08-10', fromAccountId: 'card', toAccountId: 'jar', left: money(99500, 'UAH'), arrived: money(99500, 'UAH') }), storedAt);
+    transactions.save(expenseByDefault({ id: 'fee', date: '2026-08-10', accountId: 'card', amount: money(500, 'UAH'), categoryId: 'fees' }), storedAt);
+    expect(uahAt('2026-08-31')).toEqual({ status: 'known', amount: money(99500, 'UAH') });
+    // …or declined, with legs 100000 / 99500: the same combined balance.
+    transactions.remove('t');
+    transactions.remove('fee');
+    transactions.save(transfer({ id: 't2', date: '2026-08-10', fromAccountId: 'card', toAccountId: 'jar', left: money(100000, 'UAH'), arrived: money(99500, 'UAH') }), storedAt);
+    expect(uahAt('2026-08-31')).toEqual({ status: 'known', amount: money(99500, 'UAH') });
+  });
+
+  it('Scenario: FX transfer keeps its two real amounts', () => {
+    accountsRepo(storage.db).save(account({ ...card, openingBalance: money(500000, 'UAH'), openingDate: '2026-08-01' }));
+    accountsRepo(storage.db).save(account({ ...usdAccount, openingDate: '2026-08-01' }));
+    transactions.save(transfer({ id: 'fx', date: '2026-08-10', fromAccountId: 'card', toAccountId: 'usd', left: money(410000, 'UAH'), arrived: money(10000, 'USD') }), storedAt);
+    const august = netWorthHistory({ accounts: historyInputs(storage, today), today }).find((p) => p.date === '2026-08-31')!;
+    expect(august.totals.get('UAH')).toEqual({ status: 'known', amount: money(90000, 'UAH') });
+    expect(august.totals.get('USD')).toEqual({ status: 'known', amount: money(10000, 'USD') });
+  });
+
+  it('Scenario: Data changes invalidate derived readings — a дата or a транзакція moves the next reading', () => {
+    accountsRepo(storage.db).save(account({ ...card, openingBalance: money(1000, 'UAH') }), '2026-09-01');
+    transactions.save(income('i', 'card', '2026-09-05', 500), storedAt);
+    const before = monthFigures({ accounts: historyInputs(storage, today), today }).get('UAH')!;
+    expect(before.map((m) => m.month)).toEqual(['2026-09']);
+
+    // The opening's дата moved back: the next reading starts there.
+    accountsRepo(storage.db).save(account({ ...card, openingBalance: money(1000, 'UAH'), openingDate: '2026-07-15' }), today);
+    const after = monthFigures({ accounts: historyInputs(storage, today), today }).get('UAH')!;
+    expect(after.map((m) => m.month)).toEqual(['2026-07', '2026-08', '2026-09']);
+
+    // A backdated транзакція: the remembered readings are not reused past the write.
+    const repo = netWorthRepo(storage.db);
+    const firstRead = repo.monthlyMovementByType(today);
+    transactions.save(income('old', 'card', '2026-07-20', 300), storedAt);
+    expect(repo.monthlyMovementByType(today)).not.toBe(firstRead);
+    expect(repo.monthlyMovementByType(today)).toEqual(netWorthRepo(storage.db).monthlyMovementByType(today));
+  });
+});
 
 describe('netWorthRepo — differential verification against computeBalance (task 2.3)', () => {
   const TODAY = '2026-09-19';
@@ -354,6 +465,7 @@ describe('netWorthRepo — differential verification against computeBalance (tas
       // device's own frame rate is recorded on the emulator in §7, not here.
       const start = performance.now();
       const monthly = repo.monthlyMovement(TODAY);
+      const byType = repo.monthlyMovementByType(TODAY);
       const firsts = repo.firstDates(TODAY);
       const firstMovement = repo.firstDateMovement(TODAY);
       const futureRecords = repo.accountsWithFutureRecords(TODAY);
@@ -361,6 +473,7 @@ describe('netWorthRepo — differential verification against computeBalance (tas
 
       // Bounded by accounts x months — a tiny fraction of the transactions that produced it.
       expect(monthly.length).toBeLessThanOrEqual(ACCOUNT_COUNT * MONTH_COUNT);
+      expect(byType.length).toBeLessThanOrEqual(ACCOUNT_COUNT * MONTH_COUNT * 4);
       expect(monthly.length * 10).toBeLessThan(allTransactions.length);
       // Bounded by accounts alone — never by how many future-dated records exist.
       expect(futureRecords.size).toBeLessThanOrEqual(ACCOUNT_COUNT);
@@ -380,6 +493,33 @@ describe('netWorthRepo — differential verification against computeBalance (tas
           .filter((r) => r.accountId === acc.id)
           .reduce((sum, r) => sum + r.net, 0);
         expect(acc.openingBalance.amount + monthNet).toBe(computeBalance(acc, touching).amount);
+
+        // The by-kind reading adds up to the monthly one, month by month, and each kind is
+        // exactly its транзакції's effect on this рахунок (design D3).
+        const ownRows = byType.filter((r) => r.accountId === acc.id);
+        for (const row of monthly.filter((r) => r.accountId === acc.id)) {
+          const kinds = ownRows.filter((r) => r.month === row.month);
+          expect(kinds.reduce((sum, r) => sum + r.net, 0)).toBe(row.net);
+        }
+        const expectedByKind = { income: 0, spending: 0, correction: 0, transfer: 0 };
+        for (const t of touching) {
+          if (t.type === 'transfer') {
+            expectedByKind.transfer +=
+              (t.toAccountId === acc.id ? t.arrived.amount : 0) -
+              (t.fromAccountId === acc.id ? t.left.amount : 0);
+          } else if (t.type === 'income') {
+            expectedByKind.income += t.amount.amount;
+          } else if (t.type === 'correction') {
+            expectedByKind.correction += t.amount.amount;
+          } else {
+            expectedByKind.spending += t.type === 'expense' ? -t.amount.amount : t.amount.amount;
+          }
+        }
+        for (const kind of ['income', 'spending', 'correction', 'transfer'] as const) {
+          expect(ownRows.filter((r) => r.kind === kind).reduce((sum, r) => sum + r.net, 0)).toBe(
+            expectedByKind[kind],
+          );
+        }
 
         const first = firsts.find((r) => r.accountId === acc.id);
         expect(first).toBeDefined();
@@ -428,12 +568,13 @@ describe('netWorthRepo — differential verification against computeBalance (tas
       const queries = vi.spyOn(storage.db, 'all');
       const repo = netWorthRepo(storage.db);
       repo.monthlyMovement('2026-09-19');
+      repo.monthlyMovementByType('2026-09-19');
       repo.firstDates('2026-09-19');
       repo.firstDateMovement('2026-09-19');
       repo.accountsWithFutureRecords('2026-09-19');
       // Exactly one `db.all` per reading — five accounts and six months included, summed and
       // grouped by SQLite itself, never walked one at a time from this side of the connection.
-      expect(queries).toHaveBeenCalledTimes(4);
+      expect(queries).toHaveBeenCalledTimes(5);
       queries.mockRestore();
     } finally {
       storage.close();

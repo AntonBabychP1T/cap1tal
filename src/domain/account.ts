@@ -14,6 +14,13 @@ export interface Account {
   readonly currency: CurrencyCode;
   /** Where the account stood before the first recorded transaction, in its own currency. */
   readonly openingBalance: Money;
+  /**
+   * The дата початкового залишку: the day `openingBalance` holds from. Absent for a рахунок stored
+   * before the дата existed. It moves no balance — `computeBalance` never reads it — and only says
+   * from when Статок's history counts the рахунок (net-worth, "A рахунок enters Статок history at its
+   * дата початкового залишку").
+   */
+  readonly openingDate?: IsoDate;
   /** An archived account keeps its history and balance but is offered for no new transaction. */
   readonly archived: boolean;
 }
@@ -29,6 +36,7 @@ export function account(input: {
   kind: AccountKind;
   currency: CurrencyCode;
   openingBalance?: Money;
+  openingDate?: IsoDate;
   archived?: boolean;
 }): Account {
   const openingBalance = input.openingBalance ?? money(0, input.currency);
@@ -43,6 +51,7 @@ export function account(input: {
     kind: input.kind,
     currency: input.currency,
     openingBalance,
+    ...(input.openingDate !== undefined ? { openingDate: isoDate(input.openingDate) } : {}),
     archived: input.archived ?? false,
   };
 }

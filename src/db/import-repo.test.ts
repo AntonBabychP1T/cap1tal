@@ -113,6 +113,8 @@ describe('importRepo — committing a plan', () => {
     const card = stored.find((a) => a.name === 'mono black')!;
     // 1000 opening − 250 витрата − 300 переказ out + 500 дохід.
     expect(card.openingBalance).toEqual(money(100000, 'UAH'));
+    // Its «Initial balance» entry's дата (2024-10-27) becomes the дата початкового залишку.
+    expect(card.openingDate).toBe('2024-10-27');
     expect(balanceOf(card.id)).toEqual(money(95000, 'UAH'));
     expect(balanceOf(stored.find((a) => a.name === 'готівка')!.id)).toEqual(money(30000, 'UAH'));
     // Nothing carries a plan-local id: the import's vocabulary stayed out of the database.
@@ -161,7 +163,12 @@ describe('importRepo — committing a plan', () => {
 
     const stored = accountsRepo(storage.db).list();
     expect(stored).toHaveLength(1);
-    expect(stored[0]).toMatchObject({ id: 'card', name: 'mono black', openingBalance: money(12300, 'UAH') });
+    expect(stored[0]).toMatchObject({
+      id: 'card',
+      name: 'mono black',
+      openingBalance: money(12300, 'UAH'),
+      openingDate: '2024-10-27',
+    });
     // Nothing was created, so the summary counts no рахунок — it says what the import added.
     expect(importRepo(storage.db).committedAt()).toEqual(committedAt);
   });

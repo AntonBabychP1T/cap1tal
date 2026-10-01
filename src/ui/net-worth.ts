@@ -2,34 +2,39 @@ import type { StoredRate } from '../db/rates-repo';
 import type {
   AccountFirstDate,
   AccountFirstDateMovement,
+  AccountMonthKindMovement,
   AccountMonthMovement,
 } from '../db/net-worth-repo';
 import type { Account, AccountKind } from '../domain/account';
 import type { CurrentValue } from '../domain/investments';
 import { money, type CurrencyCode, type Money } from '../domain/money';
 import {
+  changeOf,
   currentNetWorth,
-  netWorthChange,
-  netWorthHistory,
+  investmentDifference,
+  monthFigures,
+  roundHalfAway,
   type AccountContribution,
   type AccountHistoryInput,
-  type ChangeResult,
   type CurrencyTotal,
-  type HistoryPoint,
+  type MonthBreakdown,
+  type MonthChange,
+  type MonthFigure,
+  type MovementByKind,
+  type MovementKind,
   type NetWorthReading,
 } from '../domain/net-worth';
 import type { IsoDate, Month, Transaction } from '../domain/transaction';
 import { byCurrency, formatMinorUnitsGrouped, formatMoney } from './amount-input';
 import { approximateUah } from './approx-uah';
 import { calendarLabel } from './dates';
-import type { HistorySeriesPoint } from './dashboard-charts';
 
 /**
- * The Статок widget's own presentation: exact per-currency readouts, the secondary ≈ UAH figure
- * and the account-level basis explanation — everything `src/domain/net-worth.ts` computed, turned
- * into what «Статок» spec scenarios name (net-worth, "Approximate UAH requires every rate",
- * "Current valuation states its scope and dates"). Nothing here is stored or requests anything;
- * `rates` is whatever the caller already has cached.
+ * Статок's presentation shared by the compact widget on Головний and the «Статок» screen (design
+ * D6): exact per-currency readouts, the ≈ UAH conversion, the account-level basis explanation, the
+ * history selection and one series builder (`netWorthSeries`) both read — everything
+ * `src/domain/net-worth.ts` computed, turned into what the «Статок» spec scenarios name. Nothing
+ * here is stored or requests anything; `rates` is whatever the caller already has cached.
  */
 
 const UAH: CurrencyCode = 'UAH';
@@ -219,358 +224,16 @@ function dateOnly(at: Date): IsoDate {
 }
 
 /**
- * `netWorthHistory`'s dated points, for one currency, turned into `dashboard-charts.ts`'s
- * normalized series — `x` spread evenly across the points in order (this is a category axis of
- * dated points, not a continuous timeline, so equal spacing is honest: the gap between June 5 and
- * June 30 is not four times the gap between June 30 and July 31 on this axis). A `gap` or
- * `overflow` currency total is a missing value, never a fabricated one (net-worth, "no line
- * bridges an unknown gap").
- */
-export function historySeriesFor(
-  points: readonly HistoryPoint[],
-  currency: CurrencyCode,
-): HistorySeriesPoint[] {
-  return points.map((point, i) => {
-    const total = point.totals.get(currency);
-    return {
-      x: points.length > 1 ? i / (points.length - 1) : 0,
-      value: total?.status === 'known' ? total.amount.amount : undefined,
-    };
-  });
-}
-
-/**
- * The points the chart draws for one currency: the history less its leading run of points with
- * no value in that currency. `netWorthHistory` starts every currency at the *global* first date —
- * the earliest транзакція of any рахунок in any currency — so a zero-opening USD рахунок from
- * October 2024 opened the UAH chart there too, while every UAH рахунок was only known from
- * February 2026: ~70% of the card's width was a stretch before the line began, read as a chart
- * that failed to draw. A gap *inside* the history stays — it is a break in the line the owner
- * should see, not a stretch before it. With no value at all there is nothing to start the axis at,
- * so every point is kept and the chart honestly draws nothing over the whole span.
- *
- * Only the chart and the span under it are trimmed: the point list still opens with the folded
- * «… — …: невідомо» line, which is where the owner reads *why* there is nothing earlier.
- */
-export function chartedHistory(
-  points: readonly HistoryPoint[],
-  currency: CurrencyCode,
-): readonly HistoryPoint[] {
-  const first = points.findIndex((point) => point.totals.get(currency)?.status === 'known');
-  return first <= 0 ? points : points.slice(first);
-}
-
-/** Why a point is unknown when a sum is not exactly representable — never «missing data». */
-const OVERFLOW_REASON = 'сума перевищує безпечне представлення';
-
-/**
- * One dated point read aloud for point inspection or the accessible chronological list — its
- * exact value, or exactly why it has none (net-worth, "Point values remain exact… its exact USD
- * value or unknown reason and date are read").
- */
-export function historyPointLabel(point: HistoryPoint, currency: CurrencyCode, now: Date): string {
-  const date = calendarLabel(point.date, now);
-  const total = point.totals.get(currency);
-  if (total === undefined || total.status !== 'known') {
-    const reason = total?.status === 'unavailable' && total.reason === 'overflow'
-      ? OVERFLOW_REASON
-      : 'невідомо — недостатньо даних за цей період';
-    return `${date}: ${reason}`;
-  }
-  return `${date}: ${formatMoney(total.amount)}`;
-}
-
-/** One row of the accessible point list — a point, or a run of unknown points read once. */
-export interface HistoryPointRow {
-  /** The first date the row covers; unique across the rows of one list. */
-  readonly key: IsoDate;
-  readonly label: string;
-}
-
-/** What one dated point reads as: its value line, or exactly why it has none. */
-export type PointReading =
-  | { readonly value: string }
-  | { readonly reason: string };
-
-/**
- * The chronological point list the owner reads under «Показати точки», with every run of
- * consecutive points that have no value *for the same reason* folded into one line naming the
- * run's first and last date (main-screen, "Статок's explanation and history say only what
- * holds"). Nothing is dropped: the run's dates and its reason are still read, only not fifteen
- * times over before the first number. A single unknown point stays a single date. `read` is what
- * a point says — one currency's, or the combined ≈ UAH history's — so both fold the same way.
- */
-export function foldedPointRows<P extends { readonly date: IsoDate }>(
-  points: readonly P[],
-  read: (point: P) => PointReading,
-  now: Date,
-): HistoryPointRow[] {
-  const reasonOf = (point: P): string | undefined => {
-    const reading = read(point);
-    return 'reason' in reading ? reading.reason : undefined;
-  };
-  const rows: HistoryPointRow[] = [];
-  let i = 0;
-  while (i < points.length) {
-    const first = points[i]!;
-    const reason = reasonOf(first);
-    if (reason === undefined) {
-      const reading = read(first) as { readonly value: string };
-      rows.push({ key: first.date, label: `${calendarLabel(first.date, now)}: ${reading.value}` });
-      i += 1;
-      continue;
-    }
-    let j = i;
-    while (j + 1 < points.length && reasonOf(points[j + 1]!) === reason) {
-      j += 1;
-    }
-    const last = points[j]!;
-    const span =
-      j === i
-        ? calendarLabel(first.date, now)
-        : `${calendarLabel(first.date, now)} — ${calendarLabel(last.date, now)}`;
-    rows.push({ key: first.date, label: `${span}: ${reason}` });
-    i = j + 1;
-  }
-  return rows;
-}
-
-/** One currency's point rows: `foldedPointRows` over what `historyPointLabel` says. */
-export function historyPointRows(
-  points: readonly HistoryPoint[],
-  currency: CurrencyCode,
-  now: Date,
-): HistoryPointRow[] {
-  return foldedPointRows(
-    points,
-    (point) => {
-      const total = point.totals.get(currency);
-      if (total?.status === 'known') {
-        return { value: formatMoney(total.amount) };
-      }
-      return {
-        reason:
-          total?.status === 'unavailable' && total.reason === 'overflow'
-            ? OVERFLOW_REASON
-            : 'невідомо — недостатньо даних за цей період',
-      };
-    },
-    now,
-  );
-}
-
-/**
- * The reserved selector value of the combined «Усе ≈ грн» history. It is not an ISO-4217 code, so
- * it can never collide with a currency the owner holds (design D5).
- */
-export const TOTAL_HISTORY = 'total';
-
-/**
- * History's own selection — independent of the category widget's (net-worth, "History currency has
- * a deterministic default… independently of the category widget selection"): UAH when present, else
- * the first currency in the existing order; falls back the same way whenever `requested` is absent
- * or no longer offered. The combined choice is offered only beside more than one currency, and is
- * never the default, so a preserved one falls back once the owner holds a single currency.
- */
-export function selectHistoryCurrency(
-  currencies: readonly CurrencyCode[],
-  requested?: string,
-): CurrencyCode | typeof TOTAL_HISTORY | undefined {
-  if (currencies.length === 0) {
-    return undefined;
-  }
-  if (requested === TOTAL_HISTORY && currencies.length > 1) {
-    return TOTAL_HISTORY;
-  }
-  if (requested !== undefined && currencies.includes(requested)) {
-    return requested;
-  }
-  return currencies.includes('UAH') ? 'UAH' : currencies[0];
-}
-
-/**
- * The change line: signed absolute, a percentage only when the baseline allowed one, «від
- * <date>» — or, unavailable, the one sentence naming why rather than a number (net-worth, "Change
- * requires a comparable previous month-end"). `approximate` marks the combined ≈ UAH history's
- * amount with «≈» right after its sign, and words the valuation reason without «в цій валюті».
- */
-export function changeLabel(change: ChangeResult, now: Date, approximate = false): string {
-  if (change.status === 'unavailable') {
-    switch (change.reason) {
-      case 'no-baseline':
-        return 'Порівняння з попереднім місяцем поки недоступне.';
-      case 'valuation-substituted':
-        return approximate
-          ? 'Порівняння недоступне: поточна вартість інвестиції замінює вкладене.'
-          : 'Порівняння недоступне: поточна вартість інвестиції замінює вкладене в цій валюті.';
-      case 'future-records':
-        return 'Порівняння недоступне: є записи з майбутніми датами.';
-    }
-  }
-  const { absolute, percent, since } = change.change;
-  const sign = absolute.amount >= 0 ? '+' : '';
-  const percentText =
-    // A decimal comma, as every other number the owner reads: «+62,4%», not «+62.4%».
-    percent !== undefined
-      ? ` · ${percent >= 0 ? '+' : ''}${percent.toFixed(1).replace('.', ',')}%`
-      : '';
-  const body = formatMoney(absolute);
-  const amount = !approximate
-    ? `${sign}${body}`
-    : body.startsWith('−')
-      ? `−≈${body.slice(1)}`
-      : `${sign}≈${body}`;
-  return `${amount}${percentText} · від ${calendarLabel(since, now)}`;
-}
-
-/** The last calendar date of the month before `today`, by the same day-0 trick everywhere else. */
-function previousMonthEndDate(today: IsoDate): IsoDate {
-  const [year, month] = today.split('-').map(Number) as [number, number];
-  const prevMonthNumber = month === 1 ? 12 : month - 1;
-  const prevYear = month === 1 ? year - 1 : year;
-  const lastDay = new Date(prevYear, prevMonthNumber, 0).getDate();
-  return `${String(prevYear).padStart(4, '0')}-${String(prevMonthNumber).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-}
-
-/**
- * One dated point of the combined «Усе ≈ грн» history: every held currency's reconstructed баланс
- * converted at the current cached rate and summed, or exactly why there is no such sum — never a
- * partial one (net-worth, "Приблизний статок в динаміці is complete or absent").
- */
-export type CombinedPoint = { readonly date: IsoDate } & (
-  | { readonly status: 'known'; readonly amount: number }
-  | {
-      readonly status: 'unavailable';
-      /** `gap`: `currency`'s баланс is unknown on this date; `overflow`: the sum is not exact. */
-      readonly reason: 'gap' | 'overflow';
-      readonly currency?: CurrencyCode;
-    }
-);
-
-export type CombinedHistory =
-  | {
-      readonly status: 'ready';
-      readonly points: readonly CombinedPoint[];
-      /** The oldest cached rate any held currency uses — its own moment, never a fetch time. */
-      readonly oldestRateAt: Date;
-    }
-  | {
-      /** Rates are current, so a missing one is not a per-point gap: nothing is drawn (D2). */
-      readonly status: 'withheld';
-      readonly missing: readonly CurrencyCode[];
-    };
-
-/**
- * `netWorthHistory`'s points, every held currency converted at today's cached rate through
- * `convertTotalsToUah` — the headline ≈ figure's own function, so no point can round differently
- * (design D1, D2). `held` is every currency of any recorded рахунок, archived and zero-balance
- * ones included: each needs a rate, even at a zero баланс, and each must be known for a point to
- * have a value.
- */
-export function combinedHistory(
-  points: readonly HistoryPoint[],
-  held: readonly CurrencyCode[],
-  rates: readonly StoredRate[],
-): CombinedHistory {
-  const rateFor = new Map(rates.map((r) => [r.currency, r]));
-  const foreign = held.filter((c) => c !== UAH);
-  const missing = foreign.filter((c) => !rateFor.has(c));
-  if (foreign.length === 0 || missing.length > 0) {
-    // «Nothing to combine» (no foreign currency held) is never offered, so it is never read.
-    return { status: 'withheld', missing };
-  }
-  const oldestRateAt = foreign
-    .map((c) => rateFor.get(c)!.obtainedAt)
-    .reduce((oldest, at) => (at < oldest ? at : oldest));
-
-  const combined = points.map((point): CombinedPoint => {
-    const totals = new Map<CurrencyCode, CurrencyTotal>();
-    for (const currency of held) {
-      const total = point.totals.get(currency) ?? ({ status: 'unavailable', reason: 'gap' } as const);
-      if (total.status !== 'known') {
-        return total.reason === 'overflow'
-          ? { date: point.date, status: 'unavailable', reason: 'overflow' }
-          : { date: point.date, status: 'unavailable', reason: 'gap', currency };
-      }
-      totals.set(currency, total);
-    }
-    const conversion = convertTotalsToUah(totals, rates);
-    return conversion.status === 'known'
-      ? { date: point.date, status: 'known', amount: conversion.amount }
-      : // Every total is known and every rate present here, so only a sum that is not exactly
-        // representable can be left.
-        { date: point.date, status: 'unavailable', reason: 'overflow' };
-  });
-  return { status: 'ready', points: combined, oldestRateAt };
-}
-
-/** The combined history less its leading run of unknown points, as `chartedHistory` does per currency. */
-export function chartedCombinedHistory(points: readonly CombinedPoint[]): readonly CombinedPoint[] {
-  const first = points.findIndex((point) => point.status === 'known');
-  return first <= 0 ? points : points.slice(first);
-}
-
-/** The combined points as the chart's normalized series; an unknown point is a break, never a value. */
-export function combinedSeriesFor(points: readonly CombinedPoint[]): HistorySeriesPoint[] {
-  return points.map((point, i) => ({
-    x: points.length > 1 ? i / (points.length - 1) : 0,
-    value: point.status === 'known' ? point.amount : undefined,
-  }));
-}
-
-/** What one combined point reads as: its «≈» amount, or the reason it has none. */
-function combinedReading(point: CombinedPoint): PointReading {
-  if (point.status === 'known') {
-    return { value: `≈ ${formatMinorUnitsGrouped(point.amount)} грн` };
-  }
-  return {
-    reason:
-      point.reason === 'overflow' ? OVERFLOW_REASON : `немає даних за ${point.currency ?? '—'}`,
-  };
-}
-
-/** The combined history's chronological point list, same-reason unknown runs folded. */
-export function combinedPointRows(points: readonly CombinedPoint[], now: Date): HistoryPointRow[] {
-  return foldedPointRows(points, combinedReading, now);
-}
-
-/** The message that stands in for the whole combined history when a rate is missing. */
-export function combinedWithheldMessage(missing: readonly CurrencyCode[]): string {
-  return `Немає курсу ${missing.join(', ')} для сукупної історії.`;
-}
-
-/** The chip's words: the label drawn, and what TalkBack says with and without the selection. */
-export const TOTAL_HISTORY_LABEL = 'Усе ≈ грн';
-const TOTAL_HISTORY_ACCESSIBILITY = 'Усе, наближено в гривнях';
-
-/** «Історія розрахункових балансів · інвестиції за вкладеним», the per-currency basis line. */
-const HISTORY_BASIS = 'Історія розрахункових балансів · інвестиції за вкладеним';
-const HISTORY_BASIS_ACCESSIBILITY = 'Історія розрахункових балансів, інвестиції за вкладеним';
-const TOTAL_HISTORY_CAPTION = `${HISTORY_BASIS} · ≈ за поточним курсом, не за курсом на дату`;
-const TOTAL_HISTORY_CAPTION_ACCESSIBILITY =
-  `${HISTORY_BASIS_ACCESSIBILITY}, наближено за поточним курсом, не за курсом на дату`;
-
-const CHART_LABEL = 'Графік історії статку';
-
-/** The chart's accessibility label: its span when it has one, and «наближено в гривнях» when combined. */
-function chartLabel(
-  span: { readonly first: string; readonly last: string } | undefined,
-  combined: boolean,
-): string {
-  const name = combined ? `${CHART_LABEL}, наближено в гривнях` : CHART_LABEL;
-  return span ? `${name}, з ${span.first} по ${span.last}` : name;
-}
-
-/**
- * `net-worth-repo.ts`'s three flat readings, grouped by account into `netWorthHistory`'s own
- * input shape — the one place that grouping happens, so a caller passes the repo's rows straight
- * through without re-deriving the grouping itself.
+ * `net-worth-repo.ts`'s flat readings, grouped by account into the domain's own input shape — the
+ * one place that grouping happens, so a caller passes the repo's rows straight through.
+ * `byType` (the розбивка's reading) is optional: a reading without it has no розбивка.
  */
 export function buildHistoryInputs(
   accounts: readonly Account[],
   monthlyMovement: readonly AccountMonthMovement[],
   firstDates: readonly AccountFirstDate[],
   firstDateMovement: readonly AccountFirstDateMovement[],
+  byType: readonly AccountMonthKindMovement[] = [],
 ): AccountHistoryInput[] {
   const firstDateByAccount = new Map(firstDates.map((f) => [f.accountId, f.firstDate]));
   const firstDateNetByAccount = new Map(firstDateMovement.map((f) => [f.accountId, f.net]));
@@ -583,28 +246,62 @@ export function buildHistoryInputs(
     }
     byMonth.set(m.month, m.net);
   }
-  return accounts.map((account) => ({
-    account,
-    firstDate: firstDateByAccount.get(account.id),
-    firstDateNet: firstDateNetByAccount.get(account.id),
-    monthlyNet: monthlyByAccount.get(account.id) ?? new Map(),
-  }));
+  const kindsByAccount = new Map<string, Map<Month, Partial<Record<MovementKind, number>>>>();
+  for (const row of byType) {
+    let byMonth = kindsByAccount.get(row.accountId);
+    if (!byMonth) {
+      byMonth = new Map();
+      kindsByAccount.set(row.accountId, byMonth);
+    }
+    const kinds = byMonth.get(row.month) ?? {};
+    kinds[row.kind] = (kinds[row.kind] ?? 0) + row.net;
+    byMonth.set(row.month, kinds);
+  }
+  return accounts.map((account) => {
+    const kinds = kindsByAccount.get(account.id);
+    return {
+      account,
+      firstDate: firstDateByAccount.get(account.id),
+      firstDateNet: firstDateNetByAccount.get(account.id),
+      monthlyNet: monthlyByAccount.get(account.id) ?? new Map(),
+      ...(kinds ? { monthlyByKind: kinds as ReadonlyMap<Month, MovementByKind> } : {}),
+    };
+  });
 }
 
 /**
- * The first and the last date the history chart covers, as read under its two ends (main-screen,
- * "Статок's explanation and history say only what holds") — so an empty stretch reads as «no data
- * then» rather than as a chart that failed to draw. None for a single point, which has no span.
+ * The reserved selector value of the combined «Усе ≈ грн» history. It is not an ISO-4217 code, so
+ * it can never collide with a currency the owner holds.
  */
-export function historySpanOf(
-  points: readonly { readonly date: IsoDate }[],
-  now: Date,
-): { readonly first: string; readonly last: string } | undefined {
-  const first = points[0];
-  const last = points.at(-1);
-  return first && last && points.length > 1
-    ? { first: calendarLabel(first.date, now), last: calendarLabel(last.date, now) }
-    : undefined;
+export const TOTAL_HISTORY = 'total';
+
+/**
+ * History's own selection — independent of the category widget's (net-worth, "History is readable
+ * without colour, with «Усе ≈ грн» as the default reading"). A choice the owner made stands while
+ * it is still offered: a currency still held, or «Усе ≈ грн» beside more than one — even with a
+ * rate gone missing since, which then reads its withheld message rather than silently becoming
+ * another reading. Otherwise the default: «Усе ≈ грн» when more than one currency is held and every
+ * non-UAH one has a cached rate, else UAH when held, else the first currency in the existing order.
+ */
+export function selectHistory(
+  currencies: readonly CurrencyCode[],
+  rates: readonly StoredRate[],
+  requested?: string,
+): CurrencyCode | typeof TOTAL_HISTORY | undefined {
+  if (currencies.length === 0) {
+    return undefined;
+  }
+  if (requested === TOTAL_HISTORY && currencies.length > 1) {
+    return TOTAL_HISTORY;
+  }
+  if (requested !== undefined && currencies.includes(requested)) {
+    return requested;
+  }
+  const rated = new Set(rates.map((r) => r.currency));
+  if (currencies.length > 1 && currencies.every((c) => c === UAH || rated.has(c))) {
+    return TOTAL_HISTORY;
+  }
+  return currencies.includes(UAH) ? UAH : currencies[0];
 }
 
 /** One entry of the history selector: a currency, or the combined «Усе ≈ грн». */
@@ -616,275 +313,522 @@ export interface HistoryChoice {
   readonly selected: boolean;
 }
 
-export interface NetWorthWidgetModel {
-  /** «Ще немає рахунків» — present exactly when there is no account at all. */
-  readonly emptyMessage?: string;
-  readonly readouts: readonly CurrencyReadout[];
-  readonly approximate: ApproximateNetWorth;
-  readonly explanation: readonly AccountBasisLine[];
-  readonly accountsDifference: string;
-  /** All account currencies, UAH first — the currencies the history can be read in (design D4). */
-  readonly historyCurrencies: readonly CurrencyCode[];
-  /** The selected currency; absent while the combined «Усе ≈ грн» is selected. */
-  readonly historyCurrency?: CurrencyCode;
-  /** The history selector's chips: the currencies, then «Усе ≈ грн» when it adds something. */
-  readonly historyChoices: readonly HistoryChoice[];
-  readonly historyTotalSelected: boolean;
-  /** The basis line under the chips; the combined view adds the current-rate disclosure. */
-  readonly historyCaption: string;
-  readonly historyCaptionAccessibilityLabel: string;
-  /** The chart's own accessibility label — names its span, and «наближено» when combined. */
-  readonly historyChartLabel: string;
-  /** Combined only: the oldest participating rate's own moment, as `rateFreshnessLabel`. */
-  readonly historyRateFreshness?: string;
-  /** Combined only: a rate is missing, so nothing else of the history is drawn (design D2). */
-  readonly historyWithheldMessage?: string;
-  readonly historySeries: readonly HistorySeriesPoint[];
-  readonly historyPoints: readonly HistoryPointRow[];
-  /** The first and the last date the chart covers, as the owner reads them under it. */
-  readonly historySpan?: { readonly first: string; readonly last: string };
-  readonly changeText?: string;
-  /** No account anywhere has ever carried a транзакція on or before today. */
-  readonly historyUnavailableMessage?: string;
+export const TOTAL_HISTORY_LABEL = 'Усе ≈ грн';
+const TOTAL_HISTORY_ACCESSIBILITY = 'Усе, наближено в гривнях';
+
+/** The selector's chips: the currencies, then «Усе ≈ грн» when it adds something. */
+export function historyChoices(
+  currencies: readonly CurrencyCode[],
+  selection: string | undefined,
+): HistoryChoice[] {
+  const choices: HistoryChoice[] = currencies.map((currency) => ({
+    id: currency,
+    label: currency,
+    accessibilityLabel: currency === selection ? `${currency}, обрано` : currency,
+    selected: currency === selection,
+  }));
+  if (currencies.length > 1) {
+    const selected = selection === TOTAL_HISTORY;
+    choices.push({
+      id: TOTAL_HISTORY,
+      label: TOTAL_HISTORY_LABEL,
+      accessibilityLabel: selected
+        ? `${TOTAL_HISTORY_ACCESSIBILITY}, обрано`
+        : TOTAL_HISTORY_ACCESSIBILITY,
+      selected,
+    });
+  }
+  return choices;
+}
+
+/** Why a point is unknown when a sum is not exactly representable — never «missing data». */
+export const OVERFLOW_REASON = 'сума перевищує безпечне представлення';
+
+/** The message that stands in for the whole combined history when a rate is missing. */
+export function combinedWithheldMessage(missing: readonly CurrencyCode[]): string {
+  return `Немає курсу ${missing.join(', ')} для сукупної історії.`;
+}
+
+/** «Історія розрахункових балансів · інвестиції за вкладеним», the per-currency basis line. */
+export const HISTORY_BASIS = 'Історія розрахункових балансів · інвестиції за вкладеним';
+export const HISTORY_BASIS_ACCESSIBILITY = 'Історія розрахункових балансів, інвестиції за вкладеним';
+export const TOTAL_HISTORY_CAPTION = `${HISTORY_BASIS} · ≈ за поточним курсом, не за курсом на дату`;
+export const TOTAL_HISTORY_CAPTION_ACCESSIBILITY =
+  `${HISTORY_BASIS_ACCESSIBILITY}, наближено за поточним курсом, не за курсом на дату`;
+
+/**
+ * One reading of the history, month by month: a currency's exact figures, or the «Усе ≈ грн»
+ * conversion of them. `approximate` readings are integer minor units UAH at the current rates.
+ */
+export interface HistoryReading {
+  readonly id: string;
+  readonly currency: CurrencyCode;
+  readonly approximate: boolean;
+  readonly months: readonly MonthFigure[];
 }
 
 /**
- * Everything the Статок widget renders, assembled from the domain readings and the caller's own
- * already-read repo rows — nothing here reads storage or a clock beyond what is passed in
- * (`now`/`today` are the caller's, per rules/domain.md).
+ * The «Усе ≈ грн» month figures (net-worth, "Приблизний статок в динаміці converts each dated
+ * point at the current rate", "The change of приблизний статок compares recorded-balance points"):
+ * each month's level is every held currency's level converted through `convertTotalsToUah` — the
+ * headline's own function, so nothing rounds differently — its нові рахунки each currency's
+ * converted, its зміна the two «≈» levels' difference less them. The розбивка converts each
+ * currency's components; the rounding difference lands on «перекази й обмін», which already
+ * carries the difference between the bank's rate and the current one, so the parts still add up
+ * exactly to the «≈» difference. Withheld whole when any held currency lacks a rate.
  */
-export function netWorthWidgetModel(input: {
+export function combinedReading(
+  figures: ReadonlyMap<CurrencyCode, readonly MonthFigure[]>,
+  rates: readonly StoredRate[],
+):
+  | { readonly status: 'ready'; readonly reading: HistoryReading; readonly oldestRateAt: Date }
+  | { readonly status: 'withheld'; readonly missing: readonly CurrencyCode[] } {
+  const held = [...figures.keys()].sort(byCurrency);
+  const rateFor = new Map(rates.map((r) => [r.currency, r]));
+  const foreign = held.filter((c) => c !== UAH);
+  const missing = foreign.filter((c) => !rateFor.has(c));
+  if (foreign.length === 0 || missing.length > 0) {
+    return { status: 'withheld', missing };
+  }
+  const oldestRateAt = foreign
+    .map((c) => rateFor.get(c)!.obtainedAt)
+    .reduce((oldest, at) => (at < oldest ? at : oldest));
+  const toUah = (currency: CurrencyCode, amount: number): number =>
+    currency === UAH ? amount : approximateUah(amount, rateFor.get(currency)!.rateMillionths);
+
+  const length = figures.get(held[0]!)!.length;
+  const months: MonthFigure[] = [];
+  let previous: number | undefined | null = null;
+  for (let i = 0; i < length; i++) {
+    const totals = new Map<CurrencyCode, CurrencyTotal>();
+    const parts = { income: 0, spending: 0, correction: 0, transfer: 0, entered: 0 };
+    for (const currency of held) {
+      const f = figures.get(currency)![i]!;
+      totals.set(
+        currency,
+        f.end === undefined
+          ? { status: 'unavailable', reason: 'overflow' }
+          : { status: 'known', amount: money(f.end, currency) },
+      );
+      for (const key of Object.keys(parts) as (keyof MonthBreakdown)[]) {
+        parts[key] += toUah(currency, f.breakdown[key]);
+      }
+    }
+    const first = figures.get(held[0]!)![i]!;
+    const conversion = convertTotalsToUah(totals, rates);
+    const end = conversion.status === 'known' ? conversion.amount : undefined;
+    const base = previous === null ? 0 : previous;
+    if (end !== undefined && base !== undefined) {
+      parts.transfer = end - base - parts.income - parts.spending - parts.correction - parts.entered;
+    }
+    const change: MonthChange =
+      previous === null
+        ? { status: 'unavailable', reason: 'no-baseline' }
+        : previous === undefined || end === undefined
+          ? { status: 'unavailable', reason: 'overflow' }
+          : { status: 'available', ...changeOf(end, previous, parts.entered) };
+    months.push({
+      month: first.month,
+      date: first.date,
+      ...(end === undefined ? {} : { end }),
+      entered: parts.entered,
+      change,
+      breakdown: parts,
+    });
+    previous = end;
+  }
+  return {
+    status: 'ready',
+    reading: { id: TOTAL_HISTORY, currency: UAH, approximate: true, months },
+    oldestRateAt,
+  };
+}
+
+/** What every Статок view reads, built once per data reload (design D6). */
+export interface NetWorthSeries {
+  readonly current: NetWorthReading;
+  /** All account currencies, UAH first — the currencies the history can be read in. */
+  readonly currencies: readonly CurrencyCode[];
+  readonly selection: CurrencyCode | typeof TOTAL_HISTORY | undefined;
+  /** The selected reading; absent while «Усе ≈ грн» is withheld for a missing rate. */
+  readonly reading?: HistoryReading;
+  readonly withheldMessage?: string;
+  /** «Усе ≈ грн» only: the oldest participating rate's own moment. */
+  readonly oldestRateAt?: Date;
+  /** A рахунок of the reading carries a транзакція dated after today. */
+  readonly hasFutureRecords: boolean;
+}
+
+export interface NetWorthInput {
   readonly accounts: readonly Account[];
   readonly transactions: readonly Transaction[];
   readonly currentValues: ReadonlyMap<string, CurrentValue>;
   /** Every рахунок's розрахунковий баланс over `transactions`, when the caller already has it. */
   readonly balances?: ReadonlyMap<string, Money>;
   readonly monthlyMovement: readonly AccountMonthMovement[];
+  readonly monthlyMovementByType?: readonly AccountMonthKindMovement[];
   readonly firstDates: readonly AccountFirstDate[];
   readonly firstDateMovement: readonly AccountFirstDateMovement[];
-  readonly accountsWithFutureRecords: ReadonlySet<string>;
   readonly rates: readonly StoredRate[];
+  /** Every рахунок with a транзакція dated after today (`netWorthRepo.accountsWithFutureRecords`). */
+  readonly accountsWithFutureRecords?: ReadonlySet<string>;
   /** A currency code, or `TOTAL_HISTORY` for the combined «Усе ≈ грн» reading. */
   readonly requestedHistory?: string;
   readonly now: Date;
   readonly today: IsoDate;
-}): NetWorthWidgetModel {
-  if (input.accounts.length === 0) {
-    return {
-      emptyMessage: 'Ще немає рахунків',
-      readouts: [],
-      approximate: { status: 'unavailable', reason: 'uah-only' },
-      explanation: [],
-      accountsDifference: ACCOUNTS_TOTAL_DIFFERENCE_EXPLANATION,
-      historyCurrencies: [],
-      historyChoices: [],
-      historyTotalSelected: false,
-      historyCaption: HISTORY_BASIS,
-      historyCaptionAccessibilityLabel: HISTORY_BASIS_ACCESSIBILITY,
-      historyChartLabel: CHART_LABEL,
-      historySeries: [],
-      historyPoints: [],
-    };
-  }
+}
 
+/** The current reading, the history months and the selected reading — one pass over the input. */
+export function netWorthSeries(input: NetWorthInput): NetWorthSeries {
   const current = currentNetWorth({
     accounts: input.accounts,
     transactions: input.transactions,
     currentValues: input.currentValues,
     ...(input.balances ? { balances: input.balances } : {}),
   });
-  const readouts = current.status === 'ready' ? currencyReadouts(current.totals) : [];
-  const approximate: ApproximateNetWorth =
-    current.status === 'ready'
-      ? approximateNetWorthUah(current.totals, input.rates)
-      : { status: 'unavailable', reason: 'uah-only' };
-  const accountNames = new Map(input.accounts.map((a) => [a.id, a.name]));
-  const accountKinds = new Map(input.accounts.map((a) => [a.id, a.kind]));
-  const explanation =
-    current.status === 'ready'
-      ? accountBasisLines(current.contributions, accountNames, input.now, accountKinds)
-      : [];
-
-  const historyInputs = buildHistoryInputs(
-    input.accounts,
-    input.monthlyMovement,
-    input.firstDates,
-    input.firstDateMovement,
+  const currencies = [...new Set(input.accounts.map((a) => a.currency))].sort(byCurrency);
+  const selection = selectHistory(currencies, input.rates, input.requestedHistory);
+  const figures = monthFigures({
+    accounts: buildHistoryInputs(
+      input.accounts,
+      input.monthlyMovement,
+      input.firstDates,
+      input.firstDateMovement,
+      input.monthlyMovementByType ?? [],
+    ),
+    today: input.today,
+  });
+  const future = input.accountsWithFutureRecords ?? new Set<string>();
+  const hasFutureRecords = input.accounts.some(
+    (a) => future.has(a.id) && (selection === TOTAL_HISTORY || a.currency === selection),
   );
-  const historyPointsAll = netWorthHistory({ accounts: historyInputs, today: input.today });
-
-  const historyCurrencies = [...new Set(input.accounts.map((a) => a.currency))].sort(byCurrency);
-  const selection = selectHistoryCurrency(historyCurrencies, input.requestedHistory);
-  const totalSelected = selection === TOTAL_HISTORY;
-  const historyCurrency = totalSelected ? undefined : selection;
-
-  const historyChoices: HistoryChoice[] = historyCurrencies.map((currency) => ({
-    id: currency,
-    label: currency,
-    accessibilityLabel: currency === historyCurrency ? `${currency}, обрано` : currency,
-    selected: currency === historyCurrency,
-  }));
-  if (historyCurrencies.length > 1) {
-    historyChoices.push({
-      id: TOTAL_HISTORY,
-      label: TOTAL_HISTORY_LABEL,
-      accessibilityLabel: totalSelected
-        ? `${TOTAL_HISTORY_ACCESSIBILITY}, обрано`
-        : TOTAL_HISTORY_ACCESSIBILITY,
-      selected: totalSelected,
-    });
+  if (selection === undefined) {
+    return { current, currencies, selection, hasFutureRecords };
   }
-
-  const unavailableMessage =
-    historyPointsAll.length === 0 ? { historyUnavailableMessage: 'Історія поки недоступна.' } : {};
-
-  if (totalSelected) {
+  if (selection !== TOTAL_HISTORY) {
     return {
-      readouts,
-      approximate,
-      explanation,
-      accountsDifference: ACCOUNTS_TOTAL_DIFFERENCE_EXPLANATION,
-      historyCurrencies,
-      historyChoices,
-      historyTotalSelected: true,
-      historyCaption: TOTAL_HISTORY_CAPTION,
-      historyCaptionAccessibilityLabel: TOTAL_HISTORY_CAPTION_ACCESSIBILITY,
-      ...combinedHistoryModel(input, current, historyPointsAll, historyCurrencies),
-      ...unavailableMessage,
+      current,
+      currencies,
+      selection,
+      hasFutureRecords,
+      reading: {
+        id: selection,
+        currency: selection,
+        approximate: false,
+        months: figures.get(selection) ?? [],
+      },
     };
   }
-
-  // The chart and the span under it start where the history currency has its first value
-  // (`chartedHistory`); the point list reads the whole history, leading unknowns included.
-  const chartedPoints = historyCurrency
-    ? chartedHistory(historyPointsAll, historyCurrency)
-    : historyPointsAll;
-  const historySeries = historyCurrency ? historySeriesFor(chartedPoints, historyCurrency) : [];
-  const historyPoints = historyCurrency
-    ? historyPointRows(historyPointsAll, historyCurrency, input.now)
-    : [];
-  const historySpan = historySpanOf(chartedPoints, input.now);
-
-  let changeText: string | undefined;
-  if (historyCurrency !== undefined && current.status === 'ready') {
-    const total = current.totals.get(historyCurrency);
-    if (total !== undefined) {
-      const previousDate = previousMonthEndDate(input.today);
-      const previousPoint = historyPointsAll.find((p) => p.date === previousDate);
-      const currentUsedValuation = current.contributions.some(
-        (c) => c.currency === historyCurrency && c.basis === 'currentValue',
-      );
-      const hasFutureRecords = input.accounts.some(
-        (a) => a.currency === historyCurrency && input.accountsWithFutureRecords.has(a.id),
-      );
-      const change = netWorthChange({
-        current: total,
-        currentUsedValuation,
-        hasFutureRecords,
-        ...(previousPoint
-          ? {
-              previousMonthEnd: {
-                date: previousPoint.date,
-                total: previousPoint.totals.get(historyCurrency) ?? { status: 'unavailable', reason: 'gap' },
-              },
-            }
-          : {}),
-      });
-      changeText = changeLabel(change, input.now);
-    }
-  }
-
-  return {
-    readouts,
-    approximate,
-    explanation,
-    accountsDifference: ACCOUNTS_TOTAL_DIFFERENCE_EXPLANATION,
-    historyCurrencies,
-    ...(historyCurrency ? { historyCurrency } : {}),
-    historyChoices,
-    historyTotalSelected: false,
-    historyCaption: HISTORY_BASIS,
-    historyCaptionAccessibilityLabel: HISTORY_BASIS_ACCESSIBILITY,
-    historyChartLabel: chartLabel(historySpan, false),
-    historySeries,
-    historyPoints,
-    ...(historySpan ? { historySpan } : {}),
-    ...(changeText ? { changeText } : {}),
-    ...unavailableMessage,
-  };
+  const combined = combinedReading(figures, input.rates);
+  return combined.status === 'ready'
+    ? { current, currencies, selection, hasFutureRecords, reading: combined.reading, oldestRateAt: combined.oldestRateAt }
+    : { current, currencies, selection, hasFutureRecords, withheldMessage: combinedWithheldMessage(combined.missing) };
 }
 
 /**
- * The history fields of the combined «Усе ≈ грн» reading (design D2–D4): withheld whole when a rate
- * is missing, otherwise the series, rows, span and change line in «≈» UAH terms.
+ * The disclosure of транзакції dated after today (net-worth, "Future dates do not extend the
+ * curve"): the current Статок counts them, the history and its change do not, so the headline
+ * says why it differs from today's point rather than leaving the owner to wonder.
  */
-function combinedHistoryModel(
-  input: {
-    readonly accounts: readonly Account[];
-    readonly accountsWithFutureRecords: ReadonlySet<string>;
-    readonly rates: readonly StoredRate[];
-    readonly now: Date;
-    readonly today: IsoDate;
-  },
-  current: NetWorthReading,
-  historyPointsAll: readonly HistoryPoint[],
-  historyCurrencies: readonly CurrencyCode[],
-): Pick<
-  NetWorthWidgetModel,
-  | 'historyChartLabel'
-  | 'historySeries'
-  | 'historyPoints'
-  | 'historySpan'
-  | 'changeText'
-  | 'historyRateFreshness'
-  | 'historyWithheldMessage'
-> {
-  const combined = combinedHistory(historyPointsAll, historyCurrencies, input.rates);
-  if (combined.status === 'withheld') {
+export const FUTURE_RECORDS_LINE =
+  'Є записи з майбутніми датами: вони вже в статку, але не в історії й не в зміні.';
+
+/** Whole hryvnias of a «≈» amount, halves away from zero: «≈401 408 грн». */
+function approxBody(minor: number): string {
+  const whole = roundHalfAway(minor, 100);
+  const grouped = formatMinorUnitsGrouped(Math.abs(whole) * 100).slice(0, -3);
+  return `${grouped} грн`;
+}
+
+/** An amount of a reading, unsigned unless negative: «≈401 408 грн» or «12 345,67 UAH». */
+export function readingAmount(reading: Pick<HistoryReading, 'approximate' | 'currency'>, minor: number): string {
+  if (reading.approximate) {
+    const whole = roundHalfAway(minor, 100);
+    return `${whole < 0 ? '−' : ''}≈${approxBody(minor)}`;
+  }
+  return formatMoney(money(minor, reading.currency));
+}
+
+/** An amount of a reading with its sign always written: «+≈26 408 грн», «−56 000,00 UAH». */
+export function signedReadingAmount(
+  reading: Pick<HistoryReading, 'approximate' | 'currency'>,
+  minor: number,
+): string {
+  const text = readingAmount(reading, minor);
+  return minor > 0 ? `+${text}` : text;
+}
+
+/** «+62,4%», with the decimal comma every number the owner reads uses. */
+export function percentText(percent: number): string {
+  const digits = Math.abs(percent).toFixed(1).replace('.', ',');
+  return `${percent > 0 ? '+' : percent < 0 ? '−' : ''}${digits}%`;
+}
+
+/** Up, down or flat — the mark beside a зміна, so its direction is never told by colour alone. */
+export type ChangeDirection = 'up' | 'down' | 'flat';
+
+export function directionOf(absolute: number): ChangeDirection {
+  return absolute > 0 ? 'up' : absolute < 0 ? 'down' : 'flat';
+}
+
+const DIRECTION_MARK: Record<ChangeDirection, string> = { up: ' ▲', down: ' ▼', flat: '' };
+export const DIRECTION_WORD: Record<ChangeDirection, string> = {
+  up: 'зростання',
+  down: 'спад',
+  flat: 'без змін',
+};
+
+/** The words TalkBack says for a currency: hryvnias and the two common ones by name. */
+const SPOKEN_CURRENCY: Readonly<Record<string, string>> = {
+  UAH: 'гривень',
+  USD: 'доларів',
+  EUR: 'євро',
+};
+
+/**
+ * An amount as TalkBack should say it: «мінус 56 000 гривень», «приблизно 401 408 гривень» —
+ * words for the sign and the currency, the kopecks only when there are any.
+ */
+export function spokenAmount(
+  reading: Pick<HistoryReading, 'approximate' | 'currency'>,
+  minor: number,
+  signed = false,
+): string {
+  const sign = minor < 0 ? 'мінус ' : signed && minor > 0 ? 'плюс ' : '';
+  const currency = reading.approximate ? 'гривень' : (SPOKEN_CURRENCY[reading.currency] ?? reading.currency);
+  if (reading.approximate) {
+    return `${sign}приблизно ${approxBody(Math.abs(minor)).slice(0, -4)} ${currency}`;
+  }
+  const text = formatMinorUnitsGrouped(Math.abs(minor));
+  const number = text.endsWith(',00') ? text.slice(0, -3) : text;
+  return `${sign}${number} ${currency}`;
+}
+
+/** The sentence a зміна reads when there is none to give. */
+export function noChangeReason(change: Extract<MonthChange, { status: 'unavailable' }>): string {
+  return change.reason === 'overflow'
+    ? `Порівняння недоступне: ${OVERFLOW_REASON}.`
+    : 'Порівняння з попереднім місяцем поки недоступне.';
+}
+
+/**
+ * One month's зміна as a line: signed amount, percentage where there is one, the up/down mark,
+ * «від <the preceding month-end>» when `since` is given, and «нові рахунки» beside it when a
+ * рахунок entered (net-worth, "Change requires a comparable previous month-end").
+ */
+export function changeLine(
+  reading: Pick<HistoryReading, 'approximate' | 'currency'>,
+  figure: Pick<MonthFigure, 'change' | 'entered'>,
+  since: IsoDate | undefined,
+  now: Date,
+): { readonly text: string; readonly direction?: ChangeDirection } {
+  if (figure.change.status === 'unavailable') {
+    return { text: noChangeReason(figure.change) };
+  }
+  const { absolute, percent } = figure.change;
+  const direction = directionOf(absolute);
+  const parts = [
+    `${signedReadingAmount(reading, absolute)}${percent !== undefined ? ` · ${percentText(percent)}` : ''}${DIRECTION_MARK[direction]}`,
+  ];
+  if (since !== undefined) parts.push(`від ${calendarLabel(since, now)}`);
+  if (figure.entered !== 0) parts.push(`нові рахунки ${signedReadingAmount(reading, figure.entered)}`);
+  return { text: parts.join(' · '), direction };
+}
+
+/** The headline: the current Статок in the reading — the приблизний статок, or the exact amount. */
+export function headlineOf(series: NetWorthSeries, rates: readonly StoredRate[]): string | undefined {
+  if (series.current.status !== 'ready' || series.selection === undefined) return undefined;
+  if (series.selection === TOTAL_HISTORY) {
+    const conversion = convertTotalsToUah(series.current.totals, rates);
+    return conversion.status === 'known'
+      ? readingAmount({ approximate: true, currency: UAH }, conversion.amount)
+      : undefined;
+  }
+  const total = series.current.totals.get(series.selection);
+  return total?.status === 'known' ? formatMoney(total.amount) : OVERFLOW_REASON;
+}
+
+/** Every exact per-currency current value on one line, UAH first. */
+export function exactLine(current: NetWorthReading): string {
+  return current.status === 'ready'
+    ? currencyReadouts(current.totals).map((r) => r.text).join(' · ')
+    : '';
+}
+
+/**
+ * The line on поточна вартість beyond вкладено (net-worth, "The поточна вартість beyond вкладено is
+ * read on its own"): the selected currency's, or every currency's converted for «Усе ≈ грн».
+ */
+export function investmentLine(
+  series: NetWorthSeries,
+  rates: readonly StoredRate[],
+  now: Date,
+): string | undefined {
+  const differences = investmentDifference(series.current);
+  if (differences.size === 0 || series.selection === undefined) return undefined;
+  const say = (text: string, asOf: IsoDate) =>
+    `інвестиції: ${text} понад вкладене, станом на ${calendarLabel(asOf, now)}`;
+  if (series.selection !== TOTAL_HISTORY) {
+    const own = differences.get(series.selection);
+    return own ? say(formatSignedMoneyText(own.amount), own.asOf) : undefined;
+  }
+  const rateFor = new Map(rates.map((r) => [r.currency, r]));
+  let sum = 0;
+  let asOf: IsoDate | undefined;
+  for (const [currency, difference] of differences) {
+    const rate = rateFor.get(currency);
+    if (currency !== UAH && rate === undefined) return undefined;
+    sum += currency === UAH ? difference.amount.amount : approximateUah(difference.amount.amount, rate!.rateMillionths);
+    if (asOf === undefined || difference.asOf < asOf) asOf = difference.asOf;
+  }
+  return say(signedReadingAmount({ approximate: true, currency: UAH }, sum), asOf!);
+}
+
+function formatSignedMoneyText(m: Money): string {
+  return m.amount > 0 ? `+${formatMoney(m)}` : formatMoney(m);
+}
+
+/** The months of the chart under the widget: the current one and the eleven before it. */
+export const WIDGET_MONTHS = 12;
+
+/** One label under a chart: which bar or dot it names, its words, and whether it is today's month. */
+export interface MonthTick {
+  readonly index: number;
+  readonly text: string;
+  readonly current: boolean;
+}
+
+const SHORT_MONTHS = ['січ', 'лют', 'бер', 'кві', 'тра', 'чер', 'лип', 'сер', 'вер', 'жов', 'лис', 'гру'];
+const MONTHS = [
+  'січень',
+  'лютий',
+  'березень',
+  'квітень',
+  'травень',
+  'червень',
+  'липень',
+  'серпень',
+  'вересень',
+  'жовтень',
+  'листопад',
+  'грудень',
+];
+
+/** «лис» — the month under a bar. */
+export function shortMonthName(month: Month): string {
+  return SHORT_MONTHS[Number(month.slice(5, 7)) - 1]!;
+}
+
+/** «листопад», and «листопад 2025» once the year is not `now`'s. */
+export function monthName(month: Month, now: Date): string {
+  const name = MONTHS[Number(month.slice(5, 7)) - 1]!;
+  return Number(month.slice(0, 4)) === now.getFullYear() ? name : `${name} ${month.slice(0, 4)}`;
+}
+
+export interface NetWorthWidgetModel {
+  /** «Ще немає рахунків» — present exactly when there is no account at all. */
+  readonly emptyMessage?: string;
+  /** The current Статок in the selected reading, prominently. */
+  readonly headline?: string;
+  /** Every exact per-currency current value on one line, always. */
+  readonly exactLine: string;
+  /** The same values one per currency, so only the one that changed moves. */
+  readonly readouts: readonly CurrencyReadout[];
+  readonly changeText?: string;
+  readonly changeDirection?: ChangeDirection;
+  readonly investmentLine?: string;
+  /** Present when a рахунок of the reading carries a транзакція dated after today. */
+  readonly futureLine?: string;
+  /** «Усе ≈ грн» without a rate: stands in place of the chart and the change. */
+  readonly withheldMessage?: string;
+  /** The last twelve months' levels — month-ends and today — `undefined` where unknown. */
+  readonly chartValues: readonly (number | undefined)[];
+  readonly chartTicks: readonly MonthTick[];
+  readonly chartLabel: string;
+  /** What TalkBack says for the whole widget, which is one button opening «Статок». */
+  readonly accessibilityLabel: string;
+}
+
+/**
+ * The compact Статок widget (main-screen, "The Статок widget is a compact summary that opens
+ * «Статок»"): the headline, the exact currencies, the change since the preceding month-end, the
+ * investment line and a month-labelled twelve-month chart — no selector, point list or
+ * explanation of its own; those belong to the screen, whose selection it reflects.
+ */
+export function netWorthWidgetModel(input: NetWorthInput): NetWorthWidgetModel {
+  if (input.accounts.length === 0) {
     return {
-      historyChartLabel: chartLabel(undefined, true),
-      historySeries: [],
-      historyPoints: [],
-      historyWithheldMessage: combinedWithheldMessage(combined.missing),
+      emptyMessage: 'Ще немає рахунків',
+      exactLine: '',
+      readouts: [],
+      chartValues: [],
+      chartTicks: [],
+      chartLabel: 'Графік статку',
+      accessibilityLabel: 'Статок. Ще немає рахунків',
     };
   }
+  const series = netWorthSeries(input);
+  return widgetFromSeries(series, input);
+}
 
-  const chartedPoints = chartedCombinedHistory(combined.points);
-  const historySpan = historySpanOf(chartedPoints, input.now);
-
-  let changeText: string | undefined;
-  if (current.status === 'ready') {
-    const conversion = convertTotalsToUah(current.totals, input.rates);
-    const currentTotal: CurrencyTotal =
-      conversion.status === 'known'
-        ? { status: 'known', amount: money(conversion.amount, UAH) }
-        : { status: 'unavailable', reason: 'overflow' };
-    const previousPoint = combined.points.find((p) => p.date === previousMonthEndDate(input.today));
-    const change = netWorthChange({
-      current: currentTotal,
-      currentUsedValuation: current.contributions.some((c) => c.basis === 'currentValue'),
-      hasFutureRecords: input.accounts.some((a) => input.accountsWithFutureRecords.has(a.id)),
-      ...(previousPoint
-        ? {
-            previousMonthEnd: {
-              date: previousPoint.date,
-              total:
-                previousPoint.status === 'known'
-                  ? { status: 'known', amount: money(previousPoint.amount, UAH) }
-                  : { status: 'unavailable', reason: previousPoint.reason },
-            },
-          }
-        : {}),
-    });
-    changeText = changeLabel(change, input.now, true);
+/** The widget's fields from an already-built series — the screen's own `netWorthSeries` result. */
+export function widgetFromSeries(
+  series: NetWorthSeries,
+  input: Pick<NetWorthInput, 'rates' | 'now' | 'today'>,
+): NetWorthWidgetModel {
+  const headline = headlineOf(series, input.rates);
+  const exact = exactLine(series.current);
+  const readouts = series.current.status === 'ready' ? currencyReadouts(series.current.totals) : [];
+  const investment = investmentLine(series, input.rates, input.now);
+  const name = series.selection === TOTAL_HISTORY ? 'Статок, усе наближено в гривнях' : `Статок, ${series.selection}`;
+  if (series.reading === undefined) {
+    return {
+      ...(headline ? { headline } : {}),
+      exactLine: exact,
+      readouts,
+      ...(investment ? { investmentLine: investment } : {}),
+      ...(series.hasFutureRecords ? { futureLine: FUTURE_RECORDS_LINE } : {}),
+      ...(series.withheldMessage ? { withheldMessage: series.withheldMessage } : {}),
+      chartValues: [],
+      chartTicks: [],
+      chartLabel: 'Графік статку',
+      accessibilityLabel: [name, series.withheldMessage, exact, 'Відкриває Статок'].filter(Boolean).join('. '),
+    };
   }
-
+  const reading = series.reading;
+  const months = reading.months.slice(-WIDGET_MONTHS);
+  const currentMonth = months.at(-1);
+  const previous = reading.months.at(-2);
+  const change = currentMonth
+    ? changeLine(reading, currentMonth, previous?.date, input.now)
+    : undefined;
+  const ticks = months.map((m, index) => ({
+    index,
+    text: shortMonthName(m.month),
+    current: index === months.length - 1,
+  }));
+  const spokenChange =
+    currentMonth?.change.status === 'available'
+      ? `зміна ${spokenAmount(reading, currentMonth.change.absolute, true)}, ${DIRECTION_WORD[directionOf(currentMonth.change.absolute)]}, від ${calendarLabel(previous!.date, input.now)}`
+      : change?.text;
+  const spokenHeadline =
+    series.selection === TOTAL_HISTORY && series.current.status === 'ready'
+      ? (() => {
+          const conversion = convertTotalsToUah(series.current.totals, input.rates);
+          return conversion.status === 'known' ? spokenAmount(reading, conversion.amount) : headline;
+        })()
+      : headline;
   return {
-    historyChartLabel: chartLabel(historySpan, true),
-    historySeries: combinedSeriesFor(chartedPoints),
-    historyPoints: combinedPointRows(combined.points, input.now),
-    ...(historySpan ? { historySpan } : {}),
-    ...(changeText ? { changeText } : {}),
-    historyRateFreshness: rateFreshnessLabel(combined.oldestRateAt, input.now),
+    ...(headline ? { headline } : {}),
+    exactLine: exact,
+    readouts,
+    ...(change ? { changeText: change.text } : {}),
+    ...(change?.direction ? { changeDirection: change.direction } : {}),
+    ...(investment ? { investmentLine: investment } : {}),
+    ...(series.hasFutureRecords ? { futureLine: FUTURE_RECORDS_LINE } : {}),
+    chartValues: months.map((m) => m.end),
+    chartTicks: ticks,
+    chartLabel: `Графік статку за ${months.length} міс., шкала в ${reading.approximate ? 'гривнях, наближено' : reading.currency}`,
+    accessibilityLabel: [name, spokenHeadline, spokenChange, 'Відкриває Статок'].filter(Boolean).join('. '),
   };
 }

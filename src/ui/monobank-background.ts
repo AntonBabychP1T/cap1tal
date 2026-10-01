@@ -3,7 +3,7 @@ import { hasPriority, shownLinks, type OrderableLink } from '../monobank/sync';
 import type { AccountOutcome, SyncPorts } from '../monobank/coordinator';
 import { chanceRun } from '../monobank/yielding';
 import { clear as clearAlert, raise as raiseAlert, type AlertPorts } from './alerting';
-import { journal } from './journal';
+import { journal, reportFailure } from './journal';
 import { bankCoverage } from './monobank-screen';
 import { startSync, type AttemptStorage } from './monobank-sync';
 
@@ -67,6 +67,13 @@ export interface BackgroundTurnPorts {
    */
   readonly nudgedAtMs?: () => number | undefined;
   /**
+   * What else rides on a run that reached the bank, once it has committed — the розстрочки' upkeep
+   * (installments design D4): a debit synced while the app is closed links its платіж and withdraws
+   * tomorrow's warning at the end of the same run. A failure is journaled and never thrown, so it
+   * can neither crash the headless task nor turn a good run into a failed one.
+   */
+  readonly afterRun?: () => Promise<void>;
+  /**
    * The mark this chance's entries carry — the same one the ports were built with, so the
    * `native` entry for the chance, the run's two ends and every request it made read as one
    * operation (design D4).
@@ -104,6 +111,9 @@ export type BackgroundTurn =
        */
       readonly nudged?: true;
     };
+
+/** What the журнал calls a failure of what rides on a run (`afterRun`). */
+export const AFTER_RUN = 'background-after-run';
 
 /** What the журнал calls one chance the system gave the app. */
 export const BACKGROUND_CHANCE = 'background-chance';
@@ -208,6 +218,13 @@ export async function runBackgroundTurn(ports: BackgroundTurnPorts): Promise<Bac
 
   const outcome = worstOutcome(run.accounts);
   await announce(ports, outcome);
+  if (ports.afterRun) {
+    try {
+      await ports.afterRun();
+    } catch (error) {
+      reportFailure(AFTER_RUN, error);
+    }
+  }
   return { kind: 'ran', outcome, imported: run.imported, ...(nudged ? { nudged: true as const } : {}) };
 }
 

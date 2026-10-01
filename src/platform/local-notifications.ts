@@ -30,6 +30,8 @@ export type LocalNotificationPermission = 'granted' | 'denied' | 'unsupported';
 export interface ScheduledNotice {
   readonly id: string;
   readonly at: TimeOfDay;
+  /** The one calendar day of a dated arrangement; absent for the daily one. */
+  readonly date?: string;
 }
 
 export interface LocalNotificationsPort {
@@ -50,6 +52,14 @@ export interface LocalNotificationsPort {
    * that id first, so re-asserting on every launch can never leave two (design D12).
    */
   scheduleDaily(notice: Notice, at: TimeOfDay): Promise<void>;
+  /**
+   * Arranges `notice` once, on `at.date` at `at.time` in the phone's own zone at the moment of
+   * arranging — the нагадування про платіж (installments design D5). Under the notice's id, which
+   * the caller makes distinct per date; `cancelDaily` removes it like any other arrangement, and
+   * re-asserting on every launch re-computes the instant, so a phone carried into another zone
+   * warns at its own 10:00.
+   */
+  scheduleAt(notice: Notice, at: { readonly date: string; readonly time: TimeOfDay }): Promise<void>;
   /** Removes whatever is arranged under this id. Idempotent: nothing arranged is not an error. */
   cancelDaily(id: string): Promise<void>;
   /** The ids the system currently holds arranged — what the app's belief is reconciled against. */
@@ -125,6 +135,13 @@ export function inMemoryLocalNotifications(options?: {
       // "cancel before scheduling" rule exists to prevent, so the double must be able to show it.
       if (permission === 'granted') {
         scheduled.push({ id: notice.id, at });
+      }
+      return Promise.resolve();
+    },
+    scheduleAt: (notice, at) => {
+      // The same device rule as the daily one: a phone that has not granted it holds nothing.
+      if (permission === 'granted') {
+        scheduled.push({ id: notice.id, at: at.time, date: at.date });
       }
       return Promise.resolve();
     },

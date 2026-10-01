@@ -438,6 +438,7 @@ export default function MonobankScreen() {
         account: created,
         monobankAccountId: draft.monobankAccountId,
         ...syncBoundary(boundary),
+        today: todayIso(new Date()),
       });
       setDraft(undefined);
       setLinking(undefined);
@@ -493,6 +494,7 @@ export default function MonobankScreen() {
             monobankRepo.linkMany({
               accepted: entries,
               ...syncBoundary(boundary),
+              today: todayIso(new Date()),
             });
             reload();
           } catch (error) {

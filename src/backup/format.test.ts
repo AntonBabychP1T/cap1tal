@@ -122,6 +122,12 @@ describe('what a бекап holds', () => {
       // What the owner said each інвестиційний рахунок is worth: hand-entered, explained by no
       // транзакція, and recoverable from nothing if a бекап leaves it behind.
       'investment_values',
+      // Розстрочки and the states of their платежі: what is still owed, shown by no statement.
+      'installments',
+      'installment_part_links',
+      'installment_part_marks',
+      'installment_refusals',
+      'installment_reminder',
     ]) {
       expect(BACKUP_TABLES).toContain(held);
     }

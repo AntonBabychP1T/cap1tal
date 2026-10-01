@@ -29,6 +29,7 @@ import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { hapticsPreferenceRepo } from './haptics-preference-repo';
 import { importRepo } from './import-repo';
+import { installmentsRepo } from './installments-repo';
 import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
 import { monobankRepo } from './monobank-repo';
@@ -844,6 +845,24 @@ describe('the round trip a бекап promises', () => {
         expect(t.amount.currency).toBe(accounts.get(t.accountId));
       }
     }
+  });
+
+  it('Scenario: The дата survives the round trip', async () => {
+    accountsRepo(source.db).save(
+      account({
+        id: 'cash-eur',
+        name: 'готівка EUR',
+        kind: 'cash',
+        currency: 'EUR',
+        openingBalance: money(30000, 'EUR'),
+        openingDate: '2026-06-08',
+      }),
+    );
+    await roundTrip();
+
+    const restored = accountsRepo(target.db).get('cash-eur')!;
+    expect(restored.openingBalance).toEqual(money(30000, 'EUR'));
+    expect(restored.openingDate).toBe('2026-06-08');
   });
 
   it('Scenario: Configuration comes back with the money', async () => {
@@ -1945,5 +1964,99 @@ describe('the поточна вартість travels, and a restore replaces th
     expect(investmentsRepo(target.db).all()).toEqual(new Map());
     // ...and everything else arrived: the вартості being absent is not the restore failing.
     expect(accountsRepo(target.db).list()).toHaveLength(accountsRepo(source.db).list().length);
+  });
+});
+
+describe('the розстрочки in the snapshot', () => {
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReservedCategories(storage.db);
+    accountsRepo(storage.db).save(card);
+  });
+  afterEach(() => storage.close());
+
+  const plan = (id: string, name: string) => ({
+    id,
+    name,
+    total: 300_000,
+    partsCount: 3,
+    part: 100_000,
+    firstDue: '2026-10-05',
+    debitAccountId: 'card',
+    paidBefore: 0,
+    recordedAt: STORED_AT.getTime(),
+  });
+
+  it('Scenario: Replacing the state replaces the розстрочки', () => {
+    const installments = installmentsRepo(storage.db);
+    installments.save(plan('i-iphone', 'iPhone'));
+    installments.mark('i-iphone', 1);
+    const snapshot = backupRepo(storage.db).snapshot();
+    const replacement: BackupState = {
+      ...snapshot,
+      installments: {
+        plans: [plan('i-vacuum', 'Пилосос')],
+        links: [],
+        marks: [],
+        refusals: [],
+        reminderEnabled: true,
+      },
+    };
+
+    backupRepo(storage.db).replaceAll(replacement);
+
+    expect(installments.list().map((i) => i.name)).toEqual(['Пилосос']);
+    expect(installments.facts()).toEqual({ links: [], marks: [], refusals: [] });
+    expect(backupRepo(storage.db).snapshot().installments?.plans.map((p) => p.id)).toEqual(['i-vacuum']);
+  });
+
+  it('Scenario: A replace leaves whether the app already asked', () => {
+    const installments = installmentsRepo(storage.db);
+    installments.markAsked();
+    const snapshot = backupRepo(storage.db).snapshot();
+    expect(JSON.stringify(snapshot)).not.toContain('asked');
+
+    backupRepo(storage.db).replaceAll({
+      ...snapshot,
+      installments: { plans: [], links: [], marks: [], refusals: [], reminderEnabled: false },
+    });
+    expect(installments.reminder()).toEqual({ enabled: false, asked: true });
+
+    // A бекап written before розстрочки existed: none, on — and still asked.
+    const { installments: _none, ...older } = snapshot;
+    backupRepo(storage.db).replaceAll(older);
+    expect(installments.list()).toEqual([]);
+    expect(installments.reminder()).toEqual({ enabled: true, asked: true });
+  });
+
+  it('carries links, marks, refusals and the switch through a real бекап file', async () => {
+    const installments = installmentsRepo(storage.db);
+    installments.save({ ...plan('i-iphone', 'iPhone'), firstDue: '2026-06-05', partsCount: 10, total: 1_000_000, paidBefore: 4 });
+    const save = (id: string, date: string) =>
+      transactionsRepo(storage.db).save(
+        expenseByDefault({ id, date, accountId: 'card', amount: money(100_000, 'UAH') }),
+        STORED_AT,
+      );
+    save('t5', '2026-10-05');
+    installments.settle('2026-10-05');
+    save('t7', '2026-12-05');
+    installments.mark('i-iphone', 6);
+    installments.link('i-iphone', 7, 't7');
+    installments.unlink('i-iphone', 7);
+    installments.setReminderEnabled(false);
+
+    const file = await saveBackup(backupRepo(storage.db), MADE_AT);
+    const target = openTestDb();
+    try {
+      expect(await restoreBackup(backupRepo(target.db), file.bytes)).toBe('ok');
+      const restored = installmentsRepo(target.db);
+      expect(restored.list()).toEqual(installments.list());
+      expect(restored.facts()).toEqual(installments.facts());
+      expect(restored.reminder()).toEqual({ enabled: false, asked: false });
+    } finally {
+      target.close();
+    }
   });
 });

@@ -6,7 +6,9 @@ The one-time move of the owner's history out of Saldo: parse the double-entry ex
 interpret its legs into cap1tal транзакції under an owner-confirmed account map, and prove with
 a verification report that the resulting розрахункові баланси match what Saldo held at export
 time — before anything is committed.
+
 ## Requirements
+
 ### Requirement: The export parses into double-entry transactions
 
 The system SHALL parse a Saldo export CSV — RFC-4180 quoted fields, which may contain commas,
@@ -15,7 +17,9 @@ Description, Parent account, Account, Account Type, Journal Type, Amount, Curren
 Month — into transactions: the rows sharing one Transaction ID form one transaction of debit and
 credit legs. Each leg's amount SHALL become an
 integer amount in minor units with its currency code, converted exactly from the decimal text;
-each leg's date SHALL be the calendar date of its Transaction Date. A file whose header lacks
+Saldo writes Transaction Date as a UTC instant without a zone marker, so each leg's date SHALL be
+the calendar date, in the phone's time zone, of the UTC instant its Transaction Date names — the
+day the owner recorded it in Saldo, not the UTC day. A file whose header lacks
 any of these columns, or a row whose amount is not a plain two-decimal number, SHALL be rejected
 with a reason naming what is wrong; nothing SHALL be silently skipped.
 
@@ -41,8 +45,21 @@ with a reason naming what is wrong; nothing SHALL be silently skipped.
 
 #### Scenario: The datetime becomes a calendar date
 
-- **WHEN** a leg carries Transaction Date "2026-03-06T23:15:31.129"
+- **WHEN** a leg carries Transaction Date "2026-03-06T10:15:31.129" and the phone is in Kyiv
 - **THEN** its date is the calendar date 2026-03-06
+
+#### Scenario: A late-evening UTC time is the next day in Kyiv
+
+- **WHEN** a leg carries Transaction Date "2026-03-06T23:15:31.129" and the phone is in Kyiv
+  (UTC+2 in March)
+- **THEN** its date is the calendar date 2026-03-07
+
+#### Scenario: A date-only Saldo entry keeps the day the owner chose, summer and winter
+
+- **WHEN** the phone is in Kyiv and one leg carries Transaction Date "2025-08-25T21:00" (Kyiv
+  midnight of 26 August, UTC+3) and another "2026-01-25T22:00" (Kyiv midnight of 26 January,
+  UTC+2)
+- **THEN** their dates are 2025-08-26 and 2026-01-26
 
 #### Scenario: A malformed amount rejects the file with a reason
 
@@ -145,29 +162,37 @@ would add a reserved row nothing has a requirement for.
 ### Requirement: Initial balance legs become the початковий залишок
 
 A transaction pairing a real leg with an EQUITY leg SHALL become no transaction: its real leg's
-amount SHALL contribute to the mapped рахунок's початковий залишок, in the рахунок's currency.
-Entries merged onto one рахунок SHALL sum their contributions; for an existing рахунок the plan
-SHALL propose replacing its stored початковий залишок with the Saldo contribution, and the
-verification report SHALL show the replacement.
+amount SHALL contribute to the mapped рахунок's початковий залишок, in the рахунок's currency, and
+the earliest local date among the entries mapped onto that рахунок — or the рахунок's first planned
+or stored транзакція, when that is earlier — SHALL become its дата початкового залишку. Entries merged onto one рахунок SHALL sum their contributions; for an
+existing рахунок the plan SHALL propose replacing its stored початковий залишок and its дата with
+the Saldo ones, and the verification report SHALL show both replacements.
 
 #### Scenario: An initial balance becomes the opening balance
 
-- **WHEN** the only EQUITY-paired leg of "mono black" is a DEBIT of 12300 minor units UAH
+- **WHEN** the only EQUITY-paired leg of "mono black" is a DEBIT of 12300 minor units UAH dated
+  2024-10-27
 - **THEN** the plan creates no transaction for it and the mapped рахунок's початковий залишок
-  is 12300 minor units UAH
+  is 12300 minor units UAH with дата початкового залишку 2024-10-27
 
 #### Scenario: Merged accounts sum their initial balances
 
-- **WHEN** "mono black" with an initial 12300 and "Monobank UAH, Black" with an initial 5000
-  minor units UAH are mapped onto one рахунок
-- **THEN** that рахунок's початковий залишок is 17300 minor units UAH
+- **WHEN** "mono black" with an initial 12300 dated 2024-10-27 and "Monobank UAH, Black" with an
+  initial 5000 minor units UAH dated 2026-01-13 are mapped onto one рахунок
+- **THEN** that рахунок's початковий залишок is 17300 minor units UAH with дата 2024-10-27
 
 #### Scenario: Mapping onto an existing рахунок proposes replacing its opening balance
 
-- **WHEN** "mono black" with an initial 12300 minor units UAH is mapped onto an existing рахунок
-  whose початковий залишок is 5000 minor units UAH
-- **THEN** the plan proposes початковий залишок 12300 minor units UAH and the verification
-  report shows the replaced value
+- **WHEN** "mono black" with an initial 12300 minor units UAH dated 2024-10-27 is mapped onto an
+  existing рахунок whose початковий залишок is 5000 minor units UAH with no дата
+- **THEN** the plan proposes початковий залишок 12300 minor units UAH dated 2024-10-27 and the
+  verification report shows both replaced values
+
+#### Scenario: An entry dated after the first транзакція is moved back to it
+
+- **WHEN** an initial balance of 5500000 minor units UAH is dated 2024-11-27 and the рахунок's
+  first транзакція in the export is dated 2024-11-19
+- **THEN** the рахунок's дата початкового залишку is 2024-11-19
 
 ### Requirement: Two real legs become a переказ
 
@@ -324,14 +349,16 @@ NOT become any транзакція.
 
 ### Requirement: The plan is deterministic and keeps the export's order
 
-Given the same export text and the same owner decisions, the system SHALL produce the same plan;
+Given the same export text, the same owner decisions and the same phone time zone, the system
+SHALL produce the same plan;
 the plan's транзакції SHALL be ordered by the export's own datetimes, ties broken by the
 export's own row order, so that same-date транзакції keep Saldo's order when later stored.
 
 #### Scenario: The same inputs replay into the same plan
 
-- **WHEN** the plan is built twice from one export text and one set of decisions
-- **THEN** both plans hold the same транзакції in the same order with the same amounts
+- **WHEN** the plan is built twice from one export text, one set of decisions and one phone time
+  zone
+- **THEN** both plans hold the same транзакції in the same order with the same amounts and dates
 
 #### Scenario: Same-date transactions keep their intra-day order
 
@@ -364,9 +391,11 @@ hand-kept records is visible, never an inexplicable mismatch. The report SHALL a
 resulting розрахунковий баланс of every рахунок-борг in the plan, so an over-repaid (negative)
 one is visible before anything is committed. The report SHALL also list every
 dropped or unexplained row — unpaired in-transit legs, zero-only map entries, dropped
-original-currency amounts on повернення, and the rows whose Accrual Month differs from their
-date, which the import deliberately ignores (перенесення транзакцій між місяцями stays outside
-v1). A fully interpreted рахунок SHALL show equal balances.
+original-currency amounts on повернення, and the rows whose Accrual Month differs from the
+month of their Transaction Date as the export writes it — Saldo fills Accrual Month from that
+same UTC text, so a row whose phone-local date crossed into the next month is not a divergence —
+which the import deliberately ignores (перенесення транзакцій між місяцями stays outside v1). A
+fully interpreted рахунок SHALL show equal balances.
 
 #### Scenario: A fully interpreted рахунок reconciles exactly
 
@@ -397,8 +426,17 @@ v1). A fully interpreted рахунок SHALL show equal balances.
 
 #### Scenario: An accrual-month divergence is noted, not obeyed
 
-- **WHEN** a row's Accrual Month is 2025-07 while its Transaction Date is 2025-08-02
-- **THEN** the plan dates the транзакція 2025-08-02 and the report notes the divergence
+- **WHEN** the phone is in Kyiv and a row's Accrual Month is 2025-07 while its Transaction Date
+  is 2025-08-02
+- **THEN** the plan dates the транзакція 2025-08-02 and the report notes the divergence, quoting
+  the Transaction Date as the export writes it
+
+#### Scenario: A month-end evening entry is not a divergence
+
+- **WHEN** the phone is in Kyiv and a row carries Transaction Date "2025-10-31T22:00" with
+  Accrual Month "2025-10-31"
+- **THEN** the plan dates the транзакція 2025-11-01 and the report notes no accrual-month
+  divergence for it
 
 ### Requirement: «Борг» legs become перекази on the рахунок-борг «Борги»
 
@@ -445,3 +483,50 @@ outside this change — the report shows the resulting negative «Борги» i
 - **WHEN** the export holds no «Борг» leg at all
 - **THEN** the plan holds no рахунок-борг «Борги»
 
+### Requirement: The опис of a Saldo row travels onto the транзакції built from it
+
+Every транзакція the import builds SHALL carry, as its опис, the description the Saldo export
+wrote on the row it was built from, with surrounding whitespace removed. A row whose description
+is empty SHALL produce транзакції with no опис rather than an empty one. This SHALL hold for every
+shape the import builds: витрата, повернення, дохід, коригування, a переказ between two рахунки, a
+переказ built from an in-transit departure and its arrival, the комісія split off such a переказ,
+and a переказ onto or off the рахунок-борг.
+
+The опис SHALL be carried and nothing more: it SHALL NOT decide a категорія, a джерело, a вид, a
+merge or a сума, and it SHALL NOT appear anywhere in the звірка's arithmetic.
+
+#### Scenario: A витрата keeps the merchant the export named
+
+- **WHEN** the export holds a витрата row whose description is «СІЛЬПО»
+- **THEN** the витрата built from it carries the опис «СІЛЬПО»
+
+#### Scenario: An in-transit pair takes the departure's опис
+
+- **WHEN** an in-transit departure described «Переказ на картку» is matched with its arrival
+- **THEN** the переказ built from the pair carries the опис «Переказ на картку», and the комісія
+  split off it carries the same опис
+
+#### Scenario: An empty description leaves no опис
+
+- **WHEN** the export holds a витрата row whose description column is empty or blank
+- **THEN** the витрата built from it carries no опис at all
+
+#### Scenario: A повернення carries the опис of the row it reverses
+
+- **WHEN** the export holds a row crediting a категорія back onto a рахунок, described
+  «Повернення за куртку»
+- **THEN** the повернення built from it carries the опис «Повернення за куртку», and it is still a
+  повернення in that категорія and not a дохід
+
+#### Scenario: Both plain shapes of переказ carry theirs
+
+- **WHEN** the export holds a move between two рахунки described «На готівку» and a «Борг» row
+  described «борг яріку»
+- **THEN** the переказ between the two рахунки carries «На готівку» and the переказ onto
+  «Борги» carries «борг яріку»
+
+#### Scenario: A коригування and a дохід carry theirs too
+
+- **WHEN** the export holds a balance-correction row described «Звірка» and an income row
+  described «Зарплата»
+- **THEN** the коригування carries the опис «Звірка» and the дохід carries the опис «Зарплата»

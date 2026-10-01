@@ -11,6 +11,11 @@ import {
   linePath,
   MAX_PLOTTED_POINTS,
   sectorAt,
+  barGeometry,
+  forecastGeometry,
+  lineRuns,
+  monthTickLabels,
+  valueScale,
 } from './dashboard-charts';
 
 describe('donutGeometry', () => {
@@ -356,5 +361,55 @@ describe('donutMorph', () => {
         ]),
       ),
     ).toEqual({ kind: 'fade' });
+  });
+});
+
+describe('the «Статок» screen charts', () => {
+  it('Scenario: Two years still name the months', () => {
+    // 24 bars, листопад 2024 to жовтень 2026: labels at a regular interval, first and current.
+    const ticks = monthTickLabels(24, 12);
+    expect(ticks[0]).toBe(0);
+    expect(ticks.at(-1)).toBe(23);
+    expect(ticks.length).toBeLessThanOrEqual(12);
+    const gaps = ticks.slice(1, -1).map((t, i) => t - ticks[i]!);
+    expect(new Set(gaps).size).toBe(1);
+    // Every bar can still be selected: one per month, labelled or not.
+    expect(barGeometry(Array.from({ length: 24 }, (_, i) => 1000 * (i + 1))).bars).toHaveLength(24);
+    // Twelve or fewer: every month is named.
+    expect(monthTickLabels(12, 12)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it('Scenario: Negative and flat history', () => {
+    const negative = barGeometry([-3000, 2000, undefined, -1000]);
+    expect(negative.scale).toEqual({ min: -3000, max: 2000 });
+    expect(negative.zero).toBeCloseTo(0.6);
+    // A negative bar hangs below the zero line, a positive one stands on it; unknown is no bar.
+    expect(negative.bars[0]).toEqual({ index: 0, bottom: 0, top: negative.zero });
+    expect(negative.bars[1]).toEqual({ index: 1, bottom: negative.zero, top: 1 });
+    expect(negative.bars[2]).toBeUndefined();
+
+    const flat = barGeometry([5000, 5000, 5000]);
+    expect(flat.scale.max).toBeGreaterThan(flat.scale.min);
+    expect(Number.isFinite(flat.zero)).toBe(true);
+    const zeros = barGeometry([0, 0]);
+    expect(zeros.scale).toEqual({ min: -1, max: 1 });
+    expect(valueScale([], false)).toEqual({ min: -1, max: 1 });
+  });
+
+  it('puts the forecast and its band on the recorded months\' scale', () => {
+    const geometry = forecastGeometry([100, 200], [{ value: 300, low: 250, high: 400 }], false);
+    expect(geometry.scale).toEqual({ min: 100, max: 400 });
+    expect(geometry.recorded).toEqual([0, 1 / 3]);
+    expect(geometry.projected[0]).toEqual({ value: 2 / 3, low: 0.5, high: 1 });
+  });
+
+  it('draws a line through column centres and breaks it at an unknown month', () => {
+    expect(lineRuns([0, 0.5, undefined, 1], 4)).toEqual([
+      [
+        { x: 0.125, y: 0 },
+        { x: 0.375, y: 0.5 },
+      ],
+      [{ x: 0.875, y: 1 }],
+    ]);
   });
 });

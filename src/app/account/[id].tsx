@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { ChangingFigure } from '@/components/motion';
-import { Action, Choices, Field, Picker } from '@/components/form';
+import { Action, Choices, DateField, Field, Picker } from '@/components/form';
 import {
   Card,
   Fab,
@@ -34,7 +34,13 @@ import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { useSinglePush } from '@/hooks/use-single-push';
-import { accountFromDraft, draftFrom, type AccountDraft } from '@/ui/account-form';
+import {
+  accountFromDraft,
+  draftFrom,
+  openingDateProblem,
+  showsOpeningDate,
+  type AccountDraft,
+} from '@/ui/account-form';
 import { mergeConfirmation, mergeTargets } from '@/ui/account-merge';
 import { accountMovements, reconcileTyped, shownMovements } from '@/ui/account-movements';
 import { todayIso } from '@/ui/dates';
@@ -170,7 +176,7 @@ export default function AccountMovementsScreen() {
   const save = useCallback(() => {
     if (!draft) return;
     try {
-      accountsRepo.save(accountFromDraft(draft, newId()));
+      accountsRepo.save(accountFromDraft(draft, newId(), todayIso(new Date())), todayIso(new Date()));
       // A рахунок was edited: its початковий залишок moves the резерв with no транзакція behind it.
       judgeProgressLater();
       setDraft(undefined);
@@ -186,6 +192,7 @@ export default function AccountMovementsScreen() {
     (archived: boolean) => {
       if (!stored.account) return;
       try {
+        // No `today`: archiving touches no дата, so it judges none (a дата only an old file carries).
         accountsRepo.save(account({ ...stored.account, archived }));
         // Archiving takes no money away — an archived рахунок still counts toward the резерв — so
         // the зведення is the same and this evaluation writes nothing. It is here because the
@@ -478,6 +485,18 @@ export default function AccountMovementsScreen() {
                 placeholder="0,00"
                 hint={`${draft.currency} — необовʼязково`}
               />
+              {showsOpeningDate(draft) ? (
+                <DateField
+                  label="Станом на"
+                  value={draft.openingDate}
+                  onChange={(openingDate) => setDraft({ ...draft, openingDate })}
+                  now={new Date()}
+                  {...(() => {
+                    const problem = openingDateProblem(draft, todayIso(new Date()));
+                    return problem ? { hint: problem } : {};
+                  })()}
+                />
+              ) : null}
               <Action title="Зберегти" onPress={save} />
               <Action
                 variant="secondary"

@@ -47,6 +47,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { href: '/manage/rules', title: 'Правила', hint: 'Автокатегоризація імпорту' },
   { href: '/manage/limits', title: 'Ліміти', hint: 'Місячна стеля по категорії — вона ж ціль витрат' },
   { href: '/manage/goals', title: 'Цілі', hint: 'Накопичити суму або не перевищити витрати' },
+  // Also reached from Місяць's block — but a розстрочка recorded in a month with no платіж yet has
+  // no block to tap, so the section is the way in (settings-screen, "The section opens the screen").
+  { href: '/manage/installments', title: 'Розстрочки', hint: 'Покупки частинами: графік і що лишилось сплатити' },
   { href: '/manage/saldo-import', title: 'Імпорт Saldo', hint: 'Разовий переїзд з історією' },
   { href: '/manage/monobank', title: 'monobank', hint: 'Токен, рахунки та синхронізація' },
   {
