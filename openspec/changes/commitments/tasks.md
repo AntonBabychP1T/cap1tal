@@ -71,26 +71,26 @@ the розстрочки' tests as this change's.
 
 ## 5. Screen logic (Node-tested, no React)
 
-- [ ] 5.1 `src/ui/commitment-form.ts` (+ test): prefill and edit values, the four chips, the сума in the рахунок's currency, unarchived рахунки, the first-date hint, Ukrainian refusals per field. Prove "Monthly unless told otherwise", "A USD card makes a USD сума" and "A refusal sits next to its field"
-- [ ] 5.2 `src/ui/commitments-screen.ts` (+ test) list model, bounded by `max(today, firstDue)` + one period. Prove "The nearest платіж leads", "A missed debit is visible from the list", "Stopped ones are set apart" and "An empty screen explains itself"
-- [ ] 5.3 `src/ui/commitment-detail.ts` (+ test): платежі newest first up to the first after today, verbs per state, candidates within ±10 days, «Припинити»/«Відновити», delete confirmation. Prove "The платежі read newest first", "Picking the списання by hand", "Skipping a платіж", "Stopping moves it under Припинені" and "Deleting asks first"
-- [ ] 5.4 «Оновити суму» in `src/ui/commitment-detail.ts`. Prove "Netflix got dearer" and "The same сума offers nothing"
+- [x] 5.1 `src/ui/commitment-form.ts` (+ test): prefill and edit values, the four chips, the сума in the рахунок's currency, unarchived рахунки, the first-date hint, Ukrainian refusals per field. Prove "Monthly unless told otherwise", "A USD card makes a USD сума" and "A refusal sits next to its field"
+- [x] 5.2 `src/ui/commitments-screen.ts` (+ test) list model, bounded by `max(today, firstDue)` + one period. Prove "The nearest платіж leads", "A missed debit is visible from the list", "Stopped ones are set apart" and "An empty screen explains itself"
+- [x] 5.3 `src/ui/commitment-detail.ts` (+ test): платежі newest first up to the first after today, verbs per state, candidates within ±10 days, «Припинити»/«Відновити», delete confirmation. Prove "The платежі read newest first", "Picking the списання by hand", "Skipping a платіж", "Stopping moves it under Припинені" and "Deleting asks first"
+- [x] 5.4 «Оновити суму» in `src/ui/commitment-detail.ts`. Prove "Netflix got dearer" and "The same сума offers nothing"
 - [x] 5.5 `src/ui/month-screen.ts` (+ test): the «Платежі місяця» block over both plans. Rows show the scheduled сума, each row has a `href`, and totals are per currency, with no total for a currency whose платежі are all пропущено. Prove "October shows its two платежі", "Every currency totals on its own", "A skipped платіж is listed but not totalled", "The block leads to the screen", "A платіж of a зобов'язання leads to its зобов'язання", "An empty month still shows what it owes" and "A month without платежі has no block"
 - [x] 5.6 `src/ui/month-screen.ts` (+ test): «Вільно після зобов'язань» in every owing currency group. Prove "What is free after the платіж still owed", "A USD group gets its own reading", "Before the first дохід it sits beneath залишилось", "No UAH group, no reading", "No USD group, no USD reading", "Not for a past month" and "Nothing owed hides it"
-- [ ] 5.7 `src/ui/settings-sections.ts`: the row «Зобов'язання» right after «Розстрочки». Prove in `src/ui/settings-sections.test.ts`:
+- [x] 5.7 `src/ui/settings-sections.ts`: the row «Зобов'язання» right after «Розстрочки». Prove in `src/ui/settings-sections.test.ts`:
   - "The tab opens on its sections";
   - "The Зобов'язання section opens its screen" — the href is `/manage/commitments` and that route file renders the list model, following the «Базові категорії» precedent there
 
 ## 6. Screens
 
-- [ ] 6.1 `src/app/manage/commitments.tsx`: the list, «Нове зобов'язання» and «Припинені», with `settleInstallmentsOnFocus` on focus. Register it in `src/app/_layout.tsx`. Verify with `npm run typecheck` and the smoke run
-- [ ] 6.2 The form editor (back gesture via `use-close-on-back`), opened from the list and from «Редагувати». Prove "The back gesture discards the form" in `src/ui/screens.test.ts`, as that file proves it for the bug-report form: nothing writes outside «Зберегти», and the editor closes on back. Then in the smoke run; `npm run typecheck` green
-- [ ] 6.3 `src/app/commitment/[id].tsx`: verbs per платіж, the candidate picker, «Оновити суму», with `settleInstallmentsOnFocus` on focus. Register it in `src/app/_layout.tsx`. Verify with `npm run typecheck` and the smoke run
-- [ ] 6.4 Місяць: «Платежі місяця» rows as pressables (the block-level tap goes) and the reading in every owing currency group, in `src/app/(tabs)/month.tsx`. Check "The block leads to the screen", "A платіж of a зобов'язання leads to its зобов'язання" and "The Зобов'язання section opens its screen" in the smoke run, beside their vitest proofs in 5.5 and 5.7; `npm run typecheck` green
+- [x] 6.1 `src/app/manage/commitments.tsx`: the list, «Нове зобов'язання» and «Припинені», with `settleInstallmentsOnFocus` on focus. Register it in `src/app/_layout.tsx`. Verify with `npm run typecheck` and the smoke run
+- [x] 6.2 The form editor (back gesture via `use-close-on-back`), opened from the list and from «Редагувати». Prove "The back gesture discards the form" in `src/ui/screens.test.ts`, as that file proves it for the bug-report form: nothing writes outside «Зберегти», and the editor closes on back. Then in the smoke run; `npm run typecheck` green
+- [x] 6.3 `src/app/commitment/[id].tsx`: verbs per платіж, the candidate picker, «Оновити суму», with `settleInstallmentsOnFocus` on focus. Register it in `src/app/_layout.tsx`. Verify with `npm run typecheck` and the smoke run
+- [x] 6.4 Місяць: «Платежі місяця» rows as pressables (the block-level tap goes) and the reading in every owing currency group, in `src/app/(tabs)/month.tsx`. Check "The block leads to the screen", "A платіж of a зобов'язання leads to its зобов'язання" and "The Зобов'язання section opens its screen" in the smoke run, beside their vitest proofs in 5.5 and 5.7; `npm run typecheck` green
 
 ## 7. Close
 
-- [ ] 7.1 Update `docs/app-overview.md`: §2 (зобов'язання, «Вільно після зобов'язань»), §3.3 («Платежі місяця», the reading), §3.9 (the section), §4.11 (the shared linking rule), a new §4.11a «Зобов'язання», §5.2 (tables), §6 (status row) and §7 (item 6 and item 10). Verify `npm run verify` passes
+- [x] 7.1 Update `docs/app-overview.md`: §2 (зобов'язання, «Вільно після зобов'язань»), §3.3 («Платежі місяця», the reading), §3.9 (the section), §4.11 (the shared linking rule), a new §4.11a «Зобов'язання», §5.2 (tables), §6 (status row) and §7 (item 6 and item 10). Verify `npm run verify` passes
 - [ ] 7.2 Coordination and record:
   - `observations-and-month-summary`, `category-icons-and-transaction-visuals`, `merchant-normalization` and `local-model-guesses` also add requirements to capabilities this change touches (`month-screen`, `settings-screen`, `persistence`, `backup-file`). Each adds a migration and backup tables. Whichever archives after this change re-reads the merged main specs and takes the next migration number and `BACKUP_SCHEMA_VERSION`. If this change archives after any of them, it does the same;
   - after 7.4 and the commit, record whether the `smoke-runner` pass on the emulator ran, or was not run and why (CLAUDE.md order: diff-reviewer PASS → commit → smoke-runner → archive)

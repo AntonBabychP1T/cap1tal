@@ -15,6 +15,7 @@ describe('the Налаштування sections', () => {
       'Ліміти',
       'Цілі',
       'Розстрочки',
+      "Зобов'язання",
       'Імпорт Saldo',
       'monobank',
       'Сповіщення банків',
@@ -41,6 +42,16 @@ describe('the Налаштування sections', () => {
   it('Scenario: The section opens the screen', () => {
     const installments = SETTINGS_SECTIONS.find((section) => section.title === 'Розстрочки')!;
     expect(installments.href).toBe('/manage/installments');
+  });
+
+  it("Scenario: The Зобов'язання section opens its screen", () => {
+    const titles = SETTINGS_SECTIONS.map((section) => section.title);
+    expect(titles.indexOf("Зобов'язання")).toBe(titles.indexOf('Розстрочки') + 1);
+    const commitments = SETTINGS_SECTIONS.find((section) => section.title === "Зобов'язання")!;
+    expect(commitments.href).toBe('/manage/commitments');
+    const screen = readFileSync(new URL('../app/manage/commitments.tsx', import.meta.url), 'utf8');
+    expect(screen).toContain('commitmentList(');
+    expect(screen).toContain('NEW_COMMITMENT');
   });
 
   it('Scenario: The bug-reports section opens the list', () => {

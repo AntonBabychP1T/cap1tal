@@ -711,6 +711,16 @@ export default function RootLayout() {
               name="installment/[id]"
               options={{ presentation: 'card', animation: animation('installment/[id]') }}
             />
+            {/* «Зобов'язання»: from Налаштування; one зобов'язання also from Місяць's «Платежі
+                місяця». */}
+            <Stack.Screen
+              name="manage/commitments"
+              options={{ presentation: 'card', animation: animation('manage/commitments') }}
+            />
+            <Stack.Screen
+              name="commitment/[id]"
+              options={{ presentation: 'card', animation: animation('commitment/[id]') }}
+            />
             <Stack.Screen
               name="manage/reminders"
               options={{ presentation: 'card', animation: animation('manage/reminders') }}

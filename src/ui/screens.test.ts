@@ -822,6 +822,21 @@ describe('lists that lead with their rows', () => {
     expect(source).toContain('useCloseOnBack(editing !== undefined, closeEditor)');
   });
 
+  it("commitments-screen — Scenario: The back gesture discards the form", () => {
+    const screen = read('manage/commitments.tsx');
+    // Nothing is stored on the way out because nothing writes outside «Зберегти»: exactly one
+    // `save` in the file, inside the form's own `save`, and no effect that writes on unmount.
+    expect(screen.split('commitmentsRepo.save(').length - 1).toBe(1);
+    expect(screen.indexOf('commitmentsRepo.save(')).toBeGreaterThan(screen.indexOf('const save = useCallback('));
+    expect(screen).not.toContain('useEffect');
+    // WHILE the form is open the back gesture closes it — and closing drops the draft.
+    expect(screen).toContain('useCloseOnBack(editor !== undefined, closeForm)');
+    expect(screen).toContain('const closeForm = useCallback(() => setEditor(undefined), [])');
+    // The create form does not stand open by default: one «Нове зобов'язання» action opens it.
+    expect(screen).toContain('useState<Editor>()');
+    expect(screen).toContain('title={NEW_COMMITMENT}');
+  });
+
   it('The history follows the balance — the фактичний залишок field is drawn only while Звірити is open', () => {
     const source = read('account/[id].tsx');
     const open = source.indexOf('{a.archived ? null : reconciling ? (');
