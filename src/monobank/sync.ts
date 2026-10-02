@@ -1,5 +1,6 @@
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
+import type { MerchantIndex } from '../domain/merchants';
 import { resolveTarget, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
@@ -329,6 +330,8 @@ export interface MapContext {
    * a шаблон that takes no part; the app always passes it, from `categorisationContext()`.
    */
   readonly templateRules?: readonly Rule[];
+  /** The продавці as stored now: the description is recognised against them before matching. */
+  readonly merchants: MerchantIndex;
   /**
    * Every рахунок, so a правило-переказ's destination can be found and its currency compared.
    * Absent is the same as empty: no rules could then be eligible transfer rules, exactly as if
@@ -416,6 +419,8 @@ export function mapStatement(
             left: amount,
             arrived: amount,
             ...(item.description ? { description: item.description } : {}),
+            // The code the bank named stays on whatever the item became (design M11).
+            mcc: item.mcc,
           }),
           awaitingCounterpartIncome: true,
         });
@@ -433,6 +438,7 @@ export function mapStatement(
           // the bank's own сума and the currency it is in, but nothing here reads the pair and no
           // screen shows one. What the bank charged the рахунок is exact, and that is what counts.
           description: item.description,
+          mcc: item.mcc,
         }),
       );
       continue;
@@ -452,6 +458,7 @@ export function mapStatement(
       // Guarded exactly as the domain's factories guard it, so an item the bank sent no text with
       // makes a дохід of the same shape as the витрата beside it — not one carrying an empty опис.
       ...(item.description ? { description: item.description } : {}),
+      mcc: item.mcc,
     };
     transactions.push(income);
   }

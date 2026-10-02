@@ -138,8 +138,34 @@ Not in v1: recurring or scheduled transactions, SMS parsing, other banks' APIs. 
 
 - Imported transactions are categorised automatically by merchant / MCC using rules the owner can
   edit.
-- Anything not recognised goes to "Uncategorised", counts as spent (it is an expense by default), and
-  is highlighted among the latest transactions so it can be categorised in one tap.
+- Anything no rule matches goes to "Uncategorised", counts as spent (it is an expense by default),
+  and is highlighted among the latest transactions so it can be categorised in one tap.
+
+### Продавці (owner's decision, 2026-10-02)
+
+A bank names one shop in a dozen ways — «АТБ-Маркет 1234 Київ», «ATB MARKET», «Оплата послуг
+АТБ». A **продавець** is the owner's one name for it: a назва («АТБ») and the **написання** it is
+recognised by in an опис («атб», «atb»). The owner owns the list — names a продавець, renames it,
+adds and removes написання, merges two, deletes one — in Налаштування → «Продавці», which opens on
+«Без продавця», the most frequent описи nothing recognises yet. Search, правила, the пакет for
+AI-аналіз and the lines of every list then see one «АТБ» instead of a dozen spellings, with no
+model and on every phone. A правило may name a продавець instead of a pattern: «АТБ → Продукти»
+covers every spelling.
+
+- **[PROPOSED] Recognition is derived, never stored.** An опис is recognised as at most one
+  продавець: the longest написання that occurs in it, case folded, with no transliteration between
+  scripts; a tie goes to the newest написання. A транзакція's продавець is read from its опис when
+  it is shown, so one new написання re-reads the whole history at once.
+- **[PROPOSED] A better first guess, still deterministic.** Naming from an опис proposes the назва
+  and the написання: the bank's leading service words («Оплата послуг», «Покупка», «Payment», …)
+  skipped, the leading name of at most two words kept, «СІЛЬПО» written «Сільпо» while «АТБ» stays.
+  The pattern offered for a правило uses the same proposal.
+- **[PROPOSED] Lines show the назва** where they showed the опис; editing still shows the опис as
+  stored, with a «Продавець» row beside it.
+- The bank's **MCC** stays on an imported транзакція, informational like the опис, so правила and
+  the шаблон match on it in the розбір of stored history as they do at import.
+
+A продавець changes no number and categorises nothing on its own: only a правило naming it does.
 
 ## 8. The monthly model
 
@@ -278,7 +304,9 @@ marked «≈ якщо темп збережеться», computed when shown, st
 6. Recurring or scheduled transactions. A розстрочка's графік is a plan the debits are linked to,
    never a транзакція the app records by itself.
 7. Bank integrations beyond the monobank API and notification parsing (no PrivatBank API, no SMS).
-8. Category hierarchy and tags.
+8. Category hierarchy and tags. Touched and kept 2026-10-02: a продавець (§7) is recognised from
+   the опис, never attached to a транзакція by hand, and groups nothing but описи — it is neither a
+   tag nor a level above a категорія.
 9. Cloud services other than the owner's opt-in Google Drive backup.
 10. Forecasts ("at this pace…"). «Вільно після розстрочок» subtracts contractually fixed платежі,
     not a pace, and is not a forecast. Narrowed 2026-10-01: the opt-in «Прогноз статку» on the
@@ -325,7 +353,9 @@ The app may explain its numbers with the help of a language model — an assista
 has, or later a model on the phone. The model is never a source of truth: every number it sees is
 computed by the app, per currency; it interprets, and it changes nothing. By default it sees
 aggregates only; описи and individual транзакції leave the phone only when the owner switches them
-on for that run.
+on for that run. «Продавці», the switch for описи, carries the назви the owner gave their продавці
+too — words derived from those описи — and every spelling of one продавець is one merchant there;
+a написання and a продавець's id never leave.
 
 ## 18. Досягнення і виклики **[PROPOSED]**
 

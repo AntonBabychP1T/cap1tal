@@ -5,12 +5,14 @@ import { Alert, StyleSheet, View } from 'react-native';
 import { Tap } from '@/components/motion';
 import { askAboutTransfer } from '@/components/transfer-dialog';
 import { Action, Choices, DateField, Field, Picker } from '@/components/form';
+import { MerchantNamingSheet } from '@/components/merchant-naming-sheet';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
-import { Card, Screen, ScreenHeader } from '@/components/surfaces';
+import { Card, Chevron, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
+  merchants as merchantsRepo,
   persistRetyped,
   receipts as receiptsRepo,
   sources as sourcesRepo,
@@ -18,6 +20,7 @@ import {
 } from '@/db/repos';
 import type { Account } from '@/domain/account';
 import { namesById } from '@/domain/category';
+import { merchantIndex } from '@/domain/merchants';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { judgeProgressLater } from '@/hooks/progress-ports';
@@ -31,6 +34,7 @@ import { categoryChoicesFor, recentlyUsed, sourceChoicesFor } from '@/ui/categor
 import { buildEntry, entryDateCheck, normaliseDescription, type EntryType } from '@/ui/entry-form';
 import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
 import { ruleTargetLabel } from '@/ui/list-management';
+import { transactionMerchantRow, type NamingForm } from '@/ui/merchants-screen';
 import { receiptOffer } from '@/ui/receipt-screen';
 import {
   initialShape,
@@ -80,7 +84,7 @@ export default function EditTransactionScreen() {
   // decides which; anything else here is simply not the shape this param asks for.
   const openAsTransfer = as === 'transfer' ? 'transfer' : undefined;
 
-  const [stored] = useReloadOnFocus(
+  const [stored, reloadStored] = useReloadOnFocus(
     useCallback(
       () => ({
         accounts: accountsRepo.list(),
@@ -90,11 +94,24 @@ export default function EditTransactionScreen() {
         receipt: receiptsRepo.forTransaction(id),
         // What the owner reached for last — read, never stored, exactly as on the entry form.
         latest: transactionsRepo.listLatest(RECENT_WINDOW),
+        // The продавці: what the stored опис is recognised as, for the «Продавець» row.
+        merchants: merchantsRepo.list(),
       }),
       [id],
     ),
   );
   const original = stored.transaction;
+  /**
+   * The «Продавець» row, read from the опис as stored — an опис changed in this editing is read once
+   * it is saved, since the продавець is what the stored опис is recognised as (main-screen).
+   */
+  const merchantRow = useMemo(
+    () => transactionMerchantRow(original?.description, merchantIndex(stored.merchants)),
+    [original?.description, stored.merchants],
+  );
+  /** The naming form opened from «Назвати продавця», and what its розбір then moved. */
+  const [naming, setNaming] = useState<NamingForm>();
+  const [merchantSaid, setMerchantSaid] = useState<string>();
 
   /**
    * One list per leg, not one for the screen: an archived account is offered for nothing new —
@@ -261,6 +278,8 @@ export default function EditTransactionScreen() {
             // untouched when they left it alone. Every shape the транзакція is retyped into keeps
             // whatever it says, and an emptied field clears it rather than storing «».
             description: normaliseDescription(form.description),
+            // The import's MCC rides along whatever shape the транзакція takes; nobody edits it.
+            mcc: original.mcc,
           },
           { id: original.id, accounts: stored.accounts },
         );
@@ -362,6 +381,15 @@ export default function EditTransactionScreen() {
             Воно зʼявиться разом зі «звірити», що вміє його записати.
           </ThemedText>
           <StoredDescription of={original} />
+          <MerchantLine
+            row={merchantRow}
+            said={merchantSaid}
+            onOpen={(merchantId) => router.push({ pathname: '/merchant/[id]', params: { id: merchantId } })}
+            onName={(naming) => {
+              setMerchantSaid(undefined);
+              setNaming(naming);
+            }}
+          />
         </Card>
         {/* A коригування is shown, never edited, so the stored тип is the only тип there is. */}
         <ReceiptLine
@@ -371,6 +399,17 @@ export default function EditTransactionScreen() {
           onOpen={() => router.push({ pathname: '/transaction/receipt', params: { id: original.id } })}
         />
         <Action variant="destructive" title="Видалити транзакцію" onPress={remove} />
+        <MerchantNamingSheet
+          form={naming}
+          merchants={stored.merchants}
+          onClose={() => setNaming(undefined)}
+          onStored={(said) => {
+            setNaming(undefined);
+            setMerchantSaid(said);
+            reloadStored();
+          }}
+          reportBug={reportBug}
+        />
       </Screen>
     );
   }
@@ -440,6 +479,15 @@ export default function EditTransactionScreen() {
           value={form.description}
           onChangeText={(description) => setForm({ ...form, description })}
         />
+        <MerchantLine
+          row={merchantRow}
+          said={merchantSaid}
+          onOpen={(merchantId) => router.push({ pathname: '/merchant/[id]', params: { id: merchantId } })}
+          onName={(naming) => {
+            setMerchantSaid(undefined);
+            setNaming(naming);
+          }}
+        />
         {/* A витрата shows «Без категорії» selected when it carries nothing, because that is what
             saving would store — the same default the Головний form shows. A повернення shows
             nothing selected, because nothing is what saving it would refuse. */}
@@ -487,6 +535,17 @@ export default function EditTransactionScreen() {
           deleting is never the loudest thing here. */}
       <Action title="Зберегти" onPress={apply} />
       <Action variant="destructive" title="Видалити транзакцію" onPress={remove} />
+      <MerchantNamingSheet
+        form={naming}
+        merchants={stored.merchants}
+        onClose={() => setNaming(undefined)}
+        onStored={(said) => {
+          setNaming(undefined);
+          setMerchantSaid(said);
+          reloadStored();
+        }}
+        reportBug={reportBug}
+      />
       <RuleOfferSheet
         offer={ruleOffer.offer}
         targetLabel={
@@ -547,6 +606,51 @@ function ReceiptLine({
     <Tap onPress={onScan} style={styles.receiptLink} accessibilityRole="button">
       <ThemedText type="link">{offer.label}</ThemedText>
     </Tap>
+  );
+}
+
+/**
+ * The «Продавець» row (main-screen, "Editing names the транзакція's продавець"): the продавець the
+ * stored опис is recognised as, which opens its screen, or «Назвати продавця», which opens the
+ * naming form for that опис. No опис, no row — `transactionMerchantRow` decides which.
+ */
+function MerchantLine({
+  row,
+  said,
+  onOpen,
+  onName,
+}: {
+  row: ReturnType<typeof transactionMerchantRow>;
+  said: string | undefined;
+  onOpen: (merchantId: string) => void;
+  onName: (form: NamingForm) => void;
+}) {
+  if (!row) {
+    return null;
+  }
+  return (
+    <View style={styles.field}>
+      <ThemedText type="overline">Продавець</ThemedText>
+      {row.kind === 'recognised' ? (
+        <Tap
+          accessibilityRole="button"
+          accessibilityHint="Відкрити продавця"
+          onPress={() => onOpen(row.merchantId)}
+          style={styles.merchantRow}>
+          <ThemedText style={styles.merchantName}>{row.name}</ThemedText>
+          <Chevron />
+        </Tap>
+      ) : (
+        <Tap accessibilityRole="button" onPress={() => onName(row.form)} style={styles.merchantRow}>
+          <ThemedText type="link">Назвати продавця</ThemedText>
+        </Tap>
+      )}
+      {said ? (
+        <ThemedText type="small" themeColor="textPositive">
+          {said}
+        </ThemedText>
+      ) : null}
+    </View>
   );
 }
 
@@ -626,4 +730,6 @@ const styles = StyleSheet.create({
   // The quieter scan offer: a link with a button's tap target, so it is no harder to hit than
   // the outlined one it stands in for.
   receiptLink: { alignItems: 'center', paddingVertical: Spacing.two },
+  merchantRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, minHeight: 40 },
+  merchantName: { flex: 1 },
 });

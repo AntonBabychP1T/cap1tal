@@ -1,5 +1,6 @@
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
+import type { MerchantIndex } from '../domain/merchants';
 import { resolveCategory, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
@@ -109,6 +110,8 @@ export interface ProcessContext {
   readonly rules: readonly Rule[];
   /** The шаблон категоризації as rules, tried when no правило matches; absent takes no part. */
   readonly templateRules?: readonly Rule[];
+  /** The продавці as stored now: the text is recognised against them before matching. */
+  readonly merchants: MerchantIndex;
   readonly newId: () => string;
   /**
    * Epoch milliseconds → the calendar date of that moment in the device's timezone. Injected
@@ -208,6 +211,8 @@ export interface ConfirmContext {
   readonly rules: readonly Rule[];
   /** The шаблон категоризації as rules, tried when no правило matches; absent takes no part. */
   readonly templateRules?: readonly Rule[];
+  /** The продавці as they stand now, as the правила do. */
+  readonly merchants: MerchantIndex;
   readonly newId: () => string;
 }
 

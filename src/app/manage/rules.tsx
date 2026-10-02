@@ -3,10 +3,15 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { ListItem, Tap } from '@/components/motion';
-import { Action, Choices, Field } from '@/components/form';
+import { Action, Choices, Field, Picker } from '@/components/form';
 import { Card, Chevron, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import { accounts as accountsRepo, categories as categoriesRepo, rules as rulesRepo } from '@/db/repos';
+import {
+  accounts as accountsRepo,
+  categories as categoriesRepo,
+  merchants as merchantsRepo,
+  rules as rulesRepo,
+} from '@/db/repos';
 import { namesById } from '@/domain/category';
 import type { Rule } from '@/domain/rules';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
@@ -16,7 +21,14 @@ import { expenseCategoryChoices } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
 import { accountChoiceLabel } from '@/ui/labels';
-import { mccText, ruleFromDraft, ruleLine, storeRule, type RuleDraft } from '@/ui/list-management';
+import {
+  NO_MERCHANT_TO_PICK,
+  mccText,
+  ruleFromDraft,
+  ruleLine,
+  storeRule,
+  type RuleDraft,
+} from '@/ui/list-management';
 
 import { Spacing } from '@/constants/theme';
 
@@ -30,7 +42,19 @@ import { Spacing } from '@/constants/theme';
  * a silent one.
  */
 
-const EMPTY: RuleDraft = { merchant: '', mcc: '', target: 'category', categoryId: undefined };
+const EMPTY: RuleDraft = {
+  merchant: '',
+  criterion: 'pattern',
+  mcc: '',
+  target: 'category',
+  categoryId: undefined,
+};
+
+/** What a rule matches by: a pattern typed by hand, or a продавець picked (settings-screen). */
+const CRITERION_CHOICES = [
+  { value: 'pattern' as const, label: 'Текст опису' },
+  { value: 'merchant' as const, label: 'Продавець' },
+];
 
 const TARGET_CHOICES = [
   { value: 'category' as const, label: 'Категорія' },
@@ -53,6 +77,7 @@ export default function RulesScreen() {
         rules: rulesRepo.list(),
         categories: categoriesRepo.list(),
         accounts: accountsRepo.list(),
+        merchants: merchantsRepo.list(),
       }),
       [],
     ),
@@ -66,6 +91,9 @@ export default function RulesScreen() {
 
   const names = useMemo(() => namesById(stored.categories), [stored.categories]);
   const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
+  const merchantNames = useMemo(() => namesById(stored.merchants), [stored.merchants]);
+  /** Whether the продавець picker has its full list open. */
+  const [merchantListOpen, setMerchantListOpen] = useState(false);
   const choices = useMemo(
     () =>
       expenseCategoryChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
@@ -133,13 +161,40 @@ export default function RulesScreen() {
    */
   const renderForm = (editing: RuleDraft & { id?: string }, rule?: Rule) => (
     <View style={styles.form}>
-      <Field
-        label="Продавець"
-        value={editing.merchant}
-        onChangeText={(merchant) => setDraft({ ...editing, merchant })}
-        autoCapitalize="none"
-        placeholder="частина опису, напр. сільпо"
+      <Choices
+        label="Що впізнає"
+        choices={CRITERION_CHOICES}
+        selected={editing.criterion ?? 'pattern'}
+        // Switching drops the other choice when saved — a rule never names both a pattern and a
+        // продавець (categorisation-rules, "A rule naming both a pattern and a продавець is rejected").
+        onSelect={(criterion) => setDraft({ ...editing, criterion })}
       />
+      {editing.criterion === 'merchant' ? (
+        stored.merchants.length > 0 ? (
+          <Picker
+            label="Продавець"
+            rows={stored.merchants}
+            recentIds={[]}
+            selected={editing.merchantId}
+            onSelect={(merchantId: string) => setDraft({ ...editing, merchantId })}
+            noun="merchants"
+            expanded={merchantListOpen}
+            onExpandedChange={setMerchantListOpen}
+          />
+        ) : (
+          <ThemedText type="small" themeColor="textSecondary">
+            {NO_MERCHANT_TO_PICK}
+          </ThemedText>
+        )
+      ) : (
+        <Field
+          label="Текст опису"
+          value={editing.merchant}
+          onChangeText={(merchant) => setDraft({ ...editing, merchant })}
+          autoCapitalize="none"
+          placeholder="частина опису, напр. сільпо"
+        />
+      )}
       <Field
         label="MCC"
         value={editing.mcc}
@@ -216,7 +271,7 @@ export default function RulesScreen() {
       ) : (
         <ListCard>
           {stored.rules.map((rule, index) => {
-            const line = ruleLine(rule, names, accountNames);
+            const line = ruleLine(rule, names, accountNames, merchantNames);
             return (
               // A deleted правило fades out and the rows under it close the gap.
               <ListItem key={line.id} reflow>
@@ -233,6 +288,8 @@ export default function RulesScreen() {
                         setDraft({
                           id: rule.id,
                           merchant: rule.merchant ?? '',
+                          criterion: rule.merchantId !== undefined ? 'merchant' : 'pattern',
+                          ...(rule.merchantId !== undefined ? { merchantId: rule.merchantId } : {}),
                           mcc: rule.mcc === undefined ? '' : mccText(rule.mcc),
                           target: rule.target.kind,
                           ...(rule.target.kind === 'category'

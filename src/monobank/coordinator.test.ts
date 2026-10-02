@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+
 import { account, computeBalance } from '../domain/account';
 import { accountsRepo } from '../db/accounts-repo';
 import { monobankRepo, type MonobankRepo } from '../db/monobank-repo';
@@ -184,7 +186,7 @@ describe('syncLinkedAccounts', () => {
       tokenStore,
       fetch: fetchImpl,
       storage: repo,
-      categorisation: () => ({ rules }),
+      categorisation: () => ({ rules, merchants: NO_MERCHANTS }),
       accounts: () => accountsRepo(storage.db).list(),
       // The clock only moves when the run waits, so pacing is entirely the run's own doing.
       nowMs: () => clockMs,
@@ -2098,7 +2100,7 @@ describe('syncLinkedAccounts — what sync deliberately does not decide', () => 
       tokenStore: inMemoryMonobankTokenStore({ token: TOKEN }),
       fetch: fetchImpl,
       storage: repo,
-      categorisation: () => ({ rules: [] }),
+      categorisation: () => ({ rules: [], merchants: NO_MERCHANTS }),
       nowMs: () => clockMs,
       now: () => new Date(clockMs),
       dateOf,

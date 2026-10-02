@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm';
 
 import { foldCase } from '../domain/fold';
+import { merchantIndex, type MerchantIndex } from '../domain/merchants';
 import {
   isoDate,
   UNCATEGORISED_CATEGORY_ID,
@@ -24,6 +25,7 @@ import { toTransaction, toTransactionRow } from './mappers';
 import { counterpartIncomeAwaits, transactions, type TransactionRow } from './schema';
 import type { Storage } from './storage';
 import { stampedMemo } from './stamp';
+import { storedMerchants } from './stored-merchants';
 
 /**
  * `rows`, each turned into a `Transaction` — a переказ among them carrying
@@ -102,7 +104,7 @@ export function transactionsRepo(db: Storage) {
   // Every stored транзакція a search matches, newest first — read, narrowed in SQL and judged here
   // (design D12 of transaction-search), remembered per criteria under the change stamp.
   const searchMatches = stampedMemo(db, (key): Transaction[] => {
-    const criteria = JSON.parse(key) as SearchCriteria & { match: SearchMatch };
+    const criteria = JSON.parse(key) as SearchCriteria;
     const narrowed = withAwaiting(
       db,
       db
@@ -113,9 +115,18 @@ export function transactionsRepo(db: Storage) {
         .all(),
       'whole-history',
     );
+    // The продавці as stored right now: the change stamp this is remembered under moves with every
+    // написання edit, so a remembered answer never outlives the recognition it was judged by
+    // (merchant-normalization design M7).
+    const merchants = merchantIndex(storedMerchants(db));
+    const byMerchant =
+      criteria.merchantId === undefined
+        ? narrowed
+        : narrowed.filter((t) => merchants.recognise(t.description)?.merchantId === criteria.merchantId);
+    if (!criteria.match) return byMerchant;
     // The typed text is folded once here, not once per candidate row (design D2).
     const match = { ...criteria.match, text: foldCase(criteria.match.text) };
-    return narrowed.filter((t) => satisfies(t, match));
+    return byMerchant.filter((t) => satisfies(t, match, merchants));
   });
 
   return {
@@ -284,17 +295,25 @@ export function transactionsRepo(db: Storage) {
         amountMinor?: number;
         categoryIds: readonly string[];
         sourceIds: readonly string[];
+        /** The продавці named by the typed text; an опис recognised as one of them matches. */
+        merchantIds?: readonly string[];
       };
       /** One рахунок, counting a переказ on either leg. */
       accountId?: string;
       month?: Month;
+      /**
+       * One продавець: only the транзакції whose опис is recognised as it. Judged on the опис, as a
+       * search is, so it goes through the same remembered path even with nothing typed — the one
+       * exception to «the unsearched listing reads one page from storage» (design M7).
+       */
+      merchantId?: string;
       /** Only what `countUncategorised` counts — the «Без категорії» narrowing. */
       uncategorised?: boolean;
       limit: number;
       offset: number;
     }): Transaction[] {
       const { limit, offset, ...criteria } = input;
-      if (!criteria.match) {
+      if (!criteria.match && criteria.merchantId === undefined) {
         // Nothing is judged after the read, so storage pages the listing itself, walking
         // `transactions_order_idx` newest first — a page reads one page (app-speed-pass design D6).
         return withAwaiting(
@@ -365,6 +384,8 @@ interface SearchMatch {
   amountMinor?: number;
   categoryIds: readonly string[];
   sourceIds: readonly string[];
+  /** The продавці the typed text names; an опис recognised as one of them matches. */
+  merchantIds?: readonly string[];
 }
 
 interface SearchCriteria {
@@ -372,6 +393,7 @@ interface SearchCriteria {
   accountId?: string;
   month?: Month;
   uncategorised?: boolean;
+  merchantId?: string;
 }
 
 /**
@@ -400,6 +422,10 @@ function narrowing(input: SearchCriteria): SQL | undefined {
     const first = isoDate(`${input.month}-01`);
     filters.push(and(gte(transactions.date, first), lte(transactions.date, `${input.month}-31`))!);
   }
+  if (input.merchantId !== undefined) {
+    // Only an опис can be recognised as a продавець; which one it is, only TypeScript can say.
+    filters.push(isNotNull(transactions.description));
+  }
   if (match) {
     const alternatives: SQL[] = [];
     if (match.amountMinor !== undefined) {
@@ -419,7 +445,7 @@ function narrowing(input: SearchCriteria): SQL | undefined {
     }
     // Anything carrying an опис could still match on it, and only TypeScript can say whether
     // it does — the fold Ukrainian needs is not SQLite's.
-    if (match.text !== '') {
+    if (match.text !== '' || (match.merchantIds?.length ?? 0) > 0) {
       alternatives.push(isNotNull(transactions.description));
     }
     // Nothing to match on at all: a search that names no text, no сума and no label matches
@@ -442,7 +468,9 @@ function satisfies(
     amountMinor?: number;
     categoryIds: readonly string[];
     sourceIds: readonly string[];
+    merchantIds?: readonly string[];
   },
+  merchants: MerchantIndex,
 ): boolean {
   if (match.amountMinor !== undefined && amountsOf(t).includes(match.amountMinor)) {
     return true;
@@ -452,7 +480,16 @@ function satisfies(
   } else if (t.type === 'income') {
     if (match.sourceIds.includes(t.sourceId)) return true;
   }
-  if (match.text === '' || !t.description) {
+  if (!t.description) {
+    return false;
+  }
+  // A продавець named by the typed text finds every spelling it recognises — «атб» finds «ATB
+  // MARKET» once «АТБ» holds "atb" — through the one recogniser every reader shares.
+  const recognised = merchants.recognise(t.description)?.merchantId;
+  if (recognised !== undefined && match.merchantIds?.includes(recognised)) {
+    return true;
+  }
+  if (match.text === '') {
     return false;
   }
   // `foldCase` is the fold SQLite cannot do (it folds ASCII only). Matched at any position, so

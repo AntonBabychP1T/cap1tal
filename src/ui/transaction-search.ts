@@ -23,6 +23,11 @@ export interface SearchMatch {
   readonly categoryIds: readonly string[];
   /** The джерела whose names the typed text occurs in — archived ones included. */
   readonly sourceIds: readonly string[];
+  /**
+   * The продавці whose назва the typed text occurs in: a транзакція whose опис is recognised as one
+   * of them matches, whatever spelling the bank used (design M7).
+   */
+  readonly merchantIds: readonly string[];
 }
 
 /**
@@ -41,6 +46,7 @@ export function searchCriteria(
   query: string,
   categories: readonly Category[],
   sources: readonly Source[],
+  merchants: readonly { readonly id: string; readonly name: string }[] = [],
 ): SearchMatch | undefined {
   const text = query.trim();
   if (text === '') {
@@ -56,6 +62,7 @@ export function searchCriteria(
     ...(amountOf(text) !== undefined ? { amountMinor: amountOf(text) } : {}),
     categoryIds: named(categories),
     sourceIds: named(sources),
+    merchantIds: named(merchants),
   };
 }
 
@@ -94,6 +101,19 @@ export function monthFromRoute(asked: string | undefined): Month | undefined {
   return asked !== undefined && isMonth(asked) ? asked : undefined;
 }
 
+/**
+ * The продавець «Транзакції» opens narrowed to, read from a `?merchant=` in the route: the id when a
+ * stored продавець carries it, and nothing otherwise — a продавець since deleted or merged, or any
+ * other text, narrows nothing (transaction-search, "An unknown продавець narrows nothing"). Like the
+ * місяць, an initial value and never a lock.
+ */
+export function merchantFromRoute(
+  asked: string | undefined,
+  merchants: readonly { readonly id: string }[],
+): string | undefined {
+  return asked !== undefined && merchants.some((m) => m.id === asked) ? asked : undefined;
+}
+
 /** The `?only=` value that opens «Транзакції» narrowed to «Без категорії». */
 export const ONLY_UNCATEGORISED = 'uncategorised';
 
@@ -111,11 +131,11 @@ export function uncategorisedFromRoute(asked: string | undefined): boolean {
 /**
  * What a line on «Транзакції» leads with. Under the «Без категорії» narrowing every line would
  * lead with the same «Без категорії», which tells the owner nothing about what to pick — so there
- * the опис leads: «СІЛЬПО Київ», «Uklon». A line with no опис, and every line with the narrowing
- * off, reads as the стрічка reads.
+ * what the опис says leads: the продавець it is recognised as, «АТБ», or the опис itself, «Uklon».
+ * A line with no опис, and every line with the narrowing off, reads as the стрічка reads.
  */
 export function searchLineTitle(line: TransactionLine, uncategorisedOnly: boolean): string {
-  return uncategorisedOnly && line.description !== undefined ? line.description : feedTitle(line);
+  return uncategorisedOnly && line.descriptionShown !== undefined ? line.descriptionShown : feedTitle(line);
 }
 
 export const PAGE_SIZE = 100;

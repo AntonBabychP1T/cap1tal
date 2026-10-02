@@ -1,6 +1,7 @@
 import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS, merchant, merchantIndex } from '../domain/merchants';
 import { account, type Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
 import type { AccumulationGoal } from '../domain/goals';
@@ -48,6 +49,7 @@ function input(over: Partial<AnalysisInput> = {}): AnalysisInput {
     limits: [] as readonly CategoryLimit[],
     goals: [] as readonly AccumulationGoal[],
     rates: [],
+    merchants: NO_MERCHANTS,
     ...over,
   };
 }
@@ -135,6 +137,37 @@ describe('buildAnalysisPackage', () => {
           ).toBe(expected);
         },
       ),
+    );
+  });
+
+  it('Scenario: The same state builds the same пакет — with продавці among the inputs', () => {
+    const named = (merchantId: string, name: string, ...spellings: string[]) =>
+      merchant({
+        id: merchantId,
+        name,
+        spellings: spellings.map((spelling, n) => ({ id: `${merchantId}-${n}`, spelling, addedAt: new Date(n) })),
+        createdAt: new Date(0),
+      });
+    const merchants = [named('atb', 'АТБ', 'атб', 'atb'), named('silpo', 'Сільпо', 'сільпо'), named('kava', 'Кава', 'кава')];
+    const described = (date: string, amount: number, description: string) =>
+      expenseByDefault({ id: id(), date, accountId: 'card', amount: money(amount, 'UAH'), categoryId: 'groceries', description });
+    const transactions = [
+      described('2026-06-10', 100000, 'ATB MARKET'),
+      described('2026-07-10', 200000, 'АТБ 12'),
+      described('2026-08-10', 50000, 'СІЛЬПО'),
+      described('2026-08-11', 70000, 'КАВА ЗЕРНО'),
+      described('2026-08-12', 9000, 'НОВИЙ ЗАКЛАД'),
+    ];
+    const included = { descriptions: true, transactions: false };
+    const expected = JSON.stringify(built({ transactions, included, merchants: merchantIndex(merchants) }));
+
+    const shuffle = <T,>(rows: readonly T[]) => fc.shuffledSubarray(rows as T[], { minLength: rows.length });
+    fc.assert(
+      fc.property(shuffle(merchants), shuffle(transactions), (readMerchants, readTransactions) => {
+        expect(
+          JSON.stringify(built({ transactions: readTransactions, included, merchants: merchantIndex(readMerchants) })),
+        ).toBe(expected);
+      }),
     );
   });
 

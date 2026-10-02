@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+
 import { account } from '../domain/account';
 import { money } from '../domain/money';
 import type { Rule } from '../domain/rules';
@@ -135,7 +137,7 @@ describe('answering a чернетка', () => {
 
   const ports = () => ({
     storage: repo,
-    categorisation: () => ({ rules }),
+    categorisation: () => ({ rules, merchants: NO_MERCHANTS }),
     newId: () => `t-${(ids += 1)}`,
     now: () => storedAt,
   });
@@ -300,6 +302,7 @@ describe('answering a чернетка', () => {
       watches: repo.watches(),
       seenFingerprints: repo.seenFingerprints(),
       rules,
+      merchants: NO_MERCHANTS,
       newId: () => 'never',
       dateOf: () => isoDate('2026-08-26'),
     });

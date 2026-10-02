@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Category, Source } from '../domain/category';
+import { merchant, merchantIndex } from '../domain/merchants';
 import { account } from '../domain/account';
 import { money } from '../domain/money';
 import { expenseByDefault, UNCATEGORISED_CATEGORY_ID, type Transaction } from '../domain/transaction';
@@ -21,6 +22,7 @@ import {
 import { transactionsRepo } from '../db/transactions-repo';
 import { feedTitle, transactionLine } from './transaction-line';
 import {
+  merchantFromRoute,
   monthFromRoute,
   emptyMessage,
   PAGE_SIZE,
@@ -318,7 +320,83 @@ describe('searchLineTitle', () => {
     expect(screen).toContain('searchLineTitle(line, uncategorisedOnly)');
     // The опис line is dropped only when the narrowing made it the title — never with it off, where
     // a line reads as the стрічка reads even if its опис happens to equal its категорія.
-    expect(screen).toContain('line.description && !(uncategorisedOnly && title === line.description)');
+    expect(screen).toContain(
+      'line.descriptionShown && !(uncategorisedOnly && title === line.descriptionShown)',
+    );
+  });
+
+  it('Scenario: A recognised опис leads with its продавець', () => {
+    const zerno = merchant({
+      id: 'zerno',
+      name: 'Зерно',
+      spellings: [{ id: 's1', spelling: 'зерно', addedAt: new Date(0) }],
+      createdAt: new Date(0),
+    });
+    const line = transactionLine(
+      expenseByDefault({ id: 'e-zerno', date: '2026-09-14', accountId: 'card', amount: money(9000, 'UAH'), description: 'ЗЕРНО 12' }),
+      accounts,
+      names,
+      new Map(),
+      new Map(),
+      new Map(),
+      merchantIndex([zerno]),
+    );
+    expect(searchLineTitle(line, true)).toBe('Зерно');
+    expect(line.uncategorised).toBe(true);
+  });
+});
+
+describe('«Транзакції» and the продавці', () => {
+  const atb = merchant({
+    id: 'atb',
+    name: 'АТБ',
+    spellings: [
+      { id: 's1', spelling: 'атб', addedAt: new Date(0) },
+      { id: 's2', spelling: 'atb market', addedAt: new Date(1) },
+    ],
+    createdAt: new Date(0),
+  });
+
+  it('Scenario: A продавець\'s назва finds every spelling', () => {
+    // The typed text names «АТБ»; storage then finds every опис recognised as it, «ATB MARKET 23»
+    // included (`transactions-repo.test.ts`, "A продавець given with the search matches every
+    // spelling").
+    expect(searchCriteria('атб', categories, sources, [atb])?.merchantIds).toEqual(['atb']);
+    expect(searchCriteria('сільпо', categories, sources, [atb])?.merchantIds).toEqual([]);
+  });
+
+  it('Scenario: An unknown продавець narrows nothing', () => {
+    expect(merchantFromRoute('nobody', [atb])).toBeUndefined();
+    expect(merchantFromRoute(undefined, [atb])).toBeUndefined();
+    expect(merchantFromRoute('atb', [atb])).toBe('atb');
+  });
+
+  it('the screen reads the продавці, narrows by `?merchant=` and names the narrowing while in force', () => {
+    const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+    expect(screen).toContain('merchants: merchantsRepo.list()');
+    expect(screen).toContain('searchCriteria(query, stored.categories, stored.sources, stored.merchants)');
+    expect(screen).toContain("useLocalSearchParams<{ merchant?: string }>().merchant");
+    expect(screen).toContain('...(merchantId === ANY ? {} : { merchantId })');
+    expect(screen).toContain('label="Продавець"');
+    // A продавець gone while the screen sat in the stack narrows nothing, as its chip is gone too.
+    expect(screen).toContain('stored.merchants.some((m) => m.id === chosenMerchant) ? chosenMerchant : ANY');
+    // Clearing the narrowings clears it with the rest.
+    const clear = screen.slice(screen.indexOf('const clearNarrowing'));
+    expect(clear.slice(0, clear.indexOf('}, [ask]);'))).toContain('setMerchantId(ANY);');
+  });
+
+  it('every screen that draws transaction lines recognises their описи', () => {
+    for (const path of [
+      '../app/transactions.tsx',
+      '../app/(tabs)/index.tsx',
+      '../app/account/[id].tsx',
+      '../app/category/[month]/[categoryId].tsx',
+    ]) {
+      const screen = readFileSync(new URL(path, import.meta.url), 'utf8');
+      const call = screen.slice(screen.indexOf('transactionLine('), screen.indexOf(');', screen.indexOf('transactionLine(')));
+      expect(call, path).toMatch(/merchants/);
+      expect(screen, path).toContain('line.descriptionShown');
+    }
   });
 });
 
@@ -531,7 +609,10 @@ describe('the pages «Транзакції» shows', () => {
     // for the same question. The pages start over only when the question itself — as a value —
     // changes, never on a new read's identity (diff review, app-speed-pass).
     const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
-    expect(screen).toMatch(/const question = JSON\.stringify\(\{ criteria: criteria \?\? null, accountId, month, uncategorisedOnly \}\);/);
+    // The продавець narrowing is part of the question too: changing it starts its own first page.
+    expect(screen).toMatch(
+      /const question = JSON\.stringify\(\{\s*criteria: criteria \?\? null,\s*accountId,\s*month,\s*uncategorisedOnly,\s*merchantId,\s*\}\);/,
+    );
     expect(screen).toContain('usePagedList(question, pagePorts)');
     const hook = readFileSync(new URL('../hooks/use-paged-list.ts', import.meta.url), 'utf8');
     expect(hook).toContain('if (state.question !== question) {');

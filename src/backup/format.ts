@@ -2,6 +2,7 @@ import type { Account, AccountKind } from '../domain/account';
 import { identityKey, receiptIdentity } from '../domain/fiscal-receipt';
 import type { Category, Source } from '../domain/category';
 import type { CategoryLimit } from '../domain/limits';
+import { foldSpelling, merchantNameKey } from '../domain/merchants';
 import { compositionProblem, type AccumulationGoal } from '../domain/goals';
 import {
   INSTALLMENT_CURRENCY,
@@ -46,7 +47,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 10;
+export const BACKUP_SCHEMA_VERSION = 11;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -117,6 +118,11 @@ export const BACKUP_TABLES: readonly string[] = [
   'accounts',
   'categories',
   'sources',
+  // The продавці and their написання: names the owner gave, which no statement carries and nothing
+  // re-derives. Before `rules`, in the order a restore inserts them, since a правило may name one
+  // (merchant-normalization design M12).
+  'merchants',
+  'merchant_spellings',
   'rules',
   'category_limits',
   'goals',
@@ -183,9 +189,29 @@ export const BACKUP_TABLES: readonly string[] = [
 export interface BackupRule {
   readonly id: string;
   readonly merchant?: string;
+  /** The продавець the правило names instead of a pattern; absent on every older бекап. */
+  readonly merchantId?: string;
   readonly mcc?: number;
   readonly categoryId?: string;
   readonly toAccountId?: string;
+  readonly createdAtMs: number;
+}
+
+/** A продавець, with the moment it was named. Its написання are their own section. */
+export interface BackupMerchant {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAtMs: number;
+}
+
+/**
+ * A написання, with the moment it was added — carried because the newest of two написання of
+ * equal length decides a tie, so a restored phone recognises every опис as the old one did.
+ */
+export interface BackupMerchantSpelling {
+  readonly id: string;
+  readonly merchantId: string;
+  readonly spelling: string;
   readonly createdAtMs: number;
 }
 
@@ -381,6 +407,12 @@ export interface BackupState {
   readonly accounts: readonly Account[];
   readonly categories: readonly Category[];
   readonly sources: readonly Source[];
+  /**
+   * The продавці and their написання; absent on a бекап written before продавці existed, which
+   * restores with none. Optional sections, so `BACKUP_FORMAT_VERSION` stays.
+   */
+  readonly merchants?: readonly BackupMerchant[];
+  readonly merchantSpellings?: readonly BackupMerchantSpelling[];
   readonly rules: readonly BackupRule[];
   readonly limits: readonly CategoryLimit[];
   readonly goals: readonly AccumulationGoal[];
@@ -594,9 +626,29 @@ function ruleAt(value: unknown, at: string): BackupRule {
   return {
     id: stringAt(row.id, `${at}.id`),
     ...optionalString(row, 'merchant', at),
+    ...optionalString(row, 'merchantId', at),
     ...(row.mcc === undefined || row.mcc === null ? {} : { mcc: integerAt(row.mcc, `${at}.mcc`) }),
     ...optionalString(row, 'categoryId', at),
     ...optionalString(row, 'toAccountId', at),
+    createdAtMs: integerAt(row.createdAtMs, `${at}.createdAtMs`),
+  };
+}
+
+function merchantAt(value: unknown, at: string): BackupMerchant {
+  const row = objectAt(value, at);
+  return {
+    id: stringAt(row.id, `${at}.id`),
+    name: stringAt(row.name, `${at}.name`),
+    createdAtMs: integerAt(row.createdAtMs, `${at}.createdAtMs`),
+  };
+}
+
+function merchantSpellingAt(value: unknown, at: string): BackupMerchantSpelling {
+  const row = objectAt(value, at);
+  return {
+    id: stringAt(row.id, `${at}.id`),
+    merchantId: stringAt(row.merchantId, `${at}.merchantId`),
+    spelling: stringAt(row.spelling, `${at}.spelling`),
     createdAtMs: integerAt(row.createdAtMs, `${at}.createdAtMs`),
   };
 }
@@ -648,7 +700,12 @@ function transactionAt(value: unknown, at: string): Transaction {
   const row = objectAt(value, at);
   const id = stringAt(row.id, `${at}.id`);
   const date = dateAt(row.date, `${at}.date`);
-  const description = optionalString(row, 'description', at);
+  // What the транзакція says rather than what it is: its опис, and the MCC its import named — a
+  // code that is not a whole number is one no bank sends, so the бекап contradicts itself.
+  const informational = {
+    ...optionalString(row, 'description', at),
+    ...(row.mcc === undefined || row.mcc === null ? {} : { mcc: integerAt(row.mcc, `${at}.mcc`) }),
+  };
   switch (row.type) {
     case 'expense': {
       const original =
@@ -663,7 +720,7 @@ function transactionAt(value: unknown, at: string): Transaction {
         amount: moneyAt(row.amount, `${at}.amount`),
         categoryId: stringAt(row.categoryId, `${at}.categoryId`),
         ...original,
-        ...description,
+        ...informational,
       };
     }
     case 'income':
@@ -674,7 +731,7 @@ function transactionAt(value: unknown, at: string): Transaction {
         accountId: stringAt(row.accountId, `${at}.accountId`),
         amount: moneyAt(row.amount, `${at}.amount`),
         sourceId: stringAt(row.sourceId, `${at}.sourceId`),
-        ...description,
+        ...informational,
       };
     case 'refund':
       return {
@@ -684,7 +741,7 @@ function transactionAt(value: unknown, at: string): Transaction {
         accountId: stringAt(row.accountId, `${at}.accountId`),
         amount: moneyAt(row.amount, `${at}.amount`),
         categoryId: stringAt(row.categoryId, `${at}.categoryId`),
-        ...description,
+        ...informational,
       };
     case 'correction':
       return {
@@ -693,7 +750,7 @@ function transactionAt(value: unknown, at: string): Transaction {
         date,
         accountId: stringAt(row.accountId, `${at}.accountId`),
         amount: moneyAt(row.amount, `${at}.amount`),
-        ...description,
+        ...informational,
       };
     case 'transfer':
       return {
@@ -705,7 +762,7 @@ function transactionAt(value: unknown, at: string): Transaction {
         left: moneyAt(row.left, `${at}.left`),
         arrived: moneyAt(row.arrived, `${at}.arrived`),
         ...optionalTrue(row, 'awaitingCounterpartIncome', at),
-        ...description,
+        ...informational,
       };
     default:
       return fail(`${at}.type не є видом транзакції`);
@@ -989,6 +1046,14 @@ export function parseState(value: unknown): BackupState {
     accounts: listAt(data, 'accounts', accountAt),
     categories: listAt(data, 'categories', categoryAt),
     sources: listAt(data, 'sources', namedAt),
+    // A бекап written before продавці existed names neither list, and restores with none — every
+    // правило matching by its pattern or MCC, exactly as on the phone that wrote it.
+    ...(data.merchants === undefined || data.merchants === null
+      ? {}
+      : { merchants: listAt(data, 'merchants', merchantAt) }),
+    ...(data.merchantSpellings === undefined || data.merchantSpellings === null
+      ? {}
+      : { merchantSpellings: listAt(data, 'merchantSpellings', merchantSpellingAt) }),
     rules: listAt(data, 'rules', ruleAt),
     limits: listAt(data, 'limits', limitAt),
     goals: listAt(data, 'goals', goalAt),
@@ -1042,6 +1107,45 @@ export function parseState(value: unknown): BackupState {
       ? {}
       : { templateChoices: listAt(data, 'templateChoices', templateChoiceAt) }),
   };
+}
+
+/**
+ * The продавці checked against themselves (backup-file, "A бекап carries продавці, a правило's
+ * продавець and a транзакція's MCC"): every назва not blank and unique once folded, every написання
+ * stored trimmed and folded, held once, by a продавець the бекап carries, and every продавець
+ * holding at least one. Storage cannot say «at least one написання», so this is the one guard a
+ * restore has for it. Returns the ids of the продавці, for the правила to be checked against.
+ */
+function checkMerchants(state: BackupState): ReadonlySet<string> {
+  const ids = new Map<string, string>();
+  const names = new Map<string, string>();
+  for (const m of state.merchants ?? []) {
+    const what = `продавець «${m.name}»`;
+    if (m.name.trim() === '') fail(`продавець «${m.id}» не має назви`);
+    const key = merchantNameKey(m.name);
+    const twin = names.get(key);
+    if (twin !== undefined) fail(`продавці «${twin}» і «${m.name}» мають одну назву`);
+    names.set(key, m.name);
+    if (ids.has(m.id)) fail(`${what} названий двічі`);
+    ids.set(m.id, m.name);
+  }
+  const held = new Set<string>();
+  const spellings = new Set<string>();
+  for (const s of state.merchantSpellings ?? []) {
+    const what = `написання «${s.spelling}»`;
+    if (!ids.has(s.merchantId)) fail(`${what} посилається на продавця, якого в бекапі немає`);
+    if (s.spelling.trim() === '') fail(`написання продавця «${ids.get(s.merchantId)}» порожнє`);
+    if (foldSpelling(s.spelling) !== s.spelling) {
+      fail(`${what} не збережене обрізаним і малими літерами`);
+    }
+    if (spellings.has(s.spelling)) fail(`${what} назване двічі`);
+    spellings.add(s.spelling);
+    held.add(s.merchantId);
+  }
+  for (const [id, name] of ids) {
+    if (!held.has(id)) fail(`продавець «${name}» не має жодного написання`);
+  }
+  return new Set(ids.keys());
 }
 
 /**
@@ -1176,8 +1280,19 @@ export function checkConsistent(state: BackupState): void {
     }
   }
 
+  const merchants = checkMerchants(state);
   for (const rule of state.rules) {
     const what = `правило «${rule.id}»`;
+    if (rule.merchantId !== undefined) {
+      if (!merchants.has(rule.merchantId)) {
+        fail(`${what} посилається на продавця, якого в бекапі немає`);
+      }
+      // Any pattern at all beside a продавець, even an empty one: storage's CHECKs would refuse it
+      // inside the restore by a constraint name, and this says it in words before anything moves.
+      if (rule.merchant !== undefined) {
+        fail(`${what} називає і текст опису, і продавця`);
+      }
+    }
     const hasCategory = rule.categoryId !== undefined;
     const hasAccount = rule.toAccountId !== undefined;
     if (hasCategory === hasAccount) {

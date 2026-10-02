@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS, merchant, merchantIndex } from '../domain/merchants';
+
 import { account, computeBalance } from '../domain/account';
 import { money } from '../domain/money';
 import {
@@ -633,6 +635,17 @@ describe('the опис the owner writes', () => {
     expect(changed).toMatchObject({ amount: money(13000, 'UAH'), description: 'СІЛЬПО Київ' });
     expect(stored.id).toBe(changed.id);
   });
+
+  it('Scenario: Editing another field leaves the опис alone', () => {
+    // The editing screen hands the опис it holds back untouched; changing the сума alone keeps the
+    // imported text exactly, and the MCC beside it.
+    const imported = 'Оплата послуг АТБ-Маркет 1234 Київ';
+    const changed = buildEntry(
+      { ...base, amount: '130', type: 'expense', accountId: 'card', description: imported, mcc: 5411 },
+      { id: 'e1', accounts },
+    );
+    expect(changed).toMatchObject({ amount: money(13000, 'UAH'), description: imported, mcc: 5411 });
+  });
 });
 
 describe('the опис corrected from editing', () => {
@@ -1031,9 +1044,30 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId(
         { type: 'expense', description: 'АТБ 421', pickedByOwner: false },
-        { rules: [atbToGroceries] },
+        { rules: [atbToGroceries], merchants: NO_MERCHANTS },
       ),
     ).toBe('groceries');
+  });
+
+  it('Scenario: The entry form proposes by a продавець', () => {
+    const atb = merchant({
+      id: 'atb',
+      name: 'АТБ',
+      spellings: [{ id: 's1', spelling: 'atb', addedAt: new Date(0) }],
+      createdAt: new Date(0),
+    });
+    const byMerchant = {
+      id: 'r-atb',
+      merchantId: 'atb',
+      target: { kind: 'category', categoryId: 'eating-out' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    } as const;
+    expect(
+      proposedCategoryId(
+        { type: 'expense', description: 'ATB 12', pickedByOwner: false },
+        { rules: [byMerchant], merchants: merchantIndex([atb]) },
+      ),
+    ).toBe('eating-out');
   });
 
   it('Scenario: The owner\'s own pick is not overridden', () => {
@@ -1045,7 +1079,7 @@ describe('proposedCategoryId', () => {
           categoryId: 'eating-out',
           pickedByOwner: true,
         },
-        { rules: [atbToGroceries] },
+        { rules: [atbToGroceries], merchants: NO_MERCHANTS },
       ),
     ).toBe('eating-out');
   });
@@ -1054,7 +1088,7 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId(
         { type: 'expense', description: 'новий заклад', pickedByOwner: false },
-        { rules: [atbToGroceries] },
+        { rules: [atbToGroceries], merchants: NO_MERCHANTS },
       ),
     ).toBeUndefined();
   });
@@ -1063,7 +1097,7 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId(
         { type: 'income', description: 'АТБ 421', pickedByOwner: false },
-        { rules: [atbToGroceries] },
+        { rules: [atbToGroceries], merchants: NO_MERCHANTS },
       ),
     ).toBeUndefined();
   });
@@ -1077,7 +1111,7 @@ describe('proposedCategoryId', () => {
           categoryId: 'clothing',
           pickedByOwner: false,
         },
-        { rules: [atbToGroceries] },
+        { rules: [atbToGroceries], merchants: NO_MERCHANTS },
       ),
     ).toBe('clothing');
   });
@@ -1086,13 +1120,13 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId(
         { type: 'transfer', description: 'АТБ 421', pickedByOwner: false },
-        { rules: [atbToGroceries] },
+        { rules: [atbToGroceries], merchants: NO_MERCHANTS },
       ),
     ).toBeUndefined();
   });
 
   it('Scenario: The шаблон reaches the entry form', () => {
-    const tiers = { rules: [], templateRules: templateRules(new Map([['groceries', 'groceries']])) };
+    const tiers = { rules: [], merchants: NO_MERCHANTS, templateRules: templateRules(new Map([['groceries', 'groceries']])) };
     expect(
       proposedCategoryId({ type: 'expense', description: 'АТБ 421', pickedByOwner: false }, tiers),
     ).toBe('groceries');
@@ -1113,7 +1147,7 @@ describe('proposedCategoryId', () => {
 
   it('no description proposes nothing, and does not throw', () => {
     expect(
-      proposedCategoryId({ type: 'expense', pickedByOwner: false }, { rules: [atbToGroceries] }),
+      proposedCategoryId({ type: 'expense', pickedByOwner: false }, { rules: [atbToGroceries], merchants: NO_MERCHANTS }),
     ).toBeUndefined();
   });
 
@@ -1135,7 +1169,7 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId(
         { type: 'expense', description: 'Округлення балансу', pickedByOwner: false },
-        { rules: [bills, roundUpToTransfer] },
+        { rules: [bills, roundUpToTransfer], merchants: NO_MERCHANTS },
       ),
     ).toBe('bills');
   });

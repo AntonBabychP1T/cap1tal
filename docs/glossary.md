@@ -79,12 +79,19 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Description** (опис) — the text the bank sent with an imported транзакція — «СІЛЬПО»,
   «Uklon» — or a note the owner types while recording or editing a транзакція by hand. It changes
   no total and no баланс, and it survives every edit and retype, so a витрата retyped into a
-  переказ still says where it came from. The one категорія it does decide is a витрата's own: the
-  owner's правила read it, at recording exactly as at import, so typing «АТБ» proposes Groceries
-  before «Записати» is pressed — a proposal, never an override, since a категорія the owner picked
-  themselves always stands. Manual entry does ask for one. It is the bank's words about the owner,
-  or the owner's own, which is why it leaves the phone only under «Продавці» (see AI).
-- **Uncategorised** (без категорії) — an imported transaction no rule recognised. Still an
+  переказ still says where it came from. It decides two things. The first is the продавець the
+  транзакція has: what the опис is recognised as (see «Продавці»), read from it whenever it is read.
+  The second is a витрата's own категорія: the owner's правила read it, at recording exactly as at
+  import, so typing «АТБ» proposes Groceries before «Записати» is pressed — a proposal, never an
+  override, since a категорія the owner picked themselves always stands. Manual entry does ask for
+  one. It is the bank's words about the owner, or the owner's own, which is why it leaves the phone
+  only under «Продавці» (see AI).
+- **MCC** (merchant category code) — the whole number a bank names for an imported транзакція: a
+  monobank statement item carries one. Kept on the транзакція, informational like the опис — no
+  total, balance or type reads it — and matched by the правила and the шаблон, at import and in the
+  розбір of stored history alike. The owner never types one; a транзакція recorded by hand, by
+  Saldo or from a чернетка carries none, and it never recognises a продавець.
+- **Uncategorised** (без категорії) — an imported transaction no rule matched. Still an
   expense, still counted as spent, highlighted for one-tap categorisation.
 - **Unsourced** (без джерела) — the income half of "uncategorised": the джерело an imported
   arrival carries while the bank has said only that money came in. A visible starting state, never
@@ -121,10 +128,13 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   investments, interest, …
 - **Starter set** **[PROPOSED]** — the owner's Saldo categories and sources, flattened.
 - **Rule** (правило) — "merchant / MCC X → category Y", or "merchant / MCC X → переказ на рахунок
-  Z" (see Transfer rule), editable by the owner. Applied wherever a категорія is decided — the
-  three import sources and manual entry alike — never only to imports; a правило-переказ applies
-  only where a рахунок the money left is known, so manual entry and a чернетка's категорія never
-  see one.
+  Z" (see Transfer rule), editable by the owner. Its merchant criterion is a pattern — a piece of
+  the опис — or a продавець, never both: «АТБ → Продукти» naming the продавець covers every
+  spelling it is recognised by, and ranks as long as the написання that recognised the опис.
+  Applied wherever a категорія is decided — the three import sources and manual entry alike —
+  never only to imports; a правило-переказ applies only where a рахунок the money left is known,
+  so manual entry and a чернетка's категорія never see one. A правило *matches* a транзакція; a
+  продавець *recognises* an опис — the two words are kept apart.
 - **Transfer rule** (правило-переказ) — a правило whose target is a destination рахунок instead of
   a category: money leaving a linked рахунок that this правило matches is a переказ to that
   destination, not a витрата. Ranked on the same ladder as every other правило, so the most
@@ -132,12 +142,14 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   destination, money in another currency than its destination, or a категорія being decided by
   hand or from a chernetka — there it is simply not a категорія.
 - **Sweep** (розбір) — what storing a правило, newly created or edited, does about history — and
-  so does pointing a базова категорія elsewhere or switching it off, and the first open under a
-  шаблон категоризації version not yet swept: every stored витрата sitting in «Без категорії» that
-  the two tiers now match — the правила first, the шаблон where none of them answers — moves onto
-  what they give it, at once and without asking — a категорія, or a переказ when the best правило
-  is a правило-переказ. It only ever fills the gap — a категорія the owner chose, or an earlier
-  правило gave, is never revisited.
+  so does pointing a базова категорія elsewhere or switching it off, every change to the продавці
+  but a rename (naming one, adding or removing a написання, merging, deleting), and the first open
+  under a шаблон категоризації version not yet swept: every stored витрата sitting in «Без
+  категорії» that the two tiers now match — on its опис and on the MCC it carries, when it carries
+  one — moves onto what they give it, the правила first, the шаблон where none of them answers, at
+  once and without asking — a категорія, or a переказ when the best правило is a правило-переказ.
+  It only ever fills the gap — a категорія the owner chose, or an earlier правило gave, is never
+  revisited.
 - **Rule template** (шаблон категоризації) — the built-in knowledge that «АТБ» is продукти and MCC
   5411 is продукти, shipped with the app as data and updated with it: a fixed set of базові
   категорії, each holding merchant patterns, MCC codes or both. It is the second tier of
@@ -194,6 +206,37 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   shown, and nothing converted is stored anywhere. Where a rate it needs is unknown the прогрес is
   **absent** — no total, no percentage and no verdict — and the currency that cannot be converted
   is named: a missing rate is never counted as zero.
+
+## Продавці
+
+Owner's decision, 2026-10-02 (vision §7 «Продавці»). Lines marked **[PROPOSED]** are defaults the
+owner may overturn.
+
+- **Продавець** (merchant; code `Merchant`) — the owner's one name for whoever was paid — «АТБ» —
+  behind every way a bank spells it. A **назва**, unique once letter case and surrounding spaces
+  are folded, and one or more написання. Never stored on a транзакція: a транзакція's продавець is
+  what its опис is recognised as, read whenever it is read **[PROPOSED]**, so a new написання
+  re-reads the whole history at once. It changes no сума, баланс, monthly number, ліміт or ціль,
+  and puts no витрата in any категорія on its own — only a правило naming it does. Until 2026-10-02
+  the word meant the folded опис the пакет grouped by; it is now this entity.
+- **Написання** (spelling; code `MerchantSpelling`) — one text a продавець is **recognised** by in
+  an опис: stored trimmed and folded to lower case, held by exactly one продавець. An опис is
+  recognised as the продавець holding the longest написання that occurs in it, case folded and
+  nothing else — no transliteration, so a продавець the bank spells in both scripts carries both;
+  of two of equal length the newest decides **[PROPOSED]**. An опис nothing occurs in is
+  recognised as no продавець.
+- **Без продавця** (nameless) — the first part of Налаштування → «Продавці»: the stored витрати and
+  повернення whose опис no продавець recognises, grouped by the написання the proposal gives that
+  опис («АТБ-Маркет 1234» and «АТБ-Маркет 5678» are one row for «атб»), the largest groups first,
+  twenty of them, each with «Назвати». A дохід, a переказ and a коригування are not listed.
+- **Назвати** (name) — making an опис recognised: a new продавець with a назва and one написання,
+  or one написання added to a продавець that exists. The написання must occur in that опис. The
+  form proposes the назва and the написання **[PROPOSED]**: the bank's leading service words
+  skipped, the leading name of at most two words kept, an all-capitals word longer than three
+  letters written as a name («СІЛЬПО» → «Сільпо», «АТБ» stays).
+- **«Продавці»** names two things: the AI-аналіз choice that lets описи — and the назви the owner
+  gave their продавці — into a пакет, and the Налаштування section where продавці are named and
+  managed. Which one is meant is always clear from where it is read.
 
 ## The month
 
@@ -495,8 +538,9 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
 - **Пакет для аналізу** (analysis package) — the versioned, deterministic bundle of numbers the
   app builds locally for one AI-аналіз: per currency, never mixed, every сума exact, from the
   stored транзакції alone. It carries no identifier, no назва of a рахунок, no secret and no text
-  a bank sent. Описи and individual транзакції are in it only by the owner's explicit choice for
-  that one run.
+  a bank sent. Описи — grouped under the назви the owner gave their продавці, with those назви —
+  and individual транзакції are in it only by the owner's explicit choice for that one run; a
+  написання and a продавець's id never are.
 - **Файл для аналізу** (analysis file) — the пакет rendered as one self-contained text, in five
   sections and in this order: the запит, the instructions to the assistant, the context that
   defines the terms, a readable summary and the пакет itself. It is what an assistant answers from
@@ -515,10 +559,11 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
   action reads «Поділитися з AI». It is the owner's act, not a connection the app makes: the app
   names no recipient, opens no app of its own, and never learns what the chosen app did with the
   file — so whatever is handed over, it says only that the file was handed to the system.
-- **Продавець** (merchant) — the опис of a витрата, folded and trimmed, as the пакет groups
-  витрати by it. An опис that a confirmed чернетка left on its транзакція is an опис like any
-  other — the bank's own text — and leaves the phone only under «Продавці», the switch that lets
-  описи into a пакет at all.
+- **Merchant row of a пакет** — under «Продавці», one продавець (see «Продавці») by its назва,
+  whatever spelling the bank used, or — where an опис is recognised as none — that опис, folded and
+  trimmed, per currency. An опис that a confirmed чернетка left on its транзакція is an опис like
+  any other — the bank's own text — and leaves the phone only under «Продавці», the switch that
+  lets описи into a пакет at all.
 - **Тренди** (trends) — the month-over-month figures of a пакет: the changes of the six numbers,
   the averages before the period, the largest категорії and their changes, the notable витрати and
   the recurring candidates. Every one of them is computed by the app, deterministically, before
@@ -589,6 +634,10 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
 | Bank balance | Computed balance | the bank's number is shown for comparison; the computed one is the truth until a correction explains the gap |
 | Original-currency amount | The expense | the expense is the UAH the bank charged **[PROPOSED]** |
 | Draft (чернетка) | Transaction | it only proposes; nothing counts it until the owner confirms it |
+| Продавець | Категорія | who was paid, against what the money was for: «АТБ» may be Продукти one day and Побут the next, and a продавець puts nothing in a категорія on its own |
+| Продавець | Опис | one name behind many texts: the опис is what the bank sent, kept as it was; the продавець is what the owner calls whoever sent it |
+| Написання | Правило | a написання recognises who was paid, everywhere an опис is read; a правило decides where the money lands |
+| Написання | Ознака | a написання recognises a продавець in every опис; an ознака (the `commitments` change) only links a витрата to one зобовʼязання |
 | Restore (відновлення) | Import (імпорт) | an import adds to what is there; a restore replaces all of it with the бекап's |
 | Код відновлення | Відновлення | the код is a key written down — a thing the owner keeps; the відновлення is the act of putting a бекап back. Having the код restores nothing by itself, and a відновлення on the phone that made the бекап needs no код at all |
 | Reminder (нагадування) | Failure alert (сповіщення про збій) | the нагадування asks the owner to do something; the сповіщення says the app failed to |

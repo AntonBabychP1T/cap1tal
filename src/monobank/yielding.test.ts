@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+
 import { accountsRepo } from '../db/accounts-repo';
 import { monobankRepo, type MonobankRepo } from '../db/monobank-repo';
 import { openTestDb, seedReferences, type TestStorage } from '../db/test-db';
@@ -249,7 +251,7 @@ describe('a run that yields', () => {
       tokenStore: inMemoryMonobankTokenStore({ token: TOKEN }),
       fetch: fetchImpl,
       storage: repo,
-      categorisation: () => ({ rules: [] }),
+      categorisation: () => ({ rules: [], merchants: NO_MERCHANTS }),
       nowMs: timers.nowMs,
       now: () => new Date(timers.nowMs()),
       dateOf,

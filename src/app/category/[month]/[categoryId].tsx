@@ -9,6 +9,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   limits as limitsRepo,
+  merchants as merchantsRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
@@ -40,6 +41,8 @@ export default function CategoryMonthScreen() {
         // takes a category out of pickers, never out of the months it already has.
         categories: categoriesRepo.list(),
         limits: limitsRepo.list(),
+        // The продавці, so a line reads «АТБ» where its опис is recognised (design M9).
+        merchants: merchantsRepo.index(),
       }),
       [month],
     ),
@@ -77,11 +80,11 @@ export default function CategoryMonthScreen() {
     const now = new Date();
     return new Map(
       listed.map((t) => {
-        const line = transactionLine(t, byId, names, new Map(), new Map(), categoryIconKeys);
+        const line = transactionLine(t, byId, names, new Map(), new Map(), categoryIconKeys, stored.merchants);
         return [t.id, { line, subtitle: feedSubtitle(line, now) }] as const;
       }),
     );
-  }, [byId, categoryIconKeys, listed, names]);
+  }, [byId, categoryIconKeys, listed, names, stored.merchants]);
 
   /** One транзакція of the month — drawn only while it is on or near the screen. */
   const renderRow = (t: Transaction, index: number) => {
@@ -93,7 +96,7 @@ export default function CategoryMonthScreen() {
           iconTone={line.iconTone}
           title={feedTitle(line)}
           subtitle={subtitle}
-          description={line.description}
+          description={line.descriptionShown}
           amount={line.amount}
           amountTone={line.amountTone}
           onPress={() => router.push(`/transaction/${line.id}`)}

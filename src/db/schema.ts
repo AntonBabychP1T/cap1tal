@@ -55,6 +55,48 @@ export const sources = sqliteTable('sources', {
 });
 
 /**
+ * A продавець: the owner's one назва behind every way a bank spells a shop (merchants capability,
+ * design M5). Recognition is never stored — a транзакція's продавець is read from its опис — so
+ * nothing on `transactions` refers here.
+ *
+ * `name_key` is the назва trimmed and folded with `foldCase`, written by the repository: SQLite's
+ * `lower()` folds ASCII only, so a unique index on `lower(name)` would let «АТБ» and «атб» coexist.
+ */
+export const merchants = sqliteTable(
+  'merchants',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    nameKey: text('name_key').notNull().unique(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [check('merchants_name_not_blank', sql`length(trim(${t.name})) > 0`)],
+);
+
+/**
+ * A написання: one folded text a продавець is recognised by. Unique across every продавець — one
+ * написання, one продавець — and removed with its продавець. Folding is the repository's job; the
+ * CHECKs keep it trimmed and not blank. `created_at` is domain data: the newest of two написання of
+ * equal length decides a tie.
+ */
+export const merchantSpellings = sqliteTable(
+  'merchant_spellings',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id')
+      .notNull()
+      .references(() => merchants.id, { onDelete: 'cascade' }),
+    spelling: text('spelling').notNull().unique(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    check('merchant_spellings_not_blank', sql`length(trim(${t.spelling})) > 0`),
+    check('merchant_spellings_trimmed', sql`${t.spelling} = trim(${t.spelling})`),
+    index('merchant_spellings_merchant_idx').on(t.merchantId),
+  ],
+);
+
+/**
  * A правило автокатегоризації: "merchant and/or MCC → one category, or → a destination рахунок
  * (a правило-переказ)". Exactly one target, never both and never neither — the CHECK below, the
  * same shape `rules_criterion_present` already keeps for the criteria (design D1).
@@ -68,8 +110,16 @@ export const rules = sqliteTable(
   'rules',
   {
     id: text('id').primaryKey(),
-    /** A substring of the merchant description; NULL when the rule matches on MCC alone. */
+    /**
+     * A substring of the merchant description; NULL when the rule matches on MCC alone or names a
+     * продавець instead.
+     */
     merchant: text('merchant'),
+    /**
+     * The продавець the rule names instead of a pattern. RESTRICT: storage refuses to delete a
+     * продавець a правило names, which is the merchants capability's refusal (design M5).
+     */
+    merchantId: text('merchant_id').references(() => merchants.id, { onDelete: 'restrict' }),
     /** ISO-18245 merchant category code; NULL when the rule matches on the merchant alone. */
     mcc: integer('mcc'),
     /** NULL exactly when the target is a рахунок instead — a правило-переказ. */
@@ -79,7 +129,11 @@ export const rules = sqliteTable(
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => [
-    check('rules_criterion_present', sql`${t.merchant} IS NOT NULL OR ${t.mcc} IS NOT NULL`),
+    check(
+      'rules_criterion_present',
+      sql`${t.merchant} IS NOT NULL OR ${t.mcc} IS NOT NULL OR ${t.merchantId} IS NOT NULL`,
+    ),
+    check('rules_one_merchant_criterion', sql`${t.merchant} IS NULL OR ${t.merchantId} IS NULL`),
     check('rules_merchant_not_blank', sql`${t.merchant} IS NULL OR length(trim(${t.merchant})) > 0`),
     check(
       'rules_target_exactly_one',
@@ -130,6 +184,15 @@ export const transactions = sqliteTable(
      * CHECK, and a транзакція without one stores NULL rather than an empty string.
      */
     description: text('description'),
+
+    /**
+     * The MCC an import named for the транзакція — a monobank statement item's merchant category
+     * code — informational like the опис. NULL for everything recorded by hand, by Saldo or from a
+     * bank сповіщення. Outside every CHECK on purpose: a CHECK here would make drizzle rebuild
+     * `transactions`, which `fiscal_receipts` cascades off (design M5). `mapStatement` refuses a
+     * non-integer code, and so does the restore validator.
+     */
+    mcc: integer('mcc'),
 
     /** transfer only: the two accounts and the two legs, each in its account's currency. */
     fromAccountId: text('from_account_id').references(() => accounts.id, { onDelete: 'restrict' }),
@@ -190,6 +253,8 @@ export const transactions = sqliteTable(
 // tables and it takes the table itself, so an alias would be a name nothing says.
 export type RuleRow = typeof rules.$inferSelect;
 export type NewRuleRow = typeof rules.$inferInsert;
+export type MerchantRow = typeof merchants.$inferSelect;
+export type MerchantSpellingRow = typeof merchantSpellings.$inferSelect;
 
 export type AccountRow = typeof accounts.$inferSelect;
 export type NewAccountRow = typeof accounts.$inferInsert;

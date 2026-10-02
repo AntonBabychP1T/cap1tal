@@ -73,6 +73,7 @@ const EMPTY_TRANSACTION: Omit<NewTransactionRow, 'id' | 'type' | 'date'> = {
   originalAmount: null,
   originalCurrency: null,
   description: null,
+  mcc: null,
   fromAccountId: null,
   toAccountId: null,
   leftAmount: null,
@@ -91,6 +92,8 @@ export function toTransactionRow(t: Transaction): NewTransactionRow {
     type: t.type,
     date: t.date,
     description: t.description ?? null,
+    // The MCC rides beside the опис for the same reason: informational, on every type alike.
+    mcc: t.mcc ?? null,
   };
   switch (t.type) {
     case 'expense':
@@ -153,7 +156,10 @@ export function toTransaction(row: TransactionRow, awaiting?: boolean): Transact
   // Spread, never assigned: a row stored before the column existed loads with no `description`
   // property at all, exactly as a транзакція the owner recorded by hand does, so nothing
   // downstream can tell an old row from a new one without an опис.
-  const description = row.description ? { description: row.description } : {};
+  const description = {
+    ...(row.description ? { description: row.description } : {}),
+    ...(row.mcc === null || row.mcc === undefined ? {} : { mcc: row.mcc }),
+  };
   switch (row.type) {
     case 'expense': {
       const originalAmount =
@@ -233,6 +239,7 @@ export function toRule(row: RuleRow): Rule {
   return {
     id: row.id,
     ...(row.merchant === null ? {} : { merchant: row.merchant }),
+    ...(row.merchantId === null ? {} : { merchantId: row.merchantId }),
     ...(row.mcc === null ? {} : { mcc: row.mcc }),
     target:
       row.categoryId !== null

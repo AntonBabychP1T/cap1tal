@@ -1,5 +1,7 @@
 import type { Account } from './account';
 import { foldCase } from './fold';
+import { proposeMerchant, type MerchantIndex, type Recognition } from './merchants';
+import { Refusal } from './refusal';
 import { TEMPLATE_GROUPS } from './rule-template';
 import {
   UNCATEGORISED_CATEGORY_ID,
@@ -23,8 +25,16 @@ export type RuleTarget =
 
 export interface Rule {
   readonly id: string;
-  /** A substring of the merchant description; absent when the rule matches on MCC alone. */
+  /**
+   * A substring of the merchant description; absent when the rule matches on MCC alone or names a
+   * продавець instead. A rule never carries both this and `merchantId`.
+   */
   readonly merchant?: string;
+  /**
+   * The продавець the rule names instead of a pattern: it matches whatever опис is recognised as
+   * that продавець (design M3), and ranks as long as the написання that recognised it.
+   */
+  readonly merchantId?: string;
   /** ISO-18245 merchant category code; absent when the rule matches on the merchant alone. */
   readonly mcc?: number;
   readonly target: RuleTarget;
@@ -44,30 +54,48 @@ function patternOf(rule: Rule): string | undefined {
   return merchant ? merchant : undefined;
 }
 
+/** Whether the rule names a merchant at all — by a pattern or by a продавець. */
+function hasMerchantCriterion(rule: Rule): boolean {
+  return patternOf(rule) !== undefined || rule.merchantId !== undefined;
+}
+
+/**
+ * `recognised` is what the description is recognised as, worked out once by the caller that decides
+ * (design M3): a продавець-правило matches exactly when it names that продавець, so a description
+ * recognised as «Bolt Food» is never matched by the правило naming «Bolt», though "bolt" occurs in
+ * it — recognition gives one answer to one опис, and the rule follows it.
+ */
 function matches(
   rule: Rule,
   transaction: { readonly description: string; readonly mcc?: number },
+  recognised: Recognition | undefined,
 ): boolean {
   const merchant = patternOf(rule);
   // A rule with neither criterion is rejected at creation ("A rule with no criterion is
   // rejected"); should one ever reach here it matches nothing rather than everything.
-  if (merchant === undefined && rule.mcc === undefined) return false;
+  if (!hasMerchantCriterion(rule) && rule.mcc === undefined) return false;
   // Both criteria present means both must hold — the tiers below rank rules, they never relax them.
   if (merchant !== undefined && !foldCase(transaction.description).includes(foldCase(merchant))) {
     return false;
   }
+  if (rule.merchantId !== undefined && recognised?.merchantId !== rule.merchantId) return false;
   if (rule.mcc !== undefined && rule.mcc !== transaction.mcc) return false;
   return true;
 }
 
-/** Both criteria beat a merchant-only rule, which beats an MCC-only one. */
+/** Both criteria beat a merchant-only rule, which beats an MCC-only one; a продавець is a merchant. */
 function specificity(rule: Rule): number {
-  if (patternOf(rule) !== undefined) return rule.mcc !== undefined ? 2 : 1;
+  if (hasMerchantCriterion(rule)) return rule.mcc !== undefined ? 2 : 1;
   return 0;
 }
 
-/** Length after folding, so the comparison is over the same text the match was made on. */
-function patternLength(rule: Rule): number {
+/**
+ * Length after folding, so the comparison is over the same text the match was made on. A
+ * продавець-правило counts as long as the написання that recognised the description: it ranks
+ * exactly as the pattern-правило of that написання would (design M3).
+ */
+function patternLength(rule: Rule, recognised: Recognition | undefined): number {
+  if (rule.merchantId !== undefined) return recognised?.spelling.length ?? 0;
   const merchant = patternOf(rule);
   return merchant === undefined ? 0 : foldCase(merchant).length;
 }
@@ -78,10 +106,10 @@ function patternLength(rule: Rule): number {
  * without that last step the answer would depend on the order the rules were loaded in
  * (design decision 7).
  */
-function beats(candidate: Rule, best: Rule): boolean {
+function beats(candidate: Rule, best: Rule, recognised: Recognition | undefined): boolean {
   const bySpecificity = specificity(candidate) - specificity(best);
   if (bySpecificity !== 0) return bySpecificity > 0;
-  const byLength = patternLength(candidate) - patternLength(best);
+  const byLength = patternLength(candidate, recognised) - patternLength(best, recognised);
   if (byLength !== 0) return byLength > 0;
   const byAge = candidate.createdAt.getTime() - best.createdAt.getTime();
   if (byAge !== 0) return byAge > 0;
@@ -127,6 +155,21 @@ function eligible(
  */
 export function matchRule(
   rules: readonly Rule[],
+  merchants: MerchantIndex,
+  transaction: {
+    readonly description: string;
+    readonly mcc?: number;
+    readonly from?: FromAccount;
+  },
+  accounts: readonly Pick<Account, 'id' | 'currency'>[] = [],
+): RuleTarget | undefined {
+  return bestTarget(rules, merchants.recognise(transaction.description), transaction, accounts);
+}
+
+/** `matchRule` with the recognition already made, so a caller deciding two tiers recognises once. */
+function bestTarget(
+  rules: readonly Rule[],
+  recognised: Recognition | undefined,
   transaction: {
     readonly description: string;
     readonly mcc?: number;
@@ -137,10 +180,14 @@ export function matchRule(
   let best: Rule | undefined;
   for (const rule of rules) {
     if (!eligible(rule, transaction.from, accounts)) continue;
-    if (!matches(rule, transaction)) continue;
-    if (best === undefined || beats(rule, best)) best = rule;
+    if (!matches(rule, transaction, recognised)) continue;
+    if (best === undefined || beats(rule, best, recognised)) best = rule;
   }
   return best?.target;
+}
+
+function categoryOf(target: RuleTarget | undefined): string | undefined {
+  return target?.kind === 'category' ? target.categoryId : undefined;
 }
 
 /**
@@ -152,10 +199,10 @@ export function matchRule(
  */
 export function matchCategory(
   rules: readonly Rule[],
+  merchants: MerchantIndex,
   transaction: { readonly description: string; readonly mcc?: number },
 ): string | undefined {
-  const target = matchRule(rules, transaction);
-  return target?.kind === 'category' ? target.categoryId : undefined;
+  return categoryOf(matchRule(rules, merchants, transaction));
 }
 
 /**
@@ -167,6 +214,12 @@ export function matchCategory(
 export interface RuleTiers {
   readonly rules: readonly Rule[];
   readonly templateRules?: readonly Rule[];
+  /**
+   * The продавці as stored at the moment of deciding: every decision recognises the опис against
+   * them, so a правило naming a продавець takes part wherever a категорія is decided (design M3).
+   * Required, so no caller can build tiers that silently skip recognition.
+   */
+  readonly merchants: MerchantIndex;
 }
 
 /** The fixed tie-break date of every шаблон rule: the шаблон has no history to rank by. */
@@ -212,9 +265,11 @@ export function resolveTarget(
   },
   accounts: readonly Pick<Account, 'id' | 'currency'>[] = [],
 ): RuleTarget | undefined {
+  // The шаблон tier never names a продавець, so it ignores what was recognised.
+  const recognised = tiers.merchants.recognise(transaction.description);
   return (
-    matchRule(tiers.rules, transaction, accounts) ??
-    matchRule(tiers.templateRules ?? [], transaction)
+    bestTarget(tiers.rules, recognised, transaction, accounts) ??
+    bestTarget(tiers.templateRules ?? [], recognised, transaction)
   );
 }
 
@@ -226,41 +281,40 @@ export function resolveCategory(
   tiers: RuleTiers,
   transaction: { readonly description: string; readonly mcc?: number },
 ): string | undefined {
+  const recognised = tiers.merchants.recognise(transaction.description);
   return (
-    matchCategory(tiers.rules, transaction) ??
-    matchCategory(tiers.templateRules ?? [], transaction)
+    categoryOf(bestTarget(tiers.rules, recognised, transaction)) ??
+    categoryOf(bestTarget(tiers.templateRules ?? [], recognised, transaction))
   );
 }
 
 /**
+ * A rule's merchant criterion is one of a pattern or a продавець (categorisation-rules, "A rule maps
+ * merchant and/or MCC to one category"): a rule naming both is refused in words, before storage's
+ * CHECK would refuse it by a constraint name.
+ */
+export function checkMerchantCriterion(rule: Pick<Rule, 'merchant' | 'merchantId'>): void {
+  if (rule.merchant?.trim() && rule.merchantId !== undefined) {
+    throw new Refusal('Правило називає або шаблон, або продавця — не обидва');
+  }
+}
+
+/**
  * The merchant pattern a правило is offered with when the owner categorises a транзакція that
- * carries an опис — «СІЛЬПО 123 Київ, вул. Хрещатик» → «сільпо».
+ * carries an опис — «СІЛЬПО 123 Київ, вул. Хрещатик» → «сільпо», «Оплата послуг АТБ-Маркет 1234» →
+ * «атб».
  *
- * A bank's опис is `NAME [branch] [city] [street]`, and everything that identifies the one shop
- * starts at the first digit or punctuation. So the pattern is the leading run of letters, and at
- * most the first two words of it: merchant names arrive as one word or two — «СІЛЬПО», «Нова
- * Пошта», «Lviv Croissants» — and a third word is almost always the qualifier the branch is named
- * by («відділення», «маркет», a city). Taking the first word alone would keep half of «Нова
- * Пошта»; taking the whole опис would produce a pattern matching that one shop on that one street,
- * which never fires again (design decision 3).
- *
- * An опис that does not begin with a letter — «7-Eleven Kyiv» — has no name to cut out of it, so
- * the whole folded опис is proposed instead. Nothing is proposed for an опис that is blank or
- * absent: a правило with neither a merchant nor an MCC is refused, and there is no pattern here to
- * refuse it with.
+ * It is the написання `proposeMerchant` offers for a продавець from the same опис (design M4): one
+ * leading service word of the bank's skipped, then the leading run of letters cut to two words, or
+ * the whole of what remains when it does not start with a letter. One heuristic with two callers, so
+ * the pattern offered for a правило and the написання offered for a продавець can never drift apart.
  *
  * Every case of it is a guess, which is why the owner sees it in an editable field before it is
- * stored: «Оплата послуг АТБ» proposes «оплата послуг» and is simply wrong.
- *
- * Folded with the same `fold` the matcher uses, so what the owner accepts is the text that will be
- * compared, and its length ranks on the ladder exactly as it reads.
+ * stored. Nothing is proposed for an опис that is blank or absent: a правило with neither a merchant
+ * nor an MCC is refused, and there is no pattern here to refuse it with.
  */
 export function proposeMerchantPattern(description: string | undefined): string | undefined {
-  const folded = foldCase(description ?? '').trim();
-  if (folded === '') return undefined;
-  const leading = /^\p{L}[\p{L}\s]*/u.exec(folded)?.[0]?.trim();
-  if (leading === undefined || leading === '') return folded;
-  return leading.split(/\s+/).slice(0, 2).join(' ');
+  return proposeMerchant(description)?.spelling;
 }
 
 /** One витрата the розбір moves: onto a категорія, or into a переказ to a destination рахунок. */
@@ -281,10 +335,12 @@ export type SweepMove =
  * whatever its text resembles; and a дохід, a переказ and a коригування carry no expense категорія
  * to move at all.
  *
- * Matching runs on the опис with no MCC. A stored транзакція keeps none — the bank's code is not
- * carried past import — so a правило whose only criterion is an MCC moves nothing, the same
- * restriction a чернетка from a bank сповіщення already carries. A витрата with no опис matches
- * nothing.
+ * Matching runs on the опис and on the MCC the витрата carries, when its import named one (design
+ * M11): a правило whose only criterion is an MCC, and the шаблон's MCC codes, move exactly the
+ * витрати that carry that code, and a витрата recorded by hand, by Saldo, from a чернетка or
+ * imported before the MCC was kept is matched on its опис alone. A витрата with neither an опис
+ * nor an MCC matches nothing. The опис is recognised against `tiers.merchants` once per витрата,
+ * so a правило naming a продавець sweeps every spelling it recognises.
  *
  * A move onto «Без категорії» is dropped rather than made. Creating such a правило is refused at
  * the only write path the app has, but a restore writes the `rules` table directly, so a бекап
@@ -303,11 +359,13 @@ export function sweepUncategorised(
   for (const transaction of transactions) {
     if (transaction.type !== 'expense') continue;
     if (transaction.categoryId !== UNCATEGORISED_CATEGORY_ID) continue;
-    if (transaction.description === undefined) continue;
+    if (transaction.description === undefined && transaction.mcc === undefined) continue;
     const target = resolveTarget(
       tiers,
       {
-        description: transaction.description,
+        // No опис is an empty one: a pattern occurs in nothing, and nothing is recognised.
+        description: transaction.description ?? '',
+        ...(transaction.mcc === undefined ? {} : { mcc: transaction.mcc }),
         from: { accountId: transaction.accountId, currency: transaction.amount.currency },
       },
       accounts,

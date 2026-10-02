@@ -7,6 +7,7 @@ import {
 } from '../domain/category';
 import type { CurrencyCode } from '../domain/money';
 import { resolveCategoryIcon } from '../domain/category-icon';
+import type { MerchantIndex } from '../domain/merchants';
 import { matchRule, proposeMerchantPattern, type Rule, type RuleTarget } from '../domain/rules';
 import { UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import type { SweepCounts } from '../db/rules-repo';
@@ -89,7 +90,14 @@ export function manageSources(all: readonly Source[]): ManagedRow[] {
 }
 
 export interface RuleDraft {
+  /** The pattern as typed; read only while `criterion` is the pattern. */
   readonly merchant: string;
+  /**
+   * What the rule matches by — a pattern typed by hand, or a продавець picked — absent meaning the
+   * pattern. The other one's value is dropped when this is saved, so a rule never names both.
+   */
+  readonly criterion?: 'pattern' | 'merchant';
+  readonly merchantId?: string;
   /** As typed; empty means the rule has no MCC. */
   readonly mcc: string;
   /** Which target the form is filling in — the other one's id is dropped when this is saved. */
@@ -112,8 +120,12 @@ export function ruleFromDraft(
   draft: RuleDraft,
   context: { readonly id: string; readonly createdAt: Date },
 ): Rule {
-  // A merchant pattern is what is left of it after trimming, so spaces alone are no criterion.
-  const merchant = draft.merchant.trim();
+  // A merchant pattern is what is left of it after trimming, so spaces alone are no criterion. Only
+  // the criterion the form is on is read: switching to a продавець drops the typed pattern, and
+  // switching back drops the продавець picked.
+  const byMerchant = draft.criterion === 'merchant';
+  const merchant = byMerchant ? '' : draft.merchant.trim();
+  const merchantId = byMerchant && draft.merchantId ? draft.merchantId : undefined;
   const typed = draft.mcc.trim();
   // Exactly four digits and nothing else: `Number` would take '0x15', '1e3' and '-5' for whole
   // numbers, and a merchant category code is four digits (ISO 18245) — '999999' or '541' is no
@@ -123,7 +135,7 @@ export function ruleFromDraft(
     throw new Refusal('MCC — це чотири цифри, напр. 5411');
   }
   const mcc = typed === '' ? undefined : Number(typed);
-  if (merchant === '' && mcc === undefined) {
+  if (merchant === '' && merchantId === undefined && mcc === undefined) {
     throw new Refusal('Правило потребує продавця або MCC');
   }
   let target: RuleTarget;
@@ -141,11 +153,15 @@ export function ruleFromDraft(
   return {
     id: context.id,
     ...(merchant === '' ? {} : { merchant }),
+    ...(merchantId === undefined ? {} : { merchantId }),
     ...(mcc === undefined ? {} : { mcc }),
     target,
     createdAt: context.createdAt,
   };
 }
+
+/** What the rule form says when no продавець is stored to pick: where продавці are named. */
+export const NO_MERCHANT_TO_PICK = 'Продавців ще немає — їх називають у «Продавці» в Налаштуваннях.';
 
 /**
  * A `RuleTarget`'s own label: the category's name, or «переказ на <назва>» for a правило-переказ.
@@ -177,10 +193,15 @@ export function ruleLine(
   rule: Rule,
   categoryNames: ReadonlyMap<string, string>,
   accountNames: ReadonlyMap<string, string>,
+  /** The продавці by id, for a rule that names one — «продавець АТБ» (settings-screen). */
+  merchantNames: ReadonlyMap<string, string> = new Map(),
 ): { readonly id: string; readonly criteria: string; readonly category: string } {
   const criteria: string[] = [];
   if (rule.merchant) {
     criteria.push(rule.merchant);
+  }
+  if (rule.merchantId !== undefined) {
+    criteria.push(`продавець ${merchantNames.get(rule.merchantId) ?? rule.merchantId}`);
   }
   if (rule.mcc !== undefined) {
     criteria.push(`MCC ${mccText(rule.mcc)}`);
@@ -193,10 +214,63 @@ export function ruleLine(
   };
 }
 
-/** What the offer to remember a правило proposes: the pattern, editable, and the target it names. */
+/**
+ * What the offer to remember a правило proposes, and the target it names. When the опис is
+ * recognised as a продавець, that продавець is the proposed criterion and `merchant` is the pattern
+ * the owner may switch to instead; otherwise `merchant` is the criterion, editable either way.
+ */
 export interface RuleOffer {
+  /** The pattern proposed from the опис (`proposeMerchantPattern`). */
   readonly merchant: string;
+  /** The продавець the опис is recognised as, proposed ahead of the pattern. */
+  readonly recognised?: { readonly merchantId: string; readonly name: string };
   readonly target: RuleTarget;
+}
+
+/** What the owner accepts an offer with: the продавець it proposed, or a pattern. */
+export type RuleCriterion =
+  | { readonly kind: 'merchant'; readonly merchantId: string }
+  | { readonly kind: 'pattern'; readonly pattern: string };
+
+/**
+ * How the offer reads while it is showing (main-screen, "Categorising a транзакція offers to
+ * remember it as a правило"): «продавець <назва>» with a way to switch to the pattern, or the
+ * pattern field, and what the accept button stores in either state. `usePattern` is the owner's
+ * switch; an offer with no продавець is always on the pattern.
+ */
+export function ruleOfferView(
+  offer: RuleOffer,
+  usePattern: boolean,
+  pattern: string,
+): {
+  readonly merchantLabel?: string;
+  readonly showsPattern: boolean;
+  readonly canSwitchToPattern: boolean;
+  readonly criterion: RuleCriterion;
+} {
+  if (offer.recognised !== undefined && !usePattern) {
+    return {
+      merchantLabel: `продавець ${offer.recognised.name}`,
+      showsPattern: false,
+      canSwitchToPattern: true,
+      criterion: { kind: 'merchant', merchantId: offer.recognised.merchantId },
+    };
+  }
+  return { showsPattern: true, canSwitchToPattern: false, criterion: { kind: 'pattern', pattern } };
+}
+
+/** The draft an accepted offer is stored through, so it is refused in the same words as the form. */
+export function ruleDraftFromOffer(offer: RuleOffer, criterion: RuleCriterion): RuleDraft {
+  return {
+    ...(criterion.kind === 'merchant'
+      ? { criterion: 'merchant', merchant: '', merchantId: criterion.merchantId }
+      : { criterion: 'pattern', merchant: criterion.pattern }),
+    mcc: '',
+    target: offer.target.kind,
+    ...(offer.target.kind === 'category'
+      ? { categoryId: offer.target.categoryId }
+      : { toAccountId: offer.target.toAccountId }),
+  };
 }
 
 function sameTarget(a: RuleTarget, b: RuleTarget): boolean {
@@ -223,6 +297,8 @@ export function ruleOffer(input: {
   readonly fromAccount?: { readonly accountId: string; readonly currency: CurrencyCode };
   readonly accounts?: readonly Pick<Account, 'id' | 'currency'>[];
   readonly rules: readonly Rule[];
+  /** The продавці as stored: a recognised опис offers its продавець, and a правило naming it covers it. */
+  readonly merchants: MerchantIndex;
 }): RuleOffer | undefined {
   const target = input.target;
   if (target.kind === 'category' && target.categoryId === UNCATEGORISED_CATEGORY_ID) {
@@ -244,6 +320,7 @@ export function ruleOffer(input: {
   }
   const existing = matchRule(
     input.rules,
+    input.merchants,
     {
       description: input.description ?? '',
       ...(input.fromAccount ? { from: input.fromAccount } : {}),
@@ -253,7 +330,12 @@ export function ruleOffer(input: {
   if (existing !== undefined && sameTarget(existing, input.target)) {
     return undefined;
   }
-  return { merchant, target: input.target };
+  const recognised = input.merchants.recognise(input.description);
+  return {
+    merchant,
+    ...(recognised ? { recognised: { merchantId: recognised.merchantId, name: recognised.name } } : {}),
+    target: input.target,
+  };
 }
 
 /**

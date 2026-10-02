@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+
 import { money } from '../domain/money';
 import type { IsoDate } from '../domain/transaction';
 import { OFFERED_CURRENCIES } from '../ui/labels';
@@ -285,6 +287,7 @@ describe('parseStatement', () => {
       accountId: 'card',
       currency: 'UAH',
       rules: [],
+      merchants: NO_MERCHANTS,
       seenIds: new Set(),
       newId: () => 't1',
     });

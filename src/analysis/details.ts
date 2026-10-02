@@ -1,5 +1,6 @@
 import type { Account, AccountKind } from '../domain/account';
 import type { Category, Source } from '../domain/category';
+import type { MerchantIndex } from '../domain/merchants';
 import { money, type CurrencyCode } from '../domain/money';
 import { monthOf, type IsoDate, type Month, type Transaction } from '../domain/transaction';
 import { decimalOf, type Amount } from './decimal';
@@ -21,7 +22,11 @@ import { largestPerMonthByKey, MERCHANTS, recurrenceOf } from './trends';
  */
 
 export interface MerchantReport {
-  /** The опис, folded and trimmed. */
+  /**
+   * The назва of the продавець the описи are recognised as, or — where an опис is recognised as
+   * none — that опис, folded and trimmed (merchant-normalization design M8). Never a написання and
+   * never a продавець id.
+   */
   readonly merchant: string;
   readonly total: Amount;
   readonly count: number;
@@ -98,67 +103,79 @@ export function merchantReports(input: {
   readonly currency: CurrencyCode;
   readonly transactions: readonly Transaction[];
   readonly categories: readonly Category[];
+  /** The продавці: every spelling of one is one merchant. */
+  readonly merchants: MerchantIndex;
 }): MerchantReport[] {
   const months = monthsOfPeriod(input.period);
   const inPeriod = new Set<Month>(months);
   const nameOf = new Map(input.categories.map((category) => [category.id, category.name]));
 
+  /**
+   * One merchant per recognised продавець, whatever spelling the bank used, and one per folded опис
+   * where none is recognised (design M8). The key says which, so a назва and an опис that happen to
+   * read alike are never summed together; the label is what the row shows.
+   */
+  const merchantOf = (t: Transaction): { key: string; label: string } | null => {
+    if (!t.description) return null;
+    const recognised = input.merchants.recognise(t.description);
+    if (recognised) return { key: `merchant:${recognised.merchantId}`, label: recognised.name };
+    const folded = foldMerchant(t.description);
+    return folded === '' ? null : { key: `opis:${folded}`, label: folded };
+  };
+
   const totals = new Map<
     string,
-    { total: number; count: number; categories: Set<string> }
+    { label: string; total: number; count: number; categories: Set<string> }
   >();
   for (const t of input.transactions) {
     if (t.type !== 'expense' || t.amount.currency !== input.currency) continue;
     if (!inPeriod.has(monthOf(t.date))) continue;
-    if (!t.description) continue;
-    const merchant = foldMerchant(t.description);
-    if (merchant === '') continue;
+    const merchant = merchantOf(t);
+    if (merchant === null) continue;
 
-    const row = totals.get(merchant) ?? { total: 0, count: 0, categories: new Set<string>() };
+    const row = totals.get(merchant.key) ?? {
+      label: merchant.label,
+      total: 0,
+      count: 0,
+      categories: new Set<string>(),
+    };
     row.total += t.amount.amount;
     row.count += 1;
     row.categories.add(nameOf.get(t.categoryId) ?? UNNAMED);
-    totals.set(merchant, row);
+    totals.set(merchant.key, row);
   }
 
   const recurringMerchants = new Set<string>();
-  for (const [merchant, largest] of largestPerMonthByKey({
+  for (const [key, largest] of largestPerMonthByKey({
     transactions: input.transactions,
     months,
     currency: input.currency,
-    keyOf: (t) => {
-      if (!t.description) return null;
-      const folded = foldMerchant(t.description);
-      return folded === '' ? null : folded;
-    },
+    keyOf: (t) => merchantOf(t)?.key ?? null,
   })) {
     if (recurrenceOf(largest, months.length)) {
-      recurringMerchants.add(merchant);
+      recurringMerchants.add(key);
     }
   }
 
+  const byCodeUnits = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
   return [...totals]
-    .map(([merchant, row]) => ({
-      merchant,
+    .map(([key, row]) => ({
+      merchant: row.label,
       total: decimalOf(money(row.total, input.currency)),
       count: row.count,
       // Sorted by code units, never `localeCompare`: an `Intl` collation would let Node and Hermes
       // build two different пакети out of one stored state.
       categories: [...row.categories].sort(),
-      recurring: recurringMerchants.has(merchant),
+      recurring: recurringMerchants.has(key),
       totalMinor: row.total,
+      key,
     }))
-    .sort((a, b) =>
-      b.totalMinor !== a.totalMinor
-        ? b.totalMinor - a.totalMinor
-        : a.merchant < b.merchant
-          ? -1
-          : a.merchant > b.merchant
-            ? 1
-            : 0,
+    .sort(
+      (a, b) =>
+        b.totalMinor - a.totalMinor || byCodeUnits(a.merchant, b.merchant) || byCodeUnits(a.key, b.key),
     )
     .slice(0, MERCHANTS)
-    .map(({ totalMinor: _totalMinor, ...report }) => report);
+    .map(({ totalMinor: _totalMinor, key: _key, ...report }) => report);
 }
 
 /**

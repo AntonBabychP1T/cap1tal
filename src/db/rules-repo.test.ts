@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
 import { money } from '../domain/money';
+import { NO_MERCHANTS } from '../domain/merchants';
 import { matchCategory, type Rule, type RuleTarget } from '../domain/rules';
 import {
   CORRECTION_CATEGORY_ID,
@@ -300,13 +301,13 @@ describe('rulesRepo and stored transactions', () => {
     // what says the rule is why the витрата carries Groceries. Without this the test would only be
     // storing a category by hand and deleting an unrelated row.
     const description = 'Оплата картою СІЛЬПО';
-    expect(matchCategory(repo.list(), { description })).toBe('groceries');
+    expect(matchCategory(repo.list(), NO_MERCHANTS, { description })).toBe('groceries');
     const imported = expenseByDefault({
       id: 'e-silpo',
       date: '2026-03-02',
       accountId: 'card',
       amount: money(24500, 'UAH'),
-      categoryId: matchCategory(repo.list(), { description })!,
+      categoryId: matchCategory(repo.list(), NO_MERCHANTS, { description })!,
     });
     txs.save(imported, storedAt);
 
@@ -316,7 +317,7 @@ describe('rulesRepo and stored transactions', () => {
     expect(repo.list()).toEqual([]);
     // The same description would now find no rule — and the витрата it already categorised is
     // untouched, because a rule acts at import time and never retroactively.
-    expect(matchCategory(repo.list(), { description })).toBeUndefined();
+    expect(matchCategory(repo.list(), NO_MERCHANTS, { description })).toBeUndefined();
     const stillStored = txs.get('e-silpo');
     expect(stillStored).toEqual(imported);
     expect(stillStored && 'categoryId' in stillStored && stillStored.categoryId).toBe('groceries');
@@ -535,6 +536,27 @@ describe('rulesRepo — the розбір a stored правило runs', () => {
     expect(transactions.get('t2')).toMatchObject({ categoryId: 'groceries' });
     expect(transactions.get('t3')).toMatchObject({ categoryId: UNCATEGORISED_CATEGORY_ID });
     expect(counts).toEqual({ examined: 3, moved: 2, transferred: 0, absorbed: 0 });
+  });
+
+  it('Scenario: An MCC-only правило moves the витрати carrying that MCC — stored, read back, swept', () => {
+    store({ id: 't1', description: 'НОВИЙ ЗАКЛАД 7' });
+    transactions.save(
+      expenseByDefault({
+        id: 't2',
+        date: '2026-03-01',
+        accountId: 'acc',
+        amount: money(12550, 'UAH'),
+        description: 'НОВИЙ ЗАКЛАД 8',
+        mcc: 7399,
+      }),
+      stored,
+    );
+
+    const counts = repo.save({ id: 'r-mcc', mcc: 7399, target: { kind: 'category', categoryId: 'groceries' }, createdAt: created });
+
+    expect(transactions.get('t2')).toMatchObject({ categoryId: 'groceries', mcc: 7399 });
+    expect(transactions.get('t1')).toMatchObject({ categoryId: UNCATEGORISED_CATEGORY_ID });
+    expect(counts).toMatchObject({ moved: 1 });
   });
 
   it('A moved витрата keeps every other field, its опис and its place among the same date', () => {

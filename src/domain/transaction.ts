@@ -78,6 +78,13 @@ export interface Expense {
    * asks for one.
    */
   readonly description?: string;
+  /**
+   * The MCC an import named — a monobank statement item's merchant category code. Informational
+   * like the опис: no total, balance or type reads it; only the правила and the шаблон match on it.
+   * It survives every edit and retype, and nothing recorded by hand, by Saldo or from a чернетка
+   * carries one.
+   */
+  readonly mcc?: number;
 }
 
 export interface Income {
@@ -89,6 +96,8 @@ export interface Income {
   readonly sourceId: string;
   /** The bank's text; see `Expense.description`. */
   readonly description?: string;
+  /** The import's code; see `Expense.mcc`. */
+  readonly mcc?: number;
 }
 
 /**
@@ -106,6 +115,8 @@ export interface Transfer {
   readonly arrived: Money;
   /** The bank's text; see `Expense.description`. */
   readonly description?: string;
+  /** The import's code; see `Expense.mcc`. */
+  readonly mcc?: number;
   /**
    * Present, and always `true`, only while this переказ still awaits its зустрічний дохід
    * (glossary, "Counterpart income") — the дохід «Без джерела» the destination рахунок's own
@@ -126,6 +137,8 @@ export interface Refund {
   readonly categoryId: string;
   /** The bank's text; see `Expense.description`. */
   readonly description?: string;
+  /** The import's code; see `Expense.mcc`. */
+  readonly mcc?: number;
 }
 
 /**
@@ -140,6 +153,8 @@ export interface Correction {
   readonly amount: Money;
   /** The bank's text; see `Expense.description`. */
   readonly description?: string;
+  /** The import's code; see `Expense.mcc`. */
+  readonly mcc?: number;
 }
 
 export type Transaction = Expense | Income | Transfer | Refund | Correction;
@@ -157,6 +172,7 @@ export function expenseByDefault(input: {
   categoryId?: string;
   originalAmount?: Money;
   description?: string;
+  mcc?: number;
 }): Expense {
   return {
     type: 'expense',
@@ -167,6 +183,7 @@ export function expenseByDefault(input: {
     categoryId: input.categoryId ?? UNCATEGORISED_CATEGORY_ID,
     ...(input.originalAmount ? { originalAmount: input.originalAmount } : {}),
     ...(input.description ? { description: input.description } : {}),
+    ...(input.mcc !== undefined ? { mcc: input.mcc } : {}),
   };
 }
 
@@ -178,6 +195,7 @@ export function transfer(input: {
   left: Money;
   arrived: Money;
   description?: string;
+  mcc?: number;
 }): Transfer {
   if (input.fromAccountId === input.toAccountId) {
     throw new Error('a transfer connects two distinct accounts');
@@ -194,6 +212,7 @@ export function transfer(input: {
     left: input.left,
     arrived: input.arrived,
     ...(input.description ? { description: input.description } : {}),
+    ...(input.mcc !== undefined ? { mcc: input.mcc } : {}),
   };
 }
 
@@ -227,6 +246,7 @@ export function refund(input: {
   amount: Money;
   categoryId: string;
   description?: string;
+  mcc?: number;
 }): Refund {
   if (input.amount.amount <= 0) {
     throw new Error('a refund amount is positive; it reduces spent by itself');
@@ -239,5 +259,6 @@ export function refund(input: {
     amount: input.amount,
     categoryId: input.categoryId,
     ...(input.description ? { description: input.description } : {}),
+    ...(input.mcc !== undefined ? { mcc: input.mcc } : {}),
   };
 }

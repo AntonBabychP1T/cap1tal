@@ -11,6 +11,7 @@ import {
   goals as goalsRepo,
   investments as investmentsRepo,
   limits as limitsRepo,
+  merchants as merchantsRepo,
   rates as ratesRepo,
   sources as sourcesRepo,
   storedHistory,
@@ -20,6 +21,7 @@ import { analysisShare } from '@/platform/analysis-share-device';
 import {
   aiAnalysisModel,
   ALWAYS_INCLUDED,
+  MERCHANTS_CHOICE_HINT,
   defaultChoices,
   fileToShare,
   KIND_CHOICES,
@@ -93,6 +95,8 @@ export default function AiAnalysisScreen() {
         // What each інвестиційний рахунок is worth: the внесок it brings to a ціль, so the пакет
         // describes the прогрес the ціль's own screen shows and not a second, older number.
         currentValues: investmentsRepo.amounts(),
+        // The продавці: under «Продавці» every spelling of one is one merchant named by its назва.
+        merchants: merchantsRepo.index(),
       }),
       [],
     ),
@@ -210,7 +214,7 @@ export default function AiAnalysisScreen() {
           <View style={styles.rowText}>
             <ThemedText type="small">Продавці</ThemedText>
             <ThemedText type="small" themeColor="textMuted">
-              Описи транзакцій — текст, який надіслав банк
+              {MERCHANTS_CHOICE_HINT}
             </ThemedText>
           </View>
           <ThemedSwitch

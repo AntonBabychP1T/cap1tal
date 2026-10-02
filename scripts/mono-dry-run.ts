@@ -14,6 +14,7 @@
  * that is the worst case, every витрата landing in «Без категорії», and it is the shape of the
  * mapping that this run is meant to show.
  */
+import { NO_MERCHANTS } from '../src/domain/merchants';
 import type { IsoDate } from '../src/domain/transaction';
 import {
   fetchClientInfo,
@@ -103,6 +104,7 @@ async function main(): Promise<void> {
     accountId: 'dry-run',
     currency: first.currency,
     rules: [],
+    merchants: NO_MERCHANTS,
     seenIds: new Set(),
     newId,
   });

@@ -103,12 +103,13 @@ export function shortlist<Row extends Named>(
  * looking: «Всі категорії (27)» says how big the place they are about to open is. A count of what
  * is hidden would change every time the recents changed, and would answer a question nobody asks.
  */
-export type PickerNoun = 'accounts' | 'categories' | 'sources';
+export type PickerNoun = 'accounts' | 'categories' | 'sources' | 'merchants';
 
 const ALL_LABELS: Readonly<Record<PickerNoun, string>> = {
   accounts: 'Всі рахунки',
   categories: 'Всі категорії',
   sources: 'Всі джерела',
+  merchants: 'Всі продавці',
 };
 
 export function allOffer(

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import type { Category, Source } from '../domain/category';
+import { NO_MERCHANTS, merchant, merchantIndex } from '../domain/merchants';
 import type { Rule } from '../domain/rules';
 import {
   CORRECTION_CATEGORY_ID,
@@ -12,12 +13,15 @@ import {
 } from '../domain/transaction';
 import { bindTestJournal } from './journal';
 import {
+  NO_MERCHANT_TO_PICK,
   manageCategories,
   manageSources,
   mccText,
   ruleFromDraft,
   ruleLine,
+  ruleDraftFromOffer,
   ruleOffer,
+  ruleOfferView,
   storeRule,
   type ManagedRow,
 } from './list-management';
@@ -288,6 +292,37 @@ describe('ruleLine', () => {
     expect(ruleLine(rule({ mcc: 5411 }), groceries, accountNames).criteria).toBe('сільпо · MCC 5411');
   });
 
+  it('Scenario: A правило-переказ appears in the list', () => {
+    const line = ruleLine(
+      rule({ merchant: 'округлення балансу', target: { kind: 'transfer', toAccountId: 'reserve' } }),
+      groceries,
+      new Map([['reserve', 'РЕЗЕРВ']]),
+    );
+    expect(line).toMatchObject({ criteria: 'округлення балансу', category: 'переказ на РЕЗЕРВ' });
+  });
+
+  it('Scenario: A deleted rule leaves the list', () => {
+    // The list is `rulesRepo.list()` read again after the confirmed delete — nothing is kept aside.
+    const screen = readFileSync(new URL('../app/manage/rules.tsx', import.meta.url), 'utf8');
+    const remove = screen.slice(screen.indexOf('const remove = useCallback'));
+    expect(remove.slice(0, remove.indexOf('[reload]'))).toMatch(/rulesRepo\.remove\(rule\.id\);[\s\S]*reload\(\);/);
+    expect(screen).toContain('rules: rulesRepo.list(),');
+  });
+
+  it('Scenario: A rule naming a продавець appears in the list', () => {
+    const line = ruleLine(rule({ merchant: undefined, merchantId: 'atb' }), groceries, accountNames, new Map([['atb', 'АТБ']]));
+    expect(line.criteria).toBe('продавець АТБ');
+    expect(line.category).toBe('Groceries');
+  });
+
+  it('the rule form offers the pattern and names where продавці are made when there is none', () => {
+    const screen = readFileSync(new URL('../app/manage/rules.tsx', import.meta.url), 'utf8');
+    expect(screen).toContain('choices={CRITERION_CHOICES}');
+    expect(screen).toContain('{NO_MERCHANT_TO_PICK}');
+    expect(screen).toContain('noun="merchants"');
+    expect(NO_MERCHANT_TO_PICK).toContain('«Продавці»');
+  });
+
   it('An MCC-only rule shows just the MCC', () => {
     expect(ruleLine(rule({ merchant: undefined, mcc: 5411 }), groceries, accountNames).criteria).toBe(
       'MCC 5411',
@@ -340,6 +375,7 @@ describe('ruleOffer', () => {
         description: 'СІЛЬПО 123 Київ, вул. Хрещатик',
         target: category('groceries'),
         rules: noRules,
+        merchants: NO_MERCHANTS,
       }),
     ).toEqual({ merchant: 'сільпо', target: category('groceries') });
   });
@@ -348,7 +384,7 @@ describe('ruleOffer', () => {
     // The шаблон already lands «АТБ» in Groceries, but the offer looks at the owner's правила
     // alone: a правило of their own outlives a later change to the шаблон or its mapping.
     expect(
-      ruleOffer({ description: 'АТБ 421', target: category('groceries'), rules: noRules }),
+      ruleOffer({ description: 'АТБ 421', target: category('groceries'), rules: noRules, merchants: NO_MERCHANTS }),
     ).toEqual({ merchant: 'атб', target: category('groceries') });
     // …and the hook that raises the offer reads the правила, never the two-tier context.
     const hook = readFileSync(new URL('../hooks/use-rule-offer.ts', import.meta.url), 'utf8');
@@ -358,7 +394,7 @@ describe('ruleOffer', () => {
 
   it('Scenario: An опис that starts with no letter proposes the whole of itself', () => {
     expect(
-      ruleOffer({ description: '7-Eleven Kyiv', target: category('groceries'), rules: noRules }),
+      ruleOffer({ description: '7-Eleven Kyiv', target: category('groceries'), rules: noRules, merchants: NO_MERCHANTS }),
     ).toEqual({ merchant: '7-eleven kyiv', target: category('groceries') });
   });
 
@@ -366,12 +402,12 @@ describe('ruleOffer', () => {
     // ruleOffer takes no transaction type at all — the caller decides which types call it, per
     // "Setting a джерело on a дохід offers nothing" and "Editing a переказ offers nothing" below.
     expect(
-      ruleOffer({ description: 'СІЛЬПО 123 Київ', target: category('groceries'), rules: noRules }),
+      ruleOffer({ description: 'СІЛЬПО 123 Київ', target: category('groceries'), rules: noRules, merchants: NO_MERCHANTS }),
     ).toEqual({ merchant: 'сільпо', target: category('groceries') });
   });
 
   it('Scenario: A витрата with no опис is offered nothing', () => {
-    expect(ruleOffer({ target: category('groceries'), rules: noRules })).toBeUndefined();
+    expect(ruleOffer({ target: category('groceries'), rules: noRules, merchants: NO_MERCHANTS })).toBeUndefined();
   });
 
   it('Scenario: Moving a витрата back into «Без категорії» offers nothing', () => {
@@ -380,6 +416,7 @@ describe('ruleOffer', () => {
         description: 'СІЛЬПО 123 Київ',
         target: category(UNCATEGORISED_CATEGORY_ID),
         rules: noRules,
+        merchants: NO_MERCHANTS,
       }),
     ).toBeUndefined();
   });
@@ -390,6 +427,7 @@ describe('ruleOffer', () => {
         description: 'СІЛЬПО 123',
         target: category('groceries'),
         rules: [silpoToGroceries],
+        merchants: NO_MERCHANTS,
       }),
     ).toBeUndefined();
   });
@@ -400,6 +438,7 @@ describe('ruleOffer', () => {
         description: 'СІЛЬПО 123',
         target: category('eating-out'),
         rules: [silpoToGroceries],
+        merchants: NO_MERCHANTS,
       }),
     ).toEqual({ merchant: 'сільпо', target: category('eating-out') });
   });
@@ -412,6 +451,7 @@ describe('ruleOffer', () => {
         fromAccount: platinum,
         accounts: [reserveAccount, usdAccount],
         rules: noRules,
+        merchants: NO_MERCHANTS,
       }),
     ).toEqual({ merchant: 'округлення балансу', target: { kind: 'transfer', toAccountId: 'reserve' } });
   });
@@ -424,6 +464,7 @@ describe('ruleOffer', () => {
         fromAccount: platinum,
         accounts: [reserveAccount, usdAccount],
         rules: noRules,
+        merchants: NO_MERCHANTS,
       }),
     ).toBeUndefined();
   });
@@ -442,8 +483,122 @@ describe('ruleOffer', () => {
         fromAccount: platinum,
         accounts: [reserveAccount, usdAccount],
         rules: [roundUp],
+        merchants: NO_MERCHANTS,
       }),
     ).toBeUndefined();
+  });
+
+  describe('when the опис is recognised as a продавець', () => {
+    const atb = merchant({
+      id: 'atb',
+      name: 'АТБ',
+      spellings: [
+        { id: 's1', spelling: 'атб', addedAt: new Date('2026-01-01T00:00:00Z') },
+        { id: 's2', spelling: 'atb', addedAt: new Date('2026-01-02T00:00:00Z') },
+      ],
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    });
+    const reserve = merchant({
+      id: 'reserve-m',
+      name: 'Резерв',
+      spellings: [{ id: 's3', spelling: 'округлення балансу', addedAt: new Date('2026-01-01T00:00:00Z') }],
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    });
+    const merchants = merchantIndex([atb, reserve]);
+
+    it('Scenario: A recognised опис offers its продавець', () => {
+      const offer = ruleOffer({ description: 'ATB MARKET', target: category('groceries'), rules: noRules, merchants });
+      expect(offer).toEqual({
+        merchant: 'atb market',
+        recognised: { merchantId: 'atb', name: 'АТБ' },
+        target: category('groceries'),
+      });
+      const view = ruleOfferView(offer!, false, offer!.merchant);
+      expect(view.merchantLabel).toBe('продавець АТБ');
+      expect(view.canSwitchToPattern).toBe(true);
+      // The sheet names «продавець АТБ» and offers the switch to the pattern (main-screen).
+      const sheet = readFileSync(new URL('../components/rule-offer-sheet.tsx', import.meta.url), 'utf8');
+      expect(sheet).toContain('{view.merchantLabel}');
+      expect(sheet).toMatch(/view\?\.canSwitchToPattern \? \(\s*<Action[^>]*onPress=\{\(\) => setUsePattern\(true\)\}/);
+      expect(ruleFromDraft(ruleDraftFromOffer(offer!, view.criterion), { id: 'r1', createdAt: new Date(0) })).toEqual({
+        id: 'r1',
+        merchantId: 'atb',
+        target: category('groceries'),
+        createdAt: new Date(0),
+      });
+    });
+
+    it('Scenario: The продавець can be replaced by a pattern', () => {
+      const offer = ruleOffer({ description: 'ATB MARKET', target: category('groceries'), rules: noRules, merchants })!;
+      const view = ruleOfferView(offer, true, offer.merchant);
+      expect(view.showsPattern).toBe(true);
+      expect(ruleFromDraft(ruleDraftFromOffer(offer, view.criterion), { id: 'r1', createdAt: new Date(0) })).toEqual({
+        id: 'r1',
+        merchant: 'atb market',
+        target: category('groceries'),
+        createdAt: new Date(0),
+      });
+    });
+
+    it('Scenario: A recognised опис offers a правило-переказ naming its продавець', () => {
+      expect(
+        ruleOffer({
+          description: 'Округлення балансу «Резерв»',
+          target: { kind: 'transfer', toAccountId: 'reserve' },
+          fromAccount: platinum,
+          accounts: [reserveAccount, usdAccount],
+          rules: noRules,
+          merchants,
+        })?.recognised,
+      ).toEqual({ merchantId: 'reserve-m', name: 'Резерв' });
+    });
+
+    it('Scenario: A правило naming the продавець already covers it', () => {
+      const atbToGroceries: Rule = {
+        id: 'r-atb',
+        merchantId: 'atb',
+        target: category('groceries'),
+        createdAt: new Date('2026-03-01T10:00:00.000Z'),
+      };
+      expect(
+        ruleOffer({ description: 'ATB MARKET', target: category('groceries'), rules: [atbToGroceries], merchants }),
+      ).toBeUndefined();
+    });
+
+    it('an offer with no продавець is the pattern field', () => {
+      const offer = ruleOffer({ description: 'СІЛЬПО 123', target: category('groceries'), rules: noRules, merchants })!;
+      expect(ruleOfferView(offer, false, 'сільпо 123')).toEqual({
+        showsPattern: true,
+        canSwitchToPattern: false,
+        criterion: { kind: 'pattern', pattern: 'сільпо 123' },
+      });
+    });
+  });
+});
+
+describe('ruleFromDraft and the merchant criterion', () => {
+  it('Scenario: Switching the criterion drops the other choice', () => {
+    const rule = ruleFromDraft(
+      { merchant: 'атб', criterion: 'merchant', merchantId: 'atb', mcc: '', target: 'category', categoryId: 'groceries' },
+      { id: 'r1', createdAt: new Date(0) },
+    );
+    expect(rule.merchantId).toBe('atb');
+    expect(rule.merchant).toBeUndefined();
+    const back = ruleFromDraft(
+      { merchant: 'атб', criterion: 'pattern', merchantId: 'atb', mcc: '', target: 'category', categoryId: 'groceries' },
+      { id: 'r1', createdAt: new Date(0) },
+    );
+    expect(back.merchant).toBe('атб');
+    expect(back.merchantId).toBeUndefined();
+  });
+
+  it('a продавець not picked is no criterion', () => {
+    expect(() =>
+      ruleFromDraft(
+        { merchant: 'атб', criterion: 'merchant', mcc: '', target: 'category', categoryId: 'groceries' },
+        { id: 'r1', createdAt: new Date(0) },
+      ),
+    ).toThrow('Правило потребує продавця або MCC');
   });
 });
 
@@ -494,6 +649,18 @@ describe('storeRule', () => {
     for (const entry of steps) {
       expect(Object.keys(entry)).not.toContain('merchant');
       expect(JSON.stringify(entry)).not.toMatch(/сільпо/i);
+      // …and no MCC, now that a розбір reads the one a витрата carries.
+      expect(JSON.stringify(entry)).not.toMatch(/mcc|5411/i);
+    }
+    // The MCC-only правило of the same pass is no different: its code never reaches the entry.
+    await storeRule({ ...silpo, id: 'r-mcc', merchant: undefined, mcc: 5411 }, () => ({
+      examined: 40,
+      moved: 1,
+      transferred: 0,
+      absorbed: 0,
+    }));
+    for (const entry of tail().filter((e) => e.name === 'rules/sweep')) {
+      expect(JSON.stringify(entry)).not.toMatch(/mcc|5411/i);
     }
   });
 
@@ -582,15 +749,43 @@ describe('who raises and answers the offer to remember a правило', () => 
   it('Scenario: The proposed pattern can be changed before it is stored', () => {
     // The sheet's own edited state is what `onAccept` is called with — never the offer's original
     // pattern — and the hook builds the правило from exactly that argument.
-    expect(sheet).toContain('onPress={() => onAccept(pattern)}');
+    expect(sheet).toContain('ruleOfferView(offer, usePattern, pattern)');
+    expect(sheet).toContain('onPress={() => view && onAccept(view.criterion)}');
     const accept = hook.slice(hook.indexOf('const accept = useCallback'));
-    expect(accept).toContain('async (merchant: string) => {');
-    expect(accept).toMatch(/ruleFromDraft\(\s*\{\s*merchant,\s*mcc: '',\s*target: offer\.target\.kind,/);
+    expect(accept).toContain('async (criterion: RuleCriterion) => {');
+    expect(accept).toMatch(/ruleFromDraft\(ruleDraftFromOffer\(offer, criterion\)/);
+    const offer = ruleOffer({
+      description: 'СІЛЬПО 123 Київ',
+      target: { kind: 'category', categoryId: 'groceries' },
+      rules: [],
+      merchants: NO_MERCHANTS,
+    })!;
+    const edited = ruleOfferView(offer, false, 'сільпо 123').criterion;
+    expect(ruleFromDraft(ruleDraftFromOffer(offer, edited), { id: 'r1', createdAt: new Date(0) }).merchant).toBe(
+      'сільпо 123',
+    );
   });
 
   it('Scenario: Accepting the offer stores the правило', () => {
     const accept = hook.slice(hook.indexOf('const accept = useCallback'));
     expect(accept).toContain('await storeRule(rule, rulesRepo.save)');
+  });
+
+  it('Scenario: A declined offer stores nothing', () => {
+    // Declining only closes the offer: nothing is written, and the категорія stored before it stands.
+    expect(hook).toContain('const decline = useCallback(() => setOffer(undefined), []);');
+    const decline = hook.slice(hook.indexOf('const decline'), hook.indexOf('const accept'));
+    expect(decline).not.toMatch(/rulesRepo|storeRule|save/);
+  });
+
+  it('Scenario: Retyping into a переказ offers the правило-переказ', () => {
+    // The editing screen raises the offer once the переказ is stored, onto the рахунок just chosen;
+    // what it proposes is `ruleOffer`'s (above, "Retyping a витрата into a переказ offers the
+    // правило-переказ").
+    const editor = source('../app/transaction/[id].tsx');
+    const storeTransfer = editor.slice(editor.indexOf('const storeTransfer = useCallback'));
+    expect(storeTransfer.indexOf('persist(...written);')).toBeLessThan(storeTransfer.indexOf('ruleOffer.raise({'));
+    expect(storeTransfer).toContain("target: { kind: 'transfer', toAccountId: transferred.toAccountId }");
   });
 
   it('Scenario: An emptied pattern stores nothing', () => {

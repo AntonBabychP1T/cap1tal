@@ -11,6 +11,7 @@ import type { Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
 import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
+import type { MerchantIndex } from '../domain/merchants';
 import type { CurrencyCode, Money } from '../domain/money';
 import type { IsoDate, Month, Transaction } from '../domain/transaction';
 import type { AnalysisFile, AnalysisShareOutcome } from '../platform/analysis-share';
@@ -90,6 +91,8 @@ export interface StoredForAnalysis {
   readonly limits: readonly CategoryLimit[];
   readonly goals: readonly AccumulationGoal[];
   readonly rates: readonly DatedRate[];
+  /** The продавці as stored, which the «Продавці» part of a пакет groups витрати by. */
+  readonly merchants: MerchantIndex;
   /**
    * The поточна вартість of each інвестиційний рахунок that has one, by рахунок id — the внесок
    * such a рахунок brings to a ціль, which the пакет's goals section reads. Absent on a device
@@ -168,6 +171,14 @@ export const INVALID_RANGE_MESSAGE = 'Кінець діапазону раніш
 export const MALFORMED_MONTH_MESSAGE = 'Місяць пишеться як РРРР-ММ, напр. 2026-08.';
 /** What «Завжди включено» says: the aggregates never need a switch. */
 export const ALWAYS_INCLUDED = 'Завжди: місячна картина, категорії, тренди, ліміти, цілі.';
+
+/**
+ * What the «Продавці» choice carries (ai-analysis-screen, "«Продавці» says the owner's назви go
+ * too"): the описи as the bank sent them, and the назви the owner gave their продавці, which are
+ * words derived from those описи and leave only with them.
+ */
+export const MERCHANTS_CHOICE_HINT =
+  'Описи транзакцій, як їх надіслав банк, і назви, які ви дали своїм продавцям';
 
 /** The choice as the builder's own `PeriodChoice`. */
 export function periodChoiceOf(choices: AiAnalysisChoices): PeriodChoice {

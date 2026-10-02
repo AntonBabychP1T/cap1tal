@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+
 import { accountsRepo } from '../db/accounts-repo';
 import { installmentsRepo } from '../db/installments-repo';
 import { monobankRepo, type MonobankRepo } from '../db/monobank-repo';
@@ -179,7 +181,7 @@ describe('one chance the phone gives', () => {
       tokenStore: tokenStore ?? inMemoryMonobankTokenStore({ token: TOKEN }),
       fetch: fetchImpl,
       storage: repo,
-      categorisation: () => ({ rules: [] }),
+      categorisation: () => ({ rules: [], merchants: NO_MERCHANTS }),
       nowMs: () => clockMs,
       now: () => new Date(clockMs),
       dateOf: (unixSeconds) => new Date(unixSeconds * 1000).toISOString().slice(0, 10) as IsoDate,

@@ -7,6 +7,7 @@ import { transactionsRepo } from '../db/transactions-repo';
 
 import { account } from '../domain/account';
 import { namesById } from '../domain/category';
+import { merchant, merchantIndex } from '../domain/merchants';
 import type { CategoryLimit } from '../domain/limits';
 import { MAX_AMOUNT_MINOR, money } from '../domain/money';
 import {
@@ -252,6 +253,90 @@ describe('transactionLine — the imported опис', () => {
     expect(line.amount).toBe('−125,50 UAH');
     expect(line.accounts).toBe('mono black');
     expect(line.date).toBe('2026-08-27');
+  });
+
+  describe('when the опис is recognised as a продавець', () => {
+    const atb = merchant({
+      id: 'atb',
+      name: 'АТБ',
+      spellings: [
+        { id: 's1', spelling: 'атб', addedAt: new Date(0) },
+        { id: 's2', spelling: 'atb', addedAt: new Date(1) },
+      ],
+      createdAt: new Date(0),
+    });
+    const merchants = merchantIndex([atb]);
+    const lineOf = (description: string, categoryId = UNCATEGORISED_CATEGORY_ID) =>
+      transactionLine(
+        expenseByDefault({ id: 'e1', date: '2026-08-27', accountId: 'card', amount: money(12550, 'UAH'), categoryId, description }),
+        byId,
+        names,
+        sourceNames,
+        new Map(),
+        new Map(),
+        merchants,
+      );
+
+    it('Scenario: A recognised опис reads as its продавець', () => {
+      const line = lineOf('ATB MARKET 23', 'groceries');
+      expect(line.descriptionShown).toBe('АТБ');
+      // Where the опис would be, and never in place of the категорія.
+      expect(feedTitle(line)).toBe('Groceries');
+      expect(line.category).toBe('Groceries');
+    });
+
+    it('Scenario: A recognised опис shows its продавець in the feed and itself in editing', () => {
+      const line = lineOf('Оплата послуг АТБ-Маркет 1234 Київ');
+      expect(line.descriptionShown).toBe('АТБ');
+      // Editing reads the опис as stored.
+      expect(line.description).toBe('Оплата послуг АТБ-Маркет 1234 Київ');
+    });
+
+    it('Scenario: Description and type stay distinguishable', () => {
+      // «СІЛЬПО Київ», which no написання recognises, reads as itself; the категорія and the
+      // джерело keep their places, and a переказ still names both of its ends.
+      const silpo = lineOf('СІЛЬПО Київ');
+      expect(silpo.descriptionShown).toBe('СІЛЬПО Київ');
+      expect(silpo.category).toBe('Без категорії');
+      const unsourced: Income = {
+        type: 'income',
+        id: 'i1',
+        date: '2026-08-27',
+        accountId: 'card',
+        amount: money(5000, 'UAH'),
+        sourceId: UNSOURCED_SOURCE_ID,
+        description: 'Повернення за замовлення',
+      };
+      const income = transactionLine(unsourced, byId, names, sourceNames, new Map(), new Map(), merchants);
+      expect(income.source).toBe('Без джерела');
+      expect(income.descriptionShown).toBe('Повернення за замовлення');
+      const crossCurrency = transactionLine(
+        transfer({ id: 't1', date: '2026-08-27', fromAccountId: 'card', toAccountId: 'usd', left: money(41000, 'UAH'), arrived: money(1000, 'USD'), description: 'ATB валюта' }),
+        byId,
+        names,
+        sourceNames,
+        new Map(),
+        new Map(),
+        merchants,
+      );
+      expect(crossCurrency.accounts).toBe('mono black → долари');
+      expect(crossCurrency.amount).toContain('→');
+      expect(crossCurrency.descriptionShown).toBe('АТБ');
+    });
+
+    it('a транзакція with no опис shows nothing for it, recognised or not', () => {
+      const plain = transactionLine(
+        expenseByDefault({ id: 'e2', date: '2026-08-27', accountId: 'card', amount: money(100, 'UAH') }),
+        byId,
+        names,
+        sourceNames,
+        new Map(),
+        new Map(),
+        merchants,
+      );
+      expect(plain).not.toHaveProperty('description');
+      expect(plain).not.toHaveProperty('descriptionShown');
+    });
   });
 
   it('Scenario: An arriving item keeps its source distinct from its description', () => {

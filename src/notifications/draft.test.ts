@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS, merchant, merchantIndex } from '../domain/merchants';
+
 import { money } from '../domain/money';
 import { templateRules, type Rule } from '../domain/rules';
 import { TEMPLATE_GROUPS } from '../domain/rule-template';
@@ -61,6 +63,7 @@ const context = (over: Partial<ProcessContext> = {}): ProcessContext => ({
   watches: [privat],
   seenFingerprints: new Set<string>(),
   rules: [],
+  merchants: NO_MERCHANTS,
   newId: ids(),
   dateOf,
   ...over,
@@ -73,7 +76,7 @@ const drafted = (outcome: CaptureOutcome): Draft => {
 };
 
 const confirmed = (draft: Draft, rules: readonly Rule[] = [], supplied?: number) => {
-  const result = confirmDraft(draft, { rules, newId: ids() }, supplied);
+  const result = confirmDraft(draft, { rules, merchants: NO_MERCHANTS, newId: ids() }, supplied);
   expect(result.kind).toBe('confirmed');
   if (result.kind !== 'confirmed') throw new Error('unreachable');
   // "…and the чернетка is settled": every confirmation names the чернетка it spent.
@@ -167,7 +170,7 @@ describe('processCapture — what is read at all', () => {
 
   it('Scenario: A deleted транзакція stays deleted', () => {
     const notification = capture({ text: '250.00 грн. СІЛЬПО' });
-    const auto = processCapture(notification, context({ rules: [groceries] }));
+    const auto = processCapture(notification, context({ rules: [groceries], merchants: NO_MERCHANTS }));
     expect(auto.kind).toBe('auto-confirmed');
 
     // Whatever became of the транзакція afterwards, the fingerprint keeps the notification out.
@@ -228,7 +231,7 @@ describe('processCapture — auto-confirmation за правилом', () => {
   it('Scenario: A recognised merchant confirms itself', () => {
     const outcome = processCapture(
       capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }),
-      context({ rules: [groceries] }),
+      context({ rules: [groceries], merchants: NO_MERCHANTS }),
     );
 
     expect(outcome.kind).toBe('auto-confirmed');
@@ -254,10 +257,43 @@ describe('processCapture — auto-confirmation за правилом', () => {
     // правило-переказ needs, so it takes no part and the чернетка drafts as usual.
     const outcome = processCapture(
       capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }),
-      context({ rules: [roundUpToTransfer] }),
+      context({ rules: [roundUpToTransfer], merchants: NO_MERCHANTS }),
     );
 
     expect(outcome.kind).toBe('drafted');
+  });
+
+  it('Scenario: A чернетка auto-confirms by a продавець', () => {
+    const atb = merchant({
+      id: 'atb',
+      name: 'АТБ',
+      spellings: [{ id: 's1', spelling: 'atb', addedAt: new Date(0) }],
+      createdAt: new Date(0),
+    });
+    const byMerchant: Rule = {
+      id: 'r-atb',
+      merchantId: 'atb',
+      target: { kind: 'category', categoryId: 'eating-out' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const outcome = processCapture(
+      capture({ title: 'Оплата', text: '125.50 грн. ATB MARKET' }),
+      context({ rules: [byMerchant], merchants: merchantIndex([atb]) }),
+    );
+    expect(outcome.kind).toBe('auto-confirmed');
+    if (outcome.kind !== 'auto-confirmed') throw new Error('unreachable');
+    expect(outcome.transaction).toMatchObject({
+      type: 'expense',
+      amount: money(12550, 'UAH'),
+      categoryId: 'eating-out',
+    });
+    // Confirmed by hand later, the same продавець decides too.
+    expect(
+      confirmDraft(
+        drafted(processCapture(capture({ title: 'Оплата', text: '125.50 грн. ATB MARKET' }), context())),
+        { rules: [byMerchant], merchants: merchantIndex([atb]), newId: ids() },
+      ),
+    ).toMatchObject({ kind: 'confirmed', transaction: { categoryId: 'eating-out' } });
   });
 
   it('Scenario: An MCC-only правило does not auto-confirm', () => {
@@ -270,7 +306,7 @@ describe('processCapture — auto-confirmation за правилом', () => {
 
     const outcome = processCapture(
       capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }),
-      context({ rules: [byMcc] }),
+      context({ rules: [byMcc], merchants: NO_MERCHANTS }),
     );
 
     expect(outcome.kind).toBe('drafted');
@@ -279,7 +315,7 @@ describe('processCapture — auto-confirmation за правилом', () => {
   it('Scenario: Money in never auto-confirms', () => {
     const outcome = processCapture(
       capture({ title: 'Поповнення', text: '500.00 грн від СІЛЬПО' }),
-      context({ rules: [groceries] }),
+      context({ rules: [groceries], merchants: NO_MERCHANTS }),
     );
 
     expect(outcome.kind).toBe('drafted');
@@ -289,7 +325,7 @@ describe('processCapture — auto-confirmation за правилом', () => {
   it('Scenario: A raw чернетка never auto-confirms', () => {
     const outcome = processCapture(
       capture({ title: 'СІЛЬПО', text: 'дякуємо за покупку' }),
-      context({ rules: [groceries] }),
+      context({ rules: [groceries], merchants: NO_MERCHANTS }),
     );
 
     expect(outcome.kind).toBe('drafted');
@@ -346,14 +382,14 @@ describe('confirmDraft', () => {
       processCapture(capture({ title: 'Банк', text: 'Операція виконана' }), context()),
     );
 
-    expect(confirmDraft(draft, { rules: [], newId: ids() })).toEqual({
+    expect(confirmDraft(draft, { rules: [], merchants: NO_MERCHANTS, newId: ids() })).toEqual({
       kind: 'amount-required',
       draftId: draft.id,
     });
     // A сума that is not a positive whole number of minor units is no сума at all.
-    expect(confirmDraft(draft, { rules: [], newId: ids() }, 0).kind).toBe('amount-required');
-    expect(confirmDraft(draft, { rules: [], newId: ids() }, -100).kind).toBe('amount-required');
-    expect(confirmDraft(draft, { rules: [], newId: ids() }, 12.5).kind).toBe('amount-required');
+    expect(confirmDraft(draft, { rules: [], merchants: NO_MERCHANTS, newId: ids() }, 0).kind).toBe('amount-required');
+    expect(confirmDraft(draft, { rules: [], merchants: NO_MERCHANTS, newId: ids() }, -100).kind).toBe('amount-required');
+    expect(confirmDraft(draft, { rules: [], merchants: NO_MERCHANTS, newId: ids() }, 12.5).kind).toBe('amount-required');
   });
 
   it('Scenario: A raw чернетка confirms with the owner’s сума', () => {
@@ -394,7 +430,7 @@ describe('confirmDraft', () => {
       proposal: { kind: 'expense', amount: money(25000, 'USD') },
     };
 
-    expect(() => confirmDraft(mislabelled, { rules: [], newId: ids() })).toThrow(/cannot propose/u);
+    expect(() => confirmDraft(mislabelled, { rules: [], merchants: NO_MERCHANTS, newId: ids() })).toThrow(/cannot propose/u);
   });
 
   it('ignores a supplied сума for a чернетка the bank already put one on', () => {
@@ -466,8 +502,8 @@ describe('determinism', () => {
     expect(processCapture(raw, inputs())).toEqual(processCapture(raw, inputs()));
 
     const draft = drafted(processCapture(raw, inputs()));
-    expect(confirmDraft(draft, { rules: [groceries], newId: ids() }, 30000)).toEqual(
-      confirmDraft(draft, { rules: [groceries], newId: ids() }, 30000),
+    expect(confirmDraft(draft, { rules: [groceries], merchants: NO_MERCHANTS, newId: ids() }, 30000)).toEqual(
+      confirmDraft(draft, { rules: [groceries], merchants: NO_MERCHANTS, newId: ids() }, 30000),
     );
   });
 });
@@ -478,7 +514,7 @@ describe('the шаблон категоризації decides a чернетка
   it('Scenario: The шаблон auto-confirms a чернетка', () => {
     const outcome = processCapture(
       capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }),
-      context({ rules: [], templateRules: template }),
+      context({ rules: [], merchants: NO_MERCHANTS, templateRules: template }),
     );
 
     expect(outcome.kind).toBe('auto-confirmed');
@@ -499,7 +535,7 @@ describe('the шаблон категоризації decides a чернетка
     };
     const outcome = processCapture(
       capture({ title: 'Оплата', text: '250.00UAH. НОВИЙ ЗАКЛАД' }),
-      context({ rules: [byMcc], templateRules: template }),
+      context({ rules: [byMcc], merchants: NO_MERCHANTS, templateRules: template }),
     );
     expect(outcome.kind).toBe('drafted');
   });
@@ -508,7 +544,7 @@ describe('the шаблон категоризації decides a чернетка
     const draft = drafted(
       processCapture(capture({ title: 'Оплата', text: '250.00UAH. НОВИЙ ЗАКЛАД' }), context()),
     );
-    const result = confirmDraft(draft, { rules: [], templateRules: template, newId: ids() });
+    const result = confirmDraft(draft, { rules: [], merchants: NO_MERCHANTS, templateRules: template, newId: ids() });
     expect(result.kind === 'confirmed' && result.transaction).toMatchObject({
       categoryId: UNCATEGORISED_CATEGORY_ID,
     });
@@ -519,7 +555,7 @@ describe('the шаблон категоризації decides a чернетка
     const draft = drafted(
       processCapture(capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }), context()),
     );
-    const result = confirmDraft(draft, { rules: [], templateRules: template, newId: ids() });
+    const result = confirmDraft(draft, { rules: [], merchants: NO_MERCHANTS, templateRules: template, newId: ids() });
     expect(result.kind === 'confirmed' && result.transaction).toMatchObject({ categoryId: 'groceries' });
   });
 
@@ -532,7 +568,7 @@ describe('the шаблон категоризації decides a чернетка
     };
     const outcome = processCapture(
       capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }),
-      context({ rules: [silpoToEatingOut], templateRules: template }),
+      context({ rules: [silpoToEatingOut], merchants: NO_MERCHANTS, templateRules: template }),
     );
     expect(outcome.kind === 'auto-confirmed' && outcome.transaction).toMatchObject({
       categoryId: 'eating-out',

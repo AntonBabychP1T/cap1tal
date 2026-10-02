@@ -1,4 +1,4 @@
-import { desc, eq, sql } from 'drizzle-orm';
+import { desc, eq, getTableColumns, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account, type Account } from '../domain/account';
@@ -14,7 +14,6 @@ import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mapp
 import { accountsRepo } from './accounts-repo';
 import { monobankRepo } from './monobank-repo';
 import { reportingRepo } from './reporting-repo';
-import { transactionsRepo } from './transactions-repo';
 import {
   accounts,
   alerts,
@@ -34,6 +33,8 @@ import {
   hapticsPreference,
   investmentValues,
   journal,
+  merchantSpellings,
+  merchants,
   monobankAccounts,
   monobankImportedItems,
   monobankLinks,
@@ -401,6 +402,7 @@ describe('migrations — the editable lists', () => {
     expect(db.select().from(rules).where(eq(rules.id, 'rule-1')).get()).toEqual({
       id: 'rule-1',
       merchant: 'сільпо',
+      merchantId: null,
       mcc: 5411,
       categoryId: 'groceries',
       toAccountId: null,
@@ -1774,6 +1776,40 @@ describe('migrations — where a half-paged window got to', () => {
  * names the current schema's full column set, so a staged database older than that column needs
  * the raw statement.
  */
+/**
+ * Writes транзакції as a device on an older shape did. The query builder always addresses the
+ * current schema's full column set — `mcc` included since продавці arrived — so on an older shape
+ * a row is written with raw SQL naming only the columns that shape has.
+ */
+function insertLegacyTransactions(
+  db: StagedStorage['db'],
+  rows: readonly Transaction[],
+  storedAt: (n: number) => Date = () => new Date(0),
+): void {
+  const columns = getTableColumns(transactions);
+  rows.forEach((t, n) => {
+    const row: Record<string, unknown> = { ...toTransactionRow(t), createdAt: storedAt(n) };
+    delete row.mcc;
+    const keys = Object.keys(row).filter((key) => row[key] !== undefined) as (keyof typeof columns)[];
+    const names = keys.map((key) => columns[key].name);
+    const values = keys.map((key) => (row[key] === null ? null : columns[key].mapToDriverValue(row[key])));
+    db.$client
+      .prepare(`INSERT INTO transactions (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`)
+      .run(...values);
+  });
+}
+
+/** Every row of `table` as SQLite holds it, less the columns a later migration adds. */
+function rawRows(
+  db: StagedStorage['db'],
+  table: string,
+  addedLater: readonly string[] = [],
+): Record<string, unknown>[] {
+  return db
+    .all<Record<string, unknown>>(sql.raw(`SELECT * FROM ${table} ORDER BY rowid`))
+    .map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => !addedLater.includes(key))));
+}
+
 function insertLegacyAccount(db: StagedStorage['db'], a: Account): void {
   db.run(sql`INSERT INTO accounts (id, name, kind, currency, opening_amount, archived)
              VALUES (${a.id}, ${a.name}, ${a.kind}, ${a.currency}, ${a.openingBalance.amount},
@@ -1794,7 +1830,7 @@ describe('migrations — правила-перекази and awaiting перек
       db.run(
         sql`INSERT INTO rules (id, merchant, category_id, created_at) VALUES ('r1', 'сільпо', 'food', 1)`,
       );
-      db.insert(transactions).values(toTransactionRow(oneOfEachType[2]!)).run();
+      insertLegacyTransactions(db, [oneOfEachType[2]!]);
 
       staged.migrateToLatest();
 
@@ -1923,14 +1959,13 @@ describe('migrations — the категорія and newest-first order indexes',
       seedReferences(db, { categories: ['food', UNCATEGORISED_CATEGORY_ID], sources: [] });
       insertLegacyAccount(db, account({ id: 'card', name: 'mono', kind: 'spending', currency: 'UAH' }));
       insertLegacyAccount(db, account({ id: 'usd', name: 'usd', kind: 'savings', currency: 'USD' }));
-      const repo = transactionsRepo(db);
       const rows: Transaction[] = [
         expenseByDefault({ id: 'e1', date: '2026-03-02', accountId: 'card', amount: money(1000, 'UAH'), categoryId: 'food' }),
         expenseByDefault({ id: 'e2', date: '2026-03-02', accountId: 'card', amount: money(2000, 'UAH') }),
         transfer({ id: 't1', date: '2026-03-05', fromAccountId: 'card', toAccountId: 'usd', left: money(41000, 'UAH'), arrived: money(1000, 'USD') }),
       ];
-      rows.forEach((t, i) => repo.save(t, new Date(Date.UTC(2026, 2, 1, 9, i))));
-      const before = repo.listAll();
+      insertLegacyTransactions(db, rows, (i) => new Date(Date.UTC(2026, 2, 1, 9, i)));
+      const before = rawRows(db, 'transactions');
       const indexNames = () =>
         db
           .all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'transactions'`)
@@ -1939,7 +1974,7 @@ describe('migrations — the категорія and newest-first order indexes',
 
       staged.migrateToLatest();
 
-      expect(transactionsRepo(db).listAll()).toEqual(before);
+      expect(rawRows(db, 'transactions', ['mcc'])).toEqual(before);
       expect(indexNames()).toEqual(expect.arrayContaining(['transactions_category_idx', 'transactions_order_idx']));
     } finally {
       staged.close();
@@ -2083,24 +2118,23 @@ describe('migrations — the шаблон mapping', () => {
       const { db } = staged;
       seedReferences(db, VOCABULARY);
       db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
-      db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
-      db.insert(rules)
-        .values({ id: 'r1', merchant: 'сільпо', categoryId: 'food', createdAt: new Date(1) })
-        .run();
+      insertLegacyTransactions(db, oneOfEachType);
+      db.run(sql`INSERT INTO rules (id, merchant, category_id, created_at) VALUES ('r1', 'сільпо', 'food', 1)`);
       const before = {
         accounts: db.select().from(accounts).all(),
-        transactions: db.select().from(transactions).all(),
+        transactions: rawRows(db, 'transactions'),
         categories: db.select().from(categories).all(),
-        rules: db.select().from(rules).all(),
+        rules: rawRows(db, 'rules'),
       };
 
       staged.migrateToLatest();
 
+      // `mcc` and `merchant_id` arrive with a later migration than this one, empty.
       expect({
         accounts: db.select().from(accounts).all(),
-        transactions: db.select().from(transactions).all(),
+        transactions: rawRows(db, 'transactions', ['mcc']),
         categories: db.select().from(categories).all(),
-        rules: db.select().from(rules).all(),
+        rules: rawRows(db, 'rules', ['merchant_id']),
       }).toEqual(before);
       // No базова категорія has a stored choice: every one follows its типова категорія.
       expect(db.select().from(ruleTemplateChoices).all()).toEqual([]);
@@ -2125,6 +2159,107 @@ describe('migrations — the шаблон mapping', () => {
       ).toThrow();
       db.insert(ruleTemplateSweep).values({ id: 'sweep', version: 1 }).run();
       expect(() => db.insert(ruleTemplateSweep).values({ id: 'other', version: 2 }).run()).toThrow();
+    } finally {
+      storage.close();
+    }
+  });
+});
+
+describe('migrations — продавці and the MCC', () => {
+  it('Scenario: Existing data survives the migration', () => {
+    // Ten migrations precede this one; everything below is written as a device on that shape did.
+    const staged = openTestDbMigratedTo(10);
+    try {
+      const { db } = staged;
+      seedReferences(db, VOCABULARY);
+      insertLegacyAccount(db, card);
+      insertLegacyAccount(db, jar);
+      db.run(sql`INSERT INTO rules (id, merchant, mcc, category_id, to_account_id, created_at) VALUES
+        ('r-pattern', 'сільпо', NULL, 'food', NULL, 1001),
+        ('r-mcc', NULL, 5411, 'food', NULL, 1002),
+        ('r-both', 'uklon', 4121, 'clothes', NULL, 1003),
+        ('r-transfer', 'округлення балансу', NULL, NULL, 'jar', 1004)`);
+      db.run(sql`INSERT INTO transactions
+        (id, type, date, created_at, account_id, amount, currency, category_id, description) VALUES
+        ('e1', 'expense', '2026-03-10', 11, 'card', 12550, 'UAH', 'food', 'СІЛЬПО Київ')`);
+      db.run(sql`INSERT INTO transactions
+        (id, type, date, created_at, from_account_id, to_account_id, left_amount, left_currency,
+         arrived_amount, arrived_currency) VALUES
+        ('t1', 'transfer', '2026-03-15', 12, 'card', 'jar', 200000, 'UAH', 200000, 'UAH')`);
+      db.insert(fiscalReceipts)
+        .values({
+          id: 'fr1',
+          transactionId: 'e1',
+          registrarNumber: '3000909908',
+          fiscalNumber: '696582',
+          issuedDate: '2026-03-10',
+          issuedTime: '12:00:00',
+          dialect: 'rro',
+          kind: 'sale',
+          totalAmount: 12550,
+          totalCurrency: 'UAH',
+          acquisition: 'qr_scan',
+          fetchedAt: new Date('2026-03-10T12:00:00.000Z'),
+          snapshot: '<RQ/>',
+        })
+        .run();
+      const rulesBefore = db.all(sql`SELECT * FROM rules ORDER BY id`);
+      const transactionsBefore = db.all(sql`SELECT * FROM transactions ORDER BY id`);
+
+      staged.migrateToLatest();
+
+      // Every правило keeps its pattern, MCC, target and moment, and names no продавець.
+      const rulesAfter = db.all<Record<string, unknown>>(sql`SELECT * FROM rules ORDER BY id`);
+      expect(rulesAfter.map(({ merchant_id: merchantId, ...rest }) => rest)).toEqual(rulesBefore);
+      expect(rulesAfter.map((r) => r.merchant_id)).toEqual([null, null, null, null]);
+      // Every транзакція is what it was, and none carries an MCC.
+      const transactionsAfter = db.all<Record<string, unknown>>(sql`SELECT * FROM transactions ORDER BY id`);
+      expect(transactionsAfter.map(({ mcc, ...rest }) => rest)).toEqual(transactionsBefore);
+      expect(transactionsAfter.map((t) => t.mcc)).toEqual([null, null]);
+      // The чек still belongs to its транзакція, and no продавець exists the owner never named.
+      expect(db.select().from(fiscalReceipts).all().map((r) => r.transactionId)).toEqual(['e1']);
+      expect(db.select().from(merchants).all()).toEqual([]);
+      expect(db.select().from(merchantSpellings).all()).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('A fresh database keeps продавці, their написання and a правило naming one consistent', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      seedReferences(db, VOCABULARY);
+      const at = new Date(1);
+      db.insert(merchants).values({ id: 'atb', name: 'АТБ', nameKey: 'атб', createdAt: at }).run();
+      db.insert(merchantSpellings).values({ id: 's1', merchantId: 'atb', spelling: 'атб', createdAt: at }).run();
+      // One написання, one продавець; one name key.
+      db.insert(merchants).values({ id: 'other', name: 'Інший', nameKey: 'інший', createdAt: at }).run();
+      expect(() =>
+        db.insert(merchantSpellings).values({ id: 's2', merchantId: 'other', spelling: 'атб', createdAt: at }).run(),
+      ).toThrow();
+      expect(() => db.insert(merchants).values({ id: 'x', name: 'атб', nameKey: 'атб', createdAt: at }).run()).toThrow();
+      // Blank and untrimmed написання and a blank назва are refused.
+      expect(() =>
+        db.insert(merchantSpellings).values({ id: 's3', merchantId: 'atb', spelling: '  ', createdAt: at }).run(),
+      ).toThrow();
+      expect(() =>
+        db.insert(merchantSpellings).values({ id: 's4', merchantId: 'atb', spelling: ' atb', createdAt: at }).run(),
+      ).toThrow();
+      expect(() => db.insert(merchants).values({ id: 'y', name: ' ', nameKey: '', createdAt: at }).run()).toThrow();
+      // A правило names a продавець alone, never with a pattern, and only one that exists.
+      db.insert(rules).values({ id: 'r1', merchantId: 'atb', categoryId: 'food', createdAt: at }).run();
+      expect(() =>
+        db.insert(rules).values({ id: 'r2', merchant: 'атб', merchantId: 'atb', categoryId: 'food', createdAt: at }).run(),
+      ).toThrow();
+      expect(() =>
+        db.insert(rules).values({ id: 'r3', merchantId: 'nobody', categoryId: 'food', createdAt: at }).run(),
+      ).toThrow();
+      // Storage refuses to remove a продавець a правило names, and removes a написання with its продавець.
+      expect(() => db.delete(merchants).where(eq(merchants.id, 'atb')).run()).toThrow();
+      db.delete(rules).run();
+      db.delete(merchants).where(eq(merchants.id, 'atb')).run();
+      expect(db.select().from(merchantSpellings).all()).toEqual([]);
     } finally {
       storage.close();
     }

@@ -376,6 +376,22 @@ describe('Головний as the overview', () => {
     expect(main).toContain('feed: latest.slice(0, FEED_SIZE)');
   });
 
+  it('Scenario: Five of a long history', () => {
+    // At most five, the head of the history in date then recording-recency order, never re-sorted
+    // here; «Усі» opens the whole searchable history.
+    expect(main).toContain('const FEED_SIZE = 5;');
+    expect(main).toContain('feed: latest.slice(0, FEED_SIZE)');
+    expect(main).not.toContain('stored.feed.sort');
+    expect(main).toContain(FEED_OFFER);
+  });
+
+  it('Scenario: Short or empty history', () => {
+    // Fewer than five are shown as they are, none says so in words, and «Усі» stands either way.
+    expect(main).toContain('{stored.feed.length === 0 ? (');
+    expect(main).toContain('Поки нічого не записано.');
+    expect(main.indexOf(FEED_OFFER)).toBeLessThan(main.indexOf('{stored.feed.length === 0 ? ('));
+  });
+
   it('Scenario: The whole history is one tap from the feed', () => {
     expect(main).toContain('Останні транзакції');
     // The way out sits in the section's own heading, beside the note that says what is shown.

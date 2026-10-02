@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { account } from './account';
+import { NO_MERCHANTS, merchant, merchantIndex, type Merchant } from './merchants';
 import { activeCategories, type Category } from './category';
 import { money } from './money';
 import {
+  checkMerchantCriterion,
   countUncategorisedExpenses,
   matchCategory,
   matchRule,
@@ -67,7 +69,7 @@ const accounts = [platinum, reserve, usdCard];
 describe('matchRule', () => {
   it('Scenario: A merchant pattern matches case-insensitively inside the description', () => {
     const rules = [rule({ id: 'r1', merchant: 'сільпо', categoryId: 'groceries' })];
-    expect(matchRule(rules, { description: 'СІЛЬПО Київ вул. Хрещатик' })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'СІЛЬПО Київ вул. Хрещатик' })).toEqual({
       kind: 'category',
       categoryId: 'groceries',
     });
@@ -75,13 +77,13 @@ describe('matchRule', () => {
 
   it('Scenario: An MCC matches exactly', () => {
     const rules = [rule({ id: 'r1', mcc: 5411, categoryId: 'groceries' })];
-    expect(matchRule(rules, { description: 'новий магазин', mcc: 5411 })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'новий магазин', mcc: 5411 })).toEqual({
       kind: 'category',
       categoryId: 'groceries',
     });
     // Equality, not proximity — and a transaction carrying no MCC matches no MCC rule.
-    expect(matchRule(rules, { description: 'новий магазин', mcc: 5412 })).toBeUndefined();
-    expect(matchRule(rules, { description: 'новий магазин' })).toBeUndefined();
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'новий магазин', mcc: 5412 })).toBeUndefined();
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'новий магазин' })).toBeUndefined();
   });
 
   it('Scenario: Both-criteria beats merchant-only', () => {
@@ -94,18 +96,18 @@ describe('matchRule', () => {
       rule({ id: 'r2', merchant: 'uklon', categoryId: 'transport', createdAt: '2026-02-01T09:00:00.000Z' }),
       rule({ id: 'r1', merchant: 'uklon', mcc: 4121, categoryId: 'travel', createdAt: '2026-01-01T09:00:00.000Z' }),
     ];
-    expect(matchRule(rules, { description: 'Uklon', mcc: 4121 })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'Uklon', mcc: 4121 })).toEqual({
       kind: 'category',
       categoryId: 'travel',
     });
     // Without the MCC only the merchant-only rule matches, so the tier below takes over.
-    expect(matchRule(rules, { description: 'Uklon' })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'Uklon' })).toEqual({
       kind: 'category',
       categoryId: 'transport',
     });
     // And the alphabet is not folded away: a Cyrillic pattern does not reach a Latin description.
     expect(
-      matchRule([rule({ id: 'r3', merchant: 'уклон', categoryId: 'transport' })], {
+      matchRule([rule({ id: 'r3', merchant: 'уклон', categoryId: 'transport' })], NO_MERCHANTS, {
         description: 'Uklon',
       }),
     ).toBeUndefined();
@@ -117,7 +119,7 @@ describe('matchRule', () => {
       rule({ id: 'r2', mcc: 5411, categoryId: 'groceries', createdAt: '2026-02-01T09:00:00.000Z' }),
       rule({ id: 'r1', merchant: 'аптека', categoryId: 'health', createdAt: '2026-01-01T09:00:00.000Z' }),
     ];
-    expect(matchRule(rules, { description: 'Аптека 24', mcc: 5411 })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'Аптека 24', mcc: 5411 })).toEqual({
       kind: 'category',
       categoryId: 'health',
     });
@@ -129,12 +131,12 @@ describe('matchRule', () => {
       rule({ id: 'r2', merchant: 'кава', categoryId: 'coffee', createdAt: '2026-02-01T09:00:00.000Z' }),
       rule({ id: 'r1', merchant: 'кавамашина', categoryId: 'home', createdAt: '2026-01-01T09:00:00.000Z' }),
     ];
-    expect(matchRule(rules, { description: 'КАВАМАШИНА Rozetka' })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'КАВАМАШИНА Rozetka' })).toEqual({
       kind: 'category',
       categoryId: 'home',
     });
     // The shorter pattern still wins where the longer one does not occur at all.
-    expect(matchRule(rules, { description: 'кава з собою' })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'кава з собою' })).toEqual({
       kind: 'category',
       categoryId: 'coffee',
     });
@@ -146,7 +148,7 @@ describe('matchRule', () => {
       rule({ id: 'r2', merchant: 'атб', categoryId: 'groceries', createdAt: '2026-01-01T09:00:00.000Z' }),
       rule({ id: 'r1', merchant: 'атб', categoryId: 'eating-out', createdAt: '2026-02-01T09:00:00.000Z' }),
     ];
-    expect(matchRule(rules, { description: 'АТБ Маркет' })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'АТБ Маркет' })).toEqual({
       kind: 'category',
       categoryId: 'eating-out',
     });
@@ -157,8 +159,8 @@ describe('matchRule', () => {
       rule({ id: 'r1', merchant: 'сільпо', categoryId: 'groceries' }),
       rule({ id: 'r2', mcc: 5411, categoryId: 'groceries' }),
     ];
-    expect(matchRule(rules, { description: 'Невідомий продавець', mcc: 7999 })).toBeUndefined();
-    expect(matchRule([], { description: 'СІЛЬПО Київ', mcc: 5411 })).toBeUndefined();
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'Невідомий продавець', mcc: 7999 })).toBeUndefined();
+    expect(matchRule([], NO_MERCHANTS, { description: 'СІЛЬПО Київ', mcc: 5411 })).toBeUndefined();
   });
 
   it('Scenario: A rule keeps matching into an archived category', () => {
@@ -167,7 +169,7 @@ describe('matchRule', () => {
     // Archiving takes the category out of every picker…
     expect(activeCategories([groceries])).toEqual([]);
     // …and leaves matching untouched: `Rule` does not even carry the flag.
-    expect(matchRule(rules, { description: 'СІЛЬПО Київ' })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'СІЛЬПО Київ' })).toEqual({
       kind: 'category',
       categoryId: groceries.id,
     });
@@ -188,11 +190,11 @@ describe('matchRule', () => {
       createdAt: sameMoment,
     });
     const transaction = { description: 'АТБ Маркет' };
-    expect(matchRule([earlierId, laterId], transaction)).toEqual({
+    expect(matchRule([earlierId, laterId], NO_MERCHANTS, transaction)).toEqual({
       kind: 'category',
       categoryId: 'eating-out',
     });
-    expect(matchRule([laterId, earlierId], transaction)).toEqual({
+    expect(matchRule([laterId, earlierId], NO_MERCHANTS, transaction)).toEqual({
       kind: 'category',
       categoryId: 'eating-out',
     });
@@ -202,7 +204,7 @@ describe('matchRule', () => {
     // Storage rejects such a rule ("A rule with no criterion is rejected"); should one reach
     // matching anyway, it must not swallow every transaction.
     const rules = [rule({ id: 'r1', categoryId: 'groceries' })];
-    expect(matchRule(rules, { description: 'СІЛЬПО Київ', mcc: 5411 })).toBeUndefined();
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'СІЛЬПО Київ', mcc: 5411 })).toBeUndefined();
   });
 
   it('Scenario: A правило-переказ wins by the same ladder', () => {
@@ -213,6 +215,7 @@ describe('matchRule', () => {
     expect(
       matchRule(
         rules,
+        NO_MERCHANTS,
         {
           description: 'Округлення балансу «Резерв»',
           from: { accountId: platinum.id, currency: platinum.currency },
@@ -230,6 +233,7 @@ describe('matchRule', () => {
     expect(
       matchRule(
         rules,
+        NO_MERCHANTS,
         {
           description: 'Округлення балансу «Резерв»',
           from: { accountId: reserve.id, currency: reserve.currency },
@@ -244,6 +248,7 @@ describe('matchRule', () => {
     expect(
       matchRule(
         rules,
+        NO_MERCHANTS,
         {
           description: 'Округлення балансу «Резерв»',
           from: { accountId: usdCard.id, currency: usdCard.currency },
@@ -261,6 +266,7 @@ describe('matchRule', () => {
     expect(
       matchRule(
         rules,
+        NO_MERCHANTS,
         {
           description: 'Округлення балансу «Резерв»',
           from: { accountId: platinum.id, currency: platinum.currency },
@@ -272,7 +278,7 @@ describe('matchRule', () => {
 
   it('A правило-переказ takes no part with no `from` and no `accounts`', () => {
     const rules = [transferRule({ id: 'r1', merchant: 'округлення', toAccountId: reserve.id })];
-    expect(matchRule(rules, { description: 'округлення' })).toBeUndefined();
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'округлення' })).toBeUndefined();
   });
 });
 
@@ -281,21 +287,21 @@ describe('matchRule — what the tiers rest on', () => {
     // Real monobank descriptions put the merchant after the operation, so "starts with" would
     // silently stop matching the rules the owner wrote against them.
     const rules = [rule({ id: 'r1', merchant: 'сільпо', categoryId: 'groceries' })];
-    expect(matchRule(rules, { description: 'Оплата картою СІЛЬПО' })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'Оплата картою СІЛЬПО' })).toEqual({
       kind: 'category',
       categoryId: 'groceries',
     });
-    expect(matchRule(rules, { description: 'СІЛЬПО Київ' })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'СІЛЬПО Київ' })).toEqual({
       kind: 'category',
       categoryId: 'groceries',
     });
-    expect(matchRule(rules, { description: 'Оплата картою' })).toBeUndefined();
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'Оплата картою' })).toBeUndefined();
   });
 
   it('Both sides are folded, so an upper-case pattern matches a lower-case description', () => {
     // The owner may type the pattern in any case; only folding both sides makes that irrelevant.
     const rules = [rule({ id: 'r1', merchant: 'СІЛЬПО', categoryId: 'groceries' })];
-    expect(matchRule(rules, { description: 'оплата картою сільпо' })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'оплата картою сільпо' })).toEqual({
       kind: 'category',
       categoryId: 'groceries',
     });
@@ -306,8 +312,8 @@ describe('matchRule — what the tiers rest on', () => {
     // empty pattern occurs in every description and would outrank every real MCC rule.
     const blank = rule({ id: 'r1', merchant: '   ', categoryId: 'groceries' });
     const byMcc = rule({ id: 'r2', mcc: 5411, categoryId: 'health' });
-    expect(matchRule([blank], { description: 'будь-що' })).toBeUndefined();
-    expect(matchRule([blank, byMcc], { description: 'будь-що', mcc: 5411 })).toEqual({
+    expect(matchRule([blank], NO_MERCHANTS, { description: 'будь-що' })).toBeUndefined();
+    expect(matchRule([blank, byMcc], NO_MERCHANTS, { description: 'будь-що', mcc: 5411 })).toEqual({
       kind: 'category',
       categoryId: 'health',
     });
@@ -320,7 +326,7 @@ describe('matchRule — what the tiers rest on', () => {
       rule({ id: 'a', mcc: 5411, categoryId: 'groceries', createdAt: '2026-01-01T09:00:00.000Z' }),
       rule({ id: 'b', merchant: 'аптека', categoryId: 'health', createdAt: '2026-01-01T09:00:00.000Z' }),
     ];
-    expect(matchRule(rules, { description: 'Аптека 24', mcc: 5411 })).toEqual({
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'Аптека 24', mcc: 5411 })).toEqual({
       kind: 'category',
       categoryId: 'health',
     });
@@ -330,8 +336,8 @@ describe('matchRule — what the tiers rest on', () => {
 describe('matchCategory', () => {
   it('ranks category rules exactly as matchRule does', () => {
     const rules = [rule({ id: 'r1', merchant: 'сільпо', categoryId: 'groceries' })];
-    expect(matchCategory(rules, { description: 'СІЛЬПО Київ' })).toBe('groceries');
-    expect(matchCategory(rules, { description: 'невідомо' })).toBeUndefined();
+    expect(matchCategory(rules, NO_MERCHANTS, { description: 'СІЛЬПО Київ' })).toBe('groceries');
+    expect(matchCategory(rules, NO_MERCHANTS, { description: 'невідомо' })).toBeUndefined();
   });
 
   it("Scenario: A правило-переказ proposes nothing by hand", () => {
@@ -340,12 +346,12 @@ describe('matchCategory', () => {
       transferRule({ id: 'r2', merchant: 'округлення балансу', toAccountId: reserve.id }),
     ];
     // No `from` at all: exactly what the entry form and a чернетка's категорія have.
-    expect(matchCategory(rules, { description: 'Округлення балансу' })).toBe('bills');
+    expect(matchCategory(rules, NO_MERCHANTS, { description: 'Округлення балансу' })).toBe('bills');
   });
 
   it('proposes nothing when only a правило-переказ would match', () => {
     const rules = [transferRule({ id: 'r1', merchant: 'округлення', toAccountId: reserve.id })];
-    expect(matchCategory(rules, { description: 'округлення' })).toBeUndefined();
+    expect(matchCategory(rules, NO_MERCHANTS, { description: 'округлення' })).toBeUndefined();
   });
 });
 
@@ -374,7 +380,7 @@ describe('proposeMerchantPattern', () => {
     const pattern = proposeMerchantPattern('УКЛОН');
     expect(pattern).toBe('уклон');
     const proposed = [rule({ id: 'r1', merchant: pattern, categoryId: 'transport' })];
-    expect(matchRule(proposed, { description: 'УКЛОН' })).toEqual({
+    expect(matchRule(proposed, NO_MERCHANTS, { description: 'УКЛОН' })).toEqual({
       kind: 'category',
       categoryId: 'transport',
     });
@@ -387,6 +393,7 @@ function storedExpense(input: {
   accountId?: string;
   categoryId?: string;
   description?: string;
+  mcc?: number;
 }): Expense {
   return expenseByDefault({
     id: input.id,
@@ -395,6 +402,7 @@ function storedExpense(input: {
     amount: money(12550, 'UAH'),
     ...(input.categoryId ? { categoryId: input.categoryId } : {}),
     ...(input.description ? { description: input.description } : {}),
+    ...(input.mcc !== undefined ? { mcc: input.mcc } : {}),
   });
 }
 
@@ -407,7 +415,7 @@ describe('sweepUncategorised', () => {
       storedExpense({ id: 't2', description: 'АТБ 12' }),
       storedExpense({ id: 't3', description: 'НОВИЙ ЗАКЛАД' }),
     ];
-    expect(sweepUncategorised({ rules: [atb] }, stored, accounts)).toEqual([
+    expect(sweepUncategorised({ rules: [atb], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([
       { kind: 'category', id: 't1', categoryId: 'groceries' },
       { kind: 'category', id: 't2', categoryId: 'groceries' },
     ]);
@@ -415,7 +423,17 @@ describe('sweepUncategorised', () => {
 
   it('Scenario: A категорія the owner chose is never taken away', () => {
     const stored = [storedExpense({ id: 't1', categoryId: 'eating-out', description: 'АТБ 421' })];
-    expect(sweepUncategorised({ rules: [atb] }, stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [atb], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([]);
+  });
+
+  it('Scenario: An опис never moves a транзакція out of the категорія it carries', () => {
+    // The опис of a витрата in Clothing changed to «АТБ 421» while «атб → Groceries» exists: no
+    // розбір reaches it, whatever продавець that опис is now recognised as.
+    const changed = [storedExpense({ id: 't1', categoryId: 'clothing', description: 'АТБ 421' })];
+    const recognising = merchantIndex([
+      merchant({ id: 'atb-m', name: 'АТБ', spellings: [{ id: 's', spelling: 'атб', addedAt: new Date(0) }], createdAt: new Date(0) }),
+    ]);
+    expect(sweepUncategorised({ rules: [atb], merchants: recognising }, changed, accounts)).toEqual([]);
   });
 
   it('Scenario: A more specific правило keeps the last word during the sweep', () => {
@@ -423,28 +441,49 @@ describe('sweepUncategorised', () => {
     // of whatever правило was written last.
     const longer = rule({ id: 'r2', merchant: 'атб 421', categoryId: 'eating-out' });
     const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
-    expect(sweepUncategorised({ rules: [atb, longer] }, stored, accounts)).toEqual([
+    expect(sweepUncategorised({ rules: [atb, longer], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([
       { kind: 'category', id: 't1', categoryId: 'eating-out' },
     ]);
   });
 
   it('Scenario: An MCC-only правило moves nothing', () => {
-    // A stored транзакція keeps no MCC, so there is nothing for such a правило to match on.
+    // A витрата that carries no MCC — recorded by hand, or imported before the MCC was kept — has
+    // nothing for such a правило to match on.
     const byMcc = rule({ id: 'r2', mcc: 5411, categoryId: 'groceries' });
-    const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
-    expect(sweepUncategorised({ rules: [byMcc] }, stored, accounts)).toEqual([]);
+    const stored = [storedExpense({ id: 't1', description: 'НОВИЙ ЗАКЛАД 7' })];
+    expect(sweepUncategorised({ rules: [byMcc], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([]);
+  });
+
+  it('Scenario: An MCC-only правило moves the витрати carrying that MCC', () => {
+    const byMcc = rule({ id: 'r2', mcc: 7399, categoryId: 'services' });
+    const stored = [
+      storedExpense({ id: 't1', description: 'НОВИЙ ЗАКЛАД 7' }),
+      storedExpense({ id: 't2', description: 'НОВИЙ ЗАКЛАД 8', mcc: 7399 }),
+    ];
+    expect(sweepUncategorised({ rules: [byMcc], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([
+      { kind: 'category', id: 't2', categoryId: 'services' },
+    ]);
+  });
+
+  it('a витрата with an MCC and no опис is matched on the MCC alone', () => {
+    const byMcc = rule({ id: 'r2', mcc: 7399, categoryId: 'services' });
+    const byPattern = rule({ id: 'r3', merchant: 'заклад', categoryId: 'groceries' });
+    const stored = [storedExpense({ id: 't1', mcc: 7399 })];
+    expect(sweepUncategorised({ rules: [byMcc, byPattern], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([
+      { kind: 'category', id: 't1', categoryId: 'services' },
+    ]);
   });
 
   it('Scenario: A витрата with no опис is not swept', () => {
     const stored = [storedExpense({ id: 't1' })];
-    expect(sweepUncategorised({ rules: [atb] }, stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [atb], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([]);
   });
 
   it('Scenario: A правило targeting «Без категорії» moves nothing', () => {
     // Creating one is refused, but a restore writes the rules table directly.
     const intoTheGap = rule({ id: 'r2', merchant: 'атб', categoryId: UNCATEGORISED_CATEGORY_ID });
     const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
-    expect(sweepUncategorised({ rules: [intoTheGap] }, stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [intoTheGap], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([]);
   });
 
   it('Scenario: A повернення is not swept', () => {
@@ -457,7 +496,7 @@ describe('sweepUncategorised', () => {
       categoryId: UNCATEGORISED_CATEGORY_ID,
       description: 'АТБ 421',
     });
-    expect(sweepUncategorised({ rules: [atb] }, [returned], accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [atb], merchants: NO_MERCHANTS }, [returned], accounts)).toEqual([]);
   });
 
   it('A дохід, a переказ and a коригування are never moved', () => {
@@ -487,7 +526,7 @@ describe('sweepUncategorised', () => {
       amount: money(-12550, 'UAH'),
       description: 'АТБ 421',
     };
-    expect(sweepUncategorised({ rules: [atb] }, [income, moved, correction], accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [atb], merchants: NO_MERCHANTS }, [income, moved, correction], accounts)).toEqual([]);
   });
 
   it('countUncategorisedExpenses counts the pile, not everything stored', () => {
@@ -505,7 +544,7 @@ describe('sweepUncategorised', () => {
     const stored = [
       storedExpense({ id: 't1', accountId: platinum.id, description: 'Округлення балансу «Резерв»' }),
     ];
-    expect(sweepUncategorised({ rules: [roundUp] }, stored, accounts)).toEqual([
+    expect(sweepUncategorised({ rules: [roundUp], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([
       { kind: 'transfer', id: 't1', toAccountId: reserve.id },
     ]);
   });
@@ -515,7 +554,7 @@ describe('sweepUncategorised', () => {
     const stored = [
       storedExpense({ id: 't1', accountId: reserve.id, description: 'Округлення балансу «Резерв»' }),
     ];
-    expect(sweepUncategorised({ rules: [roundUp] }, stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [roundUp], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([]);
   });
 
   it('Scenario: A правило-переказ does not take a витрата out of a chosen категорія', () => {
@@ -528,7 +567,7 @@ describe('sweepUncategorised', () => {
         description: 'Округлення балансу «Резерв»',
       }),
     ];
-    expect(sweepUncategorised({ rules: [roundUp] }, stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [roundUp], merchants: NO_MERCHANTS }, stored, accounts)).toEqual([]);
   });
 
   it('a transfer move keeps id and toAccountId; date, опис and сума come from the original витрата', () => {
@@ -538,7 +577,7 @@ describe('sweepUncategorised', () => {
       accountId: platinum.id,
       description: 'округлення 479',
     });
-    const [move] = sweepUncategorised({ rules: [roundUp] }, [original], accounts);
+    const [move] = sweepUncategorised({ rules: [roundUp], merchants: NO_MERCHANTS }, [original], accounts);
     expect(move).toEqual({ kind: 'transfer', id: original.id, toAccountId: reserve.id });
     // The rest of the leg — date, опис and сума on both legs — is the repository's job, built from
     // the original транзакція this move names; the domain decision carries only the destination.
@@ -569,6 +608,7 @@ describe('the two tiers', () => {
   const tiers = (rules: readonly Rule[] = [], targets = defaults()) => ({
     rules,
     templateRules: templateRules(targets),
+    merchants: NO_MERCHANTS,
   });
 
   it('Scenario: A fresh device categorises a known merchant with no setup', () => {
@@ -659,7 +699,7 @@ describe('the two tiers', () => {
   });
 
   it('a context with no шаблон decides by the правила alone', () => {
-    expect(resolveCategory({ rules: [] }, { description: 'АТБ 421' })).toBe(undefined);
+    expect(resolveCategory({ rules: [], merchants: NO_MERCHANTS }, { description: 'АТБ 421' })).toBe(undefined);
   });
 });
 
@@ -667,6 +707,7 @@ describe('sweepUncategorised over both tiers', () => {
   const withTemplate = (rules: readonly Rule[]) => ({
     rules,
     templateRules: templateRules(defaults()),
+    merchants: NO_MERCHANTS,
   });
 
   it('sweeps a витрата in «Без категорії» by the шаблон with no правило present', () => {
@@ -693,14 +734,136 @@ describe('sweepUncategorised over both tiers', () => {
     expect(sweepUncategorised(withTemplate([]), stored, accounts)).toEqual([]);
   });
 
-  it('moves nothing by the шаблон’s MCC codes, which a stored витрата never carries', () => {
+  it('moves nothing by the шаблон’s MCC codes on a витрата that carries none', () => {
     const stored = [storedExpense({ id: 't1', description: 'НОВИЙ ЗАКЛАД 7' })];
     expect(sweepUncategorised(withTemplate([]), stored, accounts)).toEqual([]);
+  });
+
+  it('Scenario: An MCC the new шаблон adds reaches the витрати carrying it', () => {
+    // Any MCC the шаблон carries stands in for "the code the new version added": the sweep is the
+    // ordinary one, and only a витрата carrying the code moves by it.
+    const group = TEMPLATE_GROUPS.find((g) => g.mcc.length > 0)!;
+    const tiers = {
+      rules: [],
+      templateRules: templateRules(new Map([[group.id, 'beauty']])),
+      merchants: NO_MERCHANTS,
+    };
+    const stored = [
+      storedExpense({ id: 't1', description: 'НІЩО НЕ ЗБІГАЄТЬСЯ 1', mcc: group.mcc[0] }),
+      storedExpense({ id: 't2', description: 'НІЩО НЕ ЗБІГАЄТЬСЯ 2' }),
+    ];
+    expect(sweepUncategorised(tiers, stored, accounts)).toEqual([
+      { kind: 'category', id: 't1', categoryId: 'beauty' },
+    ]);
   });
 
   it('a правило targeting «Без категорії» still answers, so the шаблон does not move the витрата', () => {
     const intoTheGap = rule({ id: 'r1', merchant: 'атб', categoryId: UNCATEGORISED_CATEGORY_ID });
     const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
     expect(sweepUncategorised(withTemplate([intoTheGap]), stored, accounts)).toEqual([]);
+  });
+});
+
+describe('a правило naming a продавець', () => {
+  function named(id: string, name: string, spellings: readonly string[]): Merchant {
+    const base = new Date('2026-01-01T00:00:00Z').getTime();
+    return merchant({
+      id,
+      name,
+      spellings: spellings.map((spelling, n) => ({ id: `${id}-s${n}`, spelling, addedAt: new Date(base + n) })),
+      createdAt: new Date(base),
+    });
+  }
+
+  function merchantRule(input: {
+    id: string;
+    merchantId: string;
+    mcc?: number;
+    categoryId: string;
+    createdAt?: string;
+  }): Rule {
+    return {
+      id: input.id,
+      merchantId: input.merchantId,
+      mcc: input.mcc,
+      target: { kind: 'category', categoryId: input.categoryId },
+      createdAt: new Date(input.createdAt ?? '2026-01-01T00:00:00.000Z'),
+    };
+  }
+
+  const atb = named('atb', 'АТБ', ['атб', 'atb']);
+  const groceries = { kind: 'category', categoryId: 'groceries' } as const;
+  const eatingOut = { kind: 'category', categoryId: 'eating-out' } as const;
+
+  it('Scenario: A продавець matches every spelling it is recognised by', () => {
+    const index = merchantIndex([atb]);
+    const rules = [merchantRule({ id: 'r1', merchantId: 'atb', categoryId: 'groceries' })];
+    expect(matchRule(rules, index, { description: 'Оплата послуг АТБ-Маркет 1234' })).toEqual(groceries);
+    expect(matchRule(rules, index, { description: 'ATB MARKET' })).toEqual(groceries);
+    expect(matchRule(rules, index, { description: 'Сільпо' })).toBeUndefined();
+  });
+
+  it('Scenario: A продавець ranks as long as its recognising написання', () => {
+    const index = merchantIndex([named('atb', 'АТБ', ['атб'])]);
+    const rules = [
+      merchantRule({ id: 'r1', merchantId: 'atb', categoryId: 'groceries', createdAt: '2026-02-01T00:00:00Z' }),
+      rule({ id: 'r2', merchant: 'атб 421', categoryId: 'eating-out' }),
+    ];
+    expect(matchRule(rules, index, { description: 'АТБ 421' })).toEqual(eatingOut);
+  });
+
+  it('ranks exactly as the pattern-правило of its написання, so a tie goes to the newer rule', () => {
+    const index = merchantIndex([named('atb', 'АТБ', ['атб'])]);
+    const pattern = rule({ id: 'r1', merchant: 'атб', categoryId: 'groceries', createdAt: '2026-01-01T00:00:00Z' });
+    const byMerchant = merchantRule({
+      id: 'r2',
+      merchantId: 'atb',
+      categoryId: 'eating-out',
+      createdAt: '2026-02-01T00:00:00Z',
+    });
+    expect(matchRule([pattern, byMerchant], index, { description: 'АТБ 12' })).toEqual(eatingOut);
+    const newerPattern = { ...pattern, createdAt: new Date('2026-03-01T00:00:00Z') };
+    expect(matchRule([newerPattern, byMerchant], index, { description: 'АТБ 12' })).toEqual(groceries);
+  });
+
+  it('Scenario: A продавець rule follows recognition, not a bare substring', () => {
+    const index = merchantIndex([named('bolt', 'Bolt', ['bolt']), named('bolt-food', 'Bolt Food', ['bolt food'])]);
+    const rules = [merchantRule({ id: 'r1', merchantId: 'bolt', categoryId: 'transport' })];
+    expect(matchRule(rules, index, { description: 'BOLT FOOD 3411' })).toBeUndefined();
+    expect(matchRule(rules, index, { description: 'BOLT 12' })).toEqual({ kind: 'category', categoryId: 'transport' });
+  });
+
+  it('a продавець and an MCC both have to hold, and together beat a merchant alone', () => {
+    const index = merchantIndex([atb]);
+    const rules = [
+      merchantRule({ id: 'r1', merchantId: 'atb', mcc: 5812, categoryId: 'eating-out' }),
+      rule({ id: 'r2', merchant: 'atb market', categoryId: 'groceries' }),
+    ];
+    expect(matchRule(rules, index, { description: 'ATB MARKET', mcc: 5812 })).toEqual(eatingOut);
+    expect(matchRule(rules, index, { description: 'ATB MARKET', mcc: 5411 })).toEqual(groceries);
+  });
+
+  it('Scenario: A rule naming both a pattern and a продавець is rejected', () => {
+    expect(() => checkMerchantCriterion({ merchant: 'атб', merchantId: 'atb' })).toThrow();
+    expect(() => checkMerchantCriterion({ merchantId: 'atb' })).not.toThrow();
+    expect(() => checkMerchantCriterion({ merchant: 'атб' })).not.toThrow();
+  });
+
+  it('decides wherever the tiers are read: resolveTarget, resolveCategory and the розбір', () => {
+    const tiers = {
+      rules: [merchantRule({ id: 'r1', merchantId: 'atb', categoryId: 'eating-out' })],
+      templateRules: templateRules(new Map()),
+      merchants: merchantIndex([atb]),
+    };
+    expect(resolveTarget(tiers, { description: 'ATB MARKET 23' })).toEqual(eatingOut);
+    expect(resolveCategory(tiers, { description: 'ATB 12' })).toBe('eating-out');
+    const stored = [storedExpense({ id: 'e1', description: 'ATB MARKET' })];
+    expect(sweepUncategorised(tiers, stored, accounts)).toEqual([
+      { kind: 'category', id: 'e1', categoryId: 'eating-out' },
+    ]);
+  });
+
+  it('Scenario: Service words are skipped in the proposed pattern', () => {
+    expect(proposeMerchantPattern('Оплата послуг АТБ-Маркет 1234 Київ')).toBe('атб');
   });
 });

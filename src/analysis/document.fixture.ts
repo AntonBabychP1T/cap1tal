@@ -1,4 +1,5 @@
 import { account, type Account } from '../domain/account';
+import { NO_MERCHANTS } from '../domain/merchants';
 import type { Category, Source } from '../domain/category';
 import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
@@ -177,6 +178,7 @@ export const fixtureInput: AnalysisInput = {
   limits: fixtureLimits,
   goals: fixtureGoals,
   rates: [{ currency: 'USD', rateMillionths: 41_500_000, obtainedAt: new Date(2026, 7, 30, 9, 0) }],
+  merchants: NO_MERCHANTS,
 };
 
 /**

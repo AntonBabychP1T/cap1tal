@@ -4,6 +4,7 @@ import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import { BACKUP_TABLES } from '../backup/format';
+import { NO_MERCHANTS, merchant, merchantIndex } from '../domain/merchants';
 import { account, type Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
 import type { AccumulationGoal } from '../domain/goals';
@@ -129,6 +130,7 @@ function input(over: Partial<AnalysisInput> = {}): AnalysisInput {
     limits,
     goals,
     rates: [],
+    merchants: NO_MERCHANTS,
     ...over,
   };
 }
@@ -278,6 +280,39 @@ describe('what a пакет для аналізу never carries', () => {
     }
     // And no merchants list at all.
     expect(JSON.parse(closed).byCurrency[0].merchants).toBeUndefined();
+  });
+
+  describe('the продавці', () => {
+    // A назва that occurs in no опис, and a написання that is not how any опис is written, so a
+    // leak of either is a leak and not a coincidence.
+    const named = merchantIndex([
+      merchant({
+        id: `${SENTINEL}m-atb`,
+        name: 'Улюблений маркет',
+        spellings: [{ id: `${SENTINEL}s-atb`, spelling: 'atb 350', addedAt: new Date(0) }],
+        createdAt: new Date(0),
+      }),
+    ]);
+
+    it('Scenario: A назва stays home when описи are off', () => {
+      const closed = serialise({ merchants: named });
+      expect(closed).not.toContain('Улюблений маркет');
+      expect(closed).not.toContain('atb 350');
+      expect(closed).not.toContain(SENTINEL);
+    });
+
+    it('under «Продавці» a назва is the merchant, and no написання or продавець id goes with it', () => {
+      const open = serialise({ merchants: named, included: { descriptions: true, transactions: true } });
+      expect(JSON.parse(open).byCurrency[0].merchants.map((m: { merchant: string }) => m.merchant)).toContain(
+        'Улюблений маркет',
+      );
+      expect(open).not.toContain('atb 350');
+      expect(open).not.toContain(SENTINEL);
+      // The rendered файл carries none of them either.
+      const file = render({ merchants: named, included: { descriptions: true, transactions: true } });
+      expect(file).not.toContain('atb 350');
+      expect(file).not.toContain(SENTINEL);
+    });
   });
 
   it('carries no identifier out of any random history', () => {

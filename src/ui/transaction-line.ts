@@ -1,6 +1,7 @@
 import { transactionEffect, type Account } from '../domain/account';
 import { resolveCategoryIcon } from '../domain/category-icon';
 import { overLimitCategories, type CategoryLimit } from '../domain/limits';
+import { NO_MERCHANTS, type MerchantIndex } from '../domain/merchants';
 import { categoryBreakdown } from '../domain/monthly-picture';
 import { MAX_AMOUNT_MINOR } from '../domain/money';
 import {
@@ -53,6 +54,12 @@ export interface TransactionLine {
    * carries none, and then this is absent — no empty row, no placeholder.
    */
   readonly description?: string;
+  /**
+   * What the line shows for the опис (merchant-normalization design M9): the назва of the продавець
+   * the опис is recognised as, or the опис itself when it is recognised as none. Present exactly
+   * when `description` is; editing keeps reading `description`, the опис as stored.
+   */
+  readonly descriptionShown?: string;
   /**
    * The line carries «Без категорії», so the feed marks it and offers the one-tap categorisation
    * (main-screen: "«Без категорії» is highlighted and categorised in one tap"). Deciding it here
@@ -157,6 +164,8 @@ export function transactionLine(
   overLimit: ReadonlyMap<Month, ReadonlySet<string>> = new Map(),
   /** Stored keys are separate from labels so a rename cannot recompute a picture. */
   categoryIconKeys: ReadonlyMap<string, string | undefined> = new Map(),
+  /** The продавці as stored: a recognised опис reads as its назва. */
+  merchants: MerchantIndex = NO_MERCHANTS,
 ): TransactionLine {
   const common = {
     id: t.id,
@@ -168,7 +177,12 @@ export function transactionLine(
     iconTone: 'textSecondary' as ThemeColor,
     amountTone: 'text' as ThemeColor,
     // Guarded, not assigned: an empty опис is no опис, and the row must stay compact.
-    ...(t.description ? { description: t.description } : {}),
+    ...(t.description
+      ? {
+          description: t.description,
+          descriptionShown: merchants.recognise(t.description)?.name ?? t.description,
+        }
+      : {}),
   };
   if (t.type === 'transfer') {
     return {

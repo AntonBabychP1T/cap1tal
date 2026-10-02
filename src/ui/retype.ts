@@ -152,6 +152,7 @@ export function recategorise(t: Transaction, categoryId: string): Expense | Refu
         amount: t.amount,
         categoryId,
         ...(t.description ? { description: t.description } : {}),
+        ...(t.mcc !== undefined ? { mcc: t.mcc } : {}),
       })
     : expenseByDefault({
         id: t.id,
@@ -164,5 +165,6 @@ export function recategorise(t: Transaction, categoryId: string): Expense | Refu
         ...(t.originalAmount ? { originalAmount: t.originalAmount } : {}),
         // The bank's text describes the money, not the category the owner just chose for it.
         ...(t.description ? { description: t.description } : {}),
+        ...(t.mcc !== undefined ? { mcc: t.mcc } : {}),
       });
 }

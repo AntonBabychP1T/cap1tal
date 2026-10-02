@@ -955,3 +955,116 @@ describe('the шаблон mapping in a бекап', () => {
     expect(() => parseState({ ...base, templateChoices: [{ groupId: 'groceries' }] })).toThrow();
   });
 });
+
+describe('what a бекап holding продавці may not contradict', () => {
+  const base = {
+    categories: [{ id: 'groceries', name: 'Продукти', archived: false }],
+    accounts: [
+      { id: 'card', name: 'card', kind: 'spending', currency: 'UAH', openingBalance: { amount: 0, currency: 'UAH' }, archived: false },
+    ],
+    merchants: [{ id: 'atb', name: 'АТБ', createdAtMs: 1 }],
+    merchantSpellings: [
+      { id: 's1', merchantId: 'atb', spelling: 'атб', createdAtMs: 1 },
+      { id: 's2', merchantId: 'atb', spelling: 'atb', createdAtMs: 2 },
+    ],
+    rules: [{ id: 'r1', merchantId: 'atb', categoryId: 'groceries', createdAtMs: 1 }],
+  };
+  /** The state a file holding `over` parses into, checked whole. */
+  const checked = (over: Record<string, unknown>) => () => checkConsistent(parseState({ ...base, ...over }));
+
+  it('accepts продавці that agree with themselves, and keeps every part of them', () => {
+    const state = parseState(JSON.parse(JSON.stringify(base)));
+    expect(state.merchants).toEqual(base.merchants);
+    expect(state.merchantSpellings).toEqual(base.merchantSpellings);
+    expect(state.rules[0]?.merchantId).toBe('atb');
+    expect(() => checkConsistent(state)).not.toThrow();
+  });
+
+  it('Scenario: A бекап written before продавці existed restores without them', () => {
+    const older = parseState({ categories: base.categories, rules: [{ id: 'r1', merchant: 'атб', categoryId: 'groceries', createdAtMs: 1 }] });
+    expect(older.merchants).toBeUndefined();
+    expect(older.merchantSpellings).toBeUndefined();
+    expect(older.rules[0]).toEqual({ id: 'r1', merchant: 'атб', categoryId: 'groceries', createdAtMs: 1 });
+    expect(() => checkConsistent(older)).not.toThrow();
+  });
+
+  it('Scenario: A правило naming an absent продавець is refused whole', () => {
+    expect(checked({ merchants: [], merchantSpellings: [] })).toThrow(/продавця, якого в бекапі немає/);
+  });
+
+  it('Scenario: Two продавці with one назва are refused before anything changes', () => {
+    expect(
+      checked({
+        merchants: [...base.merchants, { id: 'atb2', name: 'атб ', createdAtMs: 2 }],
+        merchantSpellings: [...base.merchantSpellings, { id: 's3', merchantId: 'atb2', spelling: 'атб маркет', createdAtMs: 3 }],
+      }),
+    ).toThrow(/мають одну назву/);
+  });
+
+  it('Scenario: A продавець with nothing to recognise it by is refused', () => {
+    expect(
+      checked({ merchants: [...base.merchants, { id: 'zerno', name: 'Зерно', createdAtMs: 2 }] }),
+    ).toThrow(/не має жодного написання/);
+  });
+
+  it('Scenario: An MCC that is not a whole number is refused', () => {
+    const transaction = {
+      transaction: {
+        type: 'expense',
+        id: 'e1',
+        date: '2026-03-01',
+        accountId: 'card',
+        amount: { amount: 100, currency: 'UAH' },
+        categoryId: 'groceries',
+        mcc: 54.11,
+      },
+      storedAtMs: 1,
+    };
+    expect(checked({ transactions: [transaction] })).toThrow(/mcc не є цілим числом/);
+    const whole = parseState({ ...base, transactions: [{ ...transaction, transaction: { ...transaction.transaction, mcc: 5411 } }] });
+    expect(whole.transactions[0]?.transaction).toMatchObject({ mcc: 5411 });
+  });
+
+  it('refuses a написання whose продавець is absent', () => {
+    expect(
+      checked({ merchantSpellings: [...base.merchantSpellings, { id: 's3', merchantId: 'gone', spelling: 'ще', createdAtMs: 3 }] }),
+    ).toThrow(/написання «ще» посилається на продавця, якого в бекапі немає/);
+  });
+
+  it('refuses a написання held twice', () => {
+    expect(
+      checked({ merchantSpellings: [...base.merchantSpellings, { id: 's3', merchantId: 'atb', spelling: 'атб', createdAtMs: 3 }] }),
+    ).toThrow(/назване двічі/);
+  });
+
+  it('refuses a blank написання', () => {
+    expect(
+      checked({ merchantSpellings: [...base.merchantSpellings, { id: 's3', merchantId: 'atb', spelling: '  ', createdAtMs: 3 }] }),
+    ).toThrow(/порожнє/);
+  });
+
+  it('refuses a написання not stored folded', () => {
+    expect(
+      checked({ merchantSpellings: [...base.merchantSpellings, { id: 's3', merchantId: 'atb', spelling: 'ATB MARKET', createdAtMs: 3 }] }),
+    ).toThrow(/малими літерами/);
+  });
+
+  it('refuses a blank назва', () => {
+    expect(
+      checked({
+        merchants: [...base.merchants, { id: 'blank', name: '  ', createdAtMs: 2 }],
+        merchantSpellings: [...base.merchantSpellings, { id: 's3', merchantId: 'blank', spelling: 'щось', createdAtMs: 3 }],
+      }),
+    ).toThrow(/не має назви/);
+  });
+
+  it('refuses a правило naming both a pattern and a продавець', () => {
+    expect(
+      checked({ rules: [{ id: 'r1', merchant: 'атб', merchantId: 'atb', categoryId: 'groceries', createdAtMs: 1 }] }),
+    ).toThrow(/і текст опису, і продавця/);
+    // Even an empty pattern beside a продавець is refused in words, not left to storage's CHECK.
+    expect(
+      checked({ rules: [{ id: 'r1', merchant: '', merchantId: 'atb', categoryId: 'groceries', createdAtMs: 1 }] }),
+    ).toThrow(/і текст опису, і продавця/);
+  });
+});

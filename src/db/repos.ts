@@ -13,6 +13,7 @@ import { importRepo } from './import-repo';
 import { installmentsRepo } from './installments-repo';
 import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
+import { merchantsRepo } from './merchants-repo';
 import { monobankRepo } from './monobank-repo';
 import { netWorthRepo } from './net-worth-repo';
 import { notificationsRepo } from './notifications-repo';
@@ -70,6 +71,11 @@ export const rates = ratesRepo(db);
 export const categories = categoriesRepo(db);
 export const sources = sourcesRepo(db);
 export const rules = rulesRepo(db);
+/**
+ * The продавці and their написання. `merchants.index()` is what every reader recognises описи by;
+ * every change but a rename runs the розбір of «Без категорії» in its own transaction.
+ */
+export const merchants = merchantsRepo(db);
 /** The owner's mapping of the шаблон категоризації onto their категорії, and its open-time розбір. */
 export const ruleTemplate = ruleTemplateRepo(db);
 /**

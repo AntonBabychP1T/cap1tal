@@ -19,6 +19,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   limits as limitsRepo,
+  merchants as merchantsRepo,
   mergeAccounts,
   monobank as monobankRepo,
   sources as sourcesRepo,
@@ -104,6 +105,8 @@ export default function AccountMovementsScreen() {
         categories: categoriesRepo.list(),
         sources: sourcesRepo.list(),
         limits: limitsRepo.list(),
+        // The продавці, so a line reads «АТБ» where its опис is recognised (design M9).
+        merchants: merchantsRepo.index(),
       };
     }, [id]),
   );
@@ -322,13 +325,21 @@ export default function AccountMovementsScreen() {
       accountId === undefined
         ? []
         : page.shown.map((t) => {
-            const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
+            const line = transactionLine(
+              t,
+              byId,
+              categoryNames,
+              sourceNames,
+              overLimit,
+              categoryIconKeys,
+              stored.merchants,
+            );
             // Told from this рахунок's side: its own name is the screen's title, and a переказ
             // says whether it brought money in or took it out (design D3).
             return [t.id, { line, side: accountSideLine(t, line, accountId, byId, now) }] as const;
           }),
     );
-  }, [accountId, byId, categoryIconKeys, categoryNames, overLimit, page.shown, sourceNames]);
+  }, [accountId, byId, categoryIconKeys, categoryNames, overLimit, page.shown, sourceNames, stored.merchants]);
 
   // A рахунок that has been deleted from under the screen — or an id that never named one — says
   // so rather than rendering a blank list of someone else's money.
@@ -357,7 +368,7 @@ export default function AccountMovementsScreen() {
           title={side.title}
           titleTone={line.overLimit ? 'textDanger' : undefined}
           subtitle={side.subtitle}
-          description={line.description}
+          description={line.descriptionShown}
           amount={side.amount}
           amountTone={side.amountTone}
           onPress={() => push(`/transaction/${line.id}`)}

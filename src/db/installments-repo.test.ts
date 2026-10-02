@@ -96,7 +96,12 @@ describe('installmentsRepo', () => {
         }
         const accountRows = () =>
           db.all(sql`SELECT id, name, kind, currency, opening_amount, archived FROM accounts ORDER BY id`);
-        transactionsRepo(db).save(debit('e1', '2026-09-10', 12_550, { categoryId: 'food' }), at);
+        // Raw SQL too: `transactions.mcc` arrives with a later migration than this stage (0010).
+        db.run(sql`INSERT INTO transactions (id, type, date, created_at, account_id, amount, currency, category_id)
+                   VALUES ('e1', 'expense', '2026-09-10', ${at.getTime()}, 'black', 12550, 'UAH', 'food')`);
+        const transactionRows = () =>
+          db.all(sql`SELECT id, type, date, created_at, account_id, amount, currency, category_id, description
+                     FROM transactions ORDER BY id`);
         limitsRepo(db).set({ categoryId: 'food', amount: money(500_000, 'UAH') });
         // Written directly, as above: `goalsRepo.save` reads the рахунки it names through the
         // current schema.
@@ -105,7 +110,7 @@ describe('installmentsRepo', () => {
         const before = {
           accounts: accountRows(),
           categories: db.select().from(categories).all(),
-          transactions: transactionsRepo(db).listAll(),
+          transactions: transactionRows(),
           limits: limitsRepo(db).list(),
           goals: goalsRepo(db).list(),
         };
@@ -115,7 +120,7 @@ describe('installmentsRepo', () => {
         expect({
           accounts: accountRows(),
           categories: db.select().from(categories).all(),
-          transactions: transactionsRepo(db).listAll(),
+          transactions: transactionRows(),
           limits: limitsRepo(db).list(),
           goals: goalsRepo(db).list(),
         }).toEqual(before);

@@ -1,10 +1,10 @@
 import { asc, eq } from 'drizzle-orm';
 
-import type { Rule } from '../domain/rules';
+import { checkMerchantCriterion, type Rule } from '../domain/rules';
 import { CORRECTION_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import { sweepStored, type SweepCounts } from './categorisation';
 import { toRule } from './mappers';
-import { rules, type NewRuleRow } from './schema';
+import { merchants, rules, type NewRuleRow } from './schema';
 import type { Storage } from './storage';
 import { Refusal } from '../domain/refusal';
 
@@ -53,12 +53,17 @@ export function rulesRepo(db: Storage) {
     save(rule: Rule): SweepCounts {
       const row = toRuleRow(rule);
       return db.transaction((tx) => {
+        // The foreign key refuses an unknown продавець too, but by a constraint name; this says it.
+        if (row.merchantId && !tx.select().from(merchants).where(eq(merchants.id, row.merchantId)).get()) {
+          throw new Refusal('Такого продавця немає');
+        }
         tx.insert(rules)
           .values(row)
           .onConflictDoUpdate({
             target: rules.id,
             set: {
               merchant: row.merchant,
+              merchantId: row.merchantId,
               mcc: row.mcc,
               categoryId: row.categoryId,
               toAccountId: row.toAccountId,
@@ -95,13 +100,16 @@ export type RulesRepo = ReturnType<typeof rulesRepo>;
 
 function toRuleRow(rule: Rule): NewRuleRow {
   const merchant = rule.merchant?.trim() ?? '';
+  const merchantId = rule.merchantId ?? null;
   const mcc = rule.mcc ?? null;
   if (mcc !== null && !Number.isInteger(mcc)) {
     // The column would take 54.11 happily, and the rule would then never match anything: an MCC
     // is compared for equality against an integer the bank sends.
     throw new Refusal('MCC — це ціле число, напр. 5411');
   }
-  if (merchant === '' && mcc === null) {
+  // A pattern and a продавець are two ways to say one merchant criterion, never both at once.
+  checkMerchantCriterion(rule);
+  if (merchant === '' && merchantId === null && mcc === null) {
     // The table has a CHECK for this too, but this is the one mistake the owner can actually make
     // in the «Правила» form, and `failureMessage` puts whatever is thrown straight into an Alert —
     // so it says a sentence rather than SQLITE_CONSTRAINT_CHECK.
@@ -133,6 +141,7 @@ function toRuleRow(rule: Rule): NewRuleRow {
     // A pattern that is blank after trimming is no pattern at all; stored trimmed, so the
     // surrounding spaces the owner typed never become part of what has to occur in a description.
     merchant: merchant === '' ? null : merchant,
+    merchantId,
     mcc,
     categoryId: rule.target.kind === 'category' ? rule.target.categoryId : null,
     toAccountId: rule.target.kind === 'transfer' ? rule.target.toAccountId : null,

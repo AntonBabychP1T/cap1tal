@@ -1,5 +1,6 @@
 import { asc } from 'drizzle-orm';
 
+import { merchantIndex } from '../domain/merchants';
 import { TEMPLATE_GROUPS, templateTargetOf } from '../domain/rule-template';
 import {
   countUncategorisedExpenses,
@@ -11,6 +12,7 @@ import {
 import { storeTransferPairing } from './counterpart-income-repo';
 import { toRule } from './mappers';
 import { accounts, categories, ruleTemplateChoices, rules } from './schema';
+import { storedMerchants } from './stored-merchants';
 import type { Storage } from './storage';
 import { transactionsRepo } from './transactions-repo';
 
@@ -64,11 +66,16 @@ export function templateTargets(db: Storage): Map<string, string> {
   return targets;
 }
 
-/** The правила and the шаблон, as one value every deciding caller takes. */
+/**
+ * The правила, the шаблон and the продавці, as one value every deciding caller takes — so a
+ * правило naming a продавець decides wherever a категорія is decided, and no caller can match the
+ * правила without recognising the опис (design M3).
+ */
 export function categorisationContext(db: Storage): CategorisationContext {
   return {
     rules: db.select().from(rules).orderBy(asc(rules.createdAt), asc(rules.id)).all().map(toRule),
     templateRules: templateRules(templateTargets(db)),
+    merchants: merchantIndex(storedMerchants(db)),
   };
 }
 
@@ -109,6 +116,7 @@ export function sweepStored(tx: Storage, now: Date): SweepCounts {
         left: original.amount,
         arrived: original.amount,
         ...(original.description ? { description: original.description } : {}),
+        ...(original.mcc !== undefined ? { mcc: original.mcc } : {}),
       },
       now,
     );

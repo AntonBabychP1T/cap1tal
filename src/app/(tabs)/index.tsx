@@ -32,6 +32,7 @@ import {
   dashboardLayout as dashboardLayoutRepo,
   investments as investmentsRepo,
   limits as limitsRepo,
+  merchants as merchantsRepo,
   monobank as monobankRepo,
   netWorth as netWorthRepo,
   notifications as notificationsRepo,
@@ -220,6 +221,8 @@ function MainScreen() {
         categories: categoriesRepo.list(),
         sources: sourcesRepo.list(),
         limits: limitsRepo.list(),
+        // The продавці, so a стрічка line reads «АТБ» where its опис is recognised (design M9).
+        merchants: merchantsRepo.index(),
         // What the drain has left for the owner to answer. Pending ones only — a confirmed or
         // dismissed чернетка is deleted, so this is never a growing archive.
         drafts: notificationsRepo.pendingDrafts(),
@@ -535,11 +538,19 @@ function MainScreen() {
     const now = new Date();
     return new Map(
       stored.feed.map((t) => {
-        const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
+        const line = transactionLine(
+          t,
+          byId,
+          categoryNames,
+          sourceNames,
+          overLimit,
+          categoryIconKeys,
+          stored.merchants,
+        );
         return [t.id, { line, subtitle: feedSubtitle(line, now) }] as const;
       }),
     );
-  }, [byId, categoryIconKeys, categoryNames, overLimit, sourceNames, stored.feed]);
+  }, [byId, categoryIconKeys, categoryNames, overLimit, sourceNames, stored.feed, stored.merchants]);
 
   /** «Топ категорій витрат»: the same місячна breakdown, ranked and currency-selected. */
   const [requestedCategoryCurrency, setRequestedCategoryCurrency] = useState<string>();
@@ -801,7 +812,7 @@ function MainScreen() {
                           titleTone={line.overLimit ? 'textDanger' : undefined}
                           titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
                           subtitle={subtitle}
-                          description={line.description}
+                          description={line.descriptionShown}
                           amount={line.amount}
                           amountTone={line.amountTone}
                           onPress={() => router.push(`/transaction/${line.id}`)}

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
 import { account, type Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
 import { money } from '../domain/money';
@@ -11,6 +12,7 @@ import {
   aiAnalysisModel,
   defaultChoices,
   fileToShare,
+  MERCHANTS_CHOICE_HINT,
   nextState,
   PERIOD_CHOICES,
   periodChoiceOf,
@@ -48,7 +50,7 @@ const spend = (date: string, amount = 100000, categoryId = 'cafe', description?:
   });
 
 function stored(transactions: readonly Transaction[]): StoredForAnalysis {
-  return { accounts, transactions, categories, sources, limits: [], goals: [], rates: [] };
+  return { accounts, transactions, categories, sources, limits: [], goals: [], rates: [], merchants: NO_MERCHANTS };
 }
 
 const TODAY = '2026-09-02';
@@ -147,6 +149,14 @@ describe('the choices', () => {
     for (const from of ['2026-0', '', '20261', '2026-00']) {
       expect(() => model({ period: 'custom', from, to: '2026-09' })).not.toThrow();
     }
+  });
+
+  it('Scenario: «Продавці» says the owner\'s назви go too', () => {
+    expect(MERCHANTS_CHOICE_HINT).toContain('як їх надіслав банк');
+    expect(MERCHANTS_CHOICE_HINT).toContain('назви, які ви дали своїм продавцям');
+    const screen = readFileSync(new URL('../app/ai-analysis.tsx', import.meta.url), 'utf8');
+    const choice = screen.slice(screen.indexOf('<ThemedText type="small">Продавці</ThemedText>'));
+    expect(choice.slice(0, 300)).toContain('{MERCHANTS_CHOICE_HINT}');
   });
 
   it('Scenario: Details are not remembered', () => {

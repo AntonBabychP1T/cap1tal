@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
@@ -89,6 +91,8 @@ function retypedTo(
       sourceId: picked.sourceId ?? carried.sourceId,
       // Exactly what the editing screen hands over: the опис it already holds, untouched.
       description: t.description,
+      // …and the import's MCC beside it, which the screen carries and nobody types.
+      mcc: t.mcc,
     },
     { id: t.id, accounts },
   );
@@ -215,6 +219,56 @@ describe('a retype keeps the transaction and moves only what the shape allows', 
       categoryId: 'food',
       description: 'Переказ на банку',
     });
+  });
+
+  it('Scenario: A retype keeps the MCC', () => {
+    const imported = expenseByDefault({
+      id: 't8',
+      date: '2026-08-24',
+      accountId: 'card',
+      amount: money(100000, 'UAH'),
+      description: 'Переказ на банку',
+      mcc: 4829,
+    });
+    expect(retypedTo(imported, 'transfer')).toMatchObject({ type: 'transfer', id: 't8', mcc: 4829 });
+    expect(retypedTo(imported, 'refund', { categoryId: 'food' })).toMatchObject({ type: 'refund', mcc: 4829 });
+    expect(retypedTo(imported, 'income', { sourceId: 'salary' })).toMatchObject({ type: 'income', mcc: 4829 });
+    expect(recategorise(imported, 'food')).toMatchObject({ categoryId: 'food', mcc: 4829 });
+    // The editing screen hands the stored MCC to the rebuilt транзакція, whatever its shape.
+    const editor = readFileSync(new URL('../app/transaction/[id].tsx', import.meta.url), 'utf8');
+    expect(editor).toContain('mcc: original.mcc,');
+  });
+
+  it('Scenario: Correcting the опис leaves the MCC alone', () => {
+    const imported = expenseByDefault({
+      id: 't9',
+      date: '2026-08-24',
+      accountId: 'card',
+      amount: money(4500, 'UAH'),
+      description: 'CAFE 12',
+      mcc: 5812,
+    });
+    const corrected = buildEntry(
+      {
+        type: 'expense',
+        accountId: 'card',
+        amount: formatMinorUnits(4500),
+        date: imported.date,
+        categoryId: imported.categoryId,
+        description: 'кава з Олею',
+        mcc: imported.mcc,
+      },
+      { id: imported.id, accounts },
+    );
+    expect(corrected).toMatchObject({ id: 't9', description: 'кава з Олею', mcc: 5812 });
+  });
+
+  it('Scenario: A транзакція recorded by hand carries no MCC', () => {
+    const typed = buildEntry(
+      { type: 'expense', accountId: 'card', amount: '120', date: '2026-08-24', description: 'шини' },
+      { id: 'h1', accounts },
+    );
+    expect(typed).not.toHaveProperty('mcc');
   });
 
   it('A повернення becomes a витрата in the same category', () => {

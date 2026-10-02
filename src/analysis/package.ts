@@ -2,6 +2,7 @@ import type { Account, AccountKind } from '../domain/account';
 import type { Category, Source } from '../domain/category';
 import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
+import type { MerchantIndex } from '../domain/merchants';
 import type { CurrencyCode, Money } from '../domain/money';
 import type { MonthlyNumbers } from '../domain/monthly-picture';
 import { monthOf, type IsoDate, type Transaction } from '../domain/transaction';
@@ -145,6 +146,11 @@ export interface AnalysisInput {
    */
   readonly currentValues?: ReadonlyMap<string, Money>;
   readonly rates: readonly DatedRate[];
+  /**
+   * The продавці as stored: under «Продавці» every spelling of one is one merchant, named by its
+   * назва (design M8). Read only when описи are included; no id and no написання reaches the пакет.
+   */
+  readonly merchants: MerchantIndex;
   // Deliberately absent, and the absence is the guarantee: no monobank token, no cursor, no
   // баланс банку, no captured notification, no чернетка, no відстежуваний застосунок, no бекап.
   // The screen cannot hand over what this type does not name (design D5).
@@ -228,7 +234,13 @@ export function buildAnalysisPackage(input: AnalysisInput): AnalysisPackage | An
     }
 
     const merchants = input.included.descriptions
-      ? merchantReports({ period, currency, transactions: sorted, categories: input.categories })
+      ? merchantReports({
+          period,
+          currency,
+          transactions: sorted,
+          categories: input.categories,
+          merchants: input.merchants,
+        })
       : undefined;
 
     reports.push({

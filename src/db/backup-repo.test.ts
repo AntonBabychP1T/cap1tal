@@ -32,6 +32,7 @@ import { importRepo } from './import-repo';
 import { installmentsRepo } from './installments-repo';
 import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
+import { merchantsRepo } from './merchants-repo';
 import { monobankRepo } from './monobank-repo';
 import { notificationsRepo } from './notifications-repo';
 import { ratesRepo } from './rates-repo';
@@ -1292,6 +1293,84 @@ describe('the round trip a бекап promises', () => {
       categoryId: UNCATEGORISED_CATEGORY_ID,
       description: 'СІЛЬПО 123 Київ',
     });
+  });
+
+  it('Scenario: Продавці survive the round trip', async () => {
+    const merchants = merchantsRepo(source.db);
+    const named = new Date('2026-09-01T10:00:00.000Z');
+    const added = new Date('2026-09-02T10:00:00.000Z');
+    merchants.name({ description: 'АТБ 12', spelling: 'атб', spellingId: 's-atb', into: { kind: 'new', id: 'atb', name: 'АТБ' }, now: named });
+    merchants.addSpelling({ merchantId: 'atb', spelling: 'atb', spellingId: 's-atb-latin', now: added });
+    rulesRepo(source.db).save({ id: 'r-atb', merchantId: 'atb', target: { kind: 'category', categoryId: 'food' }, createdAt: named });
+    const imported = expenseByDefault({
+      id: 'e-mcc',
+      date: '2026-09-03',
+      accountId: 'card',
+      amount: money(12_550, 'UAH'),
+      categoryId: 'food',
+      description: 'СІЛЬПО',
+      mcc: 5411,
+    });
+    transactionsRepo(source.db).save(imported, MADE_AT);
+
+    await roundTrip();
+
+    expect(merchantsRepo(target.db).list()).toEqual([
+      {
+        id: 'atb',
+        name: 'АТБ',
+        spellings: [
+          { id: 's-atb', spelling: 'атб', addedAt: named },
+          { id: 's-atb-latin', spelling: 'atb', addedAt: added },
+        ],
+        createdAt: named,
+      },
+    ]);
+    expect(rulesRepo(target.db).get('r-atb')?.merchantId).toBe('atb');
+    expect(transactionsRepo(target.db).get('e-mcc')).toEqual(imported);
+    // A restored name key is the repository's own fold: «атб» is still taken on the new phone.
+    expect(() =>
+      merchantsRepo(target.db).name({
+        description: 'атб маркет',
+        spelling: 'маркет',
+        spellingId: 's-x',
+        into: { kind: 'new', id: 'x', name: 'атб' },
+        now: added,
+      }),
+    ).toThrow(/АТБ/);
+  });
+
+  it('Scenario: Replacing the state replaces the продавці', async () => {
+    merchantsRepo(source.db).name({
+      description: 'СІЛЬПО',
+      spelling: 'сільпо',
+      spellingId: 's-silpo',
+      into: { kind: 'new', id: 'silpo', name: 'Сільпо' },
+      now: MADE_AT,
+    });
+    merchantsRepo(target.db).name({
+      description: 'АТБ',
+      spelling: 'атб',
+      spellingId: 's-atb',
+      into: { kind: 'new', id: 'atb', name: 'АТБ' },
+      now: MADE_AT,
+    });
+
+    await roundTrip();
+
+    expect(merchantsRepo(target.db).list().map((m) => [m.name, m.spellings.map((s) => s.spelling)])).toEqual([
+      ['Сільпо', ['сільпо']],
+    ]);
+  });
+
+  it('restores a назва trimmed, as the repository stores every назва', () => {
+    const state = backupRepo(source.db).snapshot();
+    backupRepo(target.db).replaceAll({
+      ...state,
+      merchants: [{ id: 'atb', name: '  АТБ ', createdAtMs: 1 }],
+      merchantSpellings: [{ id: 's1', merchantId: 'atb', spelling: 'атб', createdAtMs: 1 }],
+    });
+    expect(merchantsRepo(target.db).list().map((m) => m.name)).toEqual(['АТБ']);
   });
 
   it('Scenario: A правило-переказ and an awaiting переказ survive the round trip', async () => {

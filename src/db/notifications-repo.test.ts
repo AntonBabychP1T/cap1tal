@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+
 import { account } from '../domain/account';
 import { money } from '../domain/money';
 import { expenseByDefault, isoDate, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
@@ -41,6 +43,7 @@ function contextOf(repo: NotificationsRepo) {
     watches: repo.watches(),
     seenFingerprints: repo.seenFingerprints(),
     rules: [],
+    merchants: NO_MERCHANTS,
     newId: () => 'generated',
     dateOf: () => isoDate('2026-08-26'),
   };

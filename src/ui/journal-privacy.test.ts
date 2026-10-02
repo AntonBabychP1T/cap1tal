@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+
 import type { AuthFetchLike } from '../monobank/api';
 import { entryLine, type JournalEntry } from '../reporting/journal';
 import { renderReport, type BugReport } from '../reporting/report';
@@ -150,7 +152,7 @@ describe('what the app writes into the журнал about its own work', () => {
         seenFingerprints: () => new Set<string>(),
         commitOutcome: () => undefined,
       },
-      categorisation: () => ({ rules: [] }),
+      categorisation: () => ({ rules: [], merchants: NO_MERCHANTS }),
       newId: () => 'id-1',
       dateOf: () => '2026-09-02' as never,
       now: () => new Date(2026, 8, 2, 12),

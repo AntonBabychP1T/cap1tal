@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS, merchant, merchantIndex } from '../domain/merchants';
 import { account, type Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
 import { money } from '../domain/money';
@@ -62,7 +63,7 @@ describe('merchantReports', () => {
     ];
 
     expect(
-      merchantReports({ period: august, currency: 'UAH', transactions: history, categories }),
+      merchantReports({ period: august, currency: 'UAH', transactions: history, categories, merchants: NO_MERCHANTS }),
     ).toEqual([
       {
         merchant: 'сільпо',
@@ -118,6 +119,7 @@ describe('merchantReports', () => {
       currency: 'UAH',
       transactions: history,
       categories,
+      merchants: NO_MERCHANTS,
     });
 
     // Only the витрата forms a merchant, and the повернення does not reduce it.
@@ -138,7 +140,7 @@ describe('merchantReports', () => {
       spend(`2026-${month}-05`, 500000 + index * 1000, 'home', 'Оренда'),
     );
 
-    const [rent] = merchantReports({ period, currency: 'UAH', transactions: history, categories });
+    const [rent] = merchantReports({ period, currency: 'UAH', transactions: history, categories, merchants: NO_MERCHANTS });
 
     expect(rent!.merchant).toBe('оренда');
     expect(rent!.recurring).toBe(true);
@@ -152,10 +154,82 @@ describe('merchantReports', () => {
     ];
 
     expect(
-      merchantReports({ period: august, currency: 'UAH', transactions: history, categories }).map(
+      merchantReports({ period: august, currency: 'UAH', transactions: history, categories, merchants: NO_MERCHANTS }).map(
         (m) => [m.merchant, m.total.amount],
       ),
     ).toEqual([['сільпо', '1000.00']]);
+  });
+});
+
+describe('merchantReports — the продавці', () => {
+  const named = (merchantId: string, name: string, ...spellings: string[]) =>
+    merchant({
+      id: merchantId,
+      name,
+      spellings: spellings.map((spelling, n) => ({ id: `${merchantId}-${n}`, spelling, addedAt: new Date(n) })),
+      createdAt: new Date(0),
+    });
+
+  it('Scenario: Every spelling of one продавець is one merchant', () => {
+    const history = [
+      spend('2026-08-01', 100000, 'groceries', 'Оплата послуг АТБ-Маркет 1234'),
+      spend('2026-08-10', 50000, 'groceries', 'ATB MARKET'),
+      spend('2026-08-20', 30000, 'groceries', 'АТБ 12'),
+    ];
+    const merchants = merchantIndex([named('atb', 'АТБ', 'атб', 'atb')]);
+
+    expect(merchantReports({ period: august, currency: 'UAH', transactions: history, categories, merchants })).toEqual([
+      {
+        merchant: 'АТБ',
+        total: { amount: '1800.00', currency: 'UAH' },
+        count: 3,
+        categories: ['Продукти'],
+        recurring: false,
+      },
+    ]);
+  });
+
+  it('Scenario: A продавець in two currencies is two rows, never one sum', () => {
+    const history = [
+      spend('2026-08-01', 300000, 'home', 'BOOKING.COM'),
+      spend('2026-08-02', 12000, 'home', 'BOOKING.COM', 'EUR'),
+    ];
+    const merchants = merchantIndex([named('booking', 'Booking', 'booking')]);
+    const of = (currency: string) =>
+      merchantReports({ period: august, currency, transactions: history, categories, merchants }).map((m) => [
+        m.merchant,
+        m.total.amount,
+        m.total.currency,
+      ]);
+
+    expect(of('UAH')).toEqual([['Booking', '3000.00', 'UAH']]);
+    expect(of('EUR')).toEqual([['Booking', '120.00', 'EUR']]);
+  });
+
+  it('Scenario: A recurring продавець is one candidate whatever the spelling', () => {
+    const period = resolvePeriod({ from: '2026-03', to: '2026-08' }, '2026-09-01');
+    const history = ['03', '04', '05', '06', '07', '08'].map((month, index) =>
+      spend(`2026-${month}-05`, 29900, 'home', index % 2 === 0 ? 'NETFLIX.COM' : 'Netflix International'),
+    );
+    const merchants = merchantIndex([named('netflix', 'Netflix', 'netflix')]);
+
+    const reports = merchantReports({ period, currency: 'UAH', transactions: history, categories, merchants });
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ merchant: 'Netflix', count: 6, recurring: true });
+    // Without the продавець the same history is two merchants, neither of them recurring in most months.
+    const unnamed = merchantReports({ period, currency: 'UAH', transactions: history, categories, merchants: NO_MERCHANTS });
+    expect(unnamed.map((m) => m.merchant).sort()).toEqual(['netflix international', 'netflix.com']);
+  });
+
+  it('an опис no продавець recognises still groups by itself, folded, beside the named ones', () => {
+    const history = [
+      spend('2026-08-01', 100000, 'groceries', 'ATB MARKET'),
+      spend('2026-08-02', 40000, 'groceries', 'СІЛЬПО'),
+    ];
+    const merchants = merchantIndex([named('atb', 'АТБ', 'atb')]);
+    expect(
+      merchantReports({ period: august, currency: 'UAH', transactions: history, categories, merchants }).map((m) => m.merchant),
+    ).toEqual(['АТБ', 'сільпо']);
   });
 });
 

@@ -12,6 +12,7 @@ describe('the Налаштування sections', () => {
       'Джерела',
       'Правила',
       'Базові категорії',
+      'Продавці',
       'Ліміти',
       'Цілі',
       'Розстрочки',
@@ -28,6 +29,30 @@ describe('the Налаштування sections', () => {
   it('Scenario: The tab offers «Базові категорії» after «Правила»', () => {
     const titles = SETTINGS_SECTIONS.map((section) => section.title);
     expect(titles.indexOf('Базові категорії')).toBe(titles.indexOf('Правила') + 1);
+  });
+
+  it('Scenario: The tab offers «Продавці» after «Базові категорії»', () => {
+    const titles = SETTINGS_SECTIONS.map((section) => section.title);
+    expect(titles.indexOf('Продавці')).toBe(titles.indexOf('Базові категорії') + 1);
+    // Every section offered before it is still offered, in the same order.
+    expect(titles.slice(0, titles.indexOf('Продавці'))).toEqual([
+      'Перші кроки',
+      'Категорії',
+      'Джерела',
+      'Правила',
+      'Базові категорії',
+    ]);
+  });
+
+  it('Scenario: The section opens on what is still nameless', () => {
+    const section = SETTINGS_SECTIONS.find((s) => s.title === 'Продавці')!;
+    expect(section.href).toBe('/manage/merchants');
+    const screen = readFileSync(new URL('../app/manage/merchants.tsx', import.meta.url), 'utf8');
+    // «Без продавця» first, then the owner's продавці.
+    expect(screen.indexOf('Без продавця')).toBeGreaterThan(-1);
+    expect(screen.indexOf('Без продавця')).toBeLessThan(screen.indexOf('Ваші продавці'));
+    expect(screen).toContain('namelessGroups(');
+    expect(screen).toContain('merchantRows(');
   });
 
   it('Scenario: The section opens the mapping', () => {

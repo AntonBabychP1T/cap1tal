@@ -52,6 +52,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     title: 'Базові категорії',
     hint: 'Вбудоване знання про продавців — куди воно веде',
   },
+  // Right after «Базові категорії»: who was paid, read together with where that lands
+  // (settings-screen, "Налаштування offers «Продавці» right after «Базові категорії»").
+  { href: '/manage/merchants', title: 'Продавці', hint: 'Одна назва для всіх написань магазину' },
   { href: '/manage/limits', title: 'Ліміти', hint: 'Місячна стеля по категорії — вона ж ціль витрат' },
   { href: '/manage/goals', title: 'Цілі', hint: 'Накопичити суму або не перевищити витрати' },
   // Also reached from Місяць's block — but a розстрочка recorded in a month with no платіж yet has

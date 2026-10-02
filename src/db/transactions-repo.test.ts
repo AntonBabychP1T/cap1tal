@@ -9,6 +9,7 @@ import { account, classifyTransfer, computeBalance } from '../domain/account';
 import { proposeForTransfer } from '../ui/entry-form';
 import { monthsOf } from '../ui/months';
 import { transactionLine } from '../ui/transaction-line';
+import { merchant, merchantIndex } from '../domain/merchants';
 import { money } from '../domain/money';
 import {
   expenseByDefault,
@@ -25,6 +26,7 @@ import {
   type Transfer,
 } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
+import { merchantsRepo } from './merchants-repo';
 import { countingDb, openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
 
@@ -271,6 +273,61 @@ describe('transactionsRepo', () => {
       repo.save(t, storedAt);
       expect(repo.get(t.id)).toEqual(t);
     }
+  });
+
+  it('Scenario: An imported витрата keeps its MCC', () => {
+    const imported = expenseByDefault({
+      id: 'e-mcc',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(12550, 'UAH'),
+      description: 'СІЛЬПО Київ',
+      mcc: 5411,
+    });
+    repo.save(imported, storedAt);
+    expect(repo.get('e-mcc')).toEqual(imported);
+    expect(repo.get('e-mcc')).toMatchObject({ mcc: 5411, amount: money(12550, 'UAH') });
+    // Every type keeps it alike, as the опис.
+    const moved = transfer({
+      id: 't-mcc',
+      date: '2026-03-15',
+      fromAccountId: 'card',
+      toAccountId: 'wallet',
+      left: money(479, 'UAH'),
+      arrived: money(479, 'UAH'),
+      mcc: 4829,
+    });
+    repo.save(moved, storedAt);
+    expect(repo.get('t-mcc')).toEqual(moved);
+  });
+
+  it('A транзакція recorded by hand carries no MCC, not even an empty one', () => {
+    const typed = expenseByDefault({ id: 'e-hand', date: '2026-03-10', accountId: 'card', amount: money(100, 'UAH') });
+    repo.save(typed, storedAt);
+    expect(repo.get('e-hand')).not.toHaveProperty('mcc');
+    expect(storage.db.get<{ mcc: number | null }>(sql`SELECT mcc FROM transactions WHERE id = 'e-hand'`)?.mcc).toBeNull();
+  });
+
+  it('Scenario: The опис gives the продавець and nothing more', () => {
+    const atb = merchant({
+      id: 'atb',
+      name: 'АТБ',
+      spellings: [{ id: 's1', spelling: 'атб', addedAt: new Date(0) }],
+      createdAt: new Date(0),
+    });
+    const bought = expenseByDefault({
+      id: 'e-atb',
+      date: '2026-03-10',
+      accountId: 'card',
+      amount: money(12550, 'UAH'),
+      description: 'АТБ 12',
+    });
+    repo.save(bought, storedAt);
+    const loaded = repo.get('e-atb')!;
+    expect(merchantIndex([atb]).recognise(loaded.description)?.name).toBe('АТБ');
+    // Nothing about the продавець is stored on the транзакція: it is what was saved, and no more.
+    expect(loaded).toEqual(bought);
+    expect(repo.listMonth('2026-03').reduce((sum, t) => sum + (t.type === 'expense' ? t.amount.amount : 0), 0)).toBe(12550);
   });
 
   it('Scenario: An old transaction gains no invented description', () => {
@@ -1899,5 +1956,109 @@ describe('transactionsRepo uncategorised count', () => {
 
     expect(repo.countUncategorised()).toBe(0);
     expect(repo.listAll()).toHaveLength(1);
+  });
+});
+
+describe('transactionsRepo search — продавці', () => {
+  let storage: TestStorage;
+  let repo: TransactionsRepo;
+  let n = 0;
+
+  const bought = (id: string, description: string, date = '2026-03-10') =>
+    repo.save(
+      expenseByDefault({ id, date, accountId: 'card', amount: money(12550, 'UAH'), categoryId: 'food', description }),
+      new Date(storedAt.getTime() + ++n),
+    );
+
+  /** A продавець named straight from its написання, the way «Продавці» stores one. */
+  const named = (merchantId: string, name: string, ...spellings: string[]) => {
+    const merchants = merchantsRepo(storage.db);
+    merchants.name({
+      description: spellings[0]!,
+      spelling: spellings[0]!,
+      spellingId: `${merchantId}-0`,
+      into: { kind: 'new', id: merchantId, name },
+      now: storedAt,
+    });
+    spellings.slice(1).forEach((spelling, i) =>
+      merchants.addSpelling({ merchantId, spelling, spellingId: `${merchantId}-${i + 1}`, now: storedAt }),
+    );
+  };
+
+  const ids = (found: readonly Transaction[]) => found.map((t) => t.id).sort();
+  const noText = { text: '', categoryIds: [], sourceIds: [] };
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    seedAccounts(storage);
+    repo = transactionsRepo(storage.db);
+  });
+
+  afterEach(() => storage.close());
+
+  it('Scenario: A продавець given with the search matches every spelling', () => {
+    bought('e1', 'АТБ 12');
+    bought('e2', 'ATB MARKET');
+    bought('e3', 'Сільпо');
+    named('atb', 'АТБ', 'атб', 'atb');
+    const found = repo.search({ match: { ...noText, text: 'атб', merchantIds: ['atb'] }, limit: 10, offset: 0 });
+    expect(ids(found)).toEqual(['e1', 'e2']);
+  });
+
+  it('Scenario: The продавець filter keeps only what it recognises', () => {
+    bought('e1', 'АТБ 12');
+    bought('e2', 'Сільпо');
+    named('atb', 'АТБ', 'атб');
+    expect(ids(repo.search({ merchantId: 'atb', limit: 10, offset: 0 }))).toEqual(['e1']);
+  });
+
+  it('Scenario: Every spelling of one продавець, and nothing else', () => {
+    bought('e1', 'АТБ 12');
+    bought('e2', 'ATB MARKET');
+    bought('e3', 'Сільпо');
+    named('atb', 'АТБ', 'атб', 'atb');
+    expect(ids(repo.search({ merchantId: 'atb', limit: 10, offset: 0 }))).toEqual(['e1', 'e2']);
+  });
+
+  it('Scenario: The narrowing follows recognition', () => {
+    bought('e1', 'BOLT FOOD 3411');
+    bought('e2', 'BOLT 12');
+    // «Bolt Food» first: naming happens from an опис no продавець recognises yet.
+    named('bolt-food', 'Bolt Food', 'bolt food');
+    named('bolt', 'Bolt', 'bolt');
+    expect(ids(repo.search({ merchantId: 'bolt', limit: 10, offset: 0 }))).toEqual(['e2']);
+  });
+
+  it('Scenario: It combines with a місяць and comes off by hand', () => {
+    bought('e-march', 'АТБ 12', '2026-03-10');
+    bought('e-april', 'АТБ 12', '2026-04-02');
+    bought('e-other', 'Сільпо', '2026-03-11');
+    named('atb', 'АТБ', 'атб');
+    expect(ids(repo.search({ merchantId: 'atb', month: '2026-03', limit: 10, offset: 0 }))).toEqual(['e-march']);
+    // Taken off, the whole history is back: nothing about the narrowing is remembered.
+    expect(ids(repo.search({ limit: 10, offset: 0 }))).toEqual(['e-april', 'e-march', 'e-other']);
+  });
+
+  it('a new написання re-reads what the narrowing holds, with no транзакція rewritten', () => {
+    bought('e1', 'АТБ 12');
+    bought('e2', 'ATB MARKET');
+    named('atb', 'АТБ', 'атб');
+    expect(ids(repo.search({ merchantId: 'atb', limit: 10, offset: 0 }))).toEqual(['e1']);
+    merchantsRepo(storage.db).addSpelling({ merchantId: 'atb', spelling: 'atb', spellingId: 'late', now: storedAt });
+    expect(ids(repo.search({ merchantId: 'atb', limit: 10, offset: 0 }))).toEqual(['e1', 'e2']);
+  });
+
+  it('Scenario: More of a продавець reads nothing already read', () => {
+    for (let i = 0; i < 120; i++) bought(`e${i}`, i % 2 === 0 ? `АТБ ${i}` : `Сільпо ${i}`);
+    named('atb', 'АТБ', 'атб');
+    const counting = countingDb(storage);
+    const counted = transactionsRepo(counting.db);
+    const first = counted.search({ merchantId: 'atb', limit: 50, offset: 0 });
+    counting.reset();
+    const second = counted.search({ merchantId: 'atb', limit: 50, offset: 50 });
+    expect(counting.rowsRead()).toBe(1); // the change stamp, and nothing else
+    expect([...first, ...second]).toHaveLength(60);
+    expect([...first, ...second]).toEqual(repo.search({ merchantId: 'atb', limit: 100, offset: 0 }));
   });
 });

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+
 import { account } from '../domain/account';
 import { money } from '../domain/money';
 import type { Rule } from '../domain/rules';
@@ -49,7 +51,7 @@ describe('drainCaptures', () => {
     drainCaptures({
       capture,
       storage: repo,
-      categorisation: () => ({ rules }),
+      categorisation: () => ({ rules, merchants: NO_MERCHANTS }),
       newId: () => `id-${(ids += 1)}`,
       // The device's own mapping, fixed here so the date a чернетка carries is the test's to say.
       dateOf: () => isoDate('2026-08-26'),
@@ -200,7 +202,7 @@ describe('drainCaptures', () => {
     const report = await drainCaptures({
       capture,
       storage: failing,
-      categorisation: () => ({ rules: [] }),
+      categorisation: () => ({ rules: [], merchants: NO_MERCHANTS }),
       newId: () => `id-${(ids += 1)}`,
       dateOf: () => isoDate('2026-08-26'),
       now: () => new Date('2026-08-26T12:00:00.000Z'),

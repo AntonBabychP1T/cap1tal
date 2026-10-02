@@ -1,6 +1,8 @@
 import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS, merchant, merchantIndex } from '../domain/merchants';
+
 import { money } from '../domain/money';
 import { templateRules, type Rule } from '../domain/rules';
 import { TEMPLATE_GROUPS } from '../domain/rule-template';
@@ -54,6 +56,7 @@ const context = (over: Partial<Parameters<typeof mapStatement>[1]> = {}) => ({
   accountId: 'card',
   currency: 'UAH',
   rules: [groceries],
+  merchants: NO_MERCHANTS,
   seenIds: new Set<string>(),
   newId: ids(),
   ...over,
@@ -180,6 +183,7 @@ describe('mapStatement', () => {
         amount: money(12550, 'UAH'),
         categoryId: 'groceries',
         description: 'СІЛЬПО Київ',
+        mcc: 5411,
       },
     ]);
   });
@@ -226,6 +230,7 @@ describe('mapStatement', () => {
         left: money(479, 'UAH'),
         arrived: money(479, 'UAH'),
         description: 'Округлення балансу «Резерв»',
+        mcc: 5411,
         awaitingCounterpartIncome: true,
       },
     ]);
@@ -283,6 +288,7 @@ describe('mapStatement', () => {
       amount: money(5_000_000, 'UAH'),
       sourceId: UNSOURCED_SOURCE_ID,
       description: 'Зарахування зарплати',
+      mcc: 4829,
     });
   });
 
@@ -292,7 +298,7 @@ describe('mapStatement', () => {
     // keeps it visible until they do.
     const { transactions } = mapStatement(
       [item({ id: 'a1', description: 'Кешбек', mcc: 4829, amount: money(25000, 'UAH') })],
-      context({ rules: [{ ...groceries, merchant: 'кешбек' }] }),
+      context({ rules: [{ ...groceries, merchant: 'кешбек' }], merchants: NO_MERCHANTS }),
     );
     expect(transactions[0]).toMatchObject({ type: 'income', sourceId: UNSOURCED_SOURCE_ID });
     // Not even a matching правило turns arriving money into a categorised anything.
@@ -733,7 +739,7 @@ describe('shownLinks — the linked рахунки the token still shows', () =>
 describe('mapStatement over the шаблон категоризації', () => {
   const defaults = () => new Map(TEMPLATE_GROUPS.map((g) => [g.id, g.defaultCategoryId]));
   const fresh = (targets = defaults()) =>
-    context({ rules: [], templateRules: templateRules(targets) });
+    context({ rules: [], merchants: NO_MERCHANTS, templateRules: templateRules(targets) });
   const categoryOf = (description: string, mcc?: number, ctx = fresh()) =>
     mapStatement([item({ id: 'a1', description, mcc })], ctx).transactions[0];
 
@@ -763,7 +769,7 @@ describe('mapStatement over the шаблон категоризації', () => 
       target: { kind: 'category', categoryId: 'eating-out' },
       createdAt: new Date('2026-01-01T00:00:00Z'),
     };
-    const ctx = context({ rules: [atb], templateRules: templateRules(defaults()) });
+    const ctx = context({ rules: [atb], merchants: NO_MERCHANTS, templateRules: templateRules(defaults()) });
     expect(categoryOf('АТБ 421', 5411, ctx)).toMatchObject({ categoryId: 'eating-out' });
   });
 
@@ -784,5 +790,64 @@ describe('mapStatement over the шаблон категоризації', () => 
 
   it('Scenario: Neither tier matches', () => {
     expect(categoryOf('НОВИЙ ЗАКЛАД', 7399)).toMatchObject({ categoryId: UNCATEGORISED_CATEGORY_ID });
+  });
+});
+
+describe('mapStatement — the MCC and the продавці', () => {
+  it('Scenario: A purchase keeps the code the bank gave it', () => {
+    const { transactions } = mapStatement([item({ id: 'a1', mcc: 5411 })], context());
+    expect(transactions[0]).toMatchObject({ type: 'expense', mcc: 5411 });
+  });
+
+  it('Scenario: A переказ made by a правило keeps it too', () => {
+    const roundUp: Rule = {
+      id: 'r-round-up',
+      merchant: 'округлення балансу',
+      target: { kind: 'transfer', toAccountId: 'reserve' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { transactions } = mapStatement(
+      [item({ id: 'a1', description: 'Округлення балансу «Резерв»', mcc: 4829, amount: money(-479, 'UAH') })],
+      context({
+        accountId: 'platinum',
+        rules: [roundUp],
+        accounts: [
+          { id: 'platinum', currency: 'UAH' },
+          { id: 'reserve', currency: 'UAH' },
+        ],
+      }),
+    );
+    expect(transactions[0]).toMatchObject({ type: 'transfer', mcc: 4829 });
+  });
+
+  it('Scenario: An item already imported is not revisited', () => {
+    // A витрата imported before the MCC was kept carries none, and the next sync reading the same
+    // item makes nothing of it: no second транзакція, and nothing to write the code onto.
+    const { transactions, seenNow } = mapStatement(
+      [item({ id: 'a1', mcc: 5411 })],
+      context({ seenIds: new Set(['a1']) }),
+    );
+    expect(transactions).toEqual([]);
+    expect([...seenNow]).toEqual(['a1']);
+  });
+
+  it('Scenario: The monobank sync honours a продавець', () => {
+    const atb = merchant({
+      id: 'atb',
+      name: 'АТБ',
+      spellings: [{ id: 's1', spelling: 'atb', addedAt: new Date(0) }],
+      createdAt: new Date(0),
+    });
+    const byMerchant: Rule = {
+      id: 'r-atb',
+      merchantId: 'atb',
+      target: { kind: 'category', categoryId: 'eating-out' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { transactions } = mapStatement(
+      [item({ id: 'a1', description: 'ATB MARKET 23', amount: money(-8000, 'UAH') })],
+      context({ rules: [byMerchant], merchants: merchantIndex([atb]) }),
+    );
+    expect(transactions[0]).toMatchObject({ type: 'expense', amount: money(8000, 'UAH'), categoryId: 'eating-out' });
   });
 });

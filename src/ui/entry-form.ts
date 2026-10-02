@@ -78,6 +78,11 @@ export interface EntryDraft {
    * `''`.
    */
   readonly description?: string;
+  /**
+   * The MCC the import named, carried untouched through an edit or a retype exactly as the опис
+   * is — never typed: the form has no field for it, so a транзакція recorded by hand carries none.
+   */
+  readonly mcc?: number;
 }
 
 /**
@@ -178,6 +183,7 @@ export function buildEntry(
         // Nothing picked means «Без категорії» — the default is the domain's, not the form's.
         ...(draft.categoryId ? { categoryId: draft.categoryId } : {}),
         ...(draft.description ? { description: draft.description } : {}),
+        ...(draft.mcc !== undefined ? { mcc: draft.mcc } : {}),
       });
 
     case 'income': {
@@ -194,6 +200,7 @@ export function buildEntry(
         amount: parseAmount(draft.amount, from.currency),
         sourceId: draft.sourceId,
         ...(draft.description ? { description: draft.description } : {}),
+        ...(draft.mcc !== undefined ? { mcc: draft.mcc } : {}),
       };
       return income;
     }
@@ -210,6 +217,7 @@ export function buildEntry(
         amount: parseAmount(draft.amount, from.currency),
         categoryId: draft.categoryId,
         ...(draft.description ? { description: draft.description } : {}),
+        ...(draft.mcc !== undefined ? { mcc: draft.mcc } : {}),
       });
 
     case 'transfer': {
@@ -242,6 +250,7 @@ export function buildEntry(
         left,
         arrived,
         ...(draft.description ? { description: draft.description } : {}),
+        ...(draft.mcc !== undefined ? { mcc: draft.mcc } : {}),
       });
     }
   }

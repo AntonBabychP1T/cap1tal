@@ -11,6 +11,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   limits as limitsRepo,
+  merchants as merchantsRepo,
   sources as sourcesRepo,
   storageStampNow,
   storedHistory,
@@ -18,6 +19,7 @@ import {
 } from '@/db/repos';
 import { activeAccounts } from '@/domain/account';
 import { namesById } from '@/domain/category';
+import { merchantIndex } from '@/domain/merchants';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { judgeProgressLater } from '@/hooks/progress-ports';
@@ -35,6 +37,7 @@ import { PICKER_SIZE } from '@/ui/shortlist';
 import {
   accountFilterOrder,
   emptyMessage,
+  merchantFromRoute,
   monthFromRoute,
   ONLY_UNCATEGORISED,
   searchCriteria,
@@ -88,6 +91,9 @@ export default function TransactionsScreen() {
         months: transactionsRepo.months(),
         // What the categorising picker puts first — the same recents Головний's picker reads.
         latest: transactionsRepo.listLatest(RECENT_WINDOW),
+        // The продавці: what a typed назва finds, what a line reads as, and what `?merchant=` may
+        // name (design M7, M9).
+        merchants: merchantsRepo.list(),
       }),
       [],
     ),
@@ -109,10 +115,22 @@ export default function TransactionsScreen() {
   // «Без категорії», on when «Потребує уваги» opened the screen with `?only=uncategorised`.
   const only = useLocalSearchParams<{ only?: string }>().only;
   const [uncategorisedOnly, setUncategorisedOnly] = useState(uncategorisedFromRoute(only));
+  // One продавець, when a продавець's «Транзакції» opened the screen with `?merchant=`: exact, judged
+  // on the опис, and an initial value rather than a lock. An id no продавець carries narrows nothing.
+  const askedMerchant = merchantFromRoute(
+    useLocalSearchParams<{ merchant?: string }>().merchant,
+    stored.merchants,
+  );
+  const [chosenMerchant, setMerchantId] = useState(askedMerchant ?? ANY);
+  // A продавець merged or deleted while this screen sat in the stack narrows nothing any more —
+  // the chip naming it goes on the same re-read, so no narrowing is ever in force unnamed.
+  const merchantId =
+    chosenMerchant !== ANY && stored.merchants.some((m) => m.id === chosenMerchant) ? chosenMerchant : ANY;
+  const merchants = useMemo(() => merchantIndex(stored.merchants), [stored.merchants]);
 
   const criteria = useMemo(
-    () => searchCriteria(query, stored.categories, stored.sources),
-    [query, stored.categories, stored.sources],
+    () => searchCriteria(query, stored.categories, stored.sources, stored.merchants),
+    [query, stored.categories, stored.sources, stored.merchants],
   );
 
   /** Storage, already carrying the criterion and the narrowing in force. */
@@ -123,10 +141,11 @@ export default function TransactionsScreen() {
         ...(accountId === ANY ? {} : { accountId }),
         ...(month === ANY ? {} : { month }),
         ...(uncategorisedOnly ? { uncategorised: true } : {}),
+        ...(merchantId === ANY ? {} : { merchantId }),
         limit,
         offset,
       }),
-    [accountId, criteria, month, uncategorisedOnly],
+    [accountId, criteria, merchantId, month, uncategorisedOnly],
   );
 
   /** What the search reads from, and storage's change stamp: a new question starts over. */
@@ -136,7 +155,13 @@ export default function TransactionsScreen() {
    * return to the screen or its own write reads as many rows as are shown, in one read, never back
    * to the first page (app-speed-pass design D6). The decisions are `transaction-search.ts`'s.
    */
-  const question = JSON.stringify({ criteria: criteria ?? null, accountId, month, uncategorisedOnly });
+  const question = JSON.stringify({
+    criteria: criteria ?? null,
+    accountId,
+    month,
+    uncategorisedOnly,
+    merchantId,
+  });
   const [shown, showNext, reload] = usePagedList(question, pagePorts);
 
   const byId = useMemo(() => accountsById(stored.accounts), [stored.accounts]);
@@ -157,7 +182,11 @@ export default function TransactionsScreen() {
   );
 
   const narrowed =
-    criteria !== undefined || accountId !== ANY || month !== ANY || uncategorisedOnly;
+    criteria !== undefined ||
+    accountId !== ANY ||
+    month !== ANY ||
+    uncategorisedOnly ||
+    merchantId !== ANY;
   const nothing = emptyMessage({ shown: shown.transactions.length, narrowed });
 
   /**
@@ -176,6 +205,7 @@ export default function TransactionsScreen() {
       setAccountId(ANY);
       setMonth(ANY);
       setUncategorisedOnly(false);
+      setMerchantId(ANY);
     });
   }, [ask]);
 
@@ -265,6 +295,15 @@ export default function TransactionsScreen() {
     { value: ANY, label: 'Всі' },
     ...stored.months.map((m) => ({ value: m, label: monthLabel(m) })),
   ];
+  /** The продавець the screen was opened for, named on its chip while that narrowing can be in force. */
+  const askedMerchantName = stored.merchants.find((m) => m.id === askedMerchant)?.name;
+  const merchantChoices =
+    askedMerchant !== undefined && askedMerchantName !== undefined
+      ? [
+          { value: ANY, label: 'Всі' },
+          { value: askedMerchant, label: askedMerchantName },
+        ]
+      : [];
 
   /**
    * Every shown row's line, once per list rather than on every render — one clock for the whole
@@ -274,11 +313,19 @@ export default function TransactionsScreen() {
     const now = new Date();
     return new Map(
       shown.transactions.map((t) => {
-        const line = transactionLine(t, byId, categoryNames, sourceNames, overLimit, categoryIconKeys);
+        const line = transactionLine(
+          t,
+          byId,
+          categoryNames,
+          sourceNames,
+          overLimit,
+          categoryIconKeys,
+          merchants,
+        );
         return [t.id, { line, subtitle: feedSubtitle(line, now) }] as const;
       }),
     );
-  }, [byId, categoryIconKeys, categoryNames, overLimit, shown.transactions, sourceNames]);
+  }, [byId, categoryIconKeys, categoryNames, merchants, overLimit, shown.transactions, sourceNames]);
 
   /** One row of the list — drawn only while it is on or near the screen. */
   const renderRow = (t: Transaction, index: number) => {
@@ -296,8 +343,8 @@ export default function TransactionsScreen() {
           titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
           subtitle={subtitle}
           description={
-            line.description && !(uncategorisedOnly && title === line.description)
-              ? line.description
+            line.descriptionShown && !(uncategorisedOnly && title === line.descriptionShown)
+              ? line.descriptionShown
               : undefined
           }
           amount={line.amount}
@@ -376,6 +423,17 @@ export default function TransactionsScreen() {
               scroll
             />
           ) : null}
+          {/* Only when a продавець's «Транзакції» opened the screen: the narrowing names it while it
+              is in force, and «Всі» takes it off without leaving. */}
+          {merchantChoices.length > 0 ? (
+            <Choices
+              label="Продавець"
+              choices={merchantChoices}
+              selected={merchantId}
+              onSelect={(picked: string) => ask(() => setMerchantId(picked))}
+              scroll
+            />
+          ) : null}
           {narrowed ? (
             <Action variant="secondary" title="Показати все" onPress={clearNarrowing} />
           ) : null}
@@ -437,7 +495,7 @@ function PausedSearchBar({ onSearch }: { onSearch: (text: string) => void }) {
       onSearch(text);
     }
   };
-  return <SearchBar value={typed} onChange={change} placeholder="опис, категорія або сума" />;
+  return <SearchBar value={typed} onChange={change} placeholder="опис, продавець, категорія або сума" />;
 }
 
 const styles = StyleSheet.create({

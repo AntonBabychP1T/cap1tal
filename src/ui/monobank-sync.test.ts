@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+
 import { accountsRepo } from '../db/accounts-repo';
 import { monobankRepo, type MonobankRepo } from '../db/monobank-repo';
 import { remindersRepo, type RemindersRepo } from '../db/reminders-repo';
@@ -208,7 +210,7 @@ describe('the one place a sync is started', () => {
         tokenStore: over.tokenStore ?? inMemoryMonobankTokenStore({ token: TOKEN }),
         fetch: fetchImpl,
         storage: repo,
-        categorisation: () => ({ rules: [] }),
+        categorisation: () => ({ rules: [], merchants: NO_MERCHANTS }),
         nowMs: () => RUN_AT,
         now: () => new Date(RUN_AT),
         dateOf: (unixSeconds) => new Date(unixSeconds * 1000).toISOString().slice(0, 10) as IsoDate,

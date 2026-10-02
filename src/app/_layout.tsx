@@ -682,6 +682,16 @@ export default function RootLayout() {
               name="manage/rule-template"
               options={{ presentation: 'card', animation: animation('manage/rule-template') }}
             />
+            {/* «Продавці» and one продавець's own screen, opened from the list or from a
+                транзакція's «Продавець» row. */}
+            <Stack.Screen
+              name="manage/merchants"
+              options={{ presentation: 'card', animation: animation('manage/merchants') }}
+            />
+            <Stack.Screen
+              name="merchant/[id]"
+              options={{ presentation: 'card', animation: animation('merchant/[id]') }}
+            />
             <Stack.Screen
               name="manage/monobank"
               options={{ presentation: 'card', animation: animation('manage/monobank') }}

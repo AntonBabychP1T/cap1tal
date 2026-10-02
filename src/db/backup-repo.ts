@@ -2,6 +2,7 @@ import { asc } from 'drizzle-orm';
 
 import type { BackupStore } from '../backup/backup';
 import type { BackupDashboardLayout, BackupState } from '../backup/format';
+import { merchantNameKey } from '../domain/merchants';
 import { money } from '../domain/money';
 import { isoDate } from '../domain/transaction';
 import { toInstallment, toInstallmentRow } from './installments-repo';
@@ -31,6 +32,8 @@ import {
   monobankLinks,
   notificationDrafts,
   notificationWatches,
+  merchantSpellings,
+  merchants,
   receiptItems,
   ruleTemplateChoices,
   rules,
@@ -103,6 +106,23 @@ export function backupRepo(db: Storage): BackupStore {
           .orderBy(asc(sources.id))
           .all()
           .map((row) => ({ id: row.id, name: row.name, archived: row.archived })),
+        merchants: db
+          .select()
+          .from(merchants)
+          .orderBy(asc(merchants.id))
+          .all()
+          .map((row) => ({ id: row.id, name: row.name, createdAtMs: row.createdAt.getTime() })),
+        merchantSpellings: db
+          .select()
+          .from(merchantSpellings)
+          .orderBy(asc(merchantSpellings.id))
+          .all()
+          .map((row) => ({
+            id: row.id,
+            merchantId: row.merchantId,
+            spelling: row.spelling,
+            createdAtMs: row.createdAt.getTime(),
+          })),
         rules: db
           .select()
           .from(rules)
@@ -113,6 +133,7 @@ export function backupRepo(db: Storage): BackupStore {
             // Absent, never `null`: a правило with no pattern and one whose pattern was cleared
             // are the same правило, and the бекап has to say so too.
             ...(row.merchant === null ? {} : { merchant: row.merchant }),
+            ...(row.merchantId === null ? {} : { merchantId: row.merchantId }),
             ...(row.mcc === null ? {} : { mcc: row.mcc }),
             ...(row.categoryId === null ? {} : { categoryId: row.categoryId }),
             ...(row.toAccountId === null ? {} : { toAccountId: row.toAccountId }),
@@ -422,6 +443,10 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(installments).run();
         tx.delete(categoryLimits).run();
         tx.delete(rules).run();
+        // The продавці after the правила that may name them (`restrict`); their написання go with
+        // them by cascade, and are deleted first anyway, in reference order as the чеки are.
+        tx.delete(merchantSpellings).run();
+        tx.delete(merchants).run();
         // The шаблон mapping names категорії through `restrict`, so it goes before them. The
         // swept version stays: it is this phone's own bookkeeping (rule-template design T6).
         tx.delete(ruleTemplateChoices).run();
@@ -465,11 +490,26 @@ export function backupRepo(db: Storage): BackupStore {
         for (const s of state.sources) {
           tx.insert(sources).values({ id: s.id, name: s.name, archived: s.archived }).run();
         }
+        // The продавці and their написання before the правила that name them. Written directly: a
+        // restore re-decides nothing, so no розбір runs (`merchantsRepo` is not the path here), and
+        // the `name_key` is the same fold the repository writes.
+        for (const m of state.merchants ?? []) {
+          tx.insert(merchants)
+            // Trimmed, as `merchantsRepo` stores every назва: a hand-edited « АТБ » is «АТБ».
+            .values({ id: m.id, name: m.name.trim(), nameKey: merchantNameKey(m.name), createdAt: new Date(m.createdAtMs) })
+            .run();
+        }
+        for (const s of state.merchantSpellings ?? []) {
+          tx.insert(merchantSpellings)
+            .values({ id: s.id, merchantId: s.merchantId, spelling: s.spelling, createdAt: new Date(s.createdAtMs) })
+            .run();
+        }
         for (const rule of state.rules) {
           tx.insert(rules)
             .values({
               id: rule.id,
               merchant: rule.merchant ?? null,
+              merchantId: rule.merchantId ?? null,
               mcc: rule.mcc ?? null,
               categoryId: rule.categoryId ?? null,
               toAccountId: rule.toAccountId ?? null,
