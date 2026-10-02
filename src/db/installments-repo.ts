@@ -29,6 +29,7 @@ import {
 import {
   accounts,
   categories,
+  commitmentDueLinks,
   installmentPartLinks,
   installmentPartMarks,
   installmentRefusals,
@@ -92,8 +93,11 @@ export function toInstallmentRow(installment: Installment) {
   };
 }
 
-/** What the linking needs of a транзакція — never the whole domain value. */
-function toCandidate(row: TransactionRow): DebitCandidate {
+/**
+ * What the linking needs of a транзакція — never the whole domain value. The опис rides along for
+ * a зобов'язання's ознака (commitments design D3); the розстрочка matcher ignores it.
+ */
+export function toCandidate(row: TransactionRow): DebitCandidate {
   return {
     id: row.id,
     type: row.type as TransactionType,
@@ -101,8 +105,29 @@ function toCandidate(row: TransactionRow): DebitCandidate {
     ...(row.accountId === null ? {} : { accountId: row.accountId }),
     ...(row.amount === null || row.currency === null ? {} : { amount: money(row.amount, row.currency) }),
     ...(row.categoryId === null ? {} : { categoryId: row.categoryId }),
+    ...(row.description === null ? {} : { description: row.description }),
     createdAt: row.createdAt.getTime(),
   };
+}
+
+type Tx = Parameters<Parameters<Storage['transaction']>[0]>[0];
+/** Storage, or a write transaction already open on it. */
+export type StorageReader = Storage | Tx;
+/** A write transaction already open on storage. */
+export type StorageTx = Tx;
+
+/**
+ * Every транзакція linked to a платіж of a зобов'язання — what the розстрочки may not take: one
+ * транзакція is the списання of one платіж at most, whichever plan (commitments design D4).
+ */
+export function commitmentLinkedIds(reader: StorageReader): Set<string> {
+  return new Set(
+    reader
+      .select()
+      .from(commitmentDueLinks)
+      .all()
+      .map((row) => row.transactionId),
+  );
 }
 
 /** A UAH витрата the owner may pick by hand for a платіж — what «Обрати списання» lists. */
@@ -116,8 +141,7 @@ export interface DebitChoice {
 }
 
 export function installmentsRepo(db: Storage) {
-  type Tx = Parameters<Parameters<Storage['transaction']>[0]>[0];
-  type Reader = Storage | Tx;
+  type Reader = StorageReader;
 
   function listIn(reader: Reader): Installment[] {
     return reader
@@ -176,11 +200,12 @@ export function installmentsRepo(db: Storage) {
     if (all.length === 0) {
       return { link: [], drop: [], categorise: [] };
     }
+    const takenByCommitments = commitmentLinkedIds(reader);
     const linked = transactionsById(
       reader,
       facts.links.map((link) => link.transactionId),
     );
-    const first = matchInstallmentDebits({ installments: all, facts, transactions: linked, today });
+    const first = matchInstallmentDebits({ installments: all, facts, transactions: linked, takenByCommitments, today });
     const dropped = new Set(first.drop.map((d) => `${d.installmentId}|${d.number}`));
     const factsAfterDrops: InstallmentFacts = {
       ...facts,
@@ -230,6 +255,7 @@ export function installmentsRepo(db: Storage) {
       installments: all,
       facts,
       transactions: [...linked, ...candidates.filter((c) => !linkedIds.has(c.id))],
+      takenByCommitments,
       today,
     });
   }
@@ -304,6 +330,16 @@ export function installmentsRepo(db: Storage) {
       eq(installmentPartMarks.installmentId, installmentId),
       eq(installmentPartMarks.number, number),
     );
+  }
+
+  /**
+   * The body of `settle`, inside a write the caller holds (commitments design D4): read again
+   * under the lock — a background прогін may have committed in between — and applied.
+   */
+  function settleIn(tx: StorageTx, today: IsoDate): boolean {
+    const match = matchIn(tx, today);
+    apply(tx, match);
+    return !isEmpty(match);
   }
 
   function reminderIn(reader: Reader): InstallmentReminderState {
@@ -458,7 +494,7 @@ export function installmentsRepo(db: Storage) {
             .from(installmentPartLinks)
             .where(eq(installmentPartLinks.transactionId, transactionId))
             .get();
-          if (taken) {
+          if (taken || commitmentLinkedIds(tx).has(transactionId)) {
             throw new Refusal('Ця витрата вже є списанням іншого платежу.');
           }
           tx.delete(installmentRefusals)
@@ -514,8 +550,8 @@ export function installmentsRepo(db: Storage) {
 
     /**
      * The UAH витрати on the рахунок списання within ten days of the платіж's дата, linked to no
-     * платіж, whatever their сума — nearest first (installments-screen, "Picking the списання by
-     * hand").
+     * платіж of either plan, whatever their сума — nearest first (installments-screen, "Picking the
+     * списання by hand").
      */
     choices(installmentId: string, number: number): DebitChoice[] {
       const installment = requireInstallment(db, installmentId);
@@ -532,6 +568,7 @@ export function installmentsRepo(db: Storage) {
             gte(transactions.date, window.from),
             lte(transactions.date, window.to),
             sql`${transactions.id} NOT IN (SELECT ${installmentPartLinks.transactionId} FROM ${installmentPartLinks})`,
+            sql`${transactions.id} NOT IN (SELECT ${commitmentDueLinks.transactionId} FROM ${commitmentDueLinks})`,
           ),
         )
         .orderBy(asc(transactions.date), asc(transactions.createdAt), asc(transactions.id))
@@ -552,22 +589,22 @@ export function installmentsRepo(db: Storage) {
      * Links what can be linked and drops what no longer stands, over every розстрочка, in one
      * write transaction (design D4). **Writes nothing when nothing changed** — so storage's change
      * stamp stays put and the remembered screens are not invalidated on every focus — and says
-     * whether it changed anything.
+     * whether it changed anything. The app settles both plans together through `settlePlans`
+     * (`plans-settle.ts`); this stays for what proves the розстрочки' own rules.
      */
     settle(today: IsoDate): boolean {
       if (isEmpty(matchIn(db, today))) {
         return false;
       }
-      return db.transaction(
-        (tx) => {
-          // Read again under the write lock: a background прогін may have committed in between.
-          const match = matchIn(tx, today);
-          apply(tx, match);
-          return !isEmpty(match);
-        },
-        { behavior: 'immediate' },
-      );
+      return db.transaction((tx) => settleIn(tx, today), { behavior: 'immediate' });
     },
+
+    /** Whether `settle` would change anything right now — read outside any write. */
+    pending(today: IsoDate): boolean {
+      return !isEmpty(matchIn(db, today));
+    },
+
+    settleIn,
 
     /** The switch and whether the app has already asked; on and not asked when never set. */
     reminder(): InstallmentReminderState {

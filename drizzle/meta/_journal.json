@@ -71,6 +71,13 @@
       "when": 1790884968506,
       "tag": "0009_complete_green_goblin",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1790972420605,
+      "tag": "0010_nosy_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }

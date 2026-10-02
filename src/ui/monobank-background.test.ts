@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { accountsRepo } from '../db/accounts-repo';
 import { installmentsRepo } from '../db/installments-repo';
 import { monobankRepo, type MonobankRepo } from '../db/monobank-repo';
+import { settlePlans } from '../db/plans-settle';
 import { remindersRepo, type RemindersRepo } from '../db/reminders-repo';
 import { openTestDb, seedReferences, type TestStorage } from '../db/test-db';
 import { transactionsRepo, type TransactionsRepo } from '../db/transactions-repo';
@@ -811,7 +812,12 @@ describe('one chance the phone gives', () => {
         recordedAt: CHANCE_AT - HOUR,
       });
       const upkeep = {
-        storage: installments,
+        storage: {
+          settlePlans: (today: string) => settlePlans(storage.db, today),
+          list: () => installments.list(),
+          facts: () => installments.facts(),
+          reminder: () => installments.reminder(),
+        },
         notifications: phone,
         // The morning of the debit, before the warning's 10:00 of 29 Aug.
         now: () => new Date(2026, 7, 28, 8, 0),

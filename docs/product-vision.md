@@ -73,8 +73,8 @@ the UI. Terms are defined in [glossary.md](glossary.md).
 - Lending is a transfer into that person's debt account: not spent, but no longer available (it
   reduces "left"). Repayment is a transfer back. Anything repaid above the principal is income
   ("interest").
-- No due dates, rates or schedules in v1 for debts to people (a розстрочка's графік is the one
-  schedule, see «Розстрочки» below).
+- No due dates, rates or schedules in v1 for debts to people (a розстрочка's графік and a
+  зобов'язання's are the only schedules, see «Розстрочки» and «Зобов'язання» below).
 
 ### Розстрочки (owner's decision, 2026-10-01)
 - The owner buys more and more through interest-free розстрочки — at monobank «Покупка частинами»
@@ -90,8 +90,30 @@ the UI. Terms are defined in [glossary.md](glossary.md).
   is never counted anywhere, and the app links each debit to its платіж rather than creating
   anything. The app never records a платіж by itself.
 - What the plan adds: which витрата is which платіж, what is still owed, how much of the current
-  month is already promised («Вільно після розстрочок» on Місяць), and a local warning the day
-  before a платіж.
+  month is already promised (counted in «Вільно після зобов'язань» on Місяць, §8), and a local
+  warning the day before a платіж.
+
+### Зобов'язання (owner's decision, 2026-10-02)
+- Beyond розстрочки, the owner knows other payments ahead: оренда, інтернет, мобільний, підписки,
+  страхування. Each is certain to leave on a known day, and none was in «скільки я ще можу
+  витратити».
+- The owner chose not to model them as future транзакції, which would break the bookkeeping truth:
+  витрачено would count money that has not left, and every balance would need undoing when the
+  real debit came. A **зобов'язання** is a **plan**, on the pattern of the розстрочка, never a
+  транзакція and never a рахунок. The owner enters it by hand: what it is, the сума of one платіж,
+  how often, the date of the first платіж, the рахунок it is debited from, optionally a категорія,
+  and optionally a piece of the bank's text that recognises the debit. It runs until the owner
+  stops it.
+- Each debit reaches the app as the ordinary витрата of its day, by the usual paths, and the app
+  links it to its платіж. A платіж never debited counts nowhere; the app never records anything by
+  itself.
+- **[PROPOSED]** How often: monthly, quarterly, every half-year or yearly. In any currency — the
+  currency of the рахунок it is debited from — never converted. A debit is recognised by its exact
+  сума, or, where the owner gave a piece of the bank's text, by that text whatever the сума: bills
+  that vary and підписки charged at a moving rate would otherwise never match. A платіж can be
+  marked paid elsewhere, or **пропущено** — it did not and will not happen.
+- **[PROPOSED]** No warning before a зобов'язання's платіж, unlike a розстрочка: a dozen
+  підписки would turn it into noise.
 
 ### Categories, limits, goals
 - Categories are the owner's own flat list, seeded with a starter set.
@@ -133,6 +155,8 @@ the UI. Terms are defined in [glossary.md](glossary.md).
 4. CSV import — at minimum once, to load the history exported from Saldo.
 
 Not in v1: recurring or scheduled transactions, SMS parsing, other banks' APIs. **[PROPOSED]**
+A розстрочка's графік and a зобов'язання's (§4) are plans the bank's debits are linked to, never
+транзакції the app records.
 
 ## 7. Categorisation
 
@@ -157,10 +181,11 @@ Not in v1: recurring or scheduled transactions, SMS parsing, other banks' APIs. 
     **[PROPOSED]** Equivalently: income = spent + invested + saved + lent + left. Money moved into a
     jar or lent out must not look available.
 - Monthly numbers are shown per currency, plus the approximate UAH equivalent. **[PROPOSED]**
-- **Вільно після розстрочок** (owner's decision, 2026-10-01) — for the current month only, in UAH:
-  left minus this month's розстрочка платежі still expected or not found (a платіж debited or marked
-  paid is not subtracted). A secondary reading beneath "left";
-  it changes none of the numbers above, and a платіж already debited is already inside "left".
+- **Вільно після зобов'язань** (owner's decision, 2026-10-02, replacing «Вільно після розстрочок»
+  of 2026-10-01) — for the current month only, per currency: left minus this month's платежі still
+  expected or not found, of every зобов'язання and every розстрочка alike (a платіж debited, marked
+  paid or skipped is not subtracted). A secondary reading beneath "left"; it changes none of the
+  numbers above, and a платіж already debited is already inside "left".
 
 ## 9. Budgets
 
@@ -275,13 +300,14 @@ marked «≈ якщо темп збережеться», computed when shown, st
    to people still have none, and nothing has an interest rate.
 4. "Money in transit" / bank holds as a separate state — a hold is just a transaction.
 5. Splitting one purchase across several categories.
-6. Recurring or scheduled transactions. A розстрочка's графік is a plan the debits are linked to,
-   never a транзакція the app records by itself.
+6. Recurring or scheduled transactions. A розстрочка's графік and a зобов'язання's (narrowed
+   2026-10-02) are plans the debits are linked to, never a транзакція the app records by itself.
 7. Bank integrations beyond the monobank API and notification parsing (no PrivatBank API, no SMS).
 8. Category hierarchy and tags.
 9. Cloud services other than the owner's opt-in Google Drive backup.
-10. Forecasts ("at this pace…"). «Вільно після розстрочок» subtracts contractually fixed платежі,
-    not a pace, and is not a forecast. Narrowed 2026-10-01: the opt-in «Прогноз статку» on the
+10. Forecasts ("at this pace…"). «Вільно після зобов'язань» subtracts платежі the owner declared
+    with their own сума and day — a розстрочка's contractually fixed — not a pace, and is not a
+    forecast. Narrowed 2026-10-01: the opt-in «Прогноз статку» on the
     «Статок» screen (§11) is the one forecast; nothing else — no other screen, no limit, ціль or
     monthly number — projects a pace.
 11. Moving a transaction to a different month than its date.

@@ -5,11 +5,13 @@ import { money } from '../domain/money';
 import { expenseByDefault, transfer, type Correction } from '../domain/transaction';
 import { mergeAccounts } from './account-merge-repo';
 import { accountsRepo } from './accounts-repo';
+import { commitmentsRepo } from './commitments-repo';
 import { entryDefaultsRepo } from './entry-defaults-repo';
 import { installmentsRepo } from './installments-repo';
 import { investmentsRepo } from './investments-repo';
 import { monobankRepo, type FetchedMonobankAccount } from './monobank-repo';
 import { notificationsRepo } from './notifications-repo';
+import { settlePlans } from './plans-settle';
 import { openTestDb, seedReservedCategories, type TestStorage } from './test-db';
 import { transactionsRepo } from './transactions-repo';
 
@@ -223,5 +225,36 @@ describe('mergeAccounts', () => {
     expect(installments.get('i-iphone')?.debitAccountId).toBe('black');
     expect(installments.facts().links).toEqual(links);
     expect(installments.settle('2026-10-06')).toBe(false);
+  });
+
+  it("Scenario: Merging the card of a зобов'язання", () => {
+    const saldoBlack = account({ id: 'saldo-black', name: 'mono black (Saldo)', kind: 'spending', currency: 'UAH' });
+    const black = account({ id: 'black', name: 'mono black', kind: 'spending', currency: 'UAH' });
+    accountsRepo(storage.db).save(saldoBlack);
+    accountsRepo(storage.db).save(black);
+    const commitments = commitmentsRepo(storage.db);
+    commitments.save({
+      id: 'c-internet',
+      name: 'Інтернет',
+      amount: 30_000,
+      currency: 'UAH',
+      periodicity: 'monthly',
+      firstDue: '2026-10-05',
+      debitAccountId: 'saldo-black',
+      recordedAt: storedAt.getTime(),
+    });
+    transactionsRepo(storage.db).save(
+      expenseByDefault({ id: 'debit', date: '2026-10-05', accountId: 'saldo-black', amount: money(30_000, 'UAH') }),
+      storedAt,
+    );
+    settlePlans(storage.db, '2026-10-05');
+    const links = commitments.facts().links;
+    expect(links).toHaveLength(1);
+
+    mergeAccounts(storage.db, { fromId: 'saldo-black', intoId: 'black' });
+
+    expect(commitments.get('c-internet')?.debitAccountId).toBe('black');
+    expect(commitments.facts().links).toEqual(links);
+    expect(settlePlans(storage.db, '2026-10-06')).toEqual({ installments: false, commitments: false });
   });
 });

@@ -131,6 +131,11 @@ describe('what a бекап holds', () => {
       'installment_part_marks',
       'installment_refusals',
       'installment_reminder',
+      // Зобов'язання and the states of their платежі: what is still owed, announced by no statement.
+      'commitments',
+      'commitment_due_links',
+      'commitment_due_marks',
+      'commitment_refusals',
     ]) {
       expect(BACKUP_TABLES).toContain(held);
     }

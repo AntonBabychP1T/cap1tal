@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  freeAfterInstallments,
   installmentPartStates,
   installmentReminderDates,
   installmentRefusal,
@@ -359,6 +358,19 @@ describe('matchInstallmentDebits — links', () => {
     const status = installmentPartStates(iphone, NO_INSTALLMENT_FACTS, today);
     expect(status.parts[4]?.state).not.toBe('paid');
   });
+
+  it('Scenario: A витрата already linked to a зобов\'язання is not taken', () => {
+    // installments, "A платіж is linked to its списання by the app": the витрата is the списання of
+    // «Спортзал»'s платіж already, so платіж 5 of «iPhone» stays unlinked.
+    const match = matchInstallmentDebits({
+      installments: [iphone],
+      facts: NO_INSTALLMENT_FACTS,
+      transactions: [expense('gym', '2026-10-05', 100_000)],
+      takenByCommitments: new Set(['gym']),
+      today,
+    });
+    expect(match).toEqual({ link: [], drop: [], categorise: [] });
+  });
 });
 
 describe('matchInstallmentDebits — drops and categorising', () => {
@@ -445,54 +457,6 @@ describe('matchInstallmentDebits — drops and categorising', () => {
       { installmentId: iphone.id, number: 11 },
     ]);
     expect(match.link).toEqual([]);
-  });
-});
-
-describe('freeAfterInstallments', () => {
-  const october = '2026-10';
-  const iphoneOct: Installment = { ...iphone, firstDue: '2026-10-05', paidBefore: 0 };
-  const vacuum: Installment = {
-    id: 'i-vacuum',
-    name: 'Пилосос',
-    total: 150_000,
-    partsCount: 3,
-    part: 50_000,
-    firstDue: '2026-10-20',
-    debitAccountId: 'black',
-    paidBefore: 0,
-    recordedAt: 2,
-  };
-
-  it('Scenario: Two платежі, one already debited', () => {
-    const f = facts({ links: [{ installmentId: iphoneOct.id, number: 1, transactionId: 't1' }] });
-    const parts = [iphoneOct, vacuum].flatMap((i) => installmentPartStates(i, f, '2026-10-10').parts);
-    const left = money(2_000_000, 'UAH');
-    expect(freeAfterInstallments(left, parts, october, '2026-10-10')).toEqual(money(1_950_000, 'UAH'));
-    expect(left.amount).toBe(2_000_000);
-  });
-
-  it('Scenario: Nothing owed means no reading', () => {
-    const f = facts({ marks: [{ installmentId: vacuum.id, number: 1 }] });
-    const parts = installmentPartStates(vacuum, f, '2026-10-21').parts;
-    expect(freeAfterInstallments(money(2_000_000, 'UAH'), parts, october, '2026-10-21')).toBeUndefined();
-  });
-
-  it('Scenario: A past month has none', () => {
-    const september: Installment = { ...vacuum, firstDue: '2026-09-20' };
-    const parts = installmentPartStates(september, NO_INSTALLMENT_FACTS, '2026-10-10').parts;
-    expect(parts[0]?.state).toBe('notFound');
-    expect(freeAfterInstallments(money(100, 'UAH'), parts, '2026-09', '2026-10-10')).toBeUndefined();
-  });
-
-  it('has no reading without a UAH залишилось', () => {
-    const parts = installmentPartStates(vacuum, NO_INSTALLMENT_FACTS, '2026-10-10').parts;
-    expect(freeAfterInstallments(undefined, parts, october, '2026-10-10')).toBeUndefined();
-    expect(freeAfterInstallments(money(100, 'USD'), parts, october, '2026-10-10')).toBeUndefined();
-  });
-
-  it('does not subtract a закрито платіж', () => {
-    const closed = installmentPartStates({ ...vacuum, closedOn: '2026-10-01' }, NO_INSTALLMENT_FACTS, '2026-10-10');
-    expect(freeAfterInstallments(money(100, 'UAH'), closed.parts, october, '2026-10-10')).toBeUndefined();
   });
 });
 

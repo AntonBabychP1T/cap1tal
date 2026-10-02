@@ -23,6 +23,10 @@ import {
   categories,
   categoryLimits,
   challengeDecisions,
+  commitmentDueLinks,
+  commitmentDueMarks,
+  commitmentRefusals,
+  commitments,
   counterpartIncomeAwaits,
   dailyReminder,
   dashboardLayout,
@@ -32,6 +36,8 @@ import {
   goalAccounts,
   goals,
   hapticsPreference,
+  installmentPartLinks,
+  installments,
   investmentValues,
   journal,
   monobankAccounts,
@@ -2125,6 +2131,100 @@ describe('migrations — the шаблон mapping', () => {
       ).toThrow();
       db.insert(ruleTemplateSweep).values({ id: 'sweep', version: 1 }).run();
       expect(() => db.insert(ruleTemplateSweep).values({ id: 'other', version: 2 }).run()).toThrow();
+    } finally {
+      storage.close();
+    }
+  });
+});
+
+describe('migrations — the зобов\'язання', () => {
+  // Everything up to the шаблон mapping's migration, then this one.
+  const BEFORE_COMMITMENTS = 10;
+
+  it('Scenario: Existing data survives the migration', () => {
+    const staged = openTestDbMigratedTo(BEFORE_COMMITMENTS);
+    try {
+      const { db } = staged;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
+      db.insert(categoryLimits).values({ categoryId: 'food', amount: 250000, currency: 'UAH' }).run();
+      db.insert(goals).values({ id: 'g1', name: 'Авто', amount: 100, currency: 'UAH', deadline: null }).run();
+      db.insert(installments)
+        .values({
+          id: 'i1',
+          name: 'iPhone',
+          totalMinor: 1_000_000,
+          currency: 'UAH',
+          partsCount: 10,
+          partMinor: 100_000,
+          firstDue: '2026-10-05',
+          debitAccountId: card.id,
+          paidBefore: 0,
+          categoryId: null,
+          recordedAt: new Date(1),
+          closedOn: null,
+        })
+        .run();
+      db.insert(installmentPartLinks)
+        .values({ installmentId: 'i1', number: 1, transactionId: oneOfEachType[0]!.id })
+        .run();
+      const read = () => ({
+        accounts: db.select().from(accounts).all(),
+        transactions: db.select().from(transactions).all(),
+        categories: db.select().from(categories).all(),
+        limits: db.select().from(categoryLimits).all(),
+        goals: db.select().from(goals).all(),
+        installments: db.select().from(installments).all(),
+        links: db.select().from(installmentPartLinks).all(),
+      });
+      const before = read();
+
+      staged.migrateToLatest();
+
+      expect(read()).toEqual(before);
+      expect(db.select().from(commitments).all()).toEqual([]);
+      expect(db.select().from(commitmentDueLinks).all()).toEqual([]);
+      expect(db.select().from(commitmentDueMarks).all()).toEqual([]);
+      expect(db.select().from(commitmentRefusals).all()).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('The migrated shape refuses a blank назва, a zero сума, an unknown періодичність and a short ознака', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values(toAccountRow(card)).run();
+      const row = {
+        id: 'c1',
+        name: 'Інтернет',
+        amountMinor: 30_000,
+        currency: 'UAH',
+        periodicity: 'monthly',
+        firstDue: '2026-10-05',
+        debitAccountId: card.id,
+        categoryId: null,
+        marker: null,
+        recordedAt: new Date(1),
+        stoppedOn: null,
+      };
+      expect(() => db.insert(commitments).values({ ...row, name: '  ' }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, amountMinor: 0 }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, periodicity: 'weekly' }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, marker: ' tv ' }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, firstDue: '5 жовт.' }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, debitAccountId: 'nowhere' }).run()).toThrow();
+      db.insert(commitments).values({ ...row, marker: 'ukrtelecom' }).run();
+      db.insert(commitmentDueMarks).values({ commitmentId: 'c1', number: 1, kind: 'skipped' }).run();
+      expect(() =>
+        db.insert(commitmentDueMarks).values({ commitmentId: 'c1', number: 2, kind: 'later' }).run(),
+      ).toThrow();
+      expect(() =>
+        db.insert(commitmentDueMarks).values({ commitmentId: 'c1', number: 1, kind: 'paid' }).run(),
+      ).toThrow();
     } finally {
       storage.close();
     }

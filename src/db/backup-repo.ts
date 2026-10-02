@@ -4,6 +4,7 @@ import type { BackupStore } from '../backup/backup';
 import type { BackupDashboardLayout, BackupState } from '../backup/format';
 import { money } from '../domain/money';
 import { isoDate } from '../domain/transaction';
+import { toCommitment, toCommitmentRow } from './commitments-repo';
 import { toInstallment, toInstallmentRow } from './installments-repo';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
 import {
@@ -20,6 +21,10 @@ import {
   fiscalReceipts,
   goalAccounts,
   goals,
+  commitmentDueLinks,
+  commitmentDueMarks,
+  commitmentRefusals,
+  commitments,
   installmentPartLinks,
   installmentPartMarks,
   installmentRefusals,
@@ -79,6 +84,12 @@ export function backupRepo(db: Storage): BackupStore {
         .all()
         .map(toInstallment);
       const installmentReminderRow = db.select().from(installmentReminder).all()[0];
+      const commitmentPlans = db
+        .select()
+        .from(commitments)
+        .orderBy(asc(commitments.id))
+        .all()
+        .map(toCommitment);
       const templateChoices = db
         .select()
         .from(ruleTemplateChoices)
@@ -363,6 +374,34 @@ export function backupRepo(db: Storage): BackupStore {
               },
             }
           : {}),
+        // Only when there is a зобов'язання; otherwise the section is absent and restores to none.
+        ...(commitmentPlans.length > 0
+          ? {
+              commitments: {
+                plans: commitmentPlans,
+                links: db
+                  .select()
+                  .from(commitmentDueLinks)
+                  .orderBy(asc(commitmentDueLinks.commitmentId), asc(commitmentDueLinks.number))
+                  .all(),
+                marks: db
+                  .select()
+                  .from(commitmentDueMarks)
+                  .orderBy(asc(commitmentDueMarks.commitmentId), asc(commitmentDueMarks.number))
+                  .all()
+                  .map((row) => ({ ...row, kind: row.kind as 'paid' | 'skipped' })),
+                refusals: db
+                  .select()
+                  .from(commitmentRefusals)
+                  .orderBy(
+                    asc(commitmentRefusals.commitmentId),
+                    asc(commitmentRefusals.number),
+                    asc(commitmentRefusals.transactionId),
+                  )
+                  .all(),
+              },
+            }
+          : {}),
       };
     },
 
@@ -388,6 +427,10 @@ export function backupRepo(db: Storage): BackupStore {
       for (const plan of state.installments?.plans ?? []) {
         isoDate(plan.firstDue);
         if (plan.closedOn !== undefined) isoDate(plan.closedOn);
+      }
+      for (const plan of state.commitments?.plans ?? []) {
+        isoDate(plan.firstDue);
+        if (plan.stoppedOn !== undefined) isoDate(plan.stoppedOn);
       }
 
       db.transaction((tx) => {
@@ -420,6 +463,11 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(installmentPartMarks).run();
         tx.delete(installmentPartLinks).run();
         tx.delete(installments).run();
+        // The зобов'язання the same way, for the same reason (commitments design D8).
+        tx.delete(commitmentRefusals).run();
+        tx.delete(commitmentDueMarks).run();
+        tx.delete(commitmentDueLinks).run();
+        tx.delete(commitments).run();
         tx.delete(categoryLimits).run();
         tx.delete(rules).run();
         // The шаблон mapping names категорії through `restrict`, so it goes before them. The
@@ -687,6 +735,20 @@ export function backupRepo(db: Storage): BackupStore {
         }
         if (section && section.refusals.length > 0) {
           tx.insert(installmentRefusals).values([...section.refusals]).run();
+        }
+        // The зобов'язання, after the транзакції, рахунки and категорії they name.
+        const owed = state.commitments;
+        for (const plan of owed?.plans ?? []) {
+          tx.insert(commitments).values(toCommitmentRow(plan)).run();
+        }
+        if (owed && owed.links.length > 0) {
+          tx.insert(commitmentDueLinks).values([...owed.links]).run();
+        }
+        if (owed && owed.marks.length > 0) {
+          tx.insert(commitmentDueMarks).values([...owed.marks]).run();
+        }
+        if (owed && owed.refusals.length > 0) {
+          tx.insert(commitmentRefusals).values([...owed.refusals]).run();
         }
         // The switch: the бекап's, or on for one written before розстрочки existed. `asked` is
         // left exactly as this phone had it — a row is written only where `enabled` must change.

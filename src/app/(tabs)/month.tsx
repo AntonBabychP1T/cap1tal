@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
@@ -16,12 +16,14 @@ import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
   categories as categoriesRepo,
+  commitments as commitmentsRepo,
   installments as installmentsRepo,
   limits as limitsRepo,
   rates as ratesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
+import { NO_COMMITMENT_FACTS } from '@/domain/commitments';
 import { NO_INSTALLMENT_FACTS } from '@/domain/installments';
 import { settleInstallmentsOnFocus } from '@/hooks/installment-ports';
 import { useHaptics } from '@/hooks/haptics-ports';
@@ -86,6 +88,8 @@ const UNSEEN = {
   month: undefined,
   installments: [],
   installmentFacts: NO_INSTALLMENT_FACTS,
+  commitments: [],
+  commitmentFacts: NO_COMMITMENT_FACTS,
 } as const;
 
 function MonthScreen() {
@@ -132,8 +136,9 @@ function MonthScreen() {
   const [stored, reload] = useReloadOnFocus(
     useCallback(
       () => {
-        // The платежі linked to what the debits already say, before the block below reads them
-        // (installments design D4). Writes nothing — and so moves no stamp — when nothing changed.
+        // The платежі of both plans linked to what the debits already say, before the block below
+        // reads them (installments design D4, commitments design D4). Writes nothing — and so moves
+        // no stamp — when nothing changed.
         settleInstallmentsOnFocus();
         return {
           // Every account, archived included: a month may hold a transfer touching one that has
@@ -157,9 +162,12 @@ function MonthScreen() {
           // The month this answer is for, so the body is replaced when the new month's numbers
           // arrive rather than one render earlier with the previous month's.
           month: shown,
-          // Every розстрочка: the «Розстрочки» block and «Вільно після розстрочок» read them.
+          // Every розстрочка and зобов'язання: «Платежі місяця» and «Вільно після зобов'язань»
+          // read them.
           installments: installmentsRepo.list(),
           installmentFacts: installmentsRepo.facts(),
+          commitments: commitmentsRepo.list(),
+          commitmentFacts: commitmentsRepo.facts(),
         };
       },
       [shown],
@@ -185,6 +193,7 @@ function MonthScreen() {
         now: new Date(),
         reach,
         installments: { installments: stored.installments, facts: stored.installmentFacts },
+        commitments: { commitments: stored.commitments, facts: stored.commitmentFacts },
       }),
     [reach, shown, stored],
   );
@@ -287,8 +296,8 @@ function MonthScreen() {
                       </ThemedText>
                     ) : null}
                     {/* Directly beneath залишилось when залишилось leads. */}
-                    {leading.key === 'left' && group.freeAfterInstallments ? (
-                      <FreeAfterInstallments line={group.freeAfterInstallments} />
+                    {leading.key === 'left' && group.freeAfterCommitments ? (
+                      <FreeAfterCommitments line={group.freeAfterCommitments} />
                     ) : null}
                   </View>
                 ) : null}
@@ -315,8 +324,8 @@ function MonthScreen() {
                         )}
                       </View>
                       {/* Directly beneath залишилось when витрачено leads and it is among these. */}
-                      {row.key === 'left' && group.freeAfterInstallments ? (
-                        <FreeAfterInstallments line={group.freeAfterInstallments} />
+                      {row.key === 'left' && group.freeAfterCommitments ? (
+                        <FreeAfterCommitments line={group.freeAfterCommitments} />
                       ) : null}
                     </Fragment>
                   ))}
@@ -366,54 +375,58 @@ function MonthScreen() {
           );
         })}
 
-        {/* The month's розстрочка платежі — also on an empty month, beside its statement. It
-            changes none of the six numbers; a tap opens «Розстрочки». */}
-        {model.installments ? (
+        {/* «Платежі місяця» — the платежі of розстрочки and зобов'язання, also on an empty month,
+            beside its statement. It changes none of the six numbers; each row opens its own plan. */}
+        {model.dues ? (
           <>
-            <SectionLabel>Розстрочки</SectionLabel>
-            <Tap
-              onPress={() => router.push('/manage/installments')}
-              accessibilityRole="button"
-              accessibilityLabel="Розстрочки">
-              <Card style={styles.breakdown}>
-                {model.installments.rows.map((row) => (
-                  <View key={row.key} style={styles.installment}>
-                    <View style={styles.line}>
-                      <ThemedText numberOfLines={1} style={styles.label}>
-                        {row.name}
-                      </ThemedText>
-                      <ThemedText tabular style={styles.amount}>
-                        {row.amount}
-                      </ThemedText>
-                    </View>
-                    <ThemedText
-                      type="small"
-                      themeColor={row.state === 'notFound' ? 'textDanger' : 'textSecondary'}>
-                      {`${row.date} · ${row.number} · ${row.stateLabel}`}
+            <SectionLabel>{model.dues.title}</SectionLabel>
+            <Card style={styles.breakdown}>
+              {model.dues.rows.map((row) => (
+                <Tap
+                  key={row.key}
+                  onPress={() => router.push(row.href as Href)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${row.name}, ${row.date}, ${row.stateLabel}`}
+                  style={styles.installment}>
+                  <View style={styles.line}>
+                    <ThemedText numberOfLines={1} style={styles.label}>
+                      {row.name}
+                    </ThemedText>
+                    <ThemedText tabular style={styles.amount}>
+                      {row.amount}
                     </ThemedText>
                   </View>
-                ))}
-                <Divider />
-                <View style={styles.line}>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Разом за місяць
+                  <ThemedText
+                    type="small"
+                    themeColor={row.state === 'notFound' ? 'textDanger' : 'textSecondary'}>
+                    {[row.date, row.number, row.stateLabel].filter(Boolean).join(' · ')}
                   </ThemedText>
-                  <ThemedText type="small" tabular style={styles.amount}>
-                    {model.installments.total}
-                  </ThemedText>
-                </View>
-                {model.installments.unpaid ? (
+                </Tap>
+              ))}
+              {model.dues.totals.length > 0 ? <Divider /> : null}
+              {model.dues.totals.map((total) => (
+                <Fragment key={total.currency}>
                   <View style={styles.line}>
                     <ThemedText type="small" themeColor="textSecondary">
-                      Ще не сплачено
+                      Разом за місяць
                     </ThemedText>
                     <ThemedText type="small" tabular style={styles.amount}>
-                      {model.installments.unpaid}
+                      {total.total}
                     </ThemedText>
                   </View>
-                ) : null}
-              </Card>
-            </Tap>
+                  {total.unpaid ? (
+                    <View style={styles.line}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Ще не сплачено
+                      </ThemedText>
+                      <ThemedText type="small" tabular style={styles.amount}>
+                        {total.unpaid}
+                      </ThemedText>
+                    </View>
+                  ) : null}
+                </Fragment>
+              ))}
+            </Card>
           </>
         ) : null}
 
@@ -441,8 +454,8 @@ function MonthScreen() {
   );
 }
 
-/** «Вільно після розстрочок» — a secondary line under залишилось, never the lead. */
-function FreeAfterInstallments({ line }: { line: { label: string; amount: string } }) {
+/** «Вільно після зобов'язань» — a secondary line under залишилось, never the lead. */
+function FreeAfterCommitments({ line }: { line: { label: string; amount: string } }) {
   return (
     <View style={styles.line}>
       <ThemedText type="small" themeColor="textSecondary">

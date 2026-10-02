@@ -5,19 +5,21 @@ import { todayIso } from './dates';
 import { reportFailure } from './journal';
 
 /**
- * The upkeep of the розстрочки (installments design D4): link what can be linked, then make the
+ * The upkeep of the plans (installments design D4, commitments design D4): link what can be linked
+ * — the розстрочки' платежі and the зобов'язання' in one write, the розстрочки first — then make the
  * phone hold exactly the нагадування про платіж that are still wanted. One function, called from
  * every place a reader or a warning depends on it — launch, the end of a background monobank run,
  * a restore, and the screens' focus — so there are four readers to keep in step instead of every
- * write path.
+ * write path. It keeps its name: renaming it would touch every caller for no behaviour.
  *
  * No React and no device module: the ports arrive as inputs, so `verify` proves it against the
  * in-memory notifications and a real database.
  */
 
-/** What the upkeep needs of storage — `src/db/installments-repo.ts`. */
+/** What the upkeep needs of storage — `src/db/plans-settle.ts` and `src/db/installments-repo.ts`. */
 export interface InstallmentUpkeepStorage {
-  settle(today: string): boolean;
+  /** Both plans settled in one write, the розстрочки first; what each changed. */
+  settlePlans(today: string): { readonly installments: boolean; readonly commitments: boolean };
   list(): readonly Installment[];
   facts(): InstallmentFacts;
   reminder(): { readonly enabled: boolean };
@@ -33,9 +35,11 @@ export interface InstallmentUpkeepPorts {
 export const INSTALLMENT_UPKEEP = 'installment-upkeep';
 
 /**
- * Settles the links and re-asserts the warnings. With `only: 'if-changed'` the re-assertion runs
- * only when settling changed something — what a screen's focus wants, which has nothing to
- * re-arrange otherwise. Says whether settling changed anything.
+ * Settles the links of both plans and re-asserts the warnings. The settle always runs — before the
+ * `only: 'if-changed'` return, so a screen's focus settles the зобов'язання even when the
+ * розстрочки had nothing to settle. With `only: 'if-changed'` the re-assertion runs only when the
+ * розстрочки' settle changed something — the warnings are theirs alone, and a screen's focus has
+ * nothing to re-arrange otherwise. Says whether settling changed anything, in either plan.
  */
 export async function settleAndReassert(
   ports: InstallmentUpkeepPorts,
@@ -43,9 +47,10 @@ export async function settleAndReassert(
 ): Promise<boolean> {
   const now = ports.now();
   const today = todayIso(now);
-  const changed = ports.storage.settle(today);
-  if (options.only === 'if-changed' && !changed) {
-    return false;
+  const settled = ports.storage.settlePlans(today);
+  const changed = settled.installments || settled.commitments;
+  if (options.only === 'if-changed' && !settled.installments) {
+    return changed;
   }
   await reassertInstallmentReminders(ports.notifications, {
     installments: ports.storage.list(),

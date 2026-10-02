@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { account, type Account, type AccountKind } from '../domain/account';
 import { namesById } from '../domain/category';
+import { NO_COMMITMENT_FACTS, type Commitment, type CommitmentFacts } from '../domain/commitments';
 import { NO_INSTALLMENT_FACTS, type Installment, type InstallmentFacts } from '../domain/installments';
 import type { CategoryLimit } from '../domain/limits';
 import { money, type CurrencyCode } from '../domain/money';
@@ -685,9 +686,9 @@ describe('the breakdown sizes its bars against the month’s largest катег�
   });
 });
 
-describe('the розстрочки on Місяць', () => {
+describe('month-screen — Платежі місяця and Вільно після зобов\'язань', () => {
   const october = new Date(2026, 9, 10, 12);
-  const NBSP = ' ';
+  const NBSP = '\u00A0';
   const iphone: Installment = {
     id: 'i-iphone',
     name: 'iPhone',
@@ -699,6 +700,7 @@ describe('the розстрочки on Місяць', () => {
     paidBefore: 4,
     recordedAt: 1,
   };
+  /** An очікується платіж of 500,00 ₴ on 20 жовт. */
   const vacuum: Installment = {
     id: 'i-vacuum',
     name: 'Пилосос',
@@ -710,139 +712,233 @@ describe('the розстрочки on Місяць', () => {
     paidBefore: 0,
     recordedAt: 2,
   };
+  const rent: Commitment = {
+    id: 'c-rent',
+    name: 'Оренда',
+    amount: 1_500_000,
+    currency: 'UAH',
+    periodicity: 'monthly',
+    firstDue: '2026-10-10',
+    debitAccountId: 'card',
+    recordedAt: 3,
+  };
+  const chatgpt: Commitment = {
+    id: 'c-gpt',
+    name: 'ChatGPT',
+    amount: 2_000,
+    currency: 'USD',
+    periodicity: 'monthly',
+    firstDue: '2026-10-12',
+    debitAccountId: 'usd-card',
+    recordedAt: 4,
+  };
   const debit = expense(100_000, 'UAH', UNCATEGORISED_CATEGORY_ID, '2026-10-05');
   const linked: InstallmentFacts = {
     ...NO_INSTALLMENT_FACTS,
     links: [{ installmentId: iphone.id, number: 5, transactionId: debit.id }],
   };
 
-  const october2026 = (
-    transactions: Transaction[],
-    installments: readonly Installment[],
-    facts: InstallmentFacts = linked,
-    month = '2026-10',
-    now = october,
-  ) =>
+  const show = (input: {
+    transactions: Transaction[];
+    installments?: readonly Installment[];
+    facts?: InstallmentFacts;
+    commitments?: readonly Commitment[];
+    commitmentFacts?: CommitmentFacts;
+    month?: string;
+    now?: Date;
+  }) =>
     monthViewModel({
-      month,
+      month: input.month ?? '2026-10',
       accounts,
-      transactions,
+      transactions: input.transactions,
       rates: [],
       categoryNames,
       limits: [],
       previousTransactions: [],
-      now,
-      installments: { installments, facts },
+      now: input.now ?? october,
+      installments: { installments: input.installments ?? [], facts: input.facts ?? linked },
+      commitments: { commitments: input.commitments ?? [], facts: input.commitmentFacts ?? NO_COMMITMENT_FACTS },
     });
 
   it('Scenario: October shows its two платежі', () => {
-    const model = october2026([debit, income(3_000_000, 'UAH', '2026-10-01')], [iphone, vacuum]);
-    expect(model.installments).toEqual({
+    const model = show({ transactions: [debit, income(3_000_000, 'UAH', '2026-10-01')], installments: [iphone], commitments: [rent] });
+    expect(model.dues).toEqual({
+      title: 'Платежі місяця',
       rows: [
         {
-          key: 'i-iphone#5',
+          key: 'installment:i-iphone#5',
           name: 'iPhone',
           number: 'платіж 5 з 10',
           date: '5 жовт.',
           amount: `1${NBSP}000,00${NBSP}₴`,
           state: 'paid',
           stateLabel: 'сплачено',
+          href: '/installment/i-iphone',
         },
         {
-          key: 'i-vacuum#1',
-          name: 'Пилосос',
-          number: 'платіж 1 з 3',
-          date: '20 жовт.',
-          amount: `500,00${NBSP}₴`,
+          key: 'commitment:c-rent#1',
+          name: 'Оренда',
+          number: null,
+          date: '10 жовт.',
+          amount: `15${NBSP}000,00${NBSP}₴`,
           state: 'expected',
           stateLabel: 'очікується',
+          href: '/commitment/c-rent',
         },
       ],
-      total: `1${NBSP}500,00${NBSP}₴`,
-      unpaid: `500,00${NBSP}₴`,
+      totals: [{ currency: 'UAH', total: `16${NBSP}000,00${NBSP}₴`, unpaid: `15${NBSP}000,00${NBSP}₴` }],
     });
     // Витрачено is the month's транзакції alone.
     expect(amountFor(model, 'UAH', 'spent')).toBe(`1${NBSP}000,00 UAH`);
   });
 
+  it('Scenario: Every currency totals on its own', () => {
+    const internet: Commitment = { ...rent, id: 'c-internet', name: 'Інтернет', amount: 30_000, firstDue: '2026-10-05' };
+    const model = show({ transactions: [], commitments: [internet, chatgpt], now: new Date(2026, 9, 2, 12) });
+    expect(model.dues?.totals).toEqual([
+      { currency: 'UAH', total: `300,00${NBSP}₴`, unpaid: `300,00${NBSP}₴` },
+      { currency: 'USD', total: `20,00 USD`, unpaid: `20,00 USD` },
+    ]);
+    expect(model.dues?.rows.map((r) => r.amount)).toEqual([`300,00${NBSP}₴`, '20,00 USD']);
+  });
+
+  it('Scenario: A skipped платіж is listed but not totalled', () => {
+    const netflix: Commitment = { ...rent, id: 'c-netflix', name: 'Netflix', amount: 29_900, firstDue: '2026-10-15' };
+    const model = show({
+      transactions: [],
+      commitments: [netflix],
+      commitmentFacts: { ...NO_COMMITMENT_FACTS, marks: [{ commitmentId: netflix.id, number: 1, kind: 'skipped' }] },
+    });
+    expect(model.dues?.rows).toEqual([
+      expect.objectContaining({ name: 'Netflix', state: 'skipped', stateLabel: 'пропущено' }),
+    ]);
+    expect(model.dues?.totals).toEqual([]);
+  });
+
+  it('Scenario: The block leads to the screen', () => {
+    const model = show({ transactions: [debit], installments: [iphone] });
+    expect(model.dues?.rows[0]).toMatchObject({ name: 'iPhone', href: '/installment/i-iphone' });
+  });
+
+  it("Scenario: A платіж of a зобов'язання leads to its зобов'язання", () => {
+    const model = show({ transactions: [], commitments: [rent] });
+    expect(model.dues?.rows[0]).toMatchObject({ name: 'Оренда', href: '/commitment/c-rent' });
+  });
+
   it('Scenario: An empty month still shows what it owes', () => {
     const november = new Date(2026, 10, 2, 12);
-    const model = october2026([], [iphone], NO_INSTALLMENT_FACTS, '2026-11', november);
+    const model = show({ transactions: [], installments: [iphone], facts: NO_INSTALLMENT_FACTS, month: '2026-11', now: november });
     expect(model.emptyMessage).toBe('У цьому місяці ще нічого не записано.');
-    expect(model.installments?.rows).toEqual([
+    expect(model.dues?.rows).toEqual([
       expect.objectContaining({ name: 'iPhone', date: '5 лист.', state: 'expected' }),
     ]);
   });
 
   it('Scenario: A month without платежі has no block', () => {
-    const model = october2026([debit], [iphone], linked, '2026-05', october);
-    expect(model.installments).toBeNull();
+    expect(show({ transactions: [debit], installments: [iphone], commitments: [rent], month: '2026-05' }).dues).toBeNull();
     // Nor does a закрито платіж make one.
-    const closed = october2026([], [{ ...vacuum, closedOn: '2026-10-01' }], NO_INSTALLMENT_FACTS);
-    expect(closed.installments).toBeNull();
+    const closed = show({ transactions: [], installments: [{ ...vacuum, closedOn: '2026-10-01' }], facts: NO_INSTALLMENT_FACTS });
+    expect(closed.dues).toBeNull();
+    // Nor a зобов'язання stopped before the month.
+    expect(show({ transactions: [], commitments: [{ ...rent, firstDue: '2026-09-10', stoppedOn: '2026-09-30' }] }).dues).toBeNull();
+  });
+
+  it('orders the rows by дата, then the plan recorded first, then a розстрочка before a зобов\'язання', () => {
+    const sameDay: Commitment = { ...rent, firstDue: '2026-10-20', recordedAt: vacuum.recordedAt };
+    const model = show({ transactions: [], installments: [vacuum], facts: NO_INSTALLMENT_FACTS, commitments: [sameDay] });
+    expect(model.dues?.rows.map((r) => r.key)).toEqual(['installment:i-vacuum#1', 'commitment:c-rent#1']);
   });
 
   it('Scenario: What is free after the платіж still owed', () => {
     // Залишилось 20 000,00: дохід 21 000,00 less the 1 000,00 debit of «iPhone».
-    const model = october2026([debit, income(2_100_000, 'UAH', '2026-10-01')], [iphone, vacuum]);
+    const model = show({
+      transactions: [debit, income(2_100_000, 'UAH', '2026-10-01')],
+      installments: [iphone, vacuum],
+      commitments: [rent],
+    });
     const uah = groupOf(model, 'UAH');
     expect(uah.lead).toBe('left');
     expect(amountFor(model, 'UAH', 'left')).toBe(`20${NBSP}000,00 UAH`);
-    expect(uah.freeAfterInstallments).toEqual({
-      label: 'Вільно після розстрочок',
-      amount: `19${NBSP}500,00 UAH`,
+    expect(uah.freeAfterCommitments).toEqual({
+      label: "Вільно після зобов'язань",
+      amount: `4${NBSP}500,00 UAH`,
     });
+  });
+
+  it('Scenario: A USD group gets its own reading', () => {
+    const model = show({
+      transactions: [income(50_000, 'USD', '2026-10-01'), income(100_000, 'UAH', '2026-10-01')],
+      commitments: [chatgpt],
+    });
+    expect(groupOf(model, 'USD').freeAfterCommitments?.amount).toBe('480,00 USD');
+    expect(groupOf(model, 'UAH').freeAfterCommitments).toBeUndefined();
   });
 
   it('Scenario: Before the first дохід it sits beneath залишилось', () => {
     const spent = expense(165_000, 'UAH', 'groceries', '2026-10-02');
-    const model = october2026([debit, spent], [iphone, vacuum]);
+    const model = show({ transactions: [debit, spent], installments: [iphone, vacuum] });
     const uah = groupOf(model, 'UAH');
     expect(uah.lead).toBe('spent');
     expect(amountFor(model, 'UAH', 'left')).toBe(`−2${NBSP}650,00 UAH`);
-    expect(uah.freeAfterInstallments?.amount).toBe(`−3${NBSP}150,00 UAH`);
+    expect(uah.freeAfterCommitments?.amount).toBe(`−3${NBSP}150,00 UAH`);
   });
 
   it('Scenario: No UAH group, no reading', () => {
-    const model = october2026([expense(1_000, 'USD', UNCATEGORISED_CATEGORY_ID, '2026-10-02')], [vacuum], NO_INSTALLMENT_FACTS);
+    const model = show({
+      transactions: [expense(1_000, 'USD', UNCATEGORISED_CATEGORY_ID, '2026-10-02')],
+      installments: [vacuum],
+      facts: NO_INSTALLMENT_FACTS,
+    });
     expect(model.groups.map((g) => g.currency)).toEqual(['USD']);
-    expect(model.groups.every((g) => g.freeAfterInstallments === undefined)).toBe(true);
-    expect(model.installments?.unpaid).toBe(`500,00${NBSP}₴`);
+    expect(model.groups.every((g) => g.freeAfterCommitments === undefined)).toBe(true);
+    expect(model.dues?.totals).toEqual([{ currency: 'UAH', total: `500,00${NBSP}₴`, unpaid: `500,00${NBSP}₴` }]);
+  });
+
+  it('Scenario: No USD group, no USD reading', () => {
+    const model = show({ transactions: [income(100_000, 'UAH', '2026-10-01')], commitments: [chatgpt] });
+    expect(model.groups.map((g) => g.currency)).toEqual(['UAH']);
+    expect(model.groups.every((g) => g.freeAfterCommitments === undefined)).toBe(true);
+    expect(model.dues?.totals).toEqual([{ currency: 'USD', total: '20,00 USD', unpaid: '20,00 USD' }]);
   });
 
   it('Scenario: Not for a past month', () => {
-    const september: Installment = { ...vacuum, firstDue: '2026-09-20' };
-    const model = october2026(
-      [expense(1_000, 'UAH', 'groceries', '2026-09-02'), income(100_000, 'UAH', '2026-09-01')],
-      [september],
-      NO_INSTALLMENT_FACTS,
-      '2026-09',
-    );
-    expect(model.installments?.rows[0]?.state).toBe('notFound');
-    expect(groupOf(model, 'UAH').freeAfterInstallments).toBeUndefined();
+    const september: Commitment = { ...rent, firstDue: '2026-09-10' };
+    const model = show({
+      transactions: [expense(1_000, 'UAH', 'groceries', '2026-09-02'), income(100_000, 'UAH', '2026-09-01')],
+      commitments: [september],
+      month: '2026-09',
+    });
+    expect(model.dues?.rows[0]?.state).toBe('notFound');
+    expect(groupOf(model, 'UAH').freeAfterCommitments).toBeUndefined();
   });
 
   it('Scenario: Nothing owed hides it', () => {
-    const model = october2026(
-      [debit, income(2_100_000, 'UAH', '2026-10-01')],
-      [iphone, vacuum],
-      { ...linked, marks: [{ installmentId: vacuum.id, number: 1 }] },
-    );
-    expect(groupOf(model, 'UAH').freeAfterInstallments).toBeUndefined();
-    expect(model.installments?.unpaid).toBeNull();
+    const model = show({
+      transactions: [debit, income(2_100_000, 'UAH', '2026-10-01')],
+      installments: [iphone, vacuum],
+      facts: { ...linked, marks: [{ installmentId: vacuum.id, number: 1 }] },
+      commitments: [rent],
+      commitmentFacts: { ...NO_COMMITMENT_FACTS, marks: [{ commitmentId: rent.id, number: 1, kind: 'skipped' }] },
+    });
+    expect(groupOf(model, 'UAH').freeAfterCommitments).toBeUndefined();
+    expect(model.dues?.totals).toEqual([{ currency: 'UAH', total: `1${NBSP}500,00${NBSP}₴`, unpaid: null }]);
   });
 });
 
-describe('the Місяць screen wiring of the розстрочки', () => {
+describe('the Місяць screen wiring of the платежі', () => {
   const screen = readFileSync(new URL('../app/(tabs)/month.tsx', import.meta.url), 'utf8');
 
   it('Scenario: The block leads to the screen', () => {
-    expect(screen).toContain("router.push('/manage/installments')");
-    expect(screen).toContain('model.installments');
+    // Each row opens its own plan; the block-level tap is gone.
+    expect(screen).toContain('router.push(row.href');
+    expect(screen).toContain('model.dues');
+    expect(screen).not.toContain("router.push('/manage/installments')");
   });
 
-  it('settles the links before it reads them, and draws the reading under залишилось', () => {
+  it('settles the links of both plans before it reads them, and draws the reading under залишилось', () => {
     expect(screen.indexOf('settleInstallmentsOnFocus()')).toBeLessThan(screen.indexOf('installmentsRepo.list()'));
-    expect(screen.match(/<FreeAfterInstallments /g)).toHaveLength(2);
+    expect(screen.indexOf('settleInstallmentsOnFocus()')).toBeLessThan(screen.indexOf('commitmentsRepo.list()'));
+    expect(screen.match(/<FreeAfterCommitments /g)).toHaveLength(2);
   });
 });
+

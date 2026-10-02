@@ -29,6 +29,7 @@ import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { hapticsPreferenceRepo } from './haptics-preference-repo';
 import { importRepo } from './import-repo';
+import { commitmentsRepo } from './commitments-repo';
 import { installmentsRepo } from './installments-repo';
 import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
@@ -2059,6 +2060,50 @@ describe('the розстрочки in the snapshot', () => {
     } finally {
       target.close();
     }
+  });
+});
+
+describe("commitments — the зобов'язання in the snapshot", () => {
+  let storage: TestStorage;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReservedCategories(storage.db);
+    accountsRepo(storage.db).save(card);
+  });
+  afterEach(() => storage.close());
+
+  const plan = (id: string, name: string) => ({
+    id,
+    name,
+    amount: 30_000,
+    currency: 'UAH',
+    periodicity: 'monthly' as const,
+    firstDue: '2026-10-05',
+    debitAccountId: 'card',
+    recordedAt: STORED_AT.getTime(),
+  });
+
+  it("Scenario: Replacing the state replaces the зобов'язання", () => {
+    const commitments = commitmentsRepo(storage.db);
+    commitments.save(plan('c-internet', 'Інтернет'));
+    commitments.mark('c-internet', 1, 'skipped');
+    const snapshot = backupRepo(storage.db).snapshot();
+    expect(snapshot.commitments?.plans.map((p) => p.name)).toEqual(['Інтернет']);
+
+    backupRepo(storage.db).replaceAll({
+      ...snapshot,
+      commitments: { plans: [plan('c-rent', 'Оренда')], links: [], marks: [], refusals: [] },
+    });
+
+    expect(commitments.list().map((c) => c.name)).toEqual(['Оренда']);
+    expect(commitments.facts()).toEqual({ links: [], marks: [], refusals: [] });
+
+    // A snapshot naming none replaces them with none.
+    const { commitments: _none, ...older } = snapshot;
+    backupRepo(storage.db).replaceAll(older);
+    expect(commitments.list()).toEqual([]);
+    expect(backupRepo(storage.db).snapshot().commitments).toBeUndefined();
   });
 });
 
