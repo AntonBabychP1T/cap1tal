@@ -38,6 +38,7 @@ import { ratesRepo } from './rates-repo';
 import { receiptsRepo } from './receipts-repo';
 import { remindersRepo } from './reminders-repo';
 import { reportingRepo } from './reporting-repo';
+import { ruleTemplateRepo } from './rule-template-repo';
 import { rulesRepo } from './rules-repo';
 import {
   challengeDecisions,
@@ -2058,5 +2059,99 @@ describe('the розстрочки in the snapshot', () => {
     } finally {
       target.close();
     }
+  });
+});
+
+describe('the шаблон mapping travels, and a restore replaces it', () => {
+  let source: TestStorage;
+  let target: TestStorage;
+
+  beforeEach(() => {
+    source = openTestDb();
+    seedWorld(source.db);
+    target = openTestDb();
+  });
+  afterEach(() => {
+    source.close();
+    target.close();
+  });
+
+  it('Scenario: The mapping survives the round trip', async () => {
+    const choices = ruleTemplateRepo(source.db);
+    choices.choose('groceries', { kind: 'category', categoryId: 'food' }, MADE_AT);
+    choices.choose('habits', { kind: 'off' }, MADE_AT);
+
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+
+    // Every other базова категорія is carried as nothing, so it follows its типова категорія.
+    expect(ruleTemplateRepo(target.db).choices()).toEqual(
+      new Map([
+        ['groceries', { kind: 'category', categoryId: 'food' }],
+        ['habits', { kind: 'off' }],
+      ]),
+    );
+  });
+
+  it('Scenario: A відновлення replaces the mapping', async () => {
+    ruleTemplateRepo(source.db).choose('groceries', { kind: 'category', categoryId: 'food' }, MADE_AT);
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+
+    seedWorld(target.db);
+    const held = ruleTemplateRepo(target.db);
+    for (const groupId of ['home', 'pets', 'books', 'travel', 'habits']) {
+      held.choose(groupId, { kind: 'off' }, MADE_AT);
+    }
+    // `food` is named by a choice here, with `restrict`: without the delete that goes before the
+    // категорії, this restore would fail whole.
+    held.choose('gifts', { kind: 'category', categoryId: 'food' }, MADE_AT);
+
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+    expect(ruleTemplateRepo(target.db).choices()).toEqual(
+      new Map([['groceries', { kind: 'category', categoryId: 'food' }]]),
+    );
+  });
+
+  it('Scenario: A бекап written before the mapping existed restores the defaults', async () => {
+    ruleTemplateRepo(source.db).choose('groceries', { kind: 'off' }, MADE_AT);
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const body = JSON.parse(snapshot.bytes) as { data: Record<string, unknown>; checksum: string };
+    expect(body.data.templateChoices).toEqual([{ groupId: 'groceries', categoryId: null }]);
+    delete body.data.templateChoices;
+    body.checksum = crc32(canonicalJson(body.data));
+    ruleTemplateRepo(target.db).choose('home', { kind: 'off' }, MADE_AT);
+
+    expect(await restoreBackup(backupRepo(target.db), JSON.stringify(body))).toBe('ok');
+    expect(ruleTemplateRepo(target.db).choices()).toEqual(new Map());
+  });
+
+  it('carries nothing for a device where no базова категорія was touched', () => {
+    expect(backupRepo(source.db).snapshot().templateChoices).toBeUndefined();
+  });
+
+  it('Scenario: A choice naming an absent категорія is refused whole', async () => {
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const body = JSON.parse(snapshot.bytes) as { data: Record<string, unknown>; checksum: string };
+    body.data.templateChoices = [{ groupId: 'groceries', categoryId: 'nowhere' }];
+    body.checksum = crc32(canonicalJson(body.data));
+    seedWorld(target.db);
+    const before = backupRepo(target.db).snapshot();
+
+    const refusal = await restoreBackup(backupRepo(target.db), JSON.stringify(body));
+
+    expect(refusal !== 'ok' && isRefusal(refusal) && refusal.kind).toBe('inconsistent');
+    expect(backupRepo(target.db).snapshot()).toEqual(before);
+  });
+
+  it('keeps a choice for a базова категорія this app does not carry', async () => {
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const body = JSON.parse(snapshot.bytes) as { data: Record<string, unknown>; checksum: string };
+    body.data.templateChoices = [{ groupId: 'from-a-newer-app', categoryId: 'food' }];
+    body.checksum = crc32(canonicalJson(body.data));
+
+    expect(await restoreBackup(backupRepo(target.db), JSON.stringify(body))).toBe('ok');
+    expect(ruleTemplateRepo(target.db).choices()).toEqual(
+      new Map([['from-a-newer-app', { kind: 'category', categoryId: 'food' }]]),
+    );
   });
 });

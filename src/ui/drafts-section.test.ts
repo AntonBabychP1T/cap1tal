@@ -135,7 +135,7 @@ describe('answering a чернетка', () => {
 
   const ports = () => ({
     storage: repo,
-    rules: () => rules,
+    categorisation: () => ({ rules }),
     newId: () => `t-${(ids += 1)}`,
     now: () => storedAt,
   });

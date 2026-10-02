@@ -20,12 +20,14 @@ import {
   notifications as notificationsRepo,
   reminders as remindersRepo,
   reporting as reportingRepo,
-  rules as rulesRepo,
+  categorisationContext,
+  ruleTemplate,
 } from '@/db/repos';
 import { fillMissingCategoryIcons, seedStarterSet } from '@/db/seed';
 import { judgeProgressLater, judgeProgressNow } from '@/hooks/progress-ports';
 import { deviceIdle } from '@/platform/idle-device';
 import { startLaunchChores } from '@/ui/launch-chores';
+import { sweepNewTemplate } from '@/ui/rule-template-screen';
 import { useOnForeground } from '@/hooks/use-on-foreground';
 import { useStorageMigrations } from '@/hooks/use-storage-migrations';
 import {
@@ -261,7 +263,7 @@ export default function RootLayout() {
       const report = await drainCaptures({
         capture: notificationCapture,
         storage: notificationsRepo,
-        rules: () => rulesRepo.list(),
+        categorisation: categorisationContext,
         newId,
         dateOf: dateOfEpochMs,
         now: () => new Date(),
@@ -448,6 +450,8 @@ export default function RootLayout() {
    *   so running it on every open costs one statement and can never undo a rename or an archive —
    *   see src/db/seed.ts. On a genuinely fresh install the very first paint can therefore show only
    *   the reserved rows; nothing can be recorded at that moment anyway (no рахунок exists yet).
+   * - The open-time розбір of «Без категорії» under a шаблон version not yet swept — after the seed,
+   *   once per version (rule-template design T5).
    * - The прогрес, judged once when the app starts. On a phone that already holds two years of
    *   history this earns everything the history proves, in one go and dated where the history
    *   dates it; what it earns is announced, so Головний shows it without being left. It is the only
@@ -475,6 +479,17 @@ export default function RootLayout() {
             seedStarterSet(db);
             fillMissingCategoryIcons(db);
           },
+        },
+        // After the seed, so the типові категорії a fresh device lands on exist: the first open
+        // under a шаблон version this device has not swept clears what it can from «Без категорії»,
+        // once (categorisation-rules, "A newly arrived шаблон sweeps «Без категорії» once").
+        {
+          name: 'rule-template-sweep',
+          run: () =>
+            sweepNewTemplate({
+              due: () => ruleTemplate.sweepDue(),
+              sweep: () => ruleTemplate.sweepIfTemplateChanged(new Date()),
+            }),
         },
         { name: 'progress-evaluate', run: judgeProgressNow },
         { name: 'notification-drain', run: collect },
@@ -662,6 +677,10 @@ export default function RootLayout() {
             <Stack.Screen
               name="manage/rules"
               options={{ presentation: 'card', animation: animation('manage/rules') }}
+            />
+            <Stack.Screen
+              name="manage/rule-template"
+              options={{ presentation: 'card', animation: animation('manage/rule-template') }}
             />
             <Stack.Screen
               name="manage/monobank"

@@ -150,7 +150,7 @@ describe('what the app writes into the журнал about its own work', () => {
         seenFingerprints: () => new Set<string>(),
         commitOutcome: () => undefined,
       },
-      rules: () => [],
+      categorisation: () => ({ rules: [] }),
       newId: () => 'id-1',
       dateOf: () => '2026-09-02' as never,
       now: () => new Date(2026, 8, 2, 12),

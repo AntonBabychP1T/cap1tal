@@ -21,6 +21,8 @@ import { ratesRepo } from './rates-repo';
 import { receiptsRepo } from './receipts-repo';
 import { remindersRepo } from './reminders-repo';
 import { reportingRepo } from './reporting-repo';
+import { categorisationContext as categorisationContextIn } from './categorisation';
+import { ruleTemplateRepo } from './rule-template-repo';
 import { rulesRepo } from './rules-repo';
 import { sourcesRepo } from './sources-repo';
 import { stampedMemo, storageStamp, storedHistory as storedHistoryRepo } from './stored-history';
@@ -68,6 +70,14 @@ export const rates = ratesRepo(db);
 export const categories = categoriesRepo(db);
 export const sources = sourcesRepo(db);
 export const rules = rulesRepo(db);
+/** The owner's mapping of the шаблон категоризації onto their категорії, and its open-time розбір. */
+export const ruleTemplate = ruleTemplateRepo(db);
+/**
+ * What decides a категорія — the правила and the шаблон — read fresh. Every caller that decides
+ * one takes this rather than `rules.list()`, which would silently lose the шаблон (rule-template
+ * design T4).
+ */
+export const categorisationContext = () => categorisationContextIn(db);
 /** The one-time Saldo import: the marker, and the atomic commit of a plan. */
 export const imports = importRepo(db);
 /** monobank's own side: the accounts a token showed, their links, cursors and imported ids. */

@@ -208,7 +208,7 @@ describe('the one place a sync is started', () => {
         tokenStore: over.tokenStore ?? inMemoryMonobankTokenStore({ token: TOKEN }),
         fetch: fetchImpl,
         storage: repo,
-        rules: () => [],
+        categorisation: () => ({ rules: [] }),
         nowMs: () => RUN_AT,
         now: () => new Date(RUN_AT),
         dateOf: (unixSeconds) => new Date(unixSeconds * 1000).toISOString().slice(0, 10) as IsoDate,
@@ -299,7 +299,7 @@ describe('the one place a sync is started', () => {
         ...breaking,
         sync: {
           ...breaking.sync,
-          rules: () => {
+          categorisation: () => {
             throw new Error('сховище не відповідає');
           },
         },

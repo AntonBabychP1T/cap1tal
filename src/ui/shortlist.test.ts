@@ -262,7 +262,7 @@ describe('the picker itself is wired to the rule', () => {
   it('Scenario: A picker shows at most a few choices and names what is behind the rest', () => {
     // The collapsed branch draws `shortlist` and gates the offer on `allOffer` — it may not
     // count, slice or filter on its own.
-    expect(picker).toContain('shortlist(rows, { recentIds, chosenIds })');
+    expect(picker).toContain('shortlist(rows, { recentIds, chosenIds, selectedId: selected })');
     expect(picker).toContain('allOffer(rows, noun)');
     expect(picker).toContain('{offer ? (');
   });
@@ -408,5 +408,23 @@ describe('the screens are wired to the rule', () => {
     expect(homeScreen).toContain('c.id !== UNCATEGORISED_CATEGORY_ID');
     // Read one deeper than the picker draws, so dropping «Без категорії» cannot cost a recent.
     expect(homeScreen).toContain('recentlyUsed(stored.latest, PICKER_SIZE + 1)');
+  });
+});
+
+describe('shortlist — a choice the form made, not the owner', () => {
+  const rows = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, name: `Категорія ${i}` }));
+
+  it('Scenario: The proposed категорія is one tap from being changed — a proposal outside the five is drawn', () => {
+    // The form proposed c9 from the typed опис (a правило or the шаблон): it was never tapped and
+    // the picker did not open on it, yet it is the chosen категорія and must be visible.
+    const shown = shortlist(rows, { recentIds: [], chosenIds: [], selectedId: 'c9' });
+    expect(shown.map((r) => r.id)).toEqual(['c0', 'c1', 'c2', 'c3', 'c4', 'c9']);
+  });
+
+  it('draws a proposal already among the five only once, and nothing for none', () => {
+    expect(shortlist(rows, { recentIds: [], selectedId: 'c2' }).map((r) => r.id)).toEqual([
+      'c0', 'c1', 'c2', 'c3', 'c4',
+    ]);
+    expect(shortlist(rows, { recentIds: [], chosenIds: ['c7'], selectedId: 'c7' })).toHaveLength(6);
   });
 });

@@ -8,9 +8,13 @@ import {
   matchCategory,
   matchRule,
   proposeMerchantPattern,
+  resolveCategory,
+  resolveTarget,
   sweepUncategorised,
+  templateRules,
   type Rule,
 } from './rules';
+import { TEMPLATE_GROUPS } from './rule-template';
 import {
   UNCATEGORISED_CATEGORY_ID,
   expenseByDefault,
@@ -403,7 +407,7 @@ describe('sweepUncategorised', () => {
       storedExpense({ id: 't2', description: 'АТБ 12' }),
       storedExpense({ id: 't3', description: 'НОВИЙ ЗАКЛАД' }),
     ];
-    expect(sweepUncategorised([atb], stored, accounts)).toEqual([
+    expect(sweepUncategorised({ rules: [atb] }, stored, accounts)).toEqual([
       { kind: 'category', id: 't1', categoryId: 'groceries' },
       { kind: 'category', id: 't2', categoryId: 'groceries' },
     ]);
@@ -411,7 +415,7 @@ describe('sweepUncategorised', () => {
 
   it('Scenario: A категорія the owner chose is never taken away', () => {
     const stored = [storedExpense({ id: 't1', categoryId: 'eating-out', description: 'АТБ 421' })];
-    expect(sweepUncategorised([atb], stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [atb] }, stored, accounts)).toEqual([]);
   });
 
   it('Scenario: A more specific правило keeps the last word during the sweep', () => {
@@ -419,7 +423,7 @@ describe('sweepUncategorised', () => {
     // of whatever правило was written last.
     const longer = rule({ id: 'r2', merchant: 'атб 421', categoryId: 'eating-out' });
     const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
-    expect(sweepUncategorised([atb, longer], stored, accounts)).toEqual([
+    expect(sweepUncategorised({ rules: [atb, longer] }, stored, accounts)).toEqual([
       { kind: 'category', id: 't1', categoryId: 'eating-out' },
     ]);
   });
@@ -428,19 +432,19 @@ describe('sweepUncategorised', () => {
     // A stored транзакція keeps no MCC, so there is nothing for such a правило to match on.
     const byMcc = rule({ id: 'r2', mcc: 5411, categoryId: 'groceries' });
     const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
-    expect(sweepUncategorised([byMcc], stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [byMcc] }, stored, accounts)).toEqual([]);
   });
 
   it('Scenario: A витрата with no опис is not swept', () => {
     const stored = [storedExpense({ id: 't1' })];
-    expect(sweepUncategorised([atb], stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [atb] }, stored, accounts)).toEqual([]);
   });
 
   it('Scenario: A правило targeting «Без категорії» moves nothing', () => {
     // Creating one is refused, but a restore writes the rules table directly.
     const intoTheGap = rule({ id: 'r2', merchant: 'атб', categoryId: UNCATEGORISED_CATEGORY_ID });
     const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
-    expect(sweepUncategorised([intoTheGap], stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [intoTheGap] }, stored, accounts)).toEqual([]);
   });
 
   it('Scenario: A повернення is not swept', () => {
@@ -453,7 +457,7 @@ describe('sweepUncategorised', () => {
       categoryId: UNCATEGORISED_CATEGORY_ID,
       description: 'АТБ 421',
     });
-    expect(sweepUncategorised([atb], [returned], accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [atb] }, [returned], accounts)).toEqual([]);
   });
 
   it('A дохід, a переказ and a коригування are never moved', () => {
@@ -483,7 +487,7 @@ describe('sweepUncategorised', () => {
       amount: money(-12550, 'UAH'),
       description: 'АТБ 421',
     };
-    expect(sweepUncategorised([atb], [income, moved, correction], accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [atb] }, [income, moved, correction], accounts)).toEqual([]);
   });
 
   it('countUncategorisedExpenses counts the pile, not everything stored', () => {
@@ -501,7 +505,7 @@ describe('sweepUncategorised', () => {
     const stored = [
       storedExpense({ id: 't1', accountId: platinum.id, description: 'Округлення балансу «Резерв»' }),
     ];
-    expect(sweepUncategorised([roundUp], stored, accounts)).toEqual([
+    expect(sweepUncategorised({ rules: [roundUp] }, stored, accounts)).toEqual([
       { kind: 'transfer', id: 't1', toAccountId: reserve.id },
     ]);
   });
@@ -511,7 +515,7 @@ describe('sweepUncategorised', () => {
     const stored = [
       storedExpense({ id: 't1', accountId: reserve.id, description: 'Округлення балансу «Резерв»' }),
     ];
-    expect(sweepUncategorised([roundUp], stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [roundUp] }, stored, accounts)).toEqual([]);
   });
 
   it('Scenario: A правило-переказ does not take a витрата out of a chosen категорія', () => {
@@ -524,7 +528,7 @@ describe('sweepUncategorised', () => {
         description: 'Округлення балансу «Резерв»',
       }),
     ];
-    expect(sweepUncategorised([roundUp], stored, accounts)).toEqual([]);
+    expect(sweepUncategorised({ rules: [roundUp] }, stored, accounts)).toEqual([]);
   });
 
   it('a transfer move keeps id and toAccountId; date, опис and сума come from the original витрата', () => {
@@ -534,9 +538,169 @@ describe('sweepUncategorised', () => {
       accountId: platinum.id,
       description: 'округлення 479',
     });
-    const [move] = sweepUncategorised([roundUp], [original], accounts);
+    const [move] = sweepUncategorised({ rules: [roundUp] }, [original], accounts);
     expect(move).toEqual({ kind: 'transfer', id: original.id, toAccountId: reserve.id });
     // The rest of the leg — date, опис and сума on both legs — is the repository's job, built from
     // the original транзакція this move names; the domain decision carries only the destination.
+  });
+});
+
+/** Every базова категорія at its типова категорія — an untouched device. */
+const defaults = (): Map<string, string> =>
+  new Map(TEMPLATE_GROUPS.map((g) => [g.id, g.defaultCategoryId]));
+
+describe('templateRules', () => {
+  it('turns every pattern and MCC of a mapped базова категорія into a rule on its target', () => {
+    const rules = templateRules(new Map([['groceries', 'yizha']]));
+    const groceries = TEMPLATE_GROUPS.find((g) => g.id === 'groceries')!;
+    expect(rules).toHaveLength(groceries.merchants.length + groceries.mcc.length);
+    expect(rules.every((r) => r.target.kind === 'category' && r.target.categoryId === 'yizha')).toBe(
+      true,
+    );
+    expect(new Set(rules.map((r) => r.id)).size).toBe(rules.length);
+  });
+
+  it('gives a базова категорія absent from the targets no rule at all', () => {
+    expect(templateRules(new Map())).toEqual([]);
+  });
+});
+
+describe('the two tiers', () => {
+  const tiers = (rules: readonly Rule[] = [], targets = defaults()) => ({
+    rules,
+    templateRules: templateRules(targets),
+  });
+
+  it('Scenario: A fresh device categorises a known merchant with no setup', () => {
+    expect(resolveTarget(tiers(), { description: 'АТБ 421' })).toEqual({
+      kind: 'category',
+      categoryId: 'groceries',
+    });
+  });
+
+  it('Scenario: A known MCC is enough on its own', () => {
+    expect(resolveTarget(tiers(), { description: 'НОВИЙ ЗАКЛАД', mcc: 5411 })).toEqual({
+      kind: 'category',
+      categoryId: 'groceries',
+    });
+  });
+
+  it('Scenario: Both spellings of one merchant are covered', () => {
+    expect(resolveCategory(tiers(), { description: 'UKLON' })).toBe('transport');
+    expect(resolveCategory(tiers(), { description: 'Уклон' })).toBe('transport');
+  });
+
+  it('Scenario: A правило beats the шаблон', () => {
+    const atb = rule({ id: 'r1', merchant: 'атб', categoryId: 'eating-out' });
+    expect(resolveCategory(tiers([atb]), { description: 'АТБ 421', mcc: 5411 })).toBe('eating-out');
+  });
+
+  it("Scenario: An owner's MCC rule beats a шаблон merchant match", () => {
+    const byMcc = rule({ id: 'r1', mcc: 5411, categoryId: 'simeyniy-byudzhet' });
+    expect(resolveTarget(tiers([byMcc]), { description: 'АТБ 421', mcc: 5411 })).toEqual({
+      kind: 'category',
+      categoryId: 'simeyniy-byudzhet',
+    });
+  });
+
+  it('Scenario: The longest шаблон pattern wins inside the шаблон', () => {
+    expect(resolveCategory(tiers(), { description: 'BOLT FOOD' })).toBe('food-delivery');
+    expect(resolveCategory(tiers(), { description: 'BOLT' })).toBe('transport');
+  });
+
+  it('Scenario: A remapped базова категорія lands somewhere else', () => {
+    const targets = defaults().set('groceries', 'yizha');
+    expect(resolveCategory(tiers([], targets), { description: 'АТБ 421' })).toBe('yizha');
+  });
+
+  it('Scenario: A switched-off базова категорія matches nothing', () => {
+    const targets = defaults();
+    targets.delete('habits');
+    expect(resolveTarget(tiers([], targets), { description: 'НОВИЙ ЗАКЛАД', mcc: 5921 })).toBe(
+      undefined,
+    );
+  });
+
+  it('Scenario: An untouched базова категорія uses its типова категорія', () => {
+    const targets = defaults().set('groceries', 'yizha');
+    expect(resolveCategory(tiers([], targets), { description: 'АВРОРА' })).toBe('home');
+  });
+
+  it('Scenario: An ineligible правило-переказ does not silence the шаблон', () => {
+    const toReserve = transferRule({ id: 'r1', merchant: 'атб', toAccountId: reserve.id });
+    expect(
+      resolveTarget(
+        tiers([toReserve]),
+        { description: 'АТБ 421', from: { accountId: reserve.id, currency: 'UAH' } },
+        accounts,
+      ),
+    ).toEqual({ kind: 'category', categoryId: 'groceries' });
+  });
+
+  it('an eligible правило-переказ answers before the шаблон', () => {
+    const toReserve = transferRule({ id: 'r1', merchant: 'атб', toAccountId: reserve.id });
+    expect(
+      resolveTarget(
+        tiers([toReserve]),
+        { description: 'АТБ 421', from: { accountId: platinum.id, currency: 'UAH' } },
+        accounts,
+      ),
+    ).toEqual({ kind: 'transfer', toAccountId: reserve.id });
+  });
+
+  it('resolveCategory ignores a правило-переказ and lets the шаблон answer', () => {
+    const toReserve = transferRule({ id: 'r1', merchant: 'атб', toAccountId: reserve.id });
+    expect(resolveCategory(tiers([toReserve]), { description: 'АТБ 421' })).toBe('groceries');
+  });
+
+  it('Scenario: Neither tier matches', () => {
+    expect(resolveTarget(tiers(), { description: 'НОВИЙ ЗАКЛАД' })).toBe(undefined);
+    expect(resolveCategory(tiers(), { description: 'НОВИЙ ЗАКЛАД' })).toBe(undefined);
+  });
+
+  it('a context with no шаблон decides by the правила alone', () => {
+    expect(resolveCategory({ rules: [] }, { description: 'АТБ 421' })).toBe(undefined);
+  });
+});
+
+describe('sweepUncategorised over both tiers', () => {
+  const withTemplate = (rules: readonly Rule[]) => ({
+    rules,
+    templateRules: templateRules(defaults()),
+  });
+
+  it('sweeps a витрата in «Без категорії» by the шаблон with no правило present', () => {
+    const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
+    expect(sweepUncategorised(withTemplate([]), stored, accounts)).toEqual([
+      { kind: 'category', id: 't1', categoryId: 'groceries' },
+    ]);
+  });
+
+  it('Scenario: The шаблон fills what the new правило does not', () => {
+    const fresh = rule({ id: 'r1', merchant: 'новий заклад', categoryId: 'eating-out' });
+    const stored = [
+      storedExpense({ id: 't1', description: 'АТБ 421' }),
+      storedExpense({ id: 't2', description: 'НОВИЙ ЗАКЛАД 7' }),
+    ];
+    expect(sweepUncategorised(withTemplate([fresh]), stored, accounts)).toEqual([
+      { kind: 'category', id: 't1', categoryId: 'groceries' },
+      { kind: 'category', id: 't2', categoryId: 'eating-out' },
+    ]);
+  });
+
+  it('Scenario: A категорія the owner chose is still never taken away', () => {
+    const stored = [storedExpense({ id: 't1', categoryId: 'eating-out', description: 'АТБ 421' })];
+    expect(sweepUncategorised(withTemplate([]), stored, accounts)).toEqual([]);
+  });
+
+  it('moves nothing by the шаблон’s MCC codes, which a stored витрата never carries', () => {
+    const stored = [storedExpense({ id: 't1', description: 'НОВИЙ ЗАКЛАД 7' })];
+    expect(sweepUncategorised(withTemplate([]), stored, accounts)).toEqual([]);
+  });
+
+  it('a правило targeting «Без категорії» still answers, so the шаблон does not move the витрата', () => {
+    const intoTheGap = rule({ id: 'r1', merchant: 'атб', categoryId: UNCATEGORISED_CATEGORY_ID });
+    const stored = [storedExpense({ id: 't1', description: 'АТБ 421' })];
+    expect(sweepUncategorised(withTemplate([intoTheGap]), stored, accounts)).toEqual([]);
   });
 });

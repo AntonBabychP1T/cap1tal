@@ -869,13 +869,14 @@ block recording, and a витрата recorded without one SHALL be categorised 
 ### Requirement: The entry form shows the категорія a правило gives the typed опис
 
 While a витрата is being recorded, the entry form SHALL show as chosen the категорія the owner's
-правила give the опис currently typed, for as long as the owner has picked no категорія
-themselves. The chosen категорія SHALL follow the опис as it is typed and cleared: clearing the
-опис, or changing it to text no правило matches, SHALL return the form to «Без категорії». The
+правила give the опис currently typed — or, when no правило matches it, the категорія the шаблон
+категоризації gives it — for as long as the owner has picked no категорія themselves. The chosen
+категорія SHALL follow the опис as it is typed and cleared: clearing the опис, or changing it to
+text neither a правило nor a базова категорія matches, SHALL return the form to «Без категорії». The
 moment the owner picks a категорія, the form SHALL keep that pick and SHALL stop following the
 опис for the rest of that recording.
 
-The категорія a правило gives SHALL be shown in the short list like any other, so it is visible
+The категорія a правило or the шаблон gives SHALL be shown in the short list like any other, so it is visible
 before «Записати» is pressed and can be changed with one tap. Recording SHALL store exactly the
 категорія shown.
 

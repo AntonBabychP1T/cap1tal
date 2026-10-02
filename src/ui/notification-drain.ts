@@ -1,4 +1,4 @@
-import type { Rule } from '../domain/rules';
+import type { RuleTiers } from '../domain/rules';
 import type { IsoDate } from '../domain/transaction';
 import type { CapturedNotification } from '../notifications/capture';
 import { processCapture, type CaptureOutcome, type Watch } from '../notifications/draft';
@@ -27,8 +27,11 @@ export interface DrainStorage {
 export interface DrainInput {
   readonly capture: NotificationCapturePort;
   readonly storage: DrainStorage;
-  /** Read once per drain: a правило created since the last one decides this batch. */
-  readonly rules: () => readonly Rule[];
+  /**
+   * The правила and the шаблон категоризації, read once per drain: a правило created — or a
+   * mapping changed — since the last one decides this batch.
+   */
+  readonly categorisation: () => RuleTiers;
   readonly newId: () => string;
   readonly dateOf: (epochMs: number) => IsoDate;
   /** When the outcomes count as stored — the feed's tie-break, passed in as everywhere. */
@@ -106,7 +109,7 @@ async function drained(input: DrainInput): Promise<DrainReport> {
   }
 
   const watches = input.storage.watches();
-  const rules = input.rules();
+  const categorisation = input.categorisation();
   const seen = new Set(input.storage.seenFingerprints());
   const storedAt = input.now();
 
@@ -116,7 +119,7 @@ async function drained(input: DrainInput): Promise<DrainReport> {
   let failure: unknown;
 
   for (const [index, record] of collected.entries()) {
-    const outcome = decide(record, { watches, rules, seen, input });
+    const outcome = decide(record, { watches, categorisation, seen, input });
     try {
       // One millisecond apart in the order the phone handed them over, for the reason
       // `commitStatementAnswer` gives: `createdAt` is what "newest first" orders by, so a whole
@@ -163,7 +166,7 @@ function decide(
   record: CapturedNotification,
   ctx: {
     readonly watches: readonly Watch[];
-    readonly rules: readonly Rule[];
+    readonly categorisation: RuleTiers;
     readonly seen: ReadonlySet<string>;
     readonly input: DrainInput;
   },
@@ -171,7 +174,7 @@ function decide(
   return processCapture(record, {
     watches: ctx.watches,
     seenFingerprints: ctx.seen,
-    rules: ctx.rules,
+    ...ctx.categorisation,
     newId: ctx.input.newId,
     dateOf: ctx.input.dateOf,
   });

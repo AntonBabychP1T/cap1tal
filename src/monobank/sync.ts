@@ -1,6 +1,6 @@
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
-import { matchRule, type Rule } from '../domain/rules';
+import { resolveTarget, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
   isoDate,
@@ -324,6 +324,12 @@ export interface MapContext {
   /** The owner's правила, applied by description and MCC exactly as any other import applies them. */
   readonly rules: readonly Rule[];
   /**
+   * The шаблон категоризації as rules, consulted only when no правило eligible here matches
+   * (categorisation-rules, "The owner's правила decide before the шаблон is consulted"). Absent is
+   * a шаблон that takes no part; the app always passes it, from `categorisationContext()`.
+   */
+  readonly templateRules?: readonly Rule[];
+  /**
    * Every рахунок, so a правило-переказ's destination can be found and its currency compared.
    * Absent is the same as empty: no rules could then be eligible transfer rules, exactly as if
    * `from` decided nothing.
@@ -386,8 +392,8 @@ export function mapStatement(
 
     if (item.amount.amount < 0) {
       const amount = money(-item.amount.amount, ctx.currency);
-      const target = matchRule(
-        ctx.rules,
+      const target = resolveTarget(
+        ctx,
         {
           description: item.description,
           mcc: item.mcc,

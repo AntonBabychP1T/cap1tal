@@ -179,7 +179,7 @@ describe('one chance the phone gives', () => {
       tokenStore: tokenStore ?? inMemoryMonobankTokenStore({ token: TOKEN }),
       fetch: fetchImpl,
       storage: repo,
-      rules: () => [],
+      categorisation: () => ({ rules: [] }),
       nowMs: () => clockMs,
       now: () => new Date(clockMs),
       dateOf: (unixSeconds) => new Date(unixSeconds * 1000).toISOString().slice(0, 10) as IsoDate,

@@ -1,12 +1,17 @@
 import * as SplashScreen from 'expo-splash-screen';
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Animated, { Easing, Keyframe } from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { useTheme } from '@/hooks/use-theme';
-
-const DURATION = 900;
 
 /**
  * Whether the launch view has already played in this process.
@@ -21,98 +26,173 @@ const DURATION = 900;
 let playedOnce = false;
 
 /**
- * The wordmark's own entrance-hold-exit. Frame 0 is exactly the plain, unanimated wordmark (scale
- * 1, opacity 1) — that plain frame is what the owner actually sees the instant the native splash
- * lifts (this animated view only mounts a beat later), so anything else at frame 0 would be a
- * visible jump, not an animation. What follows is a small pop on arrival, so the name feels alive
- * rather than merely appearing, then a hold, then a fade with a slight outward drift on the way
- * out — the same handover `SplashScreen.hideAsync` started.
+ * The launch view's one timeline, in ms. A single shared value runs linearly 0 → 1 over `TOTAL`
+ * on the UI thread, and every glyph reads its own window of it — so the whole sequence costs one
+ * timing and a handful of transform/opacity styles per frame, never a layout or a JS-thread tick,
+ * and the app keeps mounting underneath while it plays.
+ *
+ * 1. Rise — the letters come up through a mask one after another, left to right, while drawing in
+ *    from a slightly wider spacing (tracking in, faked with translateX so no text re-lays out).
+ * 2. Sweep — «p1t» turns from the text colour to the accent, letter by letter, like light passing.
+ * 3. Leave — the letters go on up out of the mask in reading order while the backdrop fades and
+ *    hands over to the screen already drawn beneath it.
  */
-const wordmarkKeyframe = new Keyframe({
-  0: { transform: [{ scale: 1 }], opacity: 1 },
-  22: { transform: [{ scale: 1.03 }], easing: Easing.out(Easing.cubic) },
-  38: { transform: [{ scale: 1 }], easing: Easing.out(Easing.quad) },
-  80: { opacity: 1 },
-  100: { transform: [{ scale: 1.05 }], opacity: 0, easing: Easing.in(Easing.cubic) },
-});
+const RISE_STAGGER = 34;
+const RISE = 460;
+const SWEEP_AT = 330;
+const SWEEP_STAGGER = 70;
+const SWEEP = 240;
+const LEAVE_AT = 700;
+const LEAVE_STAGGER = 16;
+const LEAVE = 220;
+const FADE_AT = 740;
+const FADE = 260;
+const TOTAL = FADE_AT + FADE;
 
 /**
- * The «p1t» accent's own pop, timed to land just after the wordmark's own settle (see
- * `wordmarkKeyframe`) so the eye lands there second — the one flourish this launch view allows
- * itself. Frame 0 is again the plain scale: the accent colour is worn from the very first frame
- * and never animates, only the size does.
+ * Px per glyph the letters start apart by, either side of the centre. Under reduced motion neither
+ * this nor the rise travels: the same timeline, opacity and colour only.
  */
-const accentKeyframe = new Keyframe({
-  0: { transform: [{ scale: 1 }] },
-  38: { transform: [{ scale: 1 }] },
-  58: { transform: [{ scale: 1.24 }], easing: Easing.out(Easing.cubic) },
-  76: { transform: [{ scale: 0.97 }], easing: Easing.inOut(Easing.quad) },
-  100: { transform: [{ scale: 1 }], easing: Easing.out(Easing.quad) },
-});
+const SPREAD = 4;
 
-/**
- * The app's own name, drawn as live text: the launch view carries no other product's mark, and a
- * wordmark the platform draws needs no image asset to ship, license or keep in sync. «p1t» carries
- * the one accent colour the theme has, `animated` only decides whether it also gets its own pop —
- * the static (pre-handover) render and the animated one must otherwise be pixel-identical, or the
- * swap between them flashes.
- */
-function Wordmark({
+const GLYPHS = [
+  { char: 'c', accent: -1 },
+  { char: 'a', accent: -1 },
+  { char: 'p', accent: 0 },
+  { char: '1', accent: 1 },
+  { char: 't', accent: 2 },
+  { char: 'a', accent: -1 },
+  { char: 'l', accent: -1 },
+] as const;
+const CENTER = (GLYPHS.length - 1) / 2;
+
+const FONT_SIZE = 36;
+/** The mask's height and how far a glyph travels to clear it; roomy enough for the «p» descender. */
+const LINE = 48;
+
+function windowOf(ms: number, start: number, length: number) {
+  'worklet';
+  return Math.min(1, Math.max(0, (ms - start) / length));
+}
+
+/** Fast out, long soft landing — the arrival. */
+function expoOut(x: number) {
+  'worklet';
+  return x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
+}
+
+/** Slow start, then away — the departure. */
+function cubicIn(x: number) {
+  'worklet';
+  return x * x * x;
+}
+
+function sineInOut(x: number) {
+  'worklet';
+  return -(Math.cos(Math.PI * x) - 1) / 2;
+}
+
+function Glyph({
+  char,
+  index,
+  accentIndex,
+  progress,
+  reduced,
   theme,
-  animated,
 }: {
+  char: string;
+  index: number;
+  accentIndex: number;
+  progress: SharedValue<number>;
+  reduced: boolean;
   theme: { text: string; accent: string };
-  animated: boolean;
 }) {
-  const accentText = (
-    <Text style={[styles.wordmarkText, styles.accentText, { color: theme.accent }]}>p1t</Text>
-  );
+  const travel = reduced ? 0 : LINE;
+  const spread = reduced ? 0 : (index - CENTER) * SPREAD;
+
+  const motion = useAnimatedStyle(() => {
+    const ms = progress.get() * TOTAL;
+    const rise = expoOut(windowOf(ms, index * RISE_STAGGER, RISE));
+    const leave = cubicIn(windowOf(ms, LEAVE_AT + index * LEAVE_STAGGER, LEAVE));
+    return {
+      // Fully in by a third of the rise, so the mask edge never shows a half-lit letter.
+      opacity: Math.min(1, rise * 3),
+      transform: [
+        { translateY: (1 - rise) * travel - leave * travel },
+        { translateX: (1 - rise) * spread },
+      ],
+    };
+  });
+
+  const lit = useAnimatedStyle(() => {
+    const ms = progress.get() * TOTAL;
+    return { opacity: sineInOut(windowOf(ms, SWEEP_AT + accentIndex * SWEEP_STAGGER, SWEEP)) };
+  });
+
   return (
-    <View style={styles.wordmarkRow}>
-      <Text style={[styles.wordmarkText, { color: theme.text }]}>ca</Text>
-      {animated ? (
-        <Animated.View entering={accentKeyframe.duration(DURATION)}>{accentText}</Animated.View>
-      ) : (
-        accentText
-      )}
-      <Text style={[styles.wordmarkText, { color: theme.text }]}>al</Text>
+    <View style={styles.mask}>
+      <Animated.View style={motion}>
+        <Text style={[styles.glyph, { color: theme.text }]}>{char}</Text>
+        {accentIndex >= 0 ? (
+          <Animated.Text style={[styles.glyph, styles.lit, { color: theme.accent }, lit]}>
+            {char}
+          </Animated.Text>
+        ) : null}
+      </Animated.View>
     </View>
   );
 }
 
+/**
+ * The app's own name, drawn as live text: the launch view carries no other product's mark, and a
+ * wordmark the platform draws needs no image asset to ship, license or keep in sync. Frame 0 is the
+ * bare backdrop — every glyph still below its mask — which is exactly what the native splash shows
+ * (`splash-blank.png` on the same colour), so the handover is invisible and the name is seen
+ * arriving rather than popping in.
+ */
 export function AnimatedSplashOverlay() {
   const theme = useTheme();
-  const [animate, setAnimate] = useState(false);
+  const reduced = useReducedMotion();
   const [visible, setVisible] = useState(!playedOnce);
+  const progress = useSharedValue(0);
+
+  const backdrop = useAnimatedStyle(() => ({
+    opacity: 1 - sineInOut(windowOf(progress.get() * TOTAL, FADE_AT, FADE)),
+  }));
 
   if (!visible) return null;
 
   // Must match the native splash background configured for expo-splash-screen in app.json, which is
   // plain JSON and cannot import this palette. If the two drift, the handover flashes.
-  const overlay = [styles.splashOverlay, { backgroundColor: theme.background }];
-
-  return animate ? (
+  return (
     <Animated.View
-      entering={wordmarkKeyframe.duration(DURATION).withCallback((finished) => {
-        'worklet';
-        if (finished) {
-          scheduleOnRN(setVisible, false);
-        }
-      })}
-      style={overlay}>
-      <Wordmark theme={theme} animated />
-    </Animated.View>
-  ) : (
-    <View
       onLayout={() => {
+        if (playedOnce) return;
         playedOnce = true;
         SplashScreen.hideAsync().finally(() => {
-          setAnimate(true);
+          progress.set(
+            withTiming(1, { duration: TOTAL, easing: Easing.linear }, (finished) => {
+              'worklet';
+              if (finished) scheduleOnRN(setVisible, false);
+            }),
+          );
         });
       }}
-      style={overlay}>
-      <Wordmark theme={theme} animated={false} />
-    </View>
+      style={[styles.splashOverlay, { backgroundColor: theme.background }, backdrop]}>
+      <View style={styles.wordmarkRow}>
+        {GLYPHS.map((glyph, index) => (
+          <Glyph
+            key={index}
+            char={glyph.char}
+            index={index}
+            accentIndex={glyph.accent}
+            progress={progress}
+            reduced={reduced}
+            theme={theme}
+          />
+        ))}
+      </View>
+    </Animated.View>
   );
 }
 
@@ -125,15 +205,21 @@ const styles = StyleSheet.create({
   },
   wordmarkRow: {
     flexDirection: 'row',
-    alignItems: 'baseline',
   },
-  wordmarkText: {
-    fontSize: 34,
-    lineHeight: 40,
-    fontWeight: 800,
-    letterSpacing: -0.6,
+  mask: {
+    height: LINE,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    // Single-glyph Texts lose the font's tracking; this is the wordmark's -0.6 letter-spacing.
+    marginHorizontal: -0.3,
   },
-  accentText: {
+  glyph: {
+    fontSize: FONT_SIZE,
+    lineHeight: LINE,
     fontWeight: 800,
+    includeFontPadding: false,
+  },
+  lit: {
+    ...StyleSheet.absoluteFill,
   },
 });

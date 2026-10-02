@@ -8,7 +8,9 @@ fingerprint deduplication, and the discipline that keeps every сума in the �
 currency. Everything here is decided by inputs alone — the same captured notification, watch
 set and правила always produce the same чернетки and транзакції — and nothing read ever
 leaves the device.
+
 ## Requirements
+
 ### Requirement: A watch joins one app to one рахунок, and an unwatched app yields nothing
 
 A watch SHALL join exactly one app package name to exactly one existing рахунок; a second
@@ -190,8 +192,9 @@ state that; the owner supplies it on confirmation.
 Confirming a чернетка SHALL create exactly the транзакція it proposes on its рахунок, dated
 the чернетка's date, carrying the чернетка's text as the транзакція's опис, and SHALL settle
 the чернетка so it awaits nothing further. A витрата-чернетка SHALL be categorised by the
-owner's правила applied at the moment of confirmation to the чернетка's text with no MCC, and
-SHALL fall back to «Без категорії» when no правило matches. A дохід-чернетка SHALL create its
+owner's правила — and, when no правило matches, by the шаблон категоризації — applied at the
+moment of confirmation to the чернетка's text with no MCC, and SHALL fall back to «Без категорії»
+when neither matches. A дохід-чернетка SHALL create its
 дохід with the джерело «Без джерела». A raw чернетка SHALL NOT confirm without a сума the
 owner supplies; with one supplied it SHALL confirm as a витрата of that сума in the
 рахунок's currency, categorised the same way, and a raw чернетка holding an original-currency
@@ -202,7 +205,7 @@ Dismissing a чернетка SHALL create nothing and SHALL settle it the same 
 #### Scenario: Confirming an unmatched витрата lands in «Без категорії»
 
 - **WHEN** a витрата-чернетка of 25000 minor units UAH with text "Оплата 250.00UAH. НОВИЙ
-  ЗАКЛАД" is confirmed and no правило matches
+  ЗАКЛАД" is confirmed and no правило and no базова категорія matches
 - **THEN** a витрата of 25000 minor units UAH in «Без категорії» with опис carrying the
   чернетка's text exists, and the чернетка is settled
 
@@ -245,10 +248,11 @@ Dismissing a чернетка SHALL create nothing and SHALL settle it the same 
 ### Requirement: A правило auto-confirms a parsed витрата-чернетка
 
 A newly drafted витрата-чернетка whose text is matched by one of the owner's правила at the
-moment of drafting SHALL confirm itself immediately into a витрата of that правило's
-category, with no owner action — FR-S3's "або автоматично за правилом". Matching SHALL run on
-the чернетка's text with no MCC, so a правило whose only criterion is an MCC SHALL never
-auto-confirm a чернетка. A дохід-чернетка and a raw чернетка SHALL never auto-confirm: the
+moment of drafting — or, when no правило matches it, by a базова категорія of the шаблон
+категоризації that lands on a категорія of this device — SHALL confirm itself immediately into a
+витрата of the категорія that match gives, with no owner action — FR-S3's "або автоматично за
+правилом". Matching SHALL run on the чернетка's text with no MCC, so a правило whose only
+criterion is an MCC, and the MCC codes the шаблон carries, SHALL never auto-confirm a чернетка. A дохід-чернетка and a raw чернетка SHALL never auto-confirm: the
 one has no expense category to gain, the other has no сума to trust.
 
 #### Scenario: A recognised merchant confirms itself
@@ -261,7 +265,7 @@ one has no expense category to gain, the other has no сума to trust.
 #### Scenario: An MCC-only правило does not auto-confirm
 
 - **WHEN** the owner's only правило carries an MCC and no merchant pattern, and a money-out
-  movement drafts
+  movement whose text no базова категорія matches drafts
 - **THEN** the чернетка awaits the owner, unconfirmed
 
 #### Scenario: Money in never auto-confirms
@@ -306,4 +310,3 @@ watch set, the seen fingerprints and the правила.
 - **WHEN** the same captured notification is processed twice against the same watch set,
   fingerprints and правила
 - **THEN** both runs decide the same outcome, and no run performed any network operation
-

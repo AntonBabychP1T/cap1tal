@@ -12,9 +12,14 @@ the app's, not the owner's state, and a бекап that carried it would restore
 onto a new app.
 
 Restoring SHALL make the mapping exactly the бекап's, replacing what the device held, as a
-відновлення replaces everything else. A бекап of the format version that comes before this one
-SHALL restore with no choice stored for any базова категорія — which is every базова категорія
-following its типова категорія, exactly the state the device that wrote it was in.
+відновлення replaces everything else. The mapping SHALL be carried as one more optional section of
+the existing format, with no change to the envelope's format version: a бекап written before the
+mapping existed carries no such section and SHALL restore with no choice stored for any базова
+категорія — which is every базова категорія following its типова категорія, exactly the state the
+device that wrote it was in.
+
+Which шаблон version the device last swept under SHALL NOT be carried: it is the device's own
+bookkeeping about work already done to the транзакції the бекап carries as they are.
 
 A restored choice naming a категорія the бекап does not also carry SHALL make the whole бекап
 contradict itself and SHALL be refused whole, as every other dangling reference in a бекап is.
@@ -31,9 +36,9 @@ contradict itself and SHALL be refused whole, as every other dangling reference 
 - **WHEN** a бекап holding one choice is restored onto a device holding five
 - **THEN** the device holds exactly that one choice afterwards
 
-#### Scenario: A бекап of the previous format restores the defaults
+#### Scenario: A бекап written before the mapping existed restores the defaults
 
-- **WHEN** a бекап written under the format version before this one is restored
+- **WHEN** a бекап carrying no mapping section, written before the mapping existed, is restored
 - **THEN** it is accepted, and every базова категорія follows its типова категорія
 
 #### Scenario: A choice naming an absent категорія is refused whole

@@ -1,6 +1,6 @@
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
-import { matchCategory, type Rule } from '../domain/rules';
+import { resolveCategory, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
   isoDate,
@@ -107,6 +107,8 @@ export interface ProcessContext {
   readonly seenFingerprints: ReadonlySet<string>;
   /** The owner's правила, applied by description with no MCC — a notification carries none. */
   readonly rules: readonly Rule[];
+  /** The шаблон категоризації as rules, tried when no правило matches; absent takes no part. */
+  readonly templateRules?: readonly Rule[];
   readonly newId: () => string;
   /**
    * Epoch milliseconds → the calendar date of that moment in the device's timezone. Injected
@@ -182,7 +184,7 @@ export function processCapture(capture: CapturedNotification, ctx: ProcessContex
   // owner has already seen and may mean to dismiss (design D8). `matchCategory`, not `matchRule`:
   // a чернетка's категорія is decided with no рахунок the money left in the sense a
   // правило-переказ needs, so a правило-переказ takes no part in it.
-  const categoryId = matchCategory(ctx.rules, { description: text });
+  const categoryId = resolveCategory(ctx, { description: text });
   if (categoryId !== undefined) {
     return {
       kind: 'auto-confirmed',
@@ -204,6 +206,8 @@ export function processCapture(capture: CapturedNotification, ctx: ProcessContex
 /** What confirming a чернетка needs: the правила as they stand now, and an id for what it creates. */
 export interface ConfirmContext {
   readonly rules: readonly Rule[];
+  /** The шаблон категоризації as rules, tried when no правило matches; absent takes no part. */
+  readonly templateRules?: readonly Rule[];
   readonly newId: () => string;
 }
 
@@ -287,7 +291,7 @@ function confirmedExpense(
   amount: Money,
   original: Money | undefined,
 ): ConfirmResult {
-  const categoryId = matchCategory(ctx.rules, { description: draft.text });
+  const categoryId = resolveCategory(ctx, { description: draft.text });
   return {
     kind: 'confirmed',
     draftId: draft.id,

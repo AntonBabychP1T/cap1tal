@@ -1388,3 +1388,36 @@ export const installmentReminder = sqliteTable(
 
 export type InstallmentRow = typeof installments.$inferSelect;
 export type NewInstallmentRow = typeof installments.$inferInsert;
+
+/**
+ * The owner's choices about the шаблон категоризації: for each базова категорія they have touched,
+ * the категорія of this device it lands in, or NULL for switched off (rule-template design T3).
+ *
+ * An absent row is "follow the типова категорія" — never seeded, so a later app version that
+ * improves a default still reaches an owner who never opened «Базові категорії». The шаблон itself
+ * (which merchants and MCC codes a базова категорія covers) is the app's and is not stored. A
+ * `group_id` the шаблон no longer carries is ignored on read and left in place, so an app downgrade
+ * throws no choice away — hence no CHECK on it.
+ */
+export const ruleTemplateChoices = sqliteTable('rule_template_choices', {
+  groupId: text('group_id').primaryKey(),
+  categoryId: text('category_id').references(() => categories.id, { onDelete: 'restrict' }),
+});
+
+/**
+ * The шаблон version «Без категорії» was last swept under — one row, written in the same
+ * transaction as the sweep it records, so a sweep that failed leaves it unwritten and the next open
+ * tries again (rule-template design T5). This phone's bookkeeping, not the owner's state: a бекап
+ * does not carry it.
+ */
+export const ruleTemplateSweep = sqliteTable(
+  'rule_template_sweep',
+  {
+    /** Always `'sweep'`; the CHECK is what keeps the table to one row. */
+    id: text('id').primaryKey(),
+    version: integer('version').notNull(),
+  },
+  (t) => [check('rule_template_sweep_single_row', sql`${t.id} = 'sweep'`)],
+);
+
+export type RuleTemplateChoiceRow = typeof ruleTemplateChoices.$inferSelect;

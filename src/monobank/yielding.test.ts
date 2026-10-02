@@ -249,7 +249,7 @@ describe('a run that yields', () => {
       tokenStore: inMemoryMonobankTokenStore({ token: TOKEN }),
       fetch: fetchImpl,
       storage: repo,
-      rules: () => [],
+      categorisation: () => ({ rules: [] }),
       nowMs: timers.nowMs,
       now: () => new Date(timers.nowMs()),
       dateOf,

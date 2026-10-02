@@ -86,6 +86,9 @@ describe('what a бекап holds', () => {
       'notification_drafts',
       // What stops an already-decided notification drafting twice; it stays on the phone.
       'notification_fingerprints',
+      // The шаблон version this phone last swept «Без категорії» under: bookkeeping about work
+      // already done to the транзакції the бекап carries as they are, not the owner's state.
+      'rule_template_sweep',
     ]);
   });
 
@@ -902,5 +905,53 @@ describe('the «Вібрація» preference in a бекап', () => {
     expect(() => parseState({ haptics: { enabled: 1 } })).toThrow();
     expect(() => parseState({ haptics: {} })).toThrow();
     expect(() => parseState({ haptics: 'off' })).toThrow();
+  });
+});
+
+describe('the шаблон mapping in a бекап', () => {
+  const base = {
+    accounts: [],
+    categories: [{ id: 'yizha', name: 'Їжа', archived: false }],
+    transactions: [],
+  };
+
+  it('Scenario: The mapping survives the round trip', () => {
+    const written = {
+      ...base,
+      templateChoices: [
+        { groupId: 'groceries', categoryId: 'yizha' },
+        { groupId: 'habits', categoryId: null },
+      ],
+    };
+    const state = parseState(JSON.parse(JSON.stringify(written)));
+    expect(state.templateChoices).toEqual(written.templateChoices);
+    expect(() => checkConsistent(state)).not.toThrow();
+  });
+
+  it('Scenario: A бекап written before the mapping existed restores the defaults', () => {
+    expect(parseState(base).templateChoices).toBeUndefined();
+  });
+
+  it('Scenario: A choice naming an absent категорія is refused whole', () => {
+    const state = parseState({
+      ...base,
+      templateChoices: [{ groupId: 'groceries', categoryId: 'nowhere' }],
+    });
+    expect(() => checkConsistent(state)).toThrow(/категорію, якої в бекапі немає/);
+  });
+
+  it('refuses two choices for one базова категорія, and a malformed one', () => {
+    expect(() =>
+      checkConsistent(
+        parseState({
+          ...base,
+          templateChoices: [
+            { groupId: 'groceries', categoryId: 'yizha' },
+            { groupId: 'groceries', categoryId: null },
+          ],
+        }),
+      ),
+    ).toThrow(/двічі/);
+    expect(() => parseState({ ...base, templateChoices: [{ groupId: 'groceries' }] })).toThrow();
   });
 });

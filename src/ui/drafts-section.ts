@@ -1,6 +1,6 @@
 import type { Account } from '../domain/account';
 import type { CurrencyCode } from '../domain/money';
-import type { Rule } from '../domain/rules';
+import type { RuleTiers } from '../domain/rules';
 import {
   UNSOURCED_SOURCE_ID,
   type Expense,
@@ -93,8 +93,11 @@ export interface DraftStorage {
 
 export interface DraftPorts {
   readonly storage: DraftStorage;
-  /** Read at the moment of confirmation, so a правило created since drafting is honoured. */
-  readonly rules: () => readonly Rule[];
+  /**
+   * The правила and the шаблон категоризації, read at the moment of confirmation, so a правило
+   * created — or a mapping changed — since drafting is honoured.
+   */
+  readonly categorisation: () => RuleTiers;
   readonly newId: () => string;
   readonly now: () => Date;
 }
@@ -137,7 +140,7 @@ export function confirmPendingDraft(
     }
   }
 
-  const decided = confirmDraft(draft, { rules: ports.rules(), newId: ports.newId }, supplied);
+  const decided = confirmDraft(draft, { ...ports.categorisation(), newId: ports.newId }, supplied);
   if (decided.kind === 'amount-required') {
     return { kind: 'amount-required', message: `Напишіть суму в ${draft.currency}.` };
   }

@@ -184,7 +184,7 @@ describe('syncLinkedAccounts', () => {
       tokenStore,
       fetch: fetchImpl,
       storage: repo,
-      rules: () => rules,
+      categorisation: () => ({ rules }),
       accounts: () => accountsRepo(storage.db).list(),
       // The clock only moves when the run waits, so pacing is entirely the run's own doing.
       nowMs: () => clockMs,
@@ -2098,7 +2098,7 @@ describe('syncLinkedAccounts — what sync deliberately does not decide', () => 
       tokenStore: inMemoryMonobankTokenStore({ token: TOKEN }),
       fetch: fetchImpl,
       storage: repo,
-      rules: () => [],
+      categorisation: () => ({ rules: [] }),
       nowMs: () => clockMs,
       now: () => new Date(clockMs),
       dateOf,

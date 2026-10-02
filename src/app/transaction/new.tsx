@@ -10,7 +10,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   entryDefaults as entryDefaultsRepo,
-  rules as rulesRepo,
+  categorisationContext,
   sources as sourcesRepo,
   transactions as transactionsRepo,
 } from '@/db/repos';
@@ -99,7 +99,7 @@ export default function NewTransactionScreen() {
         sources: sourcesRepo.list(),
         // Re-read at the moment the опис is typed, so a правило created since the form opened is
         // honoured (design D8's reasoning for the offer applies here too).
-        rules: rulesRepo.list(),
+        categorisation: categorisationContext(),
       };
     }, []),
   );
@@ -240,9 +240,9 @@ export default function NewTransactionScreen() {
     () =>
       proposedCategoryId(
         { type: entry, description: normaliseDescription(description), categoryId, pickedByOwner },
-        stored.rules,
+        stored.categorisation,
       ),
-    [categoryId, description, entry, pickedByOwner, stored.rules],
+    [categoryId, description, entry, pickedByOwner, stored.categorisation],
   );
 
   /** The owner's own tap on a категорія chip: it stands, and the form stops following the опис. */

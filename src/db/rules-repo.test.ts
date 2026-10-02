@@ -239,7 +239,7 @@ describe('rulesRepo — a правило-переказ', () => {
       (tx) => {
         const write = transactionsRepo(tx);
         for (let i = 0; i < 5000; i++) {
-          const description = i % 5 === 0 ? 'Оплата СІЛЬПО' : i % 5 === 1 ? 'округлення балансу' : 'АТБ';
+          const description = i % 5 === 0 ? 'Оплата СІЛЬПО' : i % 5 === 1 ? 'округлення балансу' : 'НОВИЙ ЗАКЛАД';
           write.save(
             expenseByDefault({ id: `e${i}`, date: '2026-03-02', accountId: 'platinum', amount: money(100 + i, 'UAH'), description }),
             at,

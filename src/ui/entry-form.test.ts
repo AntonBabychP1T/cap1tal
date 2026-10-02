@@ -15,7 +15,7 @@ import {
   type Transaction,
   type Transfer,
 } from '../domain/transaction';
-import type { Rule } from '../domain/rules';
+import { templateRules, type Rule } from '../domain/rules';
 import {
   entryFromRoute,
   buildEntry,
@@ -741,15 +741,21 @@ describe('the entry screen follows the опис', () => {
 
   it('Scenario: Typing a known merchant chooses its категорія / Clearing the опис gives it back', () => {
     // Recomputed from the current description on every render — not a snapshot taken once — so
-    // typing and clearing both move it, and `stored.rules` is re-read with the rest of the form.
+    // typing and clearing both move it, and `stored.categorisation` is re-read with the rest of
+    // the form.
     expect(entryScreen).toMatch(
-      /proposedCategoryId\(\s*\{ type: entry, description: normaliseDescription\(description\), categoryId, pickedByOwner \},\s*stored\.rules,\s*\)/,
+      /proposedCategoryId\(\s*\{ type: entry, description: normaliseDescription\(description\), categoryId, pickedByOwner \},\s*stored\.categorisation,\s*\)/,
     );
     // What the picker shows for a витрата is exactly that computation — falling back to «Без
     // категорії», never to the raw `categoryId` the owner has not touched.
     expect(entryScreen).toContain(
       "entry === 'expense'\n                  ? (displayedCategoryId ?? UNCATEGORISED_CATEGORY_ID)",
     );
+  });
+
+  it('Scenario: The шаблон reaches the entry form — the form reads both tiers, not the правила alone', () => {
+    expect(entryScreen).toContain('categorisation: categorisationContext(),');
+    expect(entryScreen).not.toMatch(/rulesRepo\.list\(\)/);
   });
 
   it('Scenario: A picked категорія stops following the опис / one tap from being changed', () => {
@@ -1014,12 +1020,18 @@ describe('proposedCategoryId', () => {
     target: { kind: 'category', categoryId: 'groceries' },
     createdAt: new Date('2026-03-01T10:00:00.000Z'),
   };
+  const atbToEatingOut: Rule = {
+    id: 'r-atb-eating-out',
+    merchant: 'атб',
+    target: { kind: 'category', categoryId: 'eating-out' },
+    createdAt: new Date('2026-03-01T10:00:00.000Z'),
+  };
 
   it('Scenario: A typed опис proposes its категорія', () => {
     expect(
       proposedCategoryId(
         { type: 'expense', description: 'АТБ 421', pickedByOwner: false },
-        [atbToGroceries],
+        { rules: [atbToGroceries] },
       ),
     ).toBe('groceries');
   });
@@ -1033,7 +1045,7 @@ describe('proposedCategoryId', () => {
           categoryId: 'eating-out',
           pickedByOwner: true,
         },
-        [atbToGroceries],
+        { rules: [atbToGroceries] },
       ),
     ).toBe('eating-out');
   });
@@ -1042,7 +1054,7 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId(
         { type: 'expense', description: 'новий заклад', pickedByOwner: false },
-        [atbToGroceries],
+        { rules: [atbToGroceries] },
       ),
     ).toBeUndefined();
   });
@@ -1051,7 +1063,7 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId(
         { type: 'income', description: 'АТБ 421', pickedByOwner: false },
-        [atbToGroceries],
+        { rules: [atbToGroceries] },
       ),
     ).toBeUndefined();
   });
@@ -1065,7 +1077,7 @@ describe('proposedCategoryId', () => {
           categoryId: 'clothing',
           pickedByOwner: false,
         },
-        [atbToGroceries],
+        { rules: [atbToGroceries] },
       ),
     ).toBe('clothing');
   });
@@ -1074,14 +1086,34 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId(
         { type: 'transfer', description: 'АТБ 421', pickedByOwner: false },
-        [atbToGroceries],
+        { rules: [atbToGroceries] },
       ),
     ).toBeUndefined();
   });
 
+  it('Scenario: The шаблон reaches the entry form', () => {
+    const tiers = { rules: [], templateRules: templateRules(new Map([['groceries', 'groceries']])) };
+    expect(
+      proposedCategoryId({ type: 'expense', description: 'АТБ 421', pickedByOwner: false }, tiers),
+    ).toBe('groceries');
+    // A правило still decides first, and the owner's own pick still stands.
+    expect(
+      proposedCategoryId(
+        { type: 'expense', description: 'АТБ 421', pickedByOwner: false },
+        { ...tiers, rules: [atbToEatingOut] },
+      ),
+    ).toBe('eating-out');
+    expect(
+      proposedCategoryId(
+        { type: 'expense', description: 'АТБ 421', categoryId: 'home', pickedByOwner: true },
+        tiers,
+      ),
+    ).toBe('home');
+  });
+
   it('no description proposes nothing, and does not throw', () => {
     expect(
-      proposedCategoryId({ type: 'expense', pickedByOwner: false }, [atbToGroceries]),
+      proposedCategoryId({ type: 'expense', pickedByOwner: false }, { rules: [atbToGroceries] }),
     ).toBeUndefined();
   });
 
@@ -1103,7 +1135,7 @@ describe('proposedCategoryId', () => {
     expect(
       proposedCategoryId(
         { type: 'expense', description: 'Округлення балансу', pickedByOwner: false },
-        [bills, roundUpToTransfer],
+        { rules: [bills, roundUpToTransfer] },
       ),
     ).toBe('bills');
   });

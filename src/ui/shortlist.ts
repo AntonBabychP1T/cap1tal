@@ -60,8 +60,21 @@ export function shortlist<Row extends Named>(
   {
     recentIds,
     chosenIds = [],
+    selectedId,
     size = PICKER_SIZE,
-  }: { recentIds: readonly string[]; chosenIds?: readonly string[]; size?: number },
+  }: {
+    recentIds: readonly string[];
+    chosenIds?: readonly string[];
+    /**
+     * The row chosen right now, whoever chose it — the owner, or the form itself when it proposes
+     * the категорія a правило or the шаблон gives a typed опис. Drawn last when nothing above drew
+     * it, so the chosen chip is always on the row and one tap from being changed (main-screen, "The
+     * proposed категорія is one tap from being changed"). Unlike `chosenIds` it does not stay: a
+     * proposal the опис no longer gives was never the owner's pick.
+     */
+    selectedId?: string;
+    size?: number;
+  },
 ): Row[] {
   const byId = new Map(offered.map((row) => [row.id, row]));
   const shown: Row[] = [];
@@ -74,7 +87,7 @@ export function shortlist<Row extends Named>(
   for (const id of recentIds) take(byId.get(id));
   for (const row of offered) take(row);
 
-  for (const id of chosenIds) {
+  for (const id of selectedId === undefined ? chosenIds : [...chosenIds, selectedId]) {
     if (shown.some((row) => row.id === id)) continue;
     const chosen = byId.get(id);
     if (chosen) shown.push(chosen);

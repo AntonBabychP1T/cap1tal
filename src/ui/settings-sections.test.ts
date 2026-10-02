@@ -11,6 +11,7 @@ describe('the Налаштування sections', () => {
       'Категорії',
       'Джерела',
       'Правила',
+      'Базові категорії',
       'Ліміти',
       'Цілі',
       'Розстрочки',
@@ -22,6 +23,19 @@ describe('the Налаштування sections', () => {
       'Google Drive',
       'Репорти про помилки',
     ]);
+  });
+
+  it('Scenario: The tab offers «Базові категорії» after «Правила»', () => {
+    const titles = SETTINGS_SECTIONS.map((section) => section.title);
+    expect(titles.indexOf('Базові категорії')).toBe(titles.indexOf('Правила') + 1);
+  });
+
+  it('Scenario: The section opens the mapping', () => {
+    const section = SETTINGS_SECTIONS.find((s) => s.title === 'Базові категорії')!;
+    expect(section.href).toBe('/manage/rule-template');
+    expect(readFileSync(new URL('../app/manage/rule-template.tsx', import.meta.url), 'utf8')).toContain(
+      'templateRows({',
+    );
   });
 
   it('Scenario: The section opens the screen', () => {

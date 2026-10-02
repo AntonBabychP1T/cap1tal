@@ -1,5 +1,5 @@
 import type { Account } from '../domain/account';
-import type { Rule } from '../domain/rules';
+import type { RuleTiers } from '../domain/rules';
 import type { IsoDate } from '../domain/transaction';
 import type { PagingPosition, StatementAnswer, StoredMonobankLink } from '../db/monobank-repo';
 import {
@@ -122,8 +122,11 @@ export interface SyncPorts {
   readonly tokenStore: MonobankTokenStore;
   readonly fetch: AuthFetchLike;
   readonly storage: SyncStorage;
-  /** The owner's правила автокатегоризації, loaded once for the whole run. */
-  readonly rules: () => readonly Rule[];
+  /**
+   * What decides a категорія — the owner's правила and the шаблон категоризації — loaded once for
+   * the whole run (rule-template design T4).
+   */
+  readonly categorisation: () => RuleTiers;
   /**
    * Every рахунок, loaded once for the whole run — a правило-переказ needs to find its
    * destination. Absent is the same as none: no правило-переказ can then be eligible.
@@ -322,7 +325,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
     remember(() => ports.storage.oweAll(ports.now()));
   }
 
-  const rules = ports.rules();
+  const categorisation = ports.categorisation();
   const accounts = ports.accounts?.() ?? [];
   /**
    * Seeded from storage, not from `undefined`: the gap belongs to the device, so a run started
@@ -548,7 +551,7 @@ export async function syncLinkedAccounts(ports: SyncPorts): Promise<SyncRun> {
       obtainedAt,
       token,
       runToMs,
-      rules,
+      categorisation,
       accounts,
       ports,
       paced,
@@ -600,14 +603,24 @@ async function syncOneAccount(input: {
   readonly obtainedAt: Date;
   readonly token: string;
   readonly runToMs: number;
-  readonly rules: readonly Rule[];
+  readonly categorisation: RuleTiers;
   readonly accounts: readonly Pick<Account, 'id' | 'currency'>[];
   readonly ports: SyncPorts;
   readonly paced: <T>(request: () => Promise<T>) => Promise<T | Stopped>;
   readonly stopping: () => StoppedOutcome | undefined;
 }): Promise<{ outcome: AccountOutcome; imported: number; reason?: UnavailableReason }> {
-  const { link, bankAccount, obtainedAt, token, runToMs, rules, accounts, ports, paced, stopping } =
-    input;
+  const {
+    link,
+    bankAccount,
+    obtainedAt,
+    token,
+    runToMs,
+    categorisation,
+    accounts,
+    ports,
+    paced,
+    stopping,
+  } = input;
 
   let cursorMs = link.cursorMs;
   let seenIds: ReadonlySet<string> = ports.storage.importedIds(link.monobankAccountId);
@@ -660,7 +673,7 @@ async function syncOneAccount(input: {
       const mapped = mapStatement(items, {
         accountId: link.accountId,
         currency: bankAccount.currency,
-        rules,
+        ...categorisation,
         accounts,
         seenIds: before,
         newId: ports.newId,

@@ -64,6 +64,13 @@
       "when": 1790880481517,
       "tag": "0008_gorgeous_leopardon",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790884968506,
+      "tag": "0009_complete_green_goblin",
+      "breakpoints": true
     }
   ]
 }

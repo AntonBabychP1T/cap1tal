@@ -31,9 +31,11 @@ So: ship the knowledge, ask only for the mapping.
 - The шаблон acts everywhere a правило acts, on the same terms: the monobank sync, the чернетки
   from bank сповіщення, the entry form, and the sweep of «Без категорії». Changing a mapping or
   switching a група off sweeps «Без категорії» exactly as storing a правило does.
-- The бекап carries the mapping, so restoring a device restores it. **BREAKING (file format):**
-  `BACKUP_SCHEMA_VERSION` becomes 2; a version-1 file restores with no mapping stored, which is the
-  defaults — the same as the device it was made on.
+- The бекап carries the mapping, so restoring a device restores it — as one more optional section
+  of the existing format, with no change to the envelope's format version. A бекап written before
+  the mapping existed restores with no mapping stored, which is the defaults — the same as the
+  device it was made on. `BACKUP_SCHEMA_VERSION` rises by one with the new migration, as it does
+  for every migration.
 
 Non-goals of this change, deliberately:
 
@@ -56,10 +58,14 @@ None. The шаблон is part of автокатегоризація, not a capa
 - `categorisation-rules`: adds the built-in шаблон as a second matching tier under the owner's
   правила, the owner's mapping of each базова категорія to a категорія of this device (or to
   nothing), and the sweep of «Без категорії» when that mapping changes.
-- `settings-screen`: adds the «Базові категорії» section and names it among the sections the tab
-  offers.
+- `settings-screen`: adds the «Базові категорії» section, offered right after «Правила» (an ADDED
+  requirement, so the sections other in-flight changes add to the tab are not overwritten).
+- `bank-notifications`: a чернетка is categorised, and auto-confirmed, by the шаблон when no правило
+  matches.
+- `monobank-sync`, `main-screen`, `bank-notifications-screen`: the requirements that named the
+  owner's правила as the only source of a категорія name the шаблон as the second tier.
 - `persistence`: the mapping survives a restart.
-- `backup-file`: the бекап carries the mapping; format version 2.
+- `backup-file`: the бекап carries the mapping as an optional section.
 
 ## Impact
 
@@ -68,9 +74,9 @@ None. The шаблон is part of автокатегоризація, not a capa
 - `src/db/schema.ts` + one new migration — the mapping table; `src/db/rule-template-repo.ts` (new).
 - Every place that matched before: `src/monobank/sync.ts`, `src/notifications/draft.ts`,
   `src/ui/entry-form.ts`, and the sweep from `rules-everywhere`.
-- `src/backup/format.ts` and `src/db/backup-repo.ts` — one more list in the file, version 2.
+- `src/backup/format.ts` and `src/db/backup-repo.ts` — one more optional list in the file.
 - Screens: `src/app/manage/rule-template.tsx` (new), `src/app/(tabs)/settings.tsx`.
-- Docs: `docs/glossary.md` gains «Шаблон категоризації» and «Базова категорія»;
+- Docs: `docs/glossary.md` gains «Шаблон категоризації», «Базова категорія» and «Типова категорія»;
   `docs/tech-task.md` records the change.
 
 ## Depends on

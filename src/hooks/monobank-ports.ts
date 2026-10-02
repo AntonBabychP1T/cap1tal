@@ -1,6 +1,10 @@
 import { AppState } from 'react-native';
 
-import { accounts as accountsRepo, monobank as monobankRepo, rules as rulesRepo } from '@/db/repos';
+import {
+  accounts as accountsRepo,
+  categorisationContext,
+  monobank as monobankRepo,
+} from '@/db/repos';
 import type { SyncPorts } from '@/monobank/coordinator';
 import { deviceTimer, foregroundRun, withRequestTimeout, REQUEST_TIMEOUT_MS } from '@/monobank/yielding';
 import { backgroundSync } from '@/platform/background-sync-device';
@@ -68,8 +72,9 @@ export function syncPorts(over: Partial<SyncPorts> = {}, run: string = newId()):
       { run },
     ),
     storage: monobankRepo,
-    // Read once per run, so a правило created since the last one decides this one.
-    rules: () => rulesRepo.list(),
+    // Read once per run, so a правило created — or a mapping changed — since the last one decides
+    // this one.
+    categorisation: categorisationContext,
     accounts: () => accountsRepo.list(),
     nowMs: () => Date.now(),
     now: () => new Date(),

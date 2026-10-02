@@ -36,7 +36,7 @@ import {
   netWorth as netWorthRepo,
   notifications as notificationsRepo,
   rates as ratesRepo,
-  rules as rulesRepo,
+  categorisationContext,
   sources as sourcesRepo,
   storedHistory,
   transactions as transactionsRepo,
@@ -142,7 +142,7 @@ let landedOnSetup = false;
  */
 const DRAFT_PORTS = {
   storage: notificationsRepo,
-  rules: () => rulesRepo.list(),
+  categorisation: categorisationContext,
   newId,
   now: () => new Date(),
 };

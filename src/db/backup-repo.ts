@@ -32,6 +32,7 @@ import {
   notificationDrafts,
   notificationWatches,
   receiptItems,
+  ruleTemplateChoices,
   rules,
   saldoImport,
   sources,
@@ -78,6 +79,11 @@ export function backupRepo(db: Storage): BackupStore {
         .all()
         .map(toInstallment);
       const installmentReminderRow = db.select().from(installmentReminder).all()[0];
+      const templateChoices = db
+        .select()
+        .from(ruleTemplateChoices)
+        .orderBy(asc(ruleTemplateChoices.groupId))
+        .all();
       return {
         accounts: db.select().from(accounts).orderBy(asc(accounts.id)).all().map(toAccount),
         categories: db
@@ -318,6 +324,16 @@ export function backupRepo(db: Storage): BackupStore {
           : {}),
         // Only when the owner has ever flipped «Вібрація»; untouched is on, and carries nothing.
         ...(haptics ? { haptics: { enabled: haptics.enabled } } : {}),
+        // Only the базові категорії the owner touched; an untouched one is carried as nothing, so
+        // it follows whatever типова категорія the restoring app's шаблон gives it.
+        ...(templateChoices.length > 0
+          ? {
+              templateChoices: templateChoices.map((row) => ({
+                groupId: row.groupId,
+                categoryId: row.categoryId,
+              })),
+            }
+          : {}),
         // Only when there is a розстрочка or the owner has touched its switch; otherwise the
         // section is absent and restores to none, on. `asked` is this phone's own and never here.
         ...(plans.length > 0 || installmentReminderRow
@@ -406,6 +422,9 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(installments).run();
         tx.delete(categoryLimits).run();
         tx.delete(rules).run();
+        // The шаблон mapping names категорії through `restrict`, so it goes before them. The
+        // swept version stays: it is this phone's own bookkeeping (rule-template design T6).
+        tx.delete(ruleTemplateChoices).run();
         tx.delete(transactionsTable).run();
         tx.delete(monobankImportedItems).run();
         tx.delete(monobankLinks).run();
@@ -644,6 +663,11 @@ export function backupRepo(db: Storage): BackupStore {
               itemsJson: JSON.stringify(state.dashboardLayout.items),
             })
             .run();
+        }
+        // After the категорії it names. A бекап without the section leaves none: every базова
+        // категорія follows its типова категорія.
+        if (state.templateChoices && state.templateChoices.length > 0) {
+          tx.insert(ruleTemplateChoices).values([...state.templateChoices]).run();
         }
         if (state.haptics) {
           // In the same transaction as the money: a restore that fails leaves this untouched too.

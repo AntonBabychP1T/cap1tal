@@ -271,16 +271,40 @@ export async function storeRule(
   rule: Rule,
   save: (rule: Rule) => SweepCounts,
 ): Promise<string | undefined> {
-  const counts = await journal.step('rules/sweep', async () => save(rule), {
-    ending: (c) => ({
-      counts: {
-        examined: c.examined,
-        moved: c.moved,
-        transferred: c.transferred,
-        absorbed: c.absorbed,
-      },
-    }),
+  return sweepSaid(await sweepStep('rules/sweep', () => save(rule)));
+}
+
+/**
+ * One розбір as one журнал operation carrying its four counts and nothing else — no опис, no сума,
+ * no назва. Every trigger of a розбір goes through it: storing a правило, changing the шаблон's
+ * mapping, and the open-time розбір (which may answer nothing when another run swept first).
+ */
+export async function sweepStep<T extends SweepCounts | undefined>(
+  name: string,
+  run: () => T,
+): Promise<T> {
+  return journal.step(name, async () => run(), {
+    ending: (c) =>
+      c === undefined
+        ? { detail: 'already-swept' }
+        : {
+            counts: {
+              examined: c.examined,
+              moved: c.moved,
+              transferred: c.transferred,
+              absorbed: c.absorbed,
+            },
+          },
   });
+}
+
+/**
+ * What a розбір the owner triggered says afterwards: how many витрати it recategorised and how many
+ * became перекази — or nothing at all when it moved nothing ("A pass that moved nothing says
+ * nothing"). One sentence for every trigger the owner has: storing a правило and changing the
+ * шаблон's mapping alike.
+ */
+export function sweepSaid(counts: SweepCounts): string | undefined {
   const said: string[] = [];
   if (counts.moved > 0) said.push(`${expenseCount(counts.moved)} перекатегоризовано.`);
   if (counts.transferred > 0) said.push(`${expenseCount(counts.transferred)} стали переказами.`);

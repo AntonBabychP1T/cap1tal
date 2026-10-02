@@ -46,7 +46,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 9;
+export const BACKUP_SCHEMA_VERSION = 10;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -106,6 +106,12 @@ export const BACKUP_KIND = 'backup';
  * the owner's last hand-made запис, not a setting they chose and not their money. A restored phone
  * learns it again the first time they record by hand, and until then the form opens with nothing
  * pre-chosen, exactly as a phone that has never recorded by hand does.
+ *
+ * `rule_template_sweep` is absent too: it is the шаблон version *this* phone last swept «Без
+ * категорії» under — bookkeeping about work already done to the транзакції a бекап carries as they
+ * are, not the owner's state (rule-template design T6). A restore leaves this phone's own row as it
+ * was: a fresh phone, which has none, sweeps the restored «Без категорії» once on its next open; a
+ * phone already swept under this шаблон does not sweep again until the шаблон's version changes.
  */
 export const BACKUP_TABLES: readonly string[] = [
   'accounts',
@@ -164,6 +170,9 @@ export const BACKUP_TABLES: readonly string[] = [
   'installment_part_marks',
   'installment_refusals',
   'installment_reminder',
+  // The owner's mapping of the шаблон категоризації onto their категорії — a choice they made,
+  // never the шаблон itself, which is the app's (rule-template design T6).
+  'rule_template_choices',
 ];
 
 /**
@@ -354,6 +363,15 @@ export interface BackupInstallments {
 }
 
 /**
+ * One choice the owner made about a базова категорія: the категорія it lands in, or `null` for
+ * switched off. A базова категорія they never touched is not carried at all.
+ */
+export interface BackupTemplateChoice {
+  readonly groupId: string;
+  readonly categoryId: string | null;
+}
+
+/**
  * The owner's whole state, in the shape a бекап carries and storage restores. Every instant is
  * epoch milliseconds rather than a `Date`, because this value is written to a file and read back
  * from one: a shape that survives `JSON.parse` unchanged needs no second mapping layer to be the
@@ -397,6 +415,13 @@ export interface BackupState {
    * on. An optional section, so `BACKUP_FORMAT_VERSION` stays.
    */
   readonly installments?: BackupInstallments;
+  /**
+   * The owner's choices about the шаблон категоризації; absent on a бекап written before the
+   * mapping existed, or on a device where no базова категорія was ever touched — which restores to
+   * none, every базова категорія following its типова категорія. An optional section, so
+   * `BACKUP_FORMAT_VERSION` stays.
+   */
+  readonly templateChoices?: readonly BackupTemplateChoice[];
 }
 
 /** The whole file: the marker, the versions, the moment, the integrity value and the contents. */
@@ -937,6 +962,14 @@ function installmentsAt(value: unknown, at: string): BackupInstallments {
   };
 }
 
+function templateChoiceAt(value: unknown, at: string): BackupTemplateChoice {
+  const row = objectAt(value, at);
+  return {
+    groupId: stringAt(row.groupId, `${at}.groupId`),
+    categoryId: row.categoryId === null ? null : stringAt(row.categoryId, `${at}.categoryId`),
+  };
+}
+
 function watchAt(value: unknown, at: string): BackupWatch {
   const row = objectAt(value, at);
   return {
@@ -1002,6 +1035,12 @@ export function parseState(value: unknown): BackupState {
     ...(data.installments === undefined || data.installments === null
       ? {}
       : { installments: installmentsAt(data.installments, 'installments') }),
+    // A бекап written before the шаблон mapping existed names none, and restores to every базова
+    // категорія following its типова категорія (backup-file, "A бекап written before the mapping
+    // existed restores the defaults").
+    ...(data.templateChoices === undefined || data.templateChoices === null
+      ? {}
+      : { templateChoices: listAt(data, 'templateChoices', templateChoiceAt) }),
   };
 }
 
@@ -1213,6 +1252,16 @@ export function checkConsistent(state: BackupState): void {
     valued.add(value.accountId);
   }
   checkInstallments(state, accounts, categories);
+  // One choice per базова категорія, and a категорія it names is one this бекап carries — a
+  // dangling one makes the whole бекап contradict itself. A group id this app's шаблон does not
+  // carry is accepted and kept: an app downgrade must not throw the owner's choices away.
+  const chosen = new Set<string>();
+  for (const choice of state.templateChoices ?? []) {
+    const what = `вибір для базової категорії «${choice.groupId}»`;
+    if (chosen.has(choice.groupId)) fail(`${what} названий двічі`);
+    chosen.add(choice.groupId);
+    if (choice.categoryId !== null) needsCategory(choice.categoryId, what);
+  }
   for (const account of state.monobankAccounts) {
     if (account.bankBalance.currency !== account.currency) {
       fail(`рахунок monobank «${account.name}» тримає баланс в іншій валюті, ніж сам рахунок`);

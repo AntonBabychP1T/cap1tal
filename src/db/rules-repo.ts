@@ -1,23 +1,14 @@
 import { asc, eq } from 'drizzle-orm';
 
-import { countUncategorisedExpenses, sweepUncategorised, type Rule } from '../domain/rules';
+import type { Rule } from '../domain/rules';
 import { CORRECTION_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
-import { storeTransferPairing } from './counterpart-income-repo';
-import { accounts, rules, type NewRuleRow, type RuleRow } from './schema';
+import { sweepStored, type SweepCounts } from './categorisation';
+import { toRule } from './mappers';
+import { rules, type NewRuleRow } from './schema';
 import type { Storage } from './storage';
-import { transactionsRepo } from './transactions-repo';
 import { Refusal } from '../domain/refusal';
 
-/**
- * What a розбір did: the «Без категорії» витрати it looked at, how many it moved onto a
- * категорія, how many it turned into перекази, and how many зустрічні доходи those absorbed.
- */
-export interface SweepCounts {
-  readonly examined: number;
-  readonly moved: number;
-  readonly transferred: number;
-  readonly absorbed: number;
-}
+export type { SweepCounts };
 
 /**
  * Правила автокатегоризації in storage. Speaks domain `Rule`s only — rows never leave this module.
@@ -25,9 +16,10 @@ export interface SweepCounts {
  * Matching itself is `matchRule`/`matchCategory` in src/domain/rules.ts, and the three import
  * sources and the entry form are what run it. What this module does with it is the розбір: storing
  * a правило decides, here, which stored «Без категорії» витрати it now recognises —
- * `sweepUncategorised` decides, this module writes, turning a matched витрата into a переказ
- * through the same shared pairing step (`counterpart-income-repo.ts`) every other переказ a
- * правило makes goes through (design D5).
+ * `sweepUncategorised` decides and `sweepStored` (`categorisation.ts`) writes, over both tiers —
+ * the правила and the шаблон — turning a matched витрата into a переказ through the same shared
+ * pairing step (`counterpart-income-repo.ts`) every other переказ a правило makes goes through
+ * (design D5).
  */
 export function rulesRepo(db: Storage) {
   return {
@@ -47,7 +39,8 @@ export function rulesRepo(db: Storage) {
      * the persistence spec asks for at storage level.
      *
      * **Storing a правило runs the розбір**, in this same transaction: every stored витрата in
-     * «Без категорії» that the правила — as they stand *after* this write — now recognise moves
+     * «Без категорії» that the правила — as they stand *after* this write — or, where none of them
+     * answers, the шаблон now recognise moves
      * onto what they give it — a категорія, or a переказ when the best правило is a
      * правило-переказ. The invariant lives here, at the only write path, because four screens
      * store a правило and a fifth will; one of them would eventually forget to sweep. One
@@ -73,48 +66,7 @@ export function rulesRepo(db: Storage) {
             },
           })
           .run();
-        const stored = transactionsRepo(tx).listAll();
-        const all = tx.select().from(rules).all().map(toRule);
-        const knownAccounts = tx.select().from(accounts).all();
-        const moves = sweepUncategorised(all, stored, knownAccounts);
-        // By id once, rather than a scan of the whole history per move (app-speed-pass design D9).
-        const storedById = new Map(stored.map((t) => [t.id, t]));
-        const write = transactionsRepo(tx);
-        let transferred = 0;
-        let absorbed = 0;
-        const now = rule.createdAt;
-        for (const move of moves) {
-          if (move.kind === 'category') {
-            write.setCategory(move.id, move.categoryId);
-            continue;
-          }
-          const original = storedById.get(move.id);
-          if (original === undefined || original.type !== 'expense') {
-            continue;
-          }
-          const result = storeTransferPairing(
-            tx,
-            {
-              type: 'transfer',
-              id: original.id,
-              date: original.date,
-              fromAccountId: original.accountId,
-              toAccountId: move.toAccountId,
-              left: original.amount,
-              arrived: original.amount,
-              ...(original.description ? { description: original.description } : {}),
-            },
-            now,
-          );
-          transferred += 1;
-          if (result.absorbed) absorbed += 1;
-        }
-        return {
-          examined: countUncategorisedExpenses(stored),
-          moved: moves.filter((m) => m.kind === 'category').length,
-          transferred,
-          absorbed,
-        };
+        return sweepStored(tx, rule.createdAt);
       }, { behavior: 'immediate' });
     },
 
@@ -185,24 +137,5 @@ function toRuleRow(rule: Rule): NewRuleRow {
     categoryId: rule.target.kind === 'category' ? rule.target.categoryId : null,
     toAccountId: rule.target.kind === 'transfer' ? rule.target.toAccountId : null,
     createdAt: rule.createdAt,
-  };
-}
-
-/**
- * An absent criterion is NULL in the row and a missing key on the domain value — not a key set to
- * `undefined` — so a loaded rule is the value that was stored and not a lookalike. Storage's own
- * `rules_target_exactly_one` CHECK is what makes exactly one of `categoryId` / `toAccountId`
- * non-null true here; a row that violated it could never have been written.
- */
-function toRule(row: RuleRow): Rule {
-  return {
-    id: row.id,
-    ...(row.merchant === null ? {} : { merchant: row.merchant }),
-    ...(row.mcc === null ? {} : { mcc: row.mcc }),
-    target:
-      row.categoryId !== null
-        ? { kind: 'category', categoryId: row.categoryId }
-        : { kind: 'transfer', toAccountId: row.toAccountId! },
-    createdAt: row.createdAt,
   };
 }

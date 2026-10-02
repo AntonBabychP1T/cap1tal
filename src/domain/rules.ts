@@ -1,5 +1,6 @@
 import type { Account } from './account';
 import { foldCase } from './fold';
+import { TEMPLATE_GROUPS } from './rule-template';
 import {
   UNCATEGORISED_CATEGORY_ID,
   type Transaction,
@@ -158,6 +159,80 @@ export function matchCategory(
 }
 
 /**
+ * The two tiers a категорія is decided by: the owner's own правила, then — only when none of them
+ * eligible there matches — the шаблон категоризації (categorisation-rules, "The owner's правила
+ * decide before the шаблон is consulted"). `templateRules` absent is a шаблон that takes no part;
+ * production always passes it, from `categorisationContext()` (design T4).
+ */
+export interface RuleTiers {
+  readonly rules: readonly Rule[];
+  readonly templateRules?: readonly Rule[];
+}
+
+/** The fixed tie-break date of every шаблон rule: the шаблон has no history to rank by. */
+const TEMPLATE_EPOCH = new Date(0);
+
+/**
+ * The шаблон as ordinary правила, so the one ladder in `matchRule` ranks it (design T2): one rule
+ * per merchant pattern and one per MCC of every базова категорія that `targets` maps to a
+ * категорія. A базова категорія absent from `targets` — switched off, or resolved to a категорія
+ * this device lacks — yields nothing and therefore matches nothing.
+ *
+ * Ids are `tpl:<group>:m<n>` / `tpl:<group>:c<n>` and `createdAt` is fixed, so ties inside the
+ * шаблон fall to the id and the answer never depends on load order.
+ */
+export function templateRules(targets: ReadonlyMap<string, string>): readonly Rule[] {
+  const rules: Rule[] = [];
+  for (const group of TEMPLATE_GROUPS) {
+    const categoryId = targets.get(group.id);
+    if (categoryId === undefined) continue;
+    const target = { kind: 'category', categoryId } as const;
+    group.merchants.forEach((merchant, n) => {
+      rules.push({ id: `tpl:${group.id}:m${n}`, merchant, target, createdAt: TEMPLATE_EPOCH });
+    });
+    group.mcc.forEach((mcc, n) => {
+      rules.push({ id: `tpl:${group.id}:c${n}`, mcc, target, createdAt: TEMPLATE_EPOCH });
+    });
+  }
+  return rules;
+}
+
+/**
+ * What the two tiers give a транзакція: the best eligible правило's target, or — when no правило
+ * eligible there matches — the best шаблон match. The tiers never mix: an owner's MCC-only правило
+ * beats the most specific шаблон merchant pattern, because the owner's tier answered at all. An
+ * ineligible правило-переказ takes no part (see `matchRule`), so it does not silence the шаблон.
+ */
+export function resolveTarget(
+  tiers: RuleTiers,
+  transaction: {
+    readonly description: string;
+    readonly mcc?: number;
+    readonly from?: FromAccount;
+  },
+  accounts: readonly Pick<Account, 'id' | 'currency'>[] = [],
+): RuleTarget | undefined {
+  return (
+    matchRule(tiers.rules, transaction, accounts) ??
+    matchRule(tiers.templateRules ?? [], transaction)
+  );
+}
+
+/**
+ * `resolveTarget` for the callers that only ever decide a категорія — the entry form and a
+ * чернетка: the category правила alone (as `matchCategory`), then the шаблон.
+ */
+export function resolveCategory(
+  tiers: RuleTiers,
+  transaction: { readonly description: string; readonly mcc?: number },
+): string | undefined {
+  return (
+    matchCategory(tiers.rules, transaction) ??
+    matchCategory(tiers.templateRules ?? [], transaction)
+  );
+}
+
+/**
  * The merchant pattern a правило is offered with when the owner categorises a транзакція that
  * carries an опис — «СІЛЬПО 123 Київ, вул. Хрещатик» → «сільпо».
  *
@@ -194,8 +269,8 @@ export type SweepMove =
   | { readonly kind: 'transfer'; readonly id: string; readonly toAccountId: string };
 
 /**
- * The розбір: which stored витрати in «Без категорії» the правила now recognise, and where each
- * one goes. It decides and returns; nothing here writes (design decision 1). Turning a витрата
+ * The розбір: which stored витрати in «Без категорії» the two tiers now recognise — the owner's
+ * правила, then the шаблон where none of them answers — and where each one goes. It decides and returns; nothing here writes (design decision 1). Turning a витрата
  * into a переказ is only the move — keeping its identity, сума, date and опис on both legs, and
  * absorbing its зустрічний дохід — is the repository's write, using the same shared step every
  * other переказ a правило makes goes through (design D5).
@@ -220,7 +295,7 @@ export type SweepMove =
  * currency, is ineligible there (design D2) and gives that витрата nothing, so it stays.
  */
 export function sweepUncategorised(
-  rules: readonly Rule[],
+  tiers: RuleTiers,
   transactions: readonly Transaction[],
   accounts: readonly Pick<Account, 'id' | 'currency'>[],
 ): readonly SweepMove[] {
@@ -229,8 +304,8 @@ export function sweepUncategorised(
     if (transaction.type !== 'expense') continue;
     if (transaction.categoryId !== UNCATEGORISED_CATEGORY_ID) continue;
     if (transaction.description === undefined) continue;
-    const target = matchRule(
-      rules,
+    const target = resolveTarget(
+      tiers,
       {
         description: transaction.description,
         from: { accountId: transaction.accountId, currency: transaction.amount.currency },

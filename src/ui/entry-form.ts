@@ -1,6 +1,6 @@
 import { computeBalance, type Account } from '../domain/account';
 import { money, type Money } from '../domain/money';
-import { matchCategory, type Rule } from '../domain/rules';
+import { resolveCategory, type RuleTiers } from '../domain/rules';
 import {
   expenseByDefault,
   proposeFee,
@@ -123,8 +123,9 @@ export function defaultAccountId(
  * from that moment the form stops looking at the опис for the rest of this recording, however it
  * changes next (design D4).
  *
- * No MCC is passed to `matchCategory`: nothing hand-typed carries one, exactly as a чернетка from a
- * bank сповіщення does not. `matchCategory`, not `matchRule`, is what keeps a правило-переказ from
+ * The owner's правила decide first and the шаблон категоризації only when none of them matches
+ * (`resolveCategory`). No MCC is passed: nothing hand-typed carries one, exactly as a чернетка from
+ * a bank сповіщення does not. Category правила only, as `matchCategory`, is what keeps a правило-переказ from
  * ever proposing a переказ here — recording by hand never turns a витрата into one on the owner's
  * behalf (categorisation-rules, "Правила decide the категорія... a правило-переказ SHALL take no
  * part").
@@ -136,12 +137,12 @@ export function proposedCategoryId(
     readonly categoryId?: string;
     readonly pickedByOwner: boolean;
   },
-  rules: readonly Rule[],
+  categorisation: RuleTiers,
 ): string | undefined {
   if (draft.type !== 'expense' || draft.pickedByOwner) {
     return draft.categoryId;
   }
-  return matchCategory(rules, { description: draft.description ?? '' }) ?? draft.categoryId;
+  return resolveCategory(categorisation, { description: draft.description ?? '' }) ?? draft.categoryId;
 }
 
 /**

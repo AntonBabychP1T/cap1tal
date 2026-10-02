@@ -142,7 +142,8 @@ dated the item's date, carrying the item's description as its опис:
 
 - An item with a negative amount SHALL become a витрата of the absolute amount in the
   рахунок's currency; its category SHALL be the owner's правила applied to the item's
-  description and MCC, and «Без категорії» when no правило matches. When the best matching
+  description and MCC — and, when no правило eligible there matches, the шаблон категоризації
+  applied the same way — and «Без категорії» when neither matches. When the best matching
   правило is a правило-переказ, the item SHALL instead become a переказ from this рахунок to the
   правило's destination, carrying the absolute amount on both legs.
 - An item with a positive amount SHALL become a дохід of that amount with the reserved джерело
@@ -166,7 +167,8 @@ An item that became no транзакція SHALL still count as imported, so it
 
 #### Scenario: An unrecognised merchant is «Без категорії»
 
-- **WHEN** no правило matches an item of amount −8000 with description "НОВИЙ ЗАКЛАД"
+- **WHEN** no правило and no базова категорія matches an item of amount −8000 with description
+  "НОВИЙ ЗАКЛАД"
 - **THEN** the result is a витрата of 8000 minor units in «Без категорії», carrying the
   description as its опис
 

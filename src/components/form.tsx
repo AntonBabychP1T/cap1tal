@@ -668,7 +668,7 @@ export function Picker({
     selected === undefined ? [] : [selected],
   );
 
-  const shown = shortlist(rows, { recentIds, chosenIds });
+  const shown = shortlist(rows, { recentIds, chosenIds, selectedId: selected });
   const offer = allOffer(rows, noun);
   const asChoices = (list: readonly Named[]) =>
     list.map((row) => ({ value: row.id, label: row.name }));

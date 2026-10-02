@@ -131,11 +131,27 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   specific one wins whichever kind it is. Takes no part in matching money leaving its own
   destination, money in another currency than its destination, or a категорія being decided by
   hand or from a chernetka — there it is simply not a категорія.
-- **Sweep** (розбір) — what storing a правило, newly created or edited, does about history: every
-  stored витрата sitting in «Без категорії» that the правила now match moves onto what they give
-  it, at once and without asking — a категорія, or a переказ when the best правило is a
-  правило-переказ. It only ever fills the gap — a категорія the owner chose, or an earlier правило
-  gave, is never revisited.
+- **Sweep** (розбір) — what storing a правило, newly created or edited, does about history — and
+  so does pointing a базова категорія elsewhere or switching it off, and the first open under a
+  шаблон категоризації version not yet swept: every stored витрата sitting in «Без категорії» that
+  the two tiers now match — the правила first, the шаблон where none of them answers — moves onto
+  what they give it, at once and without asking — a категорія, or a переказ when the best правило
+  is a правило-переказ. It only ever fills the gap — a категорія the owner chose, or an earlier
+  правило gave, is never revisited.
+- **Rule template** (шаблон категоризації) — the built-in knowledge that «АТБ» is продукти and MCC
+  5411 is продукти, shipped with the app as data and updated with it: a fixed set of базові
+  категорії, each holding merchant patterns, MCC codes or both. It is the second tier of
+  автокатегоризація — consulted only when none of the owner's правила matches, so a правило of the
+  owner's own always wins. Never stored and never carried in a бекап; only the owner's mapping of
+  it is.
+- **Base category** (базова категорія) — one group of the шаблон категоризації («Продукти»,
+  «Транспорт», «Здоровʼя», …). Not a категорія of the device and not a parent of one: it points at
+  exactly one категорія of this device — its типова категорія unless the owner chose another — or,
+  switched off, at nothing. Managed in Налаштування → «Базові категорії»; what it covers is shown
+  there and is not editable.
+- **Default category** (типова категорія) — the starter категорія a базова категорія lands in until
+  the owner points it elsewhere, named by the starter row's stable id so a rename does not move it.
+  A типова категорія this device does not hold makes its базова категорія match nothing.
 - **Limit** (ліміт) — an optional monthly ceiling on a category: at most one per category, a сума
   with a currency code. A category is **over its ліміт** for a month when that month's spent of it
   **in the ліміт's own currency** — the net-of-повернення amount the monthly-picture breakdown

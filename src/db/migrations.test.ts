@@ -44,6 +44,8 @@ import {
   notificationFingerprints,
   notificationWatches,
   receiptItems,
+  ruleTemplateChoices,
+  ruleTemplateSweep,
   rules,
   saldoImport,
   sources,
@@ -2070,6 +2072,61 @@ describe('migrations — the дата початкового залишку', ()
       expect(row).toEqual([{ opening_date: null }]);
     } finally {
       staged.close();
+    }
+  });
+});
+
+describe('migrations — the шаблон mapping', () => {
+  it('Scenario: The migration keeps what is stored', () => {
+    const staged = openTestDbMigratedTo(9);
+    try {
+      const { db } = staged;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
+      db.insert(rules)
+        .values({ id: 'r1', merchant: 'сільпо', categoryId: 'food', createdAt: new Date(1) })
+        .run();
+      const before = {
+        accounts: db.select().from(accounts).all(),
+        transactions: db.select().from(transactions).all(),
+        categories: db.select().from(categories).all(),
+        rules: db.select().from(rules).all(),
+      };
+
+      staged.migrateToLatest();
+
+      expect({
+        accounts: db.select().from(accounts).all(),
+        transactions: db.select().from(transactions).all(),
+        categories: db.select().from(categories).all(),
+        rules: db.select().from(rules).all(),
+      }).toEqual(before);
+      // No базова категорія has a stored choice: every one follows its типова категорія.
+      expect(db.select().from(ruleTemplateChoices).all()).toEqual([]);
+      expect(db.select().from(ruleTemplateSweep).all()).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('A choice names a stored категорія or nothing, and the swept version is one row', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      seedReferences(db, VOCABULARY);
+      db.insert(ruleTemplateChoices).values({ groupId: 'groceries', categoryId: 'food' }).run();
+      db.insert(ruleTemplateChoices).values({ groupId: 'habits', categoryId: null }).run();
+      expect(() =>
+        db.insert(ruleTemplateChoices).values({ groupId: 'home', categoryId: 'nowhere' }).run(),
+      ).toThrow();
+      expect(() =>
+        db.insert(ruleTemplateChoices).values({ groupId: 'groceries', categoryId: 'clothes' }).run(),
+      ).toThrow();
+      db.insert(ruleTemplateSweep).values({ id: 'sweep', version: 1 }).run();
+      expect(() => db.insert(ruleTemplateSweep).values({ id: 'other', version: 2 }).run()).toThrow();
+    } finally {
+      storage.close();
     }
   });
 });

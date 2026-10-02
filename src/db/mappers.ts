@@ -1,8 +1,15 @@
 import { account, type Account, type AccountKind } from '../domain/account';
 import { money, type Money } from '../domain/money';
+import type { Rule } from '../domain/rules';
 import { isoDate, type Transaction } from '../domain/transaction';
 
-import type { AccountRow, NewAccountRow, NewTransactionRow, TransactionRow } from './schema';
+import type {
+  AccountRow,
+  NewAccountRow,
+  NewTransactionRow,
+  RuleRow,
+  TransactionRow,
+} from './schema';
 
 /**
  * Row ↔ domain mapping, total in both directions. Storage row types never leave src/db/:
@@ -214,4 +221,23 @@ export function toTransaction(row: TransactionRow, awaiting?: boolean): Transact
     default:
       throw new Error(`stored transaction "${row.id}" has an unknown type "${row.type}"`);
   }
+}
+
+/**
+ * An absent criterion is NULL in the row and a missing key on the domain value — not a key set to
+ * `undefined` — so a loaded rule is the value that was stored and not a lookalike. Storage's own
+ * `rules_target_exactly_one` CHECK is what makes exactly one of `categoryId` / `toAccountId`
+ * non-null true here; a row that violated it could never have been written.
+ */
+export function toRule(row: RuleRow): Rule {
+  return {
+    id: row.id,
+    ...(row.merchant === null ? {} : { merchant: row.merchant }),
+    ...(row.mcc === null ? {} : { mcc: row.mcc }),
+    target:
+      row.categoryId !== null
+        ? { kind: 'category', categoryId: row.categoryId }
+        : { kind: 'transfer', toAccountId: row.toAccountId! },
+    createdAt: row.createdAt,
+  };
 }

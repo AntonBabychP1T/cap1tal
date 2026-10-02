@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { money } from '../domain/money';
-import type { Rule } from '../domain/rules';
+import { templateRules, type Rule } from '../domain/rules';
+import { TEMPLATE_GROUPS } from '../domain/rule-template';
 import {
   UNCATEGORISED_CATEGORY_ID,
   UNSOURCED_SOURCE_ID,
@@ -468,5 +469,73 @@ describe('determinism', () => {
     expect(confirmDraft(draft, { rules: [groceries], newId: ids() }, 30000)).toEqual(
       confirmDraft(draft, { rules: [groceries], newId: ids() }, 30000),
     );
+  });
+});
+
+describe('the шаблон категоризації decides a чернетка when no правило does', () => {
+  const template = templateRules(new Map(TEMPLATE_GROUPS.map((g) => [g.id, g.defaultCategoryId])));
+
+  it('Scenario: The шаблон auto-confirms a чернетка', () => {
+    const outcome = processCapture(
+      capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }),
+      context({ rules: [], templateRules: template }),
+    );
+
+    expect(outcome.kind).toBe('auto-confirmed');
+    if (outcome.kind !== 'auto-confirmed') throw new Error('unreachable');
+    expect(outcome.transaction).toMatchObject({
+      type: 'expense',
+      amount: money(12550, 'UAH'),
+      categoryId: 'groceries',
+    });
+  });
+
+  it('Scenario: An MCC-only правило does not auto-confirm — and neither do the шаблон’s MCC codes', () => {
+    const byMcc: Rule = {
+      id: 'r-mcc',
+      mcc: 5411,
+      target: { kind: 'category', categoryId: 'groceries' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const outcome = processCapture(
+      capture({ title: 'Оплата', text: '250.00UAH. НОВИЙ ЗАКЛАД' }),
+      context({ rules: [byMcc], templateRules: template }),
+    );
+    expect(outcome.kind).toBe('drafted');
+  });
+
+  it('Scenario: Confirming an unmatched витрата lands in «Без категорії» — neither tier matching', () => {
+    const draft = drafted(
+      processCapture(capture({ title: 'Оплата', text: '250.00UAH. НОВИЙ ЗАКЛАД' }), context()),
+    );
+    const result = confirmDraft(draft, { rules: [], templateRules: template, newId: ids() });
+    expect(result.kind === 'confirmed' && result.transaction).toMatchObject({
+      categoryId: UNCATEGORISED_CATEGORY_ID,
+    });
+  });
+
+  it('confirming a чернетка the шаблон recognises lands it where the шаблон says', () => {
+    // Drafted with no шаблон in play, so nothing auto-confirmed; confirmed once it is.
+    const draft = drafted(
+      processCapture(capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }), context()),
+    );
+    const result = confirmDraft(draft, { rules: [], templateRules: template, newId: ids() });
+    expect(result.kind === 'confirmed' && result.transaction).toMatchObject({ categoryId: 'groceries' });
+  });
+
+  it('a правило still decides first', () => {
+    const silpoToEatingOut: Rule = {
+      id: 'r-eo',
+      merchant: 'сільпо',
+      target: { kind: 'category', categoryId: 'eating-out' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const outcome = processCapture(
+      capture({ title: 'Оплата', text: '125.50 грн. СІЛЬПО' }),
+      context({ rules: [silpoToEatingOut], templateRules: template }),
+    );
+    expect(outcome.kind === 'auto-confirmed' && outcome.transaction).toMatchObject({
+      categoryId: 'eating-out',
+    });
   });
 });

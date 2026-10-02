@@ -45,6 +45,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { href: '/manage/categories', title: 'Категорії', hint: 'Куди пішли гроші' },
   { href: '/manage/sources', title: 'Джерела', hint: 'Звідки прийшли гроші' },
   { href: '/manage/rules', title: 'Правила', hint: 'Автокатегоризація імпорту' },
+  // Right after «Правила»: the owner's tier and the built-in tier of one автокатегоризація are
+  // read together (settings-screen, "Налаштування offers «Базові категорії» right after «Правила»").
+  {
+    href: '/manage/rule-template',
+    title: 'Базові категорії',
+    hint: 'Вбудоване знання про продавців — куди воно веде',
+  },
   { href: '/manage/limits', title: 'Ліміти', hint: 'Місячна стеля по категорії — вона ж ціль витрат' },
   { href: '/manage/goals', title: 'Цілі', hint: 'Накопичити суму або не перевищити витрати' },
   // Also reached from Місяць's block — but a розстрочка recorded in a month with no платіж yet has

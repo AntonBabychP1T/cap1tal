@@ -2,7 +2,8 @@ import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import { money } from '../domain/money';
-import type { Rule } from '../domain/rules';
+import { templateRules, type Rule } from '../domain/rules';
+import { TEMPLATE_GROUPS } from '../domain/rule-template';
 import {
   UNCATEGORISED_CATEGORY_ID,
   UNSOURCED_SOURCE_ID,
@@ -726,5 +727,62 @@ describe('shownLinks — the linked рахунки the token still shows', () =>
 
   it('A phone that holds no answer cannot tell, so it leaves nothing out', () => {
     expect(ids(shownLinks([link('mono-a')], []))).toEqual(['mono-a']);
+  });
+});
+
+describe('mapStatement over the шаблон категоризації', () => {
+  const defaults = () => new Map(TEMPLATE_GROUPS.map((g) => [g.id, g.defaultCategoryId]));
+  const fresh = (targets = defaults()) =>
+    context({ rules: [], templateRules: templateRules(targets) });
+  const categoryOf = (description: string, mcc?: number, ctx = fresh()) =>
+    mapStatement([item({ id: 'a1', description, mcc })], ctx).transactions[0];
+
+  it('Scenario: A fresh device categorises a known merchant with no setup', () => {
+    expect(categoryOf('АТБ 421', 7399)).toMatchObject({ type: 'expense', categoryId: 'groceries' });
+  });
+
+  it('Scenario: A known MCC is enough on its own', () => {
+    expect(categoryOf('НОВИЙ ЗАКЛАД', 5411)).toMatchObject({ categoryId: 'groceries' });
+  });
+
+  it('Scenario: Both spellings of one merchant are covered', () => {
+    expect(categoryOf('UKLON', 4121)).toMatchObject({ categoryId: 'transport' });
+    expect(categoryOf('Уклон', 4121)).toMatchObject({ categoryId: 'transport' });
+  });
+
+  it('Scenario: A remapped базова категорія lands somewhere else', () => {
+    expect(categoryOf('АТБ 421', 5411, fresh(defaults().set('groceries', 'yizha')))).toMatchObject({
+      categoryId: 'yizha',
+    });
+  });
+
+  it('Scenario: A правило beats the шаблон', () => {
+    const atb: Rule = {
+      id: 'r-atb',
+      merchant: 'атб',
+      target: { kind: 'category', categoryId: 'eating-out' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const ctx = context({ rules: [atb], templateRules: templateRules(defaults()) });
+    expect(categoryOf('АТБ 421', 5411, ctx)).toMatchObject({ categoryId: 'eating-out' });
+  });
+
+  it('Scenario: The longest шаблон pattern wins inside the шаблон', () => {
+    expect(categoryOf('BOLT FOOD', 5814)).toMatchObject({ categoryId: 'food-delivery' });
+  });
+
+  it('Scenario: A target that no longer exists matches nothing — the import is not refused', () => {
+    // `templateTargets` leaves out a target this device lacks; what reaches the mapper is the
+    // шаблон without that базова категорія.
+    const targets = defaults();
+    targets.delete('travel');
+    expect(categoryOf('RYANAIR', 4511, fresh(targets))).toMatchObject({
+      type: 'expense',
+      categoryId: UNCATEGORISED_CATEGORY_ID,
+    });
+  });
+
+  it('Scenario: Neither tier matches', () => {
+    expect(categoryOf('НОВИЙ ЗАКЛАД', 7399)).toMatchObject({ categoryId: UNCATEGORISED_CATEGORY_ID });
   });
 });

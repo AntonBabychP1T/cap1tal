@@ -344,6 +344,18 @@ describe('ruleOffer', () => {
     ).toEqual({ merchant: 'сільпо', target: category('groceries') });
   });
 
+  it('Scenario: A шаблон match still offers the правило', () => {
+    // The шаблон already lands «АТБ» in Groceries, but the offer looks at the owner's правила
+    // alone: a правило of their own outlives a later change to the шаблон or its mapping.
+    expect(
+      ruleOffer({ description: 'АТБ 421', target: category('groceries'), rules: noRules }),
+    ).toEqual({ merchant: 'атб', target: category('groceries') });
+    // …and the hook that raises the offer reads the правила, never the two-tier context.
+    const hook = readFileSync(new URL('../hooks/use-rule-offer.ts', import.meta.url), 'utf8');
+    expect(hook).toContain('rules: rulesRepo.list()');
+    expect(hook).not.toContain('categorisationContext');
+  });
+
   it('Scenario: An опис that starts with no letter proposes the whole of itself', () => {
     expect(
       ruleOffer({ description: '7-Eleven Kyiv', target: category('groceries'), rules: noRules }),
