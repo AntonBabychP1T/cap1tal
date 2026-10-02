@@ -494,7 +494,12 @@ export function installmentsRepo(db: Storage) {
             .from(installmentPartLinks)
             .where(eq(installmentPartLinks.transactionId, transactionId))
             .get();
-          if (taken || commitmentLinkedIds(tx).has(transactionId)) {
+          const takenByCommitment = tx
+            .select()
+            .from(commitmentDueLinks)
+            .where(eq(commitmentDueLinks.transactionId, transactionId))
+            .get();
+          if (taken || takenByCommitment) {
             throw new Refusal('Ця витрата вже є списанням іншого платежу.');
           }
           tx.delete(installmentRefusals)

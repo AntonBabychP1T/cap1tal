@@ -275,7 +275,7 @@ function Row({ row, last, onPress }: { row: CommitmentRow; last: boolean; onPres
           </ThemedText>
         </View>
         <ThemedText type="small" themeColor="textSecondary">
-          {[row.periodicity, row.next ? `наступний ${row.next}` : undefined, row.stopped]
+          {[row.periodicity, row.next ? `найближчий платіж ${row.next}` : undefined, row.stopped]
             .filter(Boolean)
             .join(' · ')}
         </ThemedText>

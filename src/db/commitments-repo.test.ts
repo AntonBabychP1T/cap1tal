@@ -381,6 +381,27 @@ describe('commitmentsRepo', () => {
       expect(tx().get('oct')).toMatchObject({ categoryId: 'telecom' });
     });
 
+    it('Scenario: A skipped платіж taken back', () => {
+      repo.mark(netflix.id, 3, 'skipped');
+      const read = () =>
+        commitmentDues(repo.get(netflix.id)!, repo.facts(), { until: '2026-10-31', today: '2026-10-16' })[2];
+      expect(read()?.state).toBe('skipped');
+      repo.unmark(netflix.id, 3);
+      expect(read()?.state).toBe('expected');
+      expect(repo.facts().marks).toEqual([]);
+    });
+
+    it("Scenario: Resuming a зобов'язання stopped by mistake", () => {
+      repo.stop(netflix.id, '2026-10-02');
+      const read = () => {
+        const stored = repo.get(netflix.id)!;
+        return commitmentDues(stored, repo.facts(), { until: firstDueAfter(stored, '2026-10-03'), today: '2026-10-03' });
+      };
+      expect(read().map((d) => d.due)).not.toContain('2026-10-15');
+      repo.resume(netflix.id);
+      expect(read().find((d) => d.due === '2026-10-15')?.state).toBe('expected');
+    });
+
     it('Scenario: Marked as paid without a debit', () => {
       repo.mark(netflix.id, 3, 'paid');
       const read = () =>

@@ -22,7 +22,6 @@ import {
 import {
   NO_INSTALLMENT_FACTS,
   installmentPartStates,
-  owedInMonth,
   type DebitCandidate,
   type Installment,
 } from './installments';
@@ -691,7 +690,9 @@ describe('commitments', () => {
     });
 
     it('with only розстрочки owed gives the UAH сума «Вільно після розстрочок» gave', () => {
-      // installments, REMOVED "Вільно після розстрочок…", Migration: залишилось less owedInMonth.
+      // installments, REMOVED "Вільно після розстрочок…", Migration: the UAH залишилось less the
+      // month's розстрочка платежі still очікується or списання не знайдено — written out here as
+      // the removed reading computed it, the oracle the new one must equal.
       const vacuum: Installment = { ...iphone, id: 'i-vacuum', total: 150_000, partsCount: 3, part: 50_000 };
       const iphoneOct: Installment = { ...iphone, firstDue: '2026-10-05' };
       const linked = { ...NO_INSTALLMENT_FACTS, links: [{ installmentId: iphoneOct.id, number: 1, transactionId: 't1' }] };
@@ -699,7 +700,10 @@ describe('commitments', () => {
         ...installmentPartStates(iphoneOct, linked, '2026-10-10').parts,
         ...installmentPartStates(vacuum, NO_INSTALLMENT_FACTS, '2026-10-10').parts,
       ];
-      const before = 2_000_000 - owedInMonth(all, october);
+      const stillOwed = all
+        .filter((p) => p.due.startsWith(october) && (p.state === 'expected' || p.state === 'notFound'))
+        .reduce((sum, p) => sum + p.amount, 0);
+      const before = 2_000_000 - stillOwed;
       const owed = owedByCurrency(all.map((p) => ({ ...p, currency: 'UAH' })), october);
       expect(freeAfterCommitments(uah(2_000_000), owed, october, '2026-10-10')).toEqual(uah(before));
       expect(before).toBe(1_950_000);

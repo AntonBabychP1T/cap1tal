@@ -2105,6 +2105,37 @@ describe("commitments — the зобов'язання in the snapshot", () => {
     expect(commitments.list()).toEqual([]);
     expect(backupRepo(storage.db).snapshot().commitments).toBeUndefined();
   });
+
+  it("Scenario: A зобов'язання survives the round trip", async () => {
+    const commitments = commitmentsRepo(storage.db);
+    commitments.save({ ...plan('c-netflix', 'Netflix'), firstDue: '2026-08-15', marker: 'netflix' });
+    const save = (id: string, date: string) =>
+      transactionsRepo(storage.db).save(
+        expenseByDefault({ id, date, accountId: 'card', amount: money(30_000, 'UAH') }),
+        STORED_AT,
+      );
+    save('aug', '2026-08-15');
+    save('other', '2026-08-16');
+    commitments.link('c-netflix', 1, 'other');
+    commitments.unlink('c-netflix', 1);
+    commitments.link('c-netflix', 1, 'aug');
+    commitments.mark('c-netflix', 2, 'paid');
+    commitments.mark('c-netflix', 3, 'skipped');
+    commitments.stop('c-netflix', '2026-10-20');
+
+    const file = await saveBackup(backupRepo(storage.db), MADE_AT);
+    const target = openTestDb();
+    try {
+      expect(await restoreBackup(backupRepo(target.db), file.bytes)).toBe('ok');
+      const restored = commitmentsRepo(target.db);
+      expect(restored.list()).toEqual(commitments.list());
+      expect(restored.facts()).toEqual(commitments.facts());
+      expect(restored.facts().refusals).toHaveLength(1);
+      expect(restored.get('c-netflix')?.stoppedOn).toBe('2026-10-20');
+    } finally {
+      target.close();
+    }
+  });
 });
 
 describe('the шаблон mapping travels, and a restore replaces it', () => {

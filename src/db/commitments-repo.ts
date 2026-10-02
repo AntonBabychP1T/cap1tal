@@ -100,6 +100,9 @@ export function installmentLinkedIds(reader: StorageReader): Set<string> {
   );
 }
 
+/** How many date windows one candidate query ORs together — well inside SQLite's depth of 1000. */
+const WINDOWS_PER_QUERY = 200;
+
 /** Overlapping date windows folded into as few as cover the same days. */
 function mergedWindows(
   windows: readonly { readonly from: IsoDate; readonly to: IsoDate }[],
@@ -204,18 +207,28 @@ export function commitmentsRepo(db: Storage) {
     if (windows.length === 0) {
       return first;
     }
-    const candidates = reader
-      .select()
-      .from(transactions)
-      .where(
-        and(
-          eq(transactions.type, 'expense'),
-          inArray(transactions.accountId, [...accountIds]),
-          or(...mergedWindows(windows).map((w) => and(gte(transactions.date, w.from), lte(transactions.date, w.to)))),
-        ),
-      )
-      .all()
-      .map(toCandidate);
+    // The windows go to SQLite in groups: one OR'd range per open платіж would pass its expression
+    // depth (1000) for a first дата some seventeen years back — and a settle that throws stops the
+    // розстрочки' linking too. Merged windows do not overlap, so no row is read twice.
+    const merged = mergedWindows(windows);
+    const candidates: DebitCandidate[] = [];
+    for (let at = 0; at < merged.length; at += WINDOWS_PER_QUERY) {
+      const group = merged.slice(at, at + WINDOWS_PER_QUERY);
+      candidates.push(
+        ...reader
+          .select()
+          .from(transactions)
+          .where(
+            and(
+              eq(transactions.type, 'expense'),
+              inArray(transactions.accountId, [...accountIds]),
+              or(...group.map((w) => and(gte(transactions.date, w.from), lte(transactions.date, w.to)))),
+            ),
+          )
+          .all()
+          .map(toCandidate),
+      );
+    }
     const linkedIds = new Set(linked.map((t) => t.id));
     return matchCommitmentDebits({
       commitments: all,

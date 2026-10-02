@@ -2,9 +2,7 @@ import { MAX_AMOUNT_MINOR, type Money } from './money';
 import {
   UNCATEGORISED_CATEGORY_ID,
   isoDate,
-  monthOf,
   type IsoDate,
-  type Month,
   type TransactionType,
 } from './transaction';
 
@@ -617,21 +615,6 @@ export function autoLinkWindow(due: IsoDate): { readonly from: IsoDate; readonly
 /** The window «Обрати списання» lists from (installments-screen, "Picking the списання by hand"). */
 export function handLinkWindow(due: IsoDate): { readonly from: IsoDate; readonly to: IsoDate } {
   return { from: addDays(due, -HAND_LINK_WINDOW_DAYS), to: addDays(due, HAND_LINK_WINDOW_DAYS) };
-}
-
-// ---------------------------------------------------------------------------------------------
-// What the month still owes
-
-/**
- * The сума of the month's платежі still owed: очікується or списання не знайдено. The розстрочки'
- * share of «Вільно після зобов'язань» (`commitments.ts`), in UAH.
- */
-export function owedInMonth(parts: readonly InstallmentPart[], month: Month): number {
-  return parts
-    .filter(
-      (part) => monthOf(part.due) === month && (part.state === 'expected' || part.state === 'notFound'),
-    )
-    .reduce((sum, part) => sum + part.amount, 0);
 }
 
 // ---------------------------------------------------------------------------------------------

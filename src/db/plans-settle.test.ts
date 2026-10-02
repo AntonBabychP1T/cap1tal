@@ -149,6 +149,31 @@ describe('commitments — settlePlans', () => {
     expect(commitments().facts().links).toEqual([{ commitmentId: rent.id, number: 129, transactionId: 'in' }]);
   });
 
+  it('links a платіж of a зобов\'язання whose first дата is a century back, and the розстрочки with it', () => {
+    // A typo in the year («05.10.1926») leaves twelve hundred open платежі. One date window each,
+    // OR'd into one query, is past SQLite's expression depth — and a settle that throws stops the
+    // розстрочки' linking too, since both plans settle in one write (diff review, MAJOR).
+    commitments().save({ ...rent, firstDue: '1926-10-10' });
+    installmentsRepo(storage.db).save({
+      id: 'i-iphone',
+      name: 'iPhone',
+      total: 1_000_000,
+      partsCount: 10,
+      part: 100_000,
+      firstDue: '2026-10-05',
+      debitAccountId: 'black',
+      paidBefore: 0,
+      recordedAt: 1,
+    });
+    tx().save(debit('rent', '2026-10-10', 1_500_000), at);
+    tx().save(debit('iphone', '2026-10-05', 100_000), at);
+    expect(settlePlans(storage.db, '2026-10-11')).toEqual({ installments: true, commitments: true });
+    expect(commitments().facts().links).toEqual([{ commitmentId: rent.id, number: 1201, transactionId: 'rent' }]);
+    expect(installmentsRepo(storage.db).facts().links).toEqual([
+      { installmentId: 'i-iphone', number: 1, transactionId: 'iphone' },
+    ]);
+  });
+
   it('leaves the storage stamp unchanged when there is nothing to do', () => {
     commitments().save(rent);
     tx().save(debit('oct', '2026-10-10', 1_500_000), at);
