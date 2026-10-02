@@ -38,6 +38,9 @@ the UI. Terms are defined in [glossary.md](glossary.md).
   space and one they check first can lead. What is waiting for an answer — a bank the app cannot
   reach, records still «Без категорії» — always stays put beneath the header, however the owner
   has arranged the rest, because it needs them regardless of what they came to read today.
+- **[PROPOSED]** The default also points at what is notable in the month — a категорія well above
+  its usual сума, a payment that got dearer, a purchase recorded twice — so the owner is shown where
+  to look rather than left to find it on a chart (§19).
 
 ## 4. Core entities and their boundaries
 
@@ -298,6 +301,9 @@ a number the owner trusts without opening a bank app or recounting cash, and the
 total less than 2 % of that month's spending. (The 2 % is the interviewer's figure; the owner may
 replace it.)
 
+**[PROPOSED]** Every finished month's підсумок (§19) reports this measure for that month: the
+corrections' absolute сум added together, against the month's spending, per currency.
+
 ## 16. Import notes and what is left open
 
 Decided for the one-time import of the Saldo history:
@@ -344,3 +350,42 @@ on for that run.
 Усе рахується локально з уже збережених транзакцій, по валютах і без конвертацій. Досягнення й
 виклики нікуди не йдуть: їх немає в пакеті для AI-аналізу, і поза бекапом власника вони телефон
 не покидають.
+
+## 19. Спостереження і підсумок місяця
+
+**Owner's decision, 2026-10-02.** Two units, asked for together, ahead of any chat with a model.
+
+- **Спостереження.** A fact the app finds in the owner's own транзакції by a fixed, deterministic
+  rule and states in one sentence with its numbers: a категорія well above or below its usual
+  сума, a категорія that has already cost as much as the whole of last month, one that has grown
+  for three months running, a regular payment whose price changed, a purchase far above what that
+  продавець usually costs, and two витрати that may be one purchase recorded twice. It is computed
+  when shown and stored nowhere; it changes no number; it is never advice, never praise or blame,
+  never a forecast and never a model's words; and it leads to the records it is about.
+- **Підсумок місяця.** Every finished month that holds a транзакція can be read as a whole on one
+  screen: what it cost against the month before and a typical month, the категорії that changed
+  most, its місячна картина, the зміна статку with its розбивка, what moved toward each ціль and
+  which ліміти held, what is still unanswered, the коригування against the measure of §15, and the
+  month's спостереження. Per currency, never converted. From it the owner may take that one month
+  to AI-аналіз (§17); nothing leaves the phone until they share it there.
+
+**[PROPOSED]** defaults the owner may overturn:
+
+- The thresholds, each a named constant: a typical сума is the median of up to six finished active
+  months before, never fewer than three; ±25 % against it is unusual; a difference smaller than
+  3 % of the currency's typical monthly spending is not noticeable; three months running is a run;
+  a price changed when it leaves a 5 % band; a purchase is far above its продавець at three times
+  the usual.
+- Головний shows up to three of the current month's спостереження as its third widget by default;
+  in the first seven days of a month it also leads to the previous month's підсумок. Місяць shows
+  the shown month's спостереження and leads to a finished month's підсумок; Звіти leads to it too.
+- A fact is not dismissed. The only answer is to a possible duplicate: «Не дубль», remembered for
+  that pair, carried in the бекап, and gone with either транзакція.
+
+What stays as it was:
+
+- No спостереження projects a pace or an end-of-month сума: "already more than last month"
+  compares two recorded facts. §14.10 stands.
+- None posts a notification, a sound or a dialog. §13 stands.
+- None leaves the phone: no спостереження is in a пакет для аналізу, a бекап or a репорт про
+  помилку.

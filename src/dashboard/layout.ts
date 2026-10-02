@@ -8,10 +8,11 @@
  * screen does not already draw.
  */
 
-/** The five widgets this version of the app knows. Adding one is a registry decision, never a UI one. */
+/** The six widgets this version of the app knows. Adding one is a registry decision, never a UI one. */
 export const DASHBOARD_WIDGET_IDS = [
   'month-spent',
   'latest-transactions',
+  'observations',
   'top-categories',
   'net-worth',
   'progress',
@@ -37,13 +38,16 @@ export interface DashboardWidgetDescriptor {
 }
 
 /**
- * The registry, in canonical order — version 1's order and also the fresh-install order of the
- * first four. «Прогрес» is known from the first version but starts hidden (proposal: «Прогрес»
- * never precedes the primary financial readings in the default layout).
+ * The registry, in canonical order — also the fresh-install order of the first five. «Прогрес» is
+ * known from the first version but starts hidden (proposal: «Прогрес» never precedes the primary
+ * financial readings in the default layout). «Спостереження» arrived third (observations design D8):
+ * visible on a fresh install, and — by the normalizer's unchanged rule — hidden at the end of a
+ * layout the owner saved before it existed.
  */
 export const DASHBOARD_WIDGETS: readonly DashboardWidgetDescriptor[] = [
   { id: 'month-spent', label: 'Витрачено цього місяця', defaultVisible: true },
   { id: 'latest-transactions', label: 'Останні 5 транзакцій', defaultVisible: true },
+  { id: 'observations', label: 'Спостереження', defaultVisible: true },
   { id: 'top-categories', label: 'Топ категорій', defaultVisible: true },
   { id: 'net-worth', label: 'Статок', defaultVisible: true },
   { id: 'progress', label: 'Прогрес', defaultVisible: false },

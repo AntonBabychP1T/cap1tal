@@ -1,5 +1,5 @@
 import { monthOf, type IsoDate, type Month } from '../domain/transaction';
-import { todayIso } from './dates';
+import { genitiveMonthName, todayIso } from './dates';
 
 /**
  * Moving between calendar months, and naming them in Ukrainian. Pure string arithmetic over
@@ -167,6 +167,23 @@ const MONTH_NAMES_IN: readonly string[] = [
 export function monthInLabel(month: Month): string {
   const { month: m } = partsOf(month);
   return `у ${MONTH_NAMES_IN[m - 1]}`;
+}
+
+/**
+ * «вересня» — the month as what a thing belongs to: «Підсумок вересня», «AI-аналіз вересня», «за
+ * 10 днів жовтня». The genitive list is `dates.ts`'s, the one a day names its month with, so the
+ * two can never spell one month two ways.
+ */
+export function monthGenitiveLabel(month: Month): string {
+  return genitiveMonthName(partsOf(month).month);
+}
+
+/**
+ * «вересень» — the month as the object of «за весь …». A month name is inanimate, so its
+ * accusative is the nominative, written in lower case inside a sentence.
+ */
+export function monthAccusativeLabel(month: Month): string {
+  return MONTH_NAMES[partsOf(month).month - 1]!.toLowerCase();
 }
 
 /**

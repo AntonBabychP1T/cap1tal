@@ -141,6 +141,13 @@ export function monthAfter(month: Month): Month {
   return `${String(next.year).padStart(4, '0')}-${String(next.month).padStart(2, '0')}`;
 }
 
+/** The calendar місяць before — `monthAfter`'s mirror, by the same string arithmetic. */
+export function monthBefore(month: Month): Month {
+  const { year, month: m } = partsOf(month);
+  const previous = m === 1 ? { year: year - 1, month: 12 } : { year, month: m - 1 };
+  return `${String(previous.year).padStart(4, '0')}-${String(previous.month).padStart(2, '0')}`;
+}
+
 /**
  * The last calendar day of a місяць — the дата a досягнення about a whole місяць is stamped with
  * («6 активних місяців» happened when the sixth місяць ended, not when the app noticed).

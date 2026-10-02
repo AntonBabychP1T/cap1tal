@@ -81,6 +81,21 @@ export function defaultChoices(today: IsoDate): AiAnalysisChoices {
   };
 }
 
+const WHOLE_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * What the screen opens with when it is opened for one given month — from that month's підсумок
+ * (ai-analysis-screen, "The screen offers the kind, the period and the details"; observations
+ * design D9): the custom range of that month alone, every other choice at its default. A given value
+ * that is not a whole calendar month leaves the default period rather than failing; absent, this is
+ * `defaultChoices` exactly. Opening builds nothing and hands nothing to any app.
+ */
+export function initialChoices(today: IsoDate, given?: string): AiAnalysisChoices {
+  const defaults = defaultChoices(today);
+  if (given === undefined || !WHOLE_MONTH.test(given)) return defaults;
+  return { ...defaults, period: 'custom', from: given, to: given };
+}
+
 /** The stored values the model reads — the repositories' own plain rows, nothing more. */
 export interface StoredForAnalysis {
   readonly accounts: readonly Account[];

@@ -1027,3 +1027,35 @@ describe('the Звіти bars on their way', () => {
     }
   });
 });
+
+describe('the spelled-out month leads to its підсумок', () => {
+  const october2 = new Date(2026, 9, 2, 12, 0, 0);
+  const history = [
+    spend('jun', '2026-06-10', 100000),
+    spend('aug', '2026-08-10', 100000),
+    spend('sep', '2026-09-10', 120000),
+  ];
+
+  it('Scenario: The newest finished month offers its підсумок', () => {
+    // October holds no транзакція yet, so September is what Звіти spells out.
+    const readout = view(history, { now: october2 }).historyReadout!;
+    expect(readout.month).toBe('2026-09');
+    expect(readout.summaryOffer).toMatchObject({ label: 'Підсумок вересня', route: '/month-summary/2026-09' });
+  });
+
+  it('Scenario: Picking an older month offers that month’s', () => {
+    expect(view(history, { now: october2, chosenMonth: '2026-06' }).historyReadout!.summaryOffer).toMatchObject({
+      label: 'Підсумок червня',
+      route: '/month-summary/2026-06',
+    });
+    // July holds no транзакція: spelled out, it offers none.
+    expect(view(history, { now: october2, chosenMonth: '2026-07' }).historyReadout!.summaryOffer).toBeNull();
+  });
+
+  it('Scenario: The current month offers none', () => {
+    const withOctober = [...history, spend('oct', '2026-10-01', 5000)];
+    const readout = view(withOctober, { now: october2 }).historyReadout!;
+    expect(readout.month).toBe('2026-10');
+    expect(readout.summaryOffer).toBeNull();
+  });
+});

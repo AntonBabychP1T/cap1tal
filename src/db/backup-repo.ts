@@ -4,6 +4,7 @@ import type { BackupStore } from '../backup/backup';
 import type { BackupDashboardLayout, BackupState } from '../backup/format';
 import { money } from '../domain/money';
 import { isoDate } from '../domain/transaction';
+import { sortedPair } from './duplicate-answers-repo';
 import { toInstallment, toInstallmentRow } from './installments-repo';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
 import {
@@ -14,6 +15,7 @@ import {
   counterpartIncomeAwaits,
   dailyReminder,
   dashboardLayout,
+  duplicateAnswers,
   hapticsPreference,
   earnedAchievements,
   entryDefaults,
@@ -83,6 +85,11 @@ export function backupRepo(db: Storage): BackupStore {
         .select()
         .from(ruleTemplateChoices)
         .orderBy(asc(ruleTemplateChoices.groupId))
+        .all();
+      const answers = db
+        .select()
+        .from(duplicateAnswers)
+        .orderBy(asc(duplicateAnswers.firstId), asc(duplicateAnswers.secondId))
         .all();
       return {
         accounts: db.select().from(accounts).orderBy(asc(accounts.id)).all().map(toAccount),
@@ -324,6 +331,17 @@ export function backupRepo(db: Storage): BackupStore {
           : {}),
         // Only when the owner has ever flipped «Вібрація»; untouched is on, and carries nothing.
         ...(haptics ? { haptics: { enabled: haptics.enabled } } : {}),
+        // Only when the owner ever answered «Не дубль»; a device that never did carries no
+        // section and restores to none. Each pair is stored sorted, so it is written sorted.
+        ...(answers.length > 0
+          ? {
+              duplicateAnswers: answers.map((row) => ({
+                first: row.firstId,
+                second: row.secondId,
+                answeredAtMs: row.answeredAt.getTime(),
+              })),
+            }
+          : {}),
         // Only the базові категорії the owner touched; an untouched one is carried as nothing, so
         // it follows whatever типова категорія the restoring app's шаблон gives it.
         ...(templateChoices.length > 0
@@ -408,6 +426,7 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(receiptItems).run();
         tx.delete(fiscalReceipts).run();
         tx.delete(counterpartIncomeAwaits).run();
+        tx.delete(duplicateAnswers).run();
         // The склад rows go immediately before the цілі they hang under. The cascade would take
         // them anyway; this file deletes in reference order and says so, for the reason stated
         // above the чеки.
@@ -513,6 +532,14 @@ export function backupRepo(db: Storage): BackupStore {
           if (entry.transaction.type === 'transfer' && entry.transaction.awaitingCounterpartIncome) {
             tx.insert(counterpartIncomeAwaits).values({ transactionId: entry.transaction.id }).run();
           }
+        }
+        // After the транзакції they name. A pair the file names either way round lands sorted —
+        // it is one unordered pair, and storage's CHECK takes it in one order only.
+        for (const answer of state.duplicateAnswers ?? []) {
+          const [first, second] = sortedPair(answer.first, answer.second);
+          tx.insert(duplicateAnswers)
+            .values({ firstId: first, secondId: second, answeredAt: new Date(answer.answeredAtMs) })
+            .run();
         }
         for (const a of state.monobankAccounts) {
           tx.insert(monobankAccounts)

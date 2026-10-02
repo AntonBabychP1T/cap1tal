@@ -71,6 +71,11 @@ function twoDigits(value: number): string {
   return String(value).padStart(2, '0');
 }
 
+/** The month numbered 1–12 in the genitive — «вересня» — for `src/ui/months.ts` to name a month by. */
+export function genitiveMonthName(month: number): string {
+  return GENITIVE_MONTHS[month - 1]!;
+}
+
 /**
  * A calendar дата in the owner's words: «30 серпня», and «30 серпня 2025» once the year is no
  * longer this one — the way a дата досягнення is read, which is a day and never an instant.

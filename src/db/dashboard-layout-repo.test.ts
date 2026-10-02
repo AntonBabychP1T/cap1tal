@@ -20,7 +20,7 @@ describe('the owner`s dashboard layout', () => {
     storage.close();
   });
 
-  it('Scenario: Fresh install uses the four-widget default (no row)', () => {
+  it('Scenario: Fresh install uses the five-widget default (no row)', () => {
     const result = dashboardLayoutRepo(storage.db).read();
     expect(result.diagnostic).toBeUndefined();
     expect(result.items).toEqual(defaultDashboardLayout());
@@ -36,8 +36,8 @@ describe('the owner`s dashboard layout', () => {
     const rows = storage.db.select().from(dashboardLayout).all();
     expect(rows).toHaveLength(1);
     const read = repo.read();
-    expect(read.items).toHaveLength(5);
-    expect(new Set(read.items.map((i) => i.id)).size).toBe(5);
+    expect(read.items).toHaveLength(6);
+    expect(new Set(read.items.map((i) => i.id)).size).toBe(6);
     expect(read.items.find((i) => i.id === 'progress')!.visible).toBe(true);
   });
 
@@ -72,6 +72,14 @@ describe('the owner`s dashboard layout', () => {
 
     expect(storage.db.select().from(dashboardLayout).all()).toHaveLength(0);
     expect(repo.read()).toEqual({ items: defaultDashboardLayout() });
+    // The five current default widgets, «Спостереження» among them, are visible; «Прогрес» is not.
+    expect(repo.read().items.filter((i) => i.visible).map((i) => i.id)).toEqual([
+      'month-spent',
+      'latest-transactions',
+      'observations',
+      'top-categories',
+      'net-worth',
+    ]);
   });
 
   it('a constraint violation on a direct write leaves the previous preference unchanged', () => {

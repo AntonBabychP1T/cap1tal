@@ -339,6 +339,39 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
 - **Reserve** (резерв) — сума розрахункових балансів рахунків виду `savings` в одній валюті.
   Ніколи не змішує валюти й ніщо в ньому не конвертується.
 
+## Спостереження і підсумок місяця
+
+Owner's decision, 2026-10-02 (vision §19). Lines marked **[PROPOSED]** are defaults the owner may
+overturn.
+
+- **Спостереження** (observation; code `Observation`) — a fact the app finds in the owner's own
+  транзакції of one month by a fixed, deterministic detector and states in one sentence with its
+  numbers. Computed when shown, stored nowhere, never dismissed; it changes no number, is never
+  advice, praise, blame or a forecast, and is never a language model's words. It exists for the
+  current month and for a завершений активний місяць, and leads to the records it is about.
+- **Типова сума** (typical amount) — the median, in one currency, of up to six завершені активні
+  місяці of that currency before a month, never fewer than three **[PROPOSED]**: of a категорія's
+  витрачено (net of повернення, a month without it counting as zero), or of the whole витрачено.
+  Fewer than three such months, or a typical витрачено that is not positive, and there is none.
+  It is read from the history, never confirmed by the owner, and feeds no other number.
+- **Поріг помітності** (noticeable threshold) **[PROPOSED]** — 3 % of a currency's типова сума of
+  витрачено: a difference smaller than it is not stated, however large its percentage.
+- **Можливий дубль** (possible duplicate) — two витрати on one рахунок with the same сума, dated at
+  most a day apart, whose описи are not the same bank text — a purchase that may have arrived
+  through two doors (the bank and the owner's hand). Never a переказ, a дохід, a повернення, a
+  коригування or a «Комісія». The app asks and does not guess: **«Не дубль»** is the owner's
+  answer, remembered for that unordered pair, carried in the бекап, and gone when either транзакція
+  is deleted. A real дубль is deleted like any транзакція.
+- **Підсумок місяця** (month summary) — one finished month read as a whole on its own screen,
+  per currency: витрачено against the month before and the типова сума, the категорії that changed
+  most, the місячна картина, the зміна статку with its розбивка, what moved toward each ціль and
+  which ліміти held, what is still unanswered, the коригування with their частка, and the month's
+  спостереження. Every завершений активний місяць has one; the current month does not. Computed
+  when shown, stored nowhere.
+- **Частка коригувань** (corrections share) **[PROPOSED]** — the sum of a month's коригування taken
+  by their absolute сум, divided by that month's витрачено in the same currency, to one decimal
+  place rounded toward zero. Vision §15's measure of a trusted month is below 2 %.
+
 ## Keeping the data
 
 - **Backup** (бекап) — one file holding everything the owner has: every рахунок with its opening
@@ -348,7 +381,8 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
   holds every розстрочка with the states of its платежі — the owner's word about money no statement
   shows — and the прогрес the owner has built up: кожне отримане досягнення зі своєю датою й свідченням,
   кожне рішення про виклик і кожна підтверджена місячна норма витрат — жодне з них не рахується з
-  транзакцій, тож без них відновлений телефон виглядав би так, ніби нічого не досягнуто. It never
+  транзакцій, тож без них відновлений телефон виглядав би так, ніби нічого не досягнуто. It holds
+  the owner's «Не дубль» answers too, and no спостереження: those are recomputed when shown. It never
   holds the monobank token, the чернетки awaiting a word, or the text of the notifications behind
   them. The file the owner saves by hand is not encrypted: whoever holds it can read the money in
   it. The copy that goes to Google Drive is a different matter — it is sealed under the owner's own
@@ -600,3 +634,11 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
 | Репорт про помилку | Сповіщення про збій | the репорт is what the owner writes for the developer; the сповіщення is what the app posts to the owner |
 | Ціль витрат | Ціль-накопичення | they point in opposite directions — one is a ceiling not to be crossed, the other a сума to be reached — so they share no word: spending under a ліміт is never «досягнуто», and saving is never «перевищено» |
 | Прогрес цілі | Розрахунковий баланс | a прогрес may sum several рахунки, may read an інвестиційний рахунок's поточна вартість instead of its баланс, and may be приблизний; a баланс is one рахунок's own number in its own currency and is never approximate |
+| Спостереження | AI-аналіз | an спостереження is a fact a fixed rule found and the app states in its own fixed words, on the phone; AI-аналіз is a language model explaining numbers the owner chose to hand over |
+| Спостереження | Досягнення | an досягнення is earned once, stored and never taken back; an спостереження is recomputed whenever shown and goes away when the транзакції stop making it true |
+| Типова сума | Місячна норма витрат | the норма needs six завершені місяці and the owner's confirmation, and Прогрес reads it; a типова сума needs three, is never confirmed, and feeds nothing |
+| Типова сума | Типова категорія | the same adjective for two unrelated things: a median сума of past months, and the starter категорія a базова категорія lands in |
+| Типова сума | Typical amount of a recurring candidate (тренди) | the тренди's typical amount is the median of one категорія's or продавець's largest витрата per month inside a пакет's period; a типова сума is the median of whole months before the month read |
+| Можливий дубль | Підказка про дубль | the можливий дубль is two транзакції that may be one purchase, answered «Не дубль»; the підказка is about two рахунки in a Saldo імпорт that may be one рахунок, offered as a merge |
+| Можливий дубль | Зустрічний дохід | a зустрічний дохід is the other leg of a переказ, absorbed by it; a можливий дубль is two витрати on one рахунок, and the app never merges or deletes either |
+| Підсумок місяця | Місячна картина | the картина is the six numbers of a month; the підсумок is one finished month read as a whole, with the картина as one of its parts |

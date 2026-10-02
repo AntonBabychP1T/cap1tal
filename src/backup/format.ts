@@ -46,7 +46,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 10;
+export const BACKUP_SCHEMA_VERSION = 11;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -173,6 +173,11 @@ export const BACKUP_TABLES: readonly string[] = [
   // The owner's mapping of the шаблон категоризації onto their категорії — a choice they made,
   // never the шаблон itself, which is the app's (rule-template design T6).
   'rule_template_choices',
+  // The «Не дубль» answers: the owner's word that two транзакції are two purchases. Nothing derives
+  // them, and a restored phone that dropped them would ask again about every pair already answered.
+  // No спостереження travels — each is recomputed from the restored транзакції when shown
+  // (observations design D5).
+  'duplicate_answers',
 ];
 
 /**
@@ -363,6 +368,17 @@ export interface BackupInstallments {
 }
 
 /**
+ * One «Не дубль» answer: the two транзакції it names and the moment it was given. The pair is
+ * unordered — a file may name it either way round, and restoring sorts it (backup-file, "Either
+ * order restores the same answer").
+ */
+export interface BackupDuplicateAnswer {
+  readonly first: string;
+  readonly second: string;
+  readonly answeredAtMs: number;
+}
+
+/**
  * One choice the owner made about a базова категорія: the категорія it lands in, or `null` for
  * switched off. A базова категорія they never touched is not carried at all.
  */
@@ -422,6 +438,12 @@ export interface BackupState {
    * `BACKUP_FORMAT_VERSION` stays.
    */
   readonly templateChoices?: readonly BackupTemplateChoice[];
+  /**
+   * The «Не дубль» answers; absent on a бекап written before they existed, or on a device where
+   * none was ever given — which restores to none, every qualifying pair asked again. An optional
+   * section, so `BACKUP_FORMAT_VERSION` stays.
+   */
+  readonly duplicateAnswers?: readonly BackupDuplicateAnswer[];
 }
 
 /** The whole file: the marker, the versions, the moment, the integrity value and the contents. */
@@ -970,6 +992,15 @@ function templateChoiceAt(value: unknown, at: string): BackupTemplateChoice {
   };
 }
 
+function duplicateAnswerAt(value: unknown, at: string): BackupDuplicateAnswer {
+  const row = objectAt(value, at);
+  return {
+    first: stringAt(row.first, `${at}.first`),
+    second: stringAt(row.second, `${at}.second`),
+    answeredAtMs: integerAt(row.answeredAtMs, `${at}.answeredAtMs`),
+  };
+}
+
 function watchAt(value: unknown, at: string): BackupWatch {
   const row = objectAt(value, at);
   return {
@@ -1041,6 +1072,11 @@ export function parseState(value: unknown): BackupState {
     ...(data.templateChoices === undefined || data.templateChoices === null
       ? {}
       : { templateChoices: listAt(data, 'templateChoices', templateChoiceAt) }),
+    // A бекап written before the «Не дубль» answers existed names none, and restores to none
+    // (backup-file, "A бекап written before the answers existed restores with none").
+    ...(data.duplicateAnswers === undefined || data.duplicateAnswers === null
+      ? {}
+      : { duplicateAnswers: listAt(data, 'duplicateAnswers', duplicateAnswerAt) }),
   };
 }
 
@@ -1314,5 +1350,28 @@ export function checkConsistent(state: BackupState): void {
     if (!receipts.has(item.receiptId)) {
       fail(`позиція «${item.rawName}» посилається на чек, якого в бекапі немає`);
     }
+  }
+
+  // The «Не дубль» contradictions (backup-file, "A бекап carries the «Не дубль» answers"): each is
+  // one storage would also refuse — a reference, the CHECK, the PRIMARY KEY — named here so the
+  // whole бекап is refused in the owner's words before anything local is touched. An unsorted pair
+  // is not among them: a pair is unordered, and restoring sorts it.
+  const answered = new Set<string>();
+  for (const answer of state.duplicateAnswers ?? []) {
+    const what = `відповідь «Не дубль» про «${answer.first}» і «${answer.second}»`;
+    if (!transactionIds.has(answer.first) || !transactionIds.has(answer.second)) {
+      fail(`${what} посилається на транзакцію, якої в бекапі немає`);
+    }
+    if (answer.first === answer.second) {
+      fail(`${what} називає ту саму транзакцію двічі`);
+    }
+    const pair =
+      answer.first < answer.second
+        ? `${answer.first}\u0000${answer.second}`
+        : `${answer.second}\u0000${answer.first}`;
+    if (answered.has(pair)) {
+      fail(`${what} записана двічі`);
+    }
+    answered.add(pair);
   }
 }

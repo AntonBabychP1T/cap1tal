@@ -585,7 +585,12 @@ describe('Головний as the overview', () => {
     // Confirm and dismiss both end in the one place that reloads — never two separate refreshes
     // that could show the banner and hide the draft row (or the reverse) a render apart.
     const settleDraft = main.slice(main.indexOf('const settleDraft = useCallback('));
-    const settleDraftBody = settleDraft.slice(0, settleDraft.indexOf('[reload, reportBug]'));
+    // Up to its own dependency list. (The anchor used to be `[reload, reportBug]`, which the
+    // callback no longer has: `indexOf` then answered −1 and the «body» ran to the end of the file,
+    // so any later `reload()` anywhere on Головний failed this test.)
+    const end = settleDraft.indexOf('[reload],');
+    expect(end).toBeGreaterThan(0);
+    const settleDraftBody = settleDraft.slice(0, end);
     expect(settleDraftBody).toContain('reload()');
     // Exactly one `reload()` in this body — not a second, later one that could race the first.
     expect([...settleDraftBody.matchAll(/reload\(\)/g)]).toHaveLength(1);

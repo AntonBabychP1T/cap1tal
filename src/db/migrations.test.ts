@@ -26,6 +26,7 @@ import {
   counterpartIncomeAwaits,
   dailyReminder,
   dashboardLayout,
+  duplicateAnswers,
   earnedAchievements,
   entryDefaults,
   fiscalReceipts,
@@ -1858,7 +1859,7 @@ describe('migrations — the dashboard layout', () => {
     storage.close();
   });
 
-  it('Scenario: Fresh install uses the four-widget default', () => {
+  it('Scenario: Fresh install uses the five-widget default', () => {
     const { db } = storage;
 
     // No row means «follow this installed version's current default» — nothing is written by
@@ -2125,6 +2126,85 @@ describe('migrations — the шаблон mapping', () => {
       ).toThrow();
       db.insert(ruleTemplateSweep).values({ id: 'sweep', version: 1 }).run();
       expect(() => db.insert(ruleTemplateSweep).values({ id: 'other', version: 2 }).run()).toThrow();
+    } finally {
+      storage.close();
+    }
+  });
+});
+
+describe('migrations — the «Не дубль» answers', () => {
+  it('Scenario: An upgraded device keeps everything and has no answers', () => {
+    const staged = openTestDbMigratedTo(10);
+    try {
+      const { db } = staged;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
+      db.insert(goals)
+        .values({ id: 'g1', name: 'Подушка', amount: 20000000, currency: 'UAH', deadline: null })
+        .run();
+      db.insert(goalAccounts).values({ goalId: 'g1', accountId: 'jar' }).run();
+      db.insert(earnedAchievements)
+        .values({
+          key: 'ledger.transactions:500',
+          template: 'ledger.transactions',
+          achievedOn: '2025-04-18',
+          recordedAt: new Date('2026-09-02T09:00:00.000Z'),
+          seenAt: null,
+          evidence: '{"count":500}',
+        })
+        .run();
+      const read = () => ({
+        accounts: db.select().from(accounts).all(),
+        transactions: db.select().from(transactions).all(),
+        goals: db.select().from(goals).all(),
+        goalAccounts: db.select().from(goalAccounts).all(),
+        earned: db.select().from(earnedAchievements).all(),
+      });
+      const before = read();
+      // Before this migration the table does not exist at all.
+      expect(() => db.select().from(duplicateAnswers).all()).toThrow();
+
+      staged.migrateToLatest();
+
+      expect(read()).toEqual(before);
+      expect(db.select().from(duplicateAnswers).all()).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('The migrated shape keeps a pair unordered, single and tied to both транзакції', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
+      const at = new Date('2026-10-04T10:00:00.000Z');
+
+      db.insert(duplicateAnswers).values({ firstId: 'e1', secondId: 'r1', answeredAt: at }).run();
+      // The CHECK: the smaller id first, so `r1, e1` is not a second spelling of the same pair.
+      expect(() =>
+        db.insert(duplicateAnswers).values({ firstId: 'r1', secondId: 'e1', answeredAt: at }).run(),
+      ).toThrow();
+      // One with itself is not a pair.
+      expect(() =>
+        db.insert(duplicateAnswers).values({ firstId: 'e1', secondId: 'e1', answeredAt: at }).run(),
+      ).toThrow();
+      // The PRIMARY KEY: one answer per pair.
+      expect(() =>
+        db.insert(duplicateAnswers).values({ firstId: 'e1', secondId: 'r1', answeredAt: at }).run(),
+      ).toThrow();
+      // Both references are real.
+      expect(() =>
+        db.insert(duplicateAnswers).values({ firstId: 'e1', secondId: 'zz', answeredAt: at }).run(),
+      ).toThrow();
+
+      // Either half's removal takes the answer with it, and nothing else.
+      db.delete(transactions).where(eq(transactions.id, 'r1')).run();
+      expect(db.select().from(duplicateAnswers).all()).toEqual([]);
+      expect(db.select().from(transactions).where(eq(transactions.id, 'e1')).all()).toHaveLength(1);
     } finally {
       storage.close();
     }

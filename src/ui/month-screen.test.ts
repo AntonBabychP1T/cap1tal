@@ -19,6 +19,8 @@ import {
 } from '../domain/transaction';
 import type { MonobankRate } from '../monobank/currency';
 import { monthViewModel } from './month-screen';
+import { observationsOf } from '../observations/observations';
+import { ledgerBuilder, monthsFrom } from '../observations/test-fixtures';
 import { prevMonth } from './months';
 
 const acc = (id: string, kind: AccountKind, currency: CurrencyCode, archived = false): Account =>
@@ -844,5 +846,116 @@ describe('the Місяць screen wiring of the розстрочки', () => {
   it('settles the links before it reads them, and draws the reading under залишилось', () => {
     expect(screen.indexOf('settleInstallmentsOnFocus()')).toBeLessThan(screen.indexOf('installmentsRepo.list()'));
     expect(screen.match(/<FreeAfterInstallments /g)).toHaveLength(2);
+  });
+});
+
+describe('the підсумок and the спостереження on Місяць', () => {
+  const october2 = new Date(2026, 9, 2, 12);
+  const october10 = new Date(2026, 9, 10, 12);
+  const names = namesById([
+    { id: 'cafe', name: 'Кафе' },
+    { id: 'food', name: 'Продукти' },
+    { id: 'subscriptions', name: 'Підписки' },
+  ]);
+
+  /** April–September at 6 000 000 UAH a month; Кафе 390 000 in September; Netflix 299 ₴ from July. */
+  function history(): Transaction[] {
+    const b = ledgerBuilder();
+    const rows: Transaction[] = [];
+    for (const month of monthsFrom('2026-03', '2026-09')) {
+      const cafe = month === '2026-09' ? 390000 : 300000;
+      const food = month === '2026-09' ? 1380000 : 1000000;
+      const netflix = month >= '2026-07' ? 29900 : 0;
+      rows.push(b.expense(`${month}-05`, 'cafe', cafe, { accountId: 'card' }));
+      rows.push(b.expense(`${month}-06`, 'food', food, { accountId: 'card' }));
+      if (netflix) rows.push(b.expense(`${month}-07`, 'subscriptions', netflix, { accountId: 'card', description: 'Netflix' }));
+      rows.push(b.expense(`${month}-20`, 'other', 6000000 - cafe - food - netflix, { accountId: 'card' }));
+    }
+    rows.push(
+      b.expense('2026-10-02', 'cafe', 420000, { accountId: 'card' }),
+      b.expense('2026-10-05', 'subscriptions', 34900, { accountId: 'card', description: 'Netflix' }),
+    );
+    return rows;
+  }
+
+  function monthOn(month: string, now: Date, rows: Transaction[] = history()) {
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    return monthViewModel({
+      month,
+      accounts,
+      transactions: rows.filter((t) => t.date.startsWith(month)),
+      rates: [],
+      categoryNames: names,
+      limits: [],
+      previousTransactions: rows.filter((t) => t.date.startsWith(prevMonth(month))),
+      now,
+      observations: observationsOf({ month, today, transactions: rows, categories: [], answers: [] }),
+    });
+  }
+
+  it('Scenario: September offers its підсумок', () => {
+    expect(monthOn('2026-09', october2).summaryOffer).toMatchObject({
+      label: 'Підсумок вересня',
+      route: '/month-summary/2026-09',
+    });
+  });
+
+  it('Scenario: The current month offers none', () => {
+    expect(monthOn('2026-10', october2).summaryOffer).toBeNull();
+  });
+
+  it('Scenario: An empty month offers none', () => {
+    const model = monthOn('2026-02', october2);
+    expect(model.summaryOffer).toBeNull();
+    expect(model.observations).toBeNull();
+    // The empty month's own offer of the previous month is unchanged.
+    const july = monthViewModel({
+      month: '2026-07',
+      accounts,
+      transactions: [],
+      rates: [],
+      categoryNames: names,
+      limits: [],
+      previousTransactions: history().filter((t) => t.date.startsWith('2026-06')),
+      now: october2,
+      observations: [],
+    });
+    expect(july.summaryOffer).toBeNull();
+    expect(july.previous?.month).toBe('2026-06');
+  });
+
+  it('Scenario: October’s спостереження on Місяць', () => {
+    const model = monthOn('2026-10', october10);
+    expect(model.observations!.lines.map((l) => l.kind)).toEqual(['price-change', 'category-early']);
+    expect(model.observations!.lines[0]!.sentence).toMatch(/^Netflix: /);
+    expect(model.observations!.empty).toBeNull();
+  });
+
+  it('Scenario: Stepping back shows the past month’s own', () => {
+    const lines = monthOn('2026-09', october10).observations!.lines;
+    expect(lines.map((l) => l.kind)).toContain('category-vs-typical');
+    expect(lines.map((l) => l.kind)).not.toContain('category-early');
+  });
+
+  it('Scenario: A quiet month says so', () => {
+    const b = ledgerBuilder();
+    const quiet = [b.expense('2026-09-05', 'food', 1000, { accountId: 'card' })];
+    const model = monthOn('2026-09', october2, quiet);
+    expect(model.observations).toEqual({ lines: [], empty: 'У вересні нічого незвичного' });
+  });
+
+  it('changes none of the six numbers', () => {
+    const rows = history();
+    const without = monthViewModel({
+      month: '2026-09',
+      accounts,
+      transactions: rows.filter((t) => t.date.startsWith('2026-09')),
+      rates: [],
+      categoryNames: names,
+      limits: [],
+      previousTransactions: [],
+      now: october2,
+    });
+    expect(monthOn('2026-09', october2).groups).toEqual(without.groups);
   });
 });

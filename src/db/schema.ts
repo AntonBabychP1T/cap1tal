@@ -1421,3 +1421,40 @@ export const ruleTemplateSweep = sqliteTable(
 );
 
 export type RuleTemplateChoiceRow = typeof ruleTemplateChoices.$inferSelect;
+
+/**
+ * The owner's «Не дубль»: a pair of транзакції a можливий дубль named, answered as two purchases
+ * (observations design D5). Nothing else about an спостереження is stored — every one is computed
+ * when shown.
+ *
+ * The pair is unordered, and the CHECK makes it so in storage rather than only in the repository:
+ * `first_id` is always the smaller id, so the PRIMARY KEY is «one answer per pair» whichever half
+ * the owner answered from. Either транзакція's removal cascades the answer away — it means nothing
+ * without both (persistence, "Deleting takes the answer with it") — while an edit keeps it, since
+ * `transactionsRepo.save` is an upsert and never deletes the row it replaces.
+ *
+ * The cascade is also this table's hazard, the one `counterpart_income_awaits` names: a later
+ * migration that rebuilds `transactions` runs under the migrator's own transaction, where
+ * `PRAGMA foreign_keys=OFF` is a no-op, and would cascade-delete every answer with it. Such a
+ * migration has to carry these rows across itself, with a test that fails without that.
+ */
+export const duplicateAnswers = sqliteTable(
+  'duplicate_answers',
+  {
+    firstId: text('first_id')
+      .notNull()
+      .references(() => transactions.id, { onDelete: 'cascade' }),
+    secondId: text('second_id')
+      .notNull()
+      .references(() => transactions.id, { onDelete: 'cascade' }),
+    answeredAt: integer('answered_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.firstId, t.secondId] }),
+    check('duplicate_answers_pair_sorted', sql`${t.firstId} < ${t.secondId}`),
+    // The cascade from `second_id` looks the row up by it; the primary key already covers `first_id`.
+    index('duplicate_answers_second_idx').on(t.secondId),
+  ],
+);
+
+export type DuplicateAnswerRow = typeof duplicateAnswers.$inferSelect;

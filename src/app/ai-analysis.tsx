@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, ScrollView, StyleSheet, View } from 'react-native';
 
@@ -20,8 +20,8 @@ import { analysisShare } from '@/platform/analysis-share-device';
 import {
   aiAnalysisModel,
   ALWAYS_INCLUDED,
-  defaultChoices,
   fileToShare,
+  initialChoices,
   KIND_CHOICES,
   nextState,
   PERIOD_CHOICES,
@@ -101,7 +101,10 @@ export default function AiAnalysisScreen() {
   // The day the пакет is built for, read once on the screen and passed down — nothing below reads
   // a clock, which is what lets the whole model be tested against a fixed date.
   const today = useMemo(() => todayIso(new Date()), []);
-  const [choices, setChoices] = useState(() => defaultChoices(today));
+  // Opened from a month's підсумок, `?month=2026-09` presets that month alone as the period; every
+  // other choice is the default, and a malformed month leaves the default period (design D9).
+  const { month: givenMonth } = useLocalSearchParams<{ month?: string }>();
+  const [choices, setChoices] = useState(() => initialChoices(today, givenMonth));
   const [run, setRun] = useState<RunState>({ kind: 'preview' });
   const [showingFile, setShowingFile] = useState(false);
 

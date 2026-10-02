@@ -6,8 +6,9 @@ import { dashboardLayoutEditorRows } from './dashboard-layout-editor';
 describe('dashboardLayoutEditorRows', () => {
   it('Scenario: Every known widget is listed once', () => {
     const rows = dashboardLayoutEditorRows(defaultDashboardLayout());
-    expect(rows).toHaveLength(5);
-    expect(new Set(rows.map((r) => r.id)).size).toBe(5);
+    expect(rows).toHaveLength(6);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(6);
+    expect(rows.find((r) => r.id === 'observations')!.label).toBe('Спостереження');
     for (const row of rows) {
       expect(row.label.length).toBeGreaterThan(0);
     }
@@ -16,7 +17,7 @@ describe('dashboardLayoutEditorRows', () => {
   it('Scenario: A screen reader can move one widget', () => {
     const rows = dashboardLayoutEditorRows(defaultDashboardLayout());
     const topCategories = rows.find((r) => r.id === 'top-categories')!;
-    // «Топ категорій» has a widget above (latest-transactions) and below (net-worth).
+    // «Топ категорій» has a widget above («Спостереження») and below (net-worth).
     expect(topCategories.canMoveUp).toBe(true);
     expect(topCategories.canMoveDown).toBe(true);
     expect(topCategories.moveUpLabel).toBe('Перемістити «Топ категорій» вище');
@@ -38,7 +39,7 @@ describe('dashboardLayoutEditorRows', () => {
   it('shows the ordinal position and visible state, and follows the given order', () => {
     const items = setWidgetVisibility(defaultDashboardLayout(), 'top-categories', false);
     const rows = dashboardLayoutEditorRows(items);
-    expect(rows.map((r) => r.ordinal)).toEqual(['1 з 5', '2 з 5', '3 з 5', '4 з 5', '5 з 5']);
+    expect(rows.map((r) => r.ordinal)).toEqual(['1 з 6', '2 з 6', '3 з 6', '4 з 6', '5 з 6', '6 з 6']);
     expect(rows.find((r) => r.id === 'top-categories')!.visible).toBe(false);
     expect(rows.find((r) => r.id === 'net-worth')!.visible).toBe(true);
   });

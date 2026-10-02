@@ -67,6 +67,8 @@ import {
 import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
 import { CategoryWidget } from '@/components/category-widget';
 import { NetWorthWidget } from '@/components/net-worth-widget';
+import { ObservationsWidget } from '@/components/observations-widget';
+import { answerNotDuplicate, currentObservations } from '@/hooks/observations-reads';
 import { homeDashboardReadPlan } from '@/ui/home-dashboard';
 import { categoryMonthRoute, currentMonthRoute, remainderRoute } from '@/ui/home-navigation';
 import { categoryPresentation } from '@/ui/home-categories';
@@ -90,6 +92,7 @@ import { reportFailure } from '@/ui/journal';
 import { currentMonth } from '@/ui/months';
 import { todayIso } from '@/ui/dates';
 import { netWorthWidgetModel } from '@/ui/net-worth';
+import { observationsWidgetModel } from '@/ui/observations';
 import { PICKER_SIZE } from '@/ui/shortlist';
 import { ONLY_UNCATEGORISED } from '@/ui/transaction-search';
 import { onCapturesStored } from '@/ui/notification-drain';
@@ -210,6 +213,11 @@ function MainScreen() {
         // Which months are over a ліміт is judged from the same history, month by month in
         // `listMonth`'s order — never a read per month the стрічка touches.
         byMonth: history.byMonth,
+        // The current month's спостереження, through the stamp memo — derived, stored nowhere — and
+        // which months hold a транзакція, for the previous month's «Підсумок» row. Hidden, the
+        // widget costs neither (observations design D8).
+        observations: plan.needsObservations ? currentObservations(today) : [],
+        activeMonths: plan.needsObservations ? new Set(history.months) : new Set<string>(),
         // The read-only прогrес reading — evaluates nothing, marks nothing seen (design D6).
         progressData: plan.needsProgress ? progressScreenData(now) : undefined,
         // Everything stored that still carries «Без категорії» — counted, not listed. Always
@@ -596,6 +604,24 @@ function MainScreen() {
     ],
   );
 
+  /** «Спостереження»: the first three of the current month's, and the previous month's підсумок. */
+  const observations = useMemo(
+    () =>
+      stored.plan.needsObservations
+        ? observationsWidgetModel({
+            observations: stored.observations,
+            today: stored.today,
+            activeMonths: stored.activeMonths,
+            names: {
+              categoryNames,
+              accountNames: new Map(stored.accounts.map((a) => [a.id, a.name])),
+              now: new Date(),
+            },
+          })
+        : undefined,
+    [categoryNames, stored.accounts, stored.activeMonths, stored.observations, stored.plan.needsObservations, stored.today],
+  );
+
   /**
    * «Прогрес»: the same quiet badge «Звіти» shows, and at most one leading row from the already
    * ordered sections — read-only, exactly like the full screen's own reading (design D6).
@@ -873,6 +899,21 @@ function MainScreen() {
             onOpenRemainder={() => router.push(remainderRoute(new Date()))}
           />
         );
+
+      case 'observations':
+        // Always defined here: computed exactly when `plan.needsObservations`. «Не дубль» is
+        // stored at once and the reload re-derives the list without the pair, in place.
+        return observations ? (
+          <ObservationsWidget
+            key={id}
+            model={observations}
+            onOpen={(route) => router.push(route)}
+            onNotDuplicate={(pair) => {
+              answerNotDuplicate(pair);
+              reload();
+            }}
+          />
+        ) : null;
 
       case 'net-worth':
         // Always defined here: `netWorth` is computed exactly when `plan.needsNetWorth`, which is
