@@ -91,8 +91,20 @@ the розстрочки' tests as this change's.
 ## 7. Close
 
 - [x] 7.1 Update `docs/app-overview.md`: §2 (зобов'язання, «Вільно після зобов'язань»), §3.3 («Платежі місяця», the reading), §3.9 (the section), §4.11 (the shared linking rule), a new §4.11a «Зобов'язання», §5.2 (tables), §6 (status row) and §7 (item 6 and item 10). Verify `npm run verify` passes
-- [ ] 7.2 Coordination and record:
+- [x] 7.2 Coordination and record:
   - `observations-and-month-summary`, `category-icons-and-transaction-visuals`, `merchant-normalization` and `local-model-guesses` also add requirements to capabilities this change touches (`month-screen`, `settings-screen`, `persistence`, `backup-file`). Each adds a migration and backup tables. Whichever archives after this change re-reads the merged main specs and takes the next migration number and `BACKUP_SCHEMA_VERSION`. If this change archives after any of them, it does the same;
   - after 7.4 and the commit, record whether the `smoke-runner` pass on the emulator ran, or was not run and why (CLAUDE.md order: diff-reviewer PASS → commit → smoke-runner → archive)
-- [ ] 7.3 Run `npm run verify` and paste the final lines
-- [ ] 7.4 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+
+  Record (2026-10-03):
+  - Built in the lane `.claude/worktrees/lane-commitments` (branch `auto/commitments`) while `observations-and-month-summary` was being finished in the main tree. That change landed in `main` first (`4612d02`, migration `0010`, `BACKUP_SCHEMA_VERSION` 11). This lane then merged `main` (`f25078d`): the зобов'язання migration was regenerated as `0011_good_infant_terrible`, `BACKUP_SCHEMA_VERSION` is 12, the migration counts in the tests are 12, and Місяць carries «Спостереження» above «Платежі місяця». `category-icons-and-transaction-visuals`, `merchant-normalization` and `local-model-guesses` are not merged yet: whichever lands next takes migration `0012` and `BACKUP_SCHEMA_VERSION` 13.
+  - `smoke-runner`: **not run yet.** The lane is not integrated into `main`, and the emulator smoke run of 6.1–6.4 and of "The block leads to the screen", "A платіж of a зобов'язання leads to its зобов'язання" and "The Зобов'язання section opens its screen" follows the integration, before `/opsx:archive`.
+- [x] 7.3 Run `npm run verify` and paste the final lines
+
+  ```
+ Test Files  237 passed (237)
+      Tests  4708 passed (4708)
+  ✔ verify passed (2f9368c459a1551d646c3a416a39cac9bcc1e4aa)
+  ```
+- [x] 7.4 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+
+  PASS on `c55c259..fb9f571` (0 critical, 1 major, 9 minor). Fixed in `2a9e473`: the major (the candidate query OR'd one date window per open платіж and passed SQLite's expression depth for a first дата ~17 years back — now queried in groups of 200, proven by a first дата of 1926), and the thin tests, the full-table read in the розстрочки' hand link, the dead `owedInMonth` and the list's «наступний» wording. Left as they are: small copied helpers (`choices`, choice rows, `capitalised`, `isIsoDate`, the category filter, the missed-debit sentence).
