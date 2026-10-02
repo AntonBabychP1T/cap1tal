@@ -39,6 +39,14 @@ import { categoryIconDefinition } from './category-icons';
 import type { IconName } from './icons';
 import { shortCalendarLabel, todayIso } from './dates';
 import { formatPlanMoney } from './commitments-screen';
+import type { Observation } from '../observations/observation';
+import {
+  noObservationsSentence,
+  observationLines,
+  summaryOffer,
+  type ObservationLine,
+  type SummaryOffer,
+} from './observations';
 
 /**
  * Everything the Місяць screen renders, as strings — so what it says is under `verify` even though
@@ -225,6 +233,16 @@ export interface MonthViewModel {
   readonly previous: PreviousMonth | null;
   /** «Платежі місяця», or `null` for a month in which no розстрочка and no зобов'язання has a платіж. */
   readonly dues: MonthDuesBlock | null;
+  /**
+   * «Підсумок вересня», beneath the month's name — only for a завершений активний місяць
+   * (month-screen, "A finished month on Місяць leads to its підсумок"); `null` otherwise.
+   */
+  readonly summaryOffer: SummaryOffer | null;
+  /**
+   * The «Спостереження» block, beneath the breakdown and before any block of the month's платежі —
+   * only when the month holds a транзакція; `null` otherwise. Changes none of the six numbers.
+   */
+  readonly observations: { readonly lines: readonly ObservationLine[]; readonly empty: string | null } | null;
 }
 
 /**
@@ -282,6 +300,8 @@ export function monthViewModel(input: {
   installments?: { readonly installments: readonly Installment[]; readonly facts: InstallmentFacts };
   /** Every зобов'язання and the states of their платежі; absent reads as none. */
   commitments?: { readonly commitments: readonly Commitment[]; readonly facts: CommitmentFacts };
+  /** The shown month's спостереження, already ordered (`observationsOf`); absent reads as none. */
+  observations?: readonly Observation[];
 }): MonthViewModel {
   const picture = monthlyPicture({
     month: input.month,
@@ -364,6 +384,7 @@ export function monthViewModel(input: {
     : null;
 
   const inMonth = input.transactions.some((t) => t.date.startsWith(`${input.month}-`));
+  const observed = input.observations ?? [];
 
   return {
     month: input.month,
@@ -382,6 +403,19 @@ export function monthViewModel(input: {
           transactions: input.previousTransactions,
         }),
     dues: duesBlockOf(dues, input.now),
+    // A finished month holding a транзакція is a завершений активний місяць; the current month,
+    // a month ahead and an empty one offer none.
+    summaryOffer: inMonth && input.month < currentMonth(input.now) ? summaryOffer(input.month) : null,
+    observations: inMonth
+      ? {
+          lines: observationLines(observed, {
+            categoryNames: input.categoryNames,
+            accountNames: new Map(input.accounts.map((a) => [a.id, a.name])),
+            now: input.now,
+          }),
+          empty: observed.length === 0 ? noObservationsSentence(input.month, today) : null,
+        }
+      : null,
   };
 }
 

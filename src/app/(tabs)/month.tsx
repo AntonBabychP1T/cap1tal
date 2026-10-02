@@ -4,6 +4,7 @@ import { StyleSheet, View } from 'react-native';
 
 import {
   Card,
+  Chevron,
   Divider,
   IconTile,
   Meter,
@@ -12,6 +13,7 @@ import {
 } from '@/components/surfaces';
 import { ChangingFigure, SteppedBody, TabFade, Tap } from '@/components/motion';
 import { RowAction } from '@/components/form';
+import { ObservationsList } from '@/components/observations-list';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
@@ -28,6 +30,8 @@ import { NO_INSTALLMENT_FACTS } from '@/domain/installments';
 import { settleInstallmentsOnFocus } from '@/hooks/installment-ports';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { useCurrentRates } from '@/hooks/use-current-rates';
+import { answerNotDuplicate, monthObservations } from '@/hooks/observations-reads';
+import { todayIso } from '@/ui/dates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { monthViewModel } from '@/ui/month-screen';
 import { choiceEvent } from '@/ui/haptics';
@@ -90,6 +94,7 @@ const UNSEEN = {
   installmentFacts: NO_INSTALLMENT_FACTS,
   commitments: [],
   commitmentFacts: NO_COMMITMENT_FACTS,
+  observations: [],
 } as const;
 
 function MonthScreen() {
@@ -168,6 +173,9 @@ function MonthScreen() {
           installmentFacts: installmentsRepo.facts(),
           commitments: commitmentsRepo.list(),
           commitmentFacts: commitmentsRepo.facts(),
+          // The shown month's спостереження, through the stamp memo Головний and Звіти fill too:
+          // after the first read per write it costs nothing (observations design D8).
+          observations: monthObservations(shown, todayIso(new Date())),
         };
       },
       [shown],
@@ -194,6 +202,7 @@ function MonthScreen() {
         reach,
         installments: { installments: stored.installments, facts: stored.installmentFacts },
         commitments: { commitments: stored.commitments, facts: stored.commitmentFacts },
+        observations: stored.observations,
       }),
     [reach, shown, stored],
   );
@@ -240,6 +249,21 @@ function MonthScreen() {
         direction={step.direction}
         stepped={step.stepped}
         style={styles.body}>
+        {/* A finished month's підсумок, directly beneath its name and above its numbers. */}
+        {model.summaryOffer ? (
+          <Tap
+            onPress={() => router.push(model.summaryOffer!.route)}
+            accessibilityRole="button"
+            accessibilityLabel={model.summaryOffer.accessibilityLabel}>
+            <Card tone="accent" style={styles.summaryOffer}>
+              <ThemedText type="smallBold" style={styles.label}>
+                {model.summaryOffer.label}
+              </ThemedText>
+              <Chevron />
+            </Card>
+          </Tap>
+        ) : null}
+
         {model.emptyMessage ? (
           <Card style={styles.empty}>
             <ThemedText>{model.emptyMessage}</ThemedText>
@@ -375,6 +399,28 @@ function MonthScreen() {
           );
         })}
 
+        {/* The month's спостереження: directly beneath the breakdown, before any block of the
+            month's платежі. «Не дубль» is stored at once and the list re-derived in place. */}
+        {model.observations ? (
+          <>
+            <SectionLabel>Спостереження</SectionLabel>
+            {model.observations.empty ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                {model.observations.empty}
+              </ThemedText>
+            ) : (
+              <ObservationsList
+                lines={model.observations.lines}
+                onOpen={(route) => router.push(route)}
+                onNotDuplicate={(pair) => {
+                  answerNotDuplicate(pair);
+                  reload();
+                }}
+              />
+            )}
+          </>
+        ) : null}
+
         {/* «Платежі місяця» — the платежі of розстрочки and зобов'язання, also on an empty month,
             beside its statement. It changes none of the six numbers; each row opens its own plan. */}
         {model.dues ? (
@@ -472,6 +518,7 @@ const styles = StyleSheet.create({
   stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   // The gap `Screen` puts between its children, kept between the body's own.
   body: { gap: Spacing.three },
+  summaryOffer: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   step: {
     minWidth: TouchTarget,
     minHeight: TouchTarget,

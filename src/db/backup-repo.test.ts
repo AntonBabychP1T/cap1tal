@@ -25,6 +25,7 @@ import { accountsRepo } from './accounts-repo';
 import { backupRepo, type BackupRepo } from './backup-repo';
 import { categoriesRepo } from './categories-repo';
 import { dashboardLayoutRepo } from './dashboard-layout-repo';
+import { duplicateAnswersRepo } from './duplicate-answers-repo';
 import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { hapticsPreferenceRepo } from './haptics-preference-repo';
@@ -2229,5 +2230,143 @@ describe('the шаблон mapping travels, and a restore replaces it', () => {
     expect(ruleTemplateRepo(target.db).choices()).toEqual(
       new Map([['from-a-newer-app', { kind: 'category', categoryId: 'food' }]]),
     );
+  });
+});
+
+describe('the «Не дубль» answers travel; no спостереження does', () => {
+  let source: TestStorage;
+  let target: TestStorage;
+  const ANSWERED = new Date('2026-10-04T10:15:00.000Z');
+  const LATER = new Date('2026-10-05T09:00:00.000Z');
+
+  beforeEach(() => {
+    source = openTestDb();
+    seedWorld(source.db);
+    target = openTestDb();
+  });
+  afterEach(() => {
+    source.close();
+    target.close();
+  });
+
+  function answerTwo(db: TestDb): void {
+    const answers = duplicateAnswersRepo(db);
+    answers.answer('t-fee', 't-expense', ANSWERED);
+    answers.answer('t-expense', 't-refund', LATER);
+  }
+
+  async function tampered(edit: (data: Record<string, unknown>) => void): Promise<string> {
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const body = JSON.parse(snapshot.bytes) as { data: Record<string, unknown>; checksum: string };
+    edit(body.data);
+    body.checksum = crc32(canonicalJson(body.data));
+    return JSON.stringify(body);
+  }
+
+  it('Scenario: The snapshot carries the answers', () => {
+    answerTwo(source.db);
+
+    expect(backupRepo(source.db).snapshot().duplicateAnswers).toEqual([
+      { first: 't-expense', second: 't-fee', answeredAtMs: ANSWERED.getTime() },
+      { first: 't-expense', second: 't-refund', answeredAtMs: LATER.getTime() },
+    ]);
+  });
+
+  it('carries no section for a device where nothing was answered', () => {
+    expect(backupRepo(source.db).snapshot().duplicateAnswers).toBeUndefined();
+  });
+
+  it('Scenario: Replacing replaces the answers', () => {
+    seedWorld(target.db);
+    answerTwo(target.db);
+    const none = { ...backupRepo(source.db).snapshot() };
+
+    backupRepo(target.db).replaceAll(none);
+
+    expect(duplicateAnswersRepo(target.db).list()).toEqual([]);
+    // In the same unit as the транзакції they name: those are the snapshot's.
+    expect(target.db.select().from(transactionsTable).all()).toHaveLength(none.transactions.length);
+  });
+
+  it('Scenario: The answers survive the round trip', async () => {
+    answerTwo(source.db);
+
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    expect(await restoreBackup(backupRepo(target.db), snapshot.bytes)).toBe('ok');
+
+    expect(duplicateAnswersRepo(target.db).list()).toEqual([
+      { first: 't-expense', second: 't-fee', answeredAt: ANSWERED },
+      { first: 't-expense', second: 't-refund', answeredAt: LATER },
+    ]);
+  });
+
+  it('Scenario: A бекап written before the answers existed restores with none', async () => {
+    seedWorld(target.db);
+    answerTwo(target.db);
+    const older = await tampered((data) => {
+      delete data.duplicateAnswers;
+    });
+
+    expect(await restoreBackup(backupRepo(target.db), older)).toBe('ok');
+    expect(duplicateAnswersRepo(target.db).list()).toEqual([]);
+  });
+
+  it('Scenario: An answer naming an absent транзакція is refused whole', async () => {
+    seedWorld(target.db);
+    const before = backupRepo(target.db).snapshot();
+    const body = await tampered((data) => {
+      data.duplicateAnswers = [{ first: 't-expense', second: 'gone', answeredAtMs: 1 }];
+    });
+
+    const refusal = await restoreBackup(backupRepo(target.db), body);
+
+    expect(refusal !== 'ok' && isRefusal(refusal) && refusal.kind).toBe('inconsistent');
+    expect(backupRepo(target.db).snapshot()).toEqual(before);
+  });
+
+  it('Scenario: An answer pairing a транзакція with itself, or one pair twice, is refused whole', async () => {
+    seedWorld(target.db);
+    const before = backupRepo(target.db).snapshot();
+    for (const answers of [
+      [{ first: 't-expense', second: 't-expense', answeredAtMs: 1 }],
+      [
+        { first: 't-expense', second: 't-fee', answeredAtMs: 1 },
+        { first: 't-fee', second: 't-expense', answeredAtMs: 2 },
+      ],
+    ]) {
+      const body = await tampered((data) => {
+        data.duplicateAnswers = answers;
+      });
+
+      const refusal = await restoreBackup(backupRepo(target.db), body);
+
+      expect(refusal !== 'ok' && isRefusal(refusal) && refusal.kind).toBe('inconsistent');
+      expect(backupRepo(target.db).snapshot()).toEqual(before);
+    }
+  });
+
+  it('Scenario: Either order restores the same answer', async () => {
+    const body = await tampered((data) => {
+      data.duplicateAnswers = [{ first: 't-fee', second: 't-expense', answeredAtMs: ANSWERED.getTime() }];
+    });
+
+    expect(await restoreBackup(backupRepo(target.db), body)).toBe('ok');
+    expect(duplicateAnswersRepo(target.db).answered('t-expense', 't-fee')).toEqual(ANSWERED);
+    expect(duplicateAnswersRepo(target.db).list()).toEqual([
+      { first: 't-expense', second: 't-fee', answeredAt: ANSWERED },
+    ]);
+  });
+
+  it('Scenario: No спостереження is in the file', async () => {
+    answerTwo(source.db);
+
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    const body = JSON.parse(snapshot.bytes) as { data: Record<string, unknown> };
+
+    expect(body.data.duplicateAnswers).toHaveLength(2);
+    // The file has no section an спостереження could live in — every key is one of the owner's
+    // stored tables' own.
+    expect(Object.keys(body.data).filter((key) => /observ|спостереж/i.test(key))).toEqual([]);
+    expect(snapshot.bytes).not.toMatch(/спостереж|observation/i);
   });
 });

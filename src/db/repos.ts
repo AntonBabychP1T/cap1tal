@@ -2,6 +2,7 @@ import { mergeAccounts as mergeAccountsImpl } from './account-merge-repo';
 import { accountsRepo } from './accounts-repo';
 import { backupRepo } from './backup-repo';
 import { driveBackupRepo } from './drive-backup-repo';
+import { duplicateAnswersRepo } from './duplicate-answers-repo';
 import { categoriesRepo } from './categories-repo';
 import { db } from './client';
 import { persistRetyped as persistRetypedImpl } from './counterpart-income-repo';
@@ -121,3 +122,5 @@ export const progress = progressRepo(db);
 export const dashboardLayout = dashboardLayoutRepo(db);
 /** The «Вібрація» switch: whether the app plays its haptics. No row is on. */
 export const hapticsPreference = hapticsPreferenceRepo(db);
+/** The owner's «Не дубль» answers — the one thing about an спостереження that is ever stored. */
+export const duplicateAnswers = duplicateAnswersRepo(db);

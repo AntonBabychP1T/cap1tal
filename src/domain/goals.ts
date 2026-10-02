@@ -1,7 +1,7 @@
-import { computeBalance, type Account } from './account';
+import { computeBalance, transactionEffect, type Account } from './account';
 import { overLimit, type CategoryLimit } from './limits';
 import { add, money, type CurrencyCode, type Money } from './money';
-import type { IsoDate, Transaction } from './transaction';
+import { monthOf, type IsoDate, type Month, type Transaction } from './transaction';
 
 /**
  * The цілі of the glossary, of two kinds — and only one of them is stored here.
@@ -65,6 +65,32 @@ export function contribution(
   // it — the same number `computeBalance` gives, without folding the whole history once per рахунок
   // (app-speed-pass design D7). A рахунок missing from it is computed here, never assumed zero.
   return balances?.get(account.id) ?? computeBalance(account, transactions);
+}
+
+/**
+ * How much the склад's розрахункові баланси moved during one calendar month, per currency of the
+ * рахунки (month-summary, "The підсумок states what moved toward each ціль"; design D7): the signed
+ * effect on each склад рахунок of every транзакція dated in the month — the very effect
+ * `computeBalance` folds, so the two can never disagree.
+ *
+ * A переказ between two рахунки of the same склад in one currency therefore nets to zero: money
+ * that stays inside the ціль did not move toward it. Nothing is converted, and no percentage, no
+ * progress at the month's end and no «≈» is derived here. An empty map is a склад nothing touched.
+ */
+export function compositionBalanceChange(
+  transactions: readonly Transaction[],
+  accountIds: readonly string[],
+  month: Month,
+): Map<CurrencyCode, Money> {
+  const moved = new Map<CurrencyCode, number>();
+  for (const t of transactions) {
+    if (monthOf(t.date) !== month) continue;
+    for (const accountId of accountIds) {
+      const effect = transactionEffect(accountId, t);
+      if (effect) moved.set(effect.currency, (moved.get(effect.currency) ?? 0) + effect.amount);
+    }
+  }
+  return new Map([...moved].map(([currency, amount]) => [currency, money(amount, currency)]));
 }
 
 /**

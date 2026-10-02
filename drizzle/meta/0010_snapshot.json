@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "55ad7525-5c14-4b40-986e-29dc31636b4d",
+  "id": "1fcfe0e6-e095-45e2-8629-99a5ebde418d",
   "prevId": "910efa58-3fe8-442f-ba61-56a5bf69ef59",
   "tables": {
     "accounts": {
@@ -422,366 +422,6 @@
         }
       }
     },
-    "commitment_due_links": {
-      "name": "commitment_due_links",
-      "columns": {
-        "commitment_id": {
-          "name": "commitment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "number": {
-          "name": "number",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "transaction_id": {
-          "name": "transaction_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "commitment_due_links_transaction_id_unique": {
-          "name": "commitment_due_links_transaction_id_unique",
-          "columns": [
-            "transaction_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "commitment_due_links_commitment_id_commitments_id_fk": {
-          "name": "commitment_due_links_commitment_id_commitments_id_fk",
-          "tableFrom": "commitment_due_links",
-          "tableTo": "commitments",
-          "columnsFrom": [
-            "commitment_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "commitment_due_links_transaction_id_transactions_id_fk": {
-          "name": "commitment_due_links_transaction_id_transactions_id_fk",
-          "tableFrom": "commitment_due_links",
-          "tableTo": "transactions",
-          "columnsFrom": [
-            "transaction_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "commitment_due_links_commitment_id_number_pk": {
-          "columns": [
-            "commitment_id",
-            "number"
-          ],
-          "name": "commitment_due_links_commitment_id_number_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "commitment_due_links_number_positive": {
-          "name": "commitment_due_links_number_positive",
-          "value": "\"commitment_due_links\".\"number\" >= 1"
-        }
-      }
-    },
-    "commitment_due_marks": {
-      "name": "commitment_due_marks",
-      "columns": {
-        "commitment_id": {
-          "name": "commitment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "number": {
-          "name": "number",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "commitment_due_marks_commitment_id_commitments_id_fk": {
-          "name": "commitment_due_marks_commitment_id_commitments_id_fk",
-          "tableFrom": "commitment_due_marks",
-          "tableTo": "commitments",
-          "columnsFrom": [
-            "commitment_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "commitment_due_marks_commitment_id_number_pk": {
-          "columns": [
-            "commitment_id",
-            "number"
-          ],
-          "name": "commitment_due_marks_commitment_id_number_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "commitment_due_marks_number_positive": {
-          "name": "commitment_due_marks_number_positive",
-          "value": "\"commitment_due_marks\".\"number\" >= 1"
-        },
-        "commitment_due_marks_kind_known": {
-          "name": "commitment_due_marks_kind_known",
-          "value": "\"commitment_due_marks\".\"kind\" IN ('paid', 'skipped')"
-        }
-      }
-    },
-    "commitment_refusals": {
-      "name": "commitment_refusals",
-      "columns": {
-        "commitment_id": {
-          "name": "commitment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "number": {
-          "name": "number",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "transaction_id": {
-          "name": "transaction_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "commitment_refusals_commitment_id_commitments_id_fk": {
-          "name": "commitment_refusals_commitment_id_commitments_id_fk",
-          "tableFrom": "commitment_refusals",
-          "tableTo": "commitments",
-          "columnsFrom": [
-            "commitment_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "commitment_refusals_transaction_id_transactions_id_fk": {
-          "name": "commitment_refusals_transaction_id_transactions_id_fk",
-          "tableFrom": "commitment_refusals",
-          "tableTo": "transactions",
-          "columnsFrom": [
-            "transaction_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "commitment_refusals_commitment_id_number_transaction_id_pk": {
-          "columns": [
-            "commitment_id",
-            "number",
-            "transaction_id"
-          ],
-          "name": "commitment_refusals_commitment_id_number_transaction_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "commitment_refusals_number_positive": {
-          "name": "commitment_refusals_number_positive",
-          "value": "\"commitment_refusals\".\"number\" >= 1"
-        }
-      }
-    },
-    "commitments": {
-      "name": "commitments",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "amount_minor": {
-          "name": "amount_minor",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "periodicity": {
-          "name": "periodicity",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "first_due": {
-          "name": "first_due",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "debit_account_id": {
-          "name": "debit_account_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "category_id": {
-          "name": "category_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "marker": {
-          "name": "marker",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "recorded_at": {
-          "name": "recorded_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "stopped_on": {
-          "name": "stopped_on",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "commitments_debit_account_idx": {
-          "name": "commitments_debit_account_idx",
-          "columns": [
-            "debit_account_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "commitments_debit_account_id_accounts_id_fk": {
-          "name": "commitments_debit_account_id_accounts_id_fk",
-          "tableFrom": "commitments",
-          "tableTo": "accounts",
-          "columnsFrom": [
-            "debit_account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "commitments_category_id_categories_id_fk": {
-          "name": "commitments_category_id_categories_id_fk",
-          "tableFrom": "commitments",
-          "tableTo": "categories",
-          "columnsFrom": [
-            "category_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "commitments_name_not_blank": {
-          "name": "commitments_name_not_blank",
-          "value": "length(trim(\"commitments\".\"name\")) > 0"
-        },
-        "commitments_amount_positive": {
-          "name": "commitments_amount_positive",
-          "value": "\"commitments\".\"amount_minor\" > 0"
-        },
-        "commitments_periodicity_known": {
-          "name": "commitments_periodicity_known",
-          "value": "\"commitments\".\"periodicity\" IN ('monthly', 'quarterly', 'halfYearly', 'yearly')"
-        },
-        "commitments_first_due_iso": {
-          "name": "commitments_first_due_iso",
-          "value": "\"commitments\".\"first_due\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
-        },
-        "commitments_stopped_on_iso": {
-          "name": "commitments_stopped_on_iso",
-          "value": "\"commitments\".\"stopped_on\" IS NULL OR \"commitments\".\"stopped_on\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
-        },
-        "commitments_marker_length": {
-          "name": "commitments_marker_length",
-          "value": "\"commitments\".\"marker\" IS NULL OR length(trim(\"commitments\".\"marker\")) >= 3"
-        }
-      }
-    },
     "counterpart_income_awaits": {
       "name": "counterpart_income_awaits",
       "columns": {
@@ -965,6 +605,85 @@
         "drive_backup_single_row": {
           "name": "drive_backup_single_row",
           "value": "\"drive_backup\".\"id\" = 'drive'"
+        }
+      }
+    },
+    "duplicate_answers": {
+      "name": "duplicate_answers",
+      "columns": {
+        "first_id": {
+          "name": "first_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "second_id": {
+          "name": "second_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "answered_at": {
+          "name": "answered_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "duplicate_answers_second_idx": {
+          "name": "duplicate_answers_second_idx",
+          "columns": [
+            "second_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "duplicate_answers_first_id_transactions_id_fk": {
+          "name": "duplicate_answers_first_id_transactions_id_fk",
+          "tableFrom": "duplicate_answers",
+          "tableTo": "transactions",
+          "columnsFrom": [
+            "first_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "duplicate_answers_second_id_transactions_id_fk": {
+          "name": "duplicate_answers_second_id_transactions_id_fk",
+          "tableFrom": "duplicate_answers",
+          "tableTo": "transactions",
+          "columnsFrom": [
+            "second_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "duplicate_answers_first_id_second_id_pk": {
+          "columns": [
+            "first_id",
+            "second_id"
+          ],
+          "name": "duplicate_answers_first_id_second_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "duplicate_answers_pair_sorted": {
+          "name": "duplicate_answers_pair_sorted",
+          "value": "\"duplicate_answers\".\"first_id\" < \"duplicate_answers\".\"second_id\""
         }
       }
     },

@@ -960,3 +960,82 @@ describe('the шаблон mapping in a бекап', () => {
     expect(() => parseState({ ...base, templateChoices: [{ groupId: 'groceries' }] })).toThrow();
   });
 });
+
+describe('the «Не дубль» answers in a бекап', () => {
+  const coffee = (id: string, date: string) => ({
+    transaction: {
+      type: 'expense' as const,
+      id,
+      date,
+      accountId: 'black',
+      amount: money(12_500, 'UAH'),
+      categoryId: 'coffee',
+    },
+    storedAtMs: 1,
+  });
+  const held: BackupState = {
+    accounts: [
+      {
+        id: 'black',
+        name: 'mono black',
+        kind: 'spending',
+        currency: 'UAH',
+        openingBalance: money(0, 'UAH'),
+        archived: false,
+      },
+    ],
+    categories: [{ id: 'coffee', name: 'Кава', archived: false }],
+    sources: [],
+    rules: [],
+    limits: [],
+    goals: [],
+    transactions: [coffee('a', '2026-10-03'), coffee('b', '2026-10-04'), coffee('c', '2026-10-04')],
+    monobankAccounts: [],
+    monobankLinks: [],
+    monobankImportedItems: [],
+    watches: [],
+    receipts: [],
+    receiptItems: [],
+    achievements: [],
+    challengeDecisions: [],
+    norms: [],
+    investmentValues: [],
+  };
+  const answer = (first: string, second: string) => ({ first, second, answeredAtMs: 1_790_000_000_000 });
+
+  it('Scenario: A бекап written before the answers existed restores with none', () => {
+    const state = parseState({ accounts: [], transactions: [] });
+    expect('duplicateAnswers' in state).toBe(false);
+    expect(() => checkConsistent(held)).not.toThrow();
+  });
+
+  it('Scenario: The answers survive the round trip', () => {
+    const answers = [answer('a', 'b'), answer('a', 'c')];
+    expect(parseState(JSON.parse(JSON.stringify({ duplicateAnswers: answers }))).duplicateAnswers).toEqual(
+      answers,
+    );
+  });
+
+  it('Scenario: An answer naming an absent транзакція is refused whole', () => {
+    expect(() => checkConsistent({ ...held, duplicateAnswers: [answer('a', 'gone')] })).toThrow(
+      /транзакцію, якої в бекапі немає/,
+    );
+  });
+
+  it('Scenario: An answer pairing a транзакція with itself, or one pair twice, is refused whole', () => {
+    expect(() => checkConsistent({ ...held, duplicateAnswers: [answer('a', 'a')] })).toThrow(/двічі/);
+    expect(() =>
+      checkConsistent({ ...held, duplicateAnswers: [answer('a', 'b'), answer('b', 'a')] }),
+    ).toThrow(/записана двічі/);
+  });
+
+  it('Scenario: Either order restores the same answer', () => {
+    // An unsorted pair is not a contradiction: the pair is unordered.
+    expect(() => checkConsistent({ ...held, duplicateAnswers: [answer('b', 'a')] })).not.toThrow();
+  });
+
+  it('refuses an answer that is not two ids and a moment', () => {
+    expect(() => parseState({ duplicateAnswers: [{ first: 'a', second: 2, answeredAtMs: 1 }] })).toThrow();
+    expect(() => parseState({ duplicateAnswers: [{ first: 'a', second: 'b', answeredAtMs: 1.5 }] })).toThrow();
+  });
+});

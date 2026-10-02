@@ -15,7 +15,7 @@ import {
   historySeries,
   type MonthTotals,
 } from '../domain/reports';
-import type { IsoDate, Month, Transaction } from '../domain/transaction';
+import { monthOf, type IsoDate, type Month, type Transaction } from '../domain/transaction';
 import type { MonobankRate } from '../monobank/currency';
 import type { Candidate } from '../progress/catalogue';
 import type { EarnedAchievement } from '../progress/earned';
@@ -35,6 +35,7 @@ import {
   SPENDING_GOALS_TITLE,
 } from './labels';
 import { currentMonth, monthLabel, shortMonthLabel } from './months';
+import { summaryOffer, type SummaryOffer } from './observations';
 import { unseenAchievementsBadge } from './progress-screen';
 
 /**
@@ -114,6 +115,12 @@ export interface HistoryReadout {
     readonly label: string;
     readonly amount: string;
   }[];
+  /**
+   * «Підсумок вересня» beneath the numbers, when the spelled-out month is a завершений активний
+   * місяць (reports-screen, "A spelled-out finished month leads to its підсумок"); `null` for the
+   * current month and for a month with no транзакція. Nothing beyond that is computed for it.
+   */
+  readonly summaryOffer: SummaryOffer | null;
 }
 
 /** The same for the category chart, which has one number per month. */
@@ -365,6 +372,8 @@ export interface ReportsHistory {
   /** Read again only for the chosen категорія's series. */
   readonly transactions: readonly Transaction[];
   readonly categoryNames: ReadonlyMap<string, string>;
+  /** The months holding a транзакція — all a підсумок offer needs to know. */
+  readonly activeMonths: ReadonlySet<Month>;
 }
 
 export function reportsHistory(input: ReportsStored): ReportsHistory {
@@ -484,6 +493,7 @@ export function reportsHistory(input: ReportsStored): ReportsHistory {
     ),
     transactions: input.transactions,
     categoryNames: input.categoryNames,
+    activeMonths: new Set(input.transactions.map((t) => monthOf(t.date))),
   };
 }
 
@@ -552,6 +562,10 @@ export function reportsSelection(derived: ReportsHistory, choice: ReportsChoice)
           month: readHistory.month,
           label: readHistory.label,
           numbers: readHistory.bars.map(({ key, label, amount }) => ({ key, label, amount })),
+          summaryOffer:
+            readHistory.month < month && derived.activeMonths.has(readHistory.month)
+              ? summaryOffer(readHistory.month)
+              : null,
         }
       : null,
     historyHasNegative,
