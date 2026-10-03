@@ -5,6 +5,8 @@ import type { BackupDashboardLayout, BackupState } from '../backup/format';
 import { merchantNameKey } from '../domain/merchants';
 import { money } from '../domain/money';
 import { isoDate } from '../domain/transaction';
+import { toCommitment, toCommitmentRow } from './commitments-repo';
+import { sortedPair } from './duplicate-answers-repo';
 import { toInstallment, toInstallmentRow } from './installments-repo';
 import { toAccount, toAccountRow, toTransaction, toTransactionRow } from './mappers';
 import {
@@ -15,12 +17,17 @@ import {
   counterpartIncomeAwaits,
   dailyReminder,
   dashboardLayout,
+  duplicateAnswers,
   hapticsPreference,
   earnedAchievements,
   entryDefaults,
   fiscalReceipts,
   goalAccounts,
   goals,
+  commitmentDueLinks,
+  commitmentDueMarks,
+  commitmentRefusals,
+  commitments,
   installmentPartLinks,
   installmentPartMarks,
   installmentRefusals,
@@ -82,10 +89,21 @@ export function backupRepo(db: Storage): BackupStore {
         .all()
         .map(toInstallment);
       const installmentReminderRow = db.select().from(installmentReminder).all()[0];
+      const commitmentPlans = db
+        .select()
+        .from(commitments)
+        .orderBy(asc(commitments.id))
+        .all()
+        .map(toCommitment);
       const templateChoices = db
         .select()
         .from(ruleTemplateChoices)
         .orderBy(asc(ruleTemplateChoices.groupId))
+        .all();
+      const answers = db
+        .select()
+        .from(duplicateAnswers)
+        .orderBy(asc(duplicateAnswers.firstId), asc(duplicateAnswers.secondId))
         .all();
       return {
         accounts: db.select().from(accounts).orderBy(asc(accounts.id)).all().map(toAccount),
@@ -345,6 +363,17 @@ export function backupRepo(db: Storage): BackupStore {
           : {}),
         // Only when the owner has ever flipped «Вібрація»; untouched is on, and carries nothing.
         ...(haptics ? { haptics: { enabled: haptics.enabled } } : {}),
+        // Only when the owner ever answered «Не дубль»; a device that never did carries no
+        // section and restores to none. Each pair is stored sorted, so it is written sorted.
+        ...(answers.length > 0
+          ? {
+              duplicateAnswers: answers.map((row) => ({
+                first: row.firstId,
+                second: row.secondId,
+                answeredAtMs: row.answeredAt.getTime(),
+              })),
+            }
+          : {}),
         // Only the базові категорії the owner touched; an untouched one is carried as nothing, so
         // it follows whatever типова категорія the restoring app's шаблон gives it.
         ...(templateChoices.length > 0
@@ -384,6 +413,34 @@ export function backupRepo(db: Storage): BackupStore {
               },
             }
           : {}),
+        // Only when there is a зобов'язання; otherwise the section is absent and restores to none.
+        ...(commitmentPlans.length > 0
+          ? {
+              commitments: {
+                plans: commitmentPlans,
+                links: db
+                  .select()
+                  .from(commitmentDueLinks)
+                  .orderBy(asc(commitmentDueLinks.commitmentId), asc(commitmentDueLinks.number))
+                  .all(),
+                marks: db
+                  .select()
+                  .from(commitmentDueMarks)
+                  .orderBy(asc(commitmentDueMarks.commitmentId), asc(commitmentDueMarks.number))
+                  .all()
+                  .map((row) => ({ ...row, kind: row.kind as 'paid' | 'skipped' })),
+                refusals: db
+                  .select()
+                  .from(commitmentRefusals)
+                  .orderBy(
+                    asc(commitmentRefusals.commitmentId),
+                    asc(commitmentRefusals.number),
+                    asc(commitmentRefusals.transactionId),
+                  )
+                  .all(),
+              },
+            }
+          : {}),
       };
     },
 
@@ -410,6 +467,10 @@ export function backupRepo(db: Storage): BackupStore {
         isoDate(plan.firstDue);
         if (plan.closedOn !== undefined) isoDate(plan.closedOn);
       }
+      for (const plan of state.commitments?.plans ?? []) {
+        isoDate(plan.firstDue);
+        if (plan.stoppedOn !== undefined) isoDate(plan.stoppedOn);
+      }
 
       db.transaction((tx) => {
         // Deleted in reference order: nothing is removed while something still points at it.
@@ -429,6 +490,7 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(receiptItems).run();
         tx.delete(fiscalReceipts).run();
         tx.delete(counterpartIncomeAwaits).run();
+        tx.delete(duplicateAnswers).run();
         // The склад rows go immediately before the цілі they hang under. The cascade would take
         // them anyway; this file deletes in reference order and says so, for the reason stated
         // above the чеки.
@@ -441,6 +503,11 @@ export function backupRepo(db: Storage): BackupStore {
         tx.delete(installmentPartMarks).run();
         tx.delete(installmentPartLinks).run();
         tx.delete(installments).run();
+        // The зобов'язання the same way, for the same reason (commitments design D8).
+        tx.delete(commitmentRefusals).run();
+        tx.delete(commitmentDueMarks).run();
+        tx.delete(commitmentDueLinks).run();
+        tx.delete(commitments).run();
         tx.delete(categoryLimits).run();
         tx.delete(rules).run();
         // The продавці after the правила that may name them (`restrict`); their написання go with
@@ -553,6 +620,14 @@ export function backupRepo(db: Storage): BackupStore {
           if (entry.transaction.type === 'transfer' && entry.transaction.awaitingCounterpartIncome) {
             tx.insert(counterpartIncomeAwaits).values({ transactionId: entry.transaction.id }).run();
           }
+        }
+        // After the транзакції they name. A pair the file names either way round lands sorted —
+        // it is one unordered pair, and storage's CHECK takes it in one order only.
+        for (const answer of state.duplicateAnswers ?? []) {
+          const [first, second] = sortedPair(answer.first, answer.second);
+          tx.insert(duplicateAnswers)
+            .values({ firstId: first, secondId: second, answeredAt: new Date(answer.answeredAtMs) })
+            .run();
         }
         for (const a of state.monobankAccounts) {
           tx.insert(monobankAccounts)
@@ -727,6 +802,20 @@ export function backupRepo(db: Storage): BackupStore {
         }
         if (section && section.refusals.length > 0) {
           tx.insert(installmentRefusals).values([...section.refusals]).run();
+        }
+        // The зобов'язання, after the транзакції, рахунки and категорії they name.
+        const owed = state.commitments;
+        for (const plan of owed?.plans ?? []) {
+          tx.insert(commitments).values(toCommitmentRow(plan)).run();
+        }
+        if (owed && owed.links.length > 0) {
+          tx.insert(commitmentDueLinks).values([...owed.links]).run();
+        }
+        if (owed && owed.marks.length > 0) {
+          tx.insert(commitmentDueMarks).values([...owed.marks]).run();
+        }
+        if (owed && owed.refusals.length > 0) {
+          tx.insert(commitmentRefusals).values([...owed.refusals]).run();
         }
         // The switch: the бекап's, or on for one written before розстрочки existed. `asked` is
         // left exactly as this phone had it — a row is written only where `enabled` must change.

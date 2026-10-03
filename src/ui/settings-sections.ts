@@ -60,6 +60,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   // Also reached from Місяць's block — but a розстрочка recorded in a month with no платіж yet has
   // no block to tap, so the section is the way in (settings-screen, "The section opens the screen").
   { href: '/manage/installments', title: 'Розстрочки', hint: 'Покупки частинами: графік і що лишилось сплатити' },
+  // The same reason: a зобов'язання recorded before its first платіж has no row on Місяць yet
+  // (settings-screen, "The Зобов'язання section opens its screen").
+  { href: '/manage/commitments', title: "Зобов'язання", hint: 'Оренда, інтернет, підписки: що ще має списатися' },
   { href: '/manage/saldo-import', title: 'Імпорт Saldo', hint: 'Разовий переїзд з історією' },
   { href: '/manage/monobank', title: 'monobank', hint: 'Токен, рахунки та синхронізація' },
   {

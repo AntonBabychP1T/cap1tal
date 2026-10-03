@@ -686,3 +686,169 @@ describe('a бекап carries the розстрочки', () => {
     expect(read.state.installments?.plans).toEqual([iphone]);
   });
 });
+
+describe("commitments — a бекап carries the зобов'язання", () => {
+  const netflix = {
+    id: 'c-netflix',
+    name: 'Netflix',
+    amount: 29_900,
+    currency: 'UAH',
+    periodicity: 'monthly' as const,
+    firstDue: '2026-08-15',
+    debitAccountId: 'a1',
+    categoryId: 'c1',
+    marker: 'netflix',
+    recordedAt: 1_700_000_000_000,
+    stoppedOn: '2026-10-20',
+  };
+  const debit = (id: string, date: string, accountId = 'a1', amount = 29_900): Transaction => ({
+    type: 'expense',
+    id,
+    date,
+    accountId,
+    amount: money(amount, 'UAH'),
+    categoryId: 'c1',
+  });
+  const withCommitments = (over: Partial<BackupState> = {}) =>
+    state({
+      accounts: [uahAccount('a1', 'mono black'), uahAccount('a2', 'mono white')],
+      categories: [{ id: 'c1', name: 'Підписки', archived: false }],
+      transactions: [stored(debit('aug', '2026-08-15')), stored(debit('other', '2026-08-16'))],
+      commitments: {
+        plans: [netflix],
+        links: [{ commitmentId: 'c-netflix', number: 1, transactionId: 'aug' }],
+        marks: [
+          { commitmentId: 'c-netflix', number: 2, kind: 'paid' },
+          { commitmentId: 'c-netflix', number: 3, kind: 'skipped' },
+        ],
+        refusals: [{ commitmentId: 'c-netflix', number: 1, transactionId: 'other' }],
+      },
+      ...over,
+    });
+
+  function inconsistent(bad: BackupState): string {
+    const read = refusal(handMade(JSON.parse(canonicalJson(bad))));
+    expect(read.kind).toBe('inconsistent');
+    return read.kind === 'inconsistent' ? read.problem : '';
+  }
+
+  it("Scenario: A зобов'язання survives the round trip", () => {
+    const before = withCommitments();
+    const read = readBackup(makeBackup(before, MADE_AT).bytes);
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+    expect(read.state.commitments).toEqual(before.commitments);
+    expect(read.state.commitments?.plans[0]?.stoppedOn).toBe('2026-10-20');
+  });
+
+  it("Scenario: A бекап written before зобов'язання existed still restores", () => {
+    const older = { ...smallState() } as Record<string, unknown>;
+    delete older.commitments;
+    const read = readBackup(handMade(JSON.parse(canonicalJson(older))));
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+    expect(read.state.commitments).toBeUndefined();
+    expect(read.state.transactions).toHaveLength(1);
+  });
+
+  it("Scenario: A зобов'язання on a рахунок outside the бекап stops the restore", () => {
+    const outside = withCommitments();
+    expect(
+      inconsistent({
+        ...outside,
+        commitments: { ...outside.commitments!, plans: [{ ...netflix, debitAccountId: 'a-gone' }], links: [] },
+      }),
+    ).toContain('рахунок, якого в бекапі немає');
+    expect(
+      inconsistent({
+        ...outside,
+        commitments: { ...outside.commitments!, plans: [{ ...netflix, currency: 'USD' }], links: [] },
+      }),
+    ).toContain('у USD');
+  });
+
+  it("Scenario: One транзакція linked to a розстрочка and a зобов'язання stops the restore", () => {
+    const both = withCommitments({
+      installments: {
+        plans: [
+          {
+            id: 'i-iphone',
+            name: 'iPhone',
+            total: 299_000,
+            partsCount: 10,
+            part: 29_900,
+            firstDue: '2026-08-15',
+            debitAccountId: 'a1',
+            paidBefore: 0,
+            recordedAt: 1,
+          },
+        ],
+        links: [{ installmentId: 'i-iphone', number: 1, transactionId: 'aug' }],
+        marks: [],
+        refusals: [],
+        reminderEnabled: true,
+      },
+    });
+    expect(inconsistent(both)).toContain('двох платежів');
+  });
+
+  it('Scenario: A платіж said twice, or said after the stop, stops the restore', () => {
+    const twice = withCommitments();
+    expect(
+      inconsistent({
+        ...twice,
+        commitments: {
+          ...twice.commitments!,
+          marks: [...twice.commitments!.marks, { commitmentId: 'c-netflix', number: 1, kind: 'paid' }],
+        },
+      }),
+    ).toContain('більше ніж один стан');
+    expect(
+      inconsistent({
+        ...twice,
+        commitments: {
+          ...twice.commitments!,
+          marks: [{ commitmentId: 'c-netflix', number: 4, kind: 'skipped' }],
+        },
+      }),
+    ).toContain('після дати припинення');
+  });
+
+  it('Scenario: A two-letter ознака stops the restore', () => {
+    const short = withCommitments();
+    expect(
+      inconsistent({ ...short, commitments: { ...short.commitments!, plans: [{ ...netflix, marker: 'tv' }] } }),
+    ).toContain('щонайменше 3 символи');
+  });
+
+  it('Scenario: A link outside the бекап stops the restore', () => {
+    const outside = withCommitments();
+    expect(
+      inconsistent({
+        ...outside,
+        commitments: {
+          ...outside.commitments!,
+          links: [{ commitmentId: 'c-netflix', number: 1, transactionId: 't-gone' }],
+        },
+      }),
+    ).toContain('транзакцію, якої в бекапі немає');
+  });
+
+  it('refuses a link to a витрата on another рахунок, and an unknown періодичність', () => {
+    const elsewhere = withCommitments({
+      transactions: [stored(debit('aug', '2026-08-15', 'a2')), stored(debit('other', '2026-08-16'))],
+    });
+    expect(inconsistent(elsewhere)).toContain('не є витратою з рахунку списання');
+    const weekly = JSON.parse(canonicalJson(withCommitments())) as { commitments: { plans: { periodicity: string }[] } };
+    weekly.commitments.plans[0]!.periodicity = 'weekly';
+    expect(refusal(handMade(weekly)).kind).not.toBe('ok');
+  });
+
+  it("Scenario: A зобов'язання on a since-archived рахунок restores", () => {
+    const archived = withCommitments({
+      accounts: [{ ...uahAccount('a1', 'mono black'), archived: true }, uahAccount('a2', 'mono white')],
+      categories: [{ id: 'c1', name: 'Підписки', archived: true }],
+    });
+    const read = readBackup(makeBackup(archived, MADE_AT).bytes);
+    if (isRefusal(read)) throw new Error(`unexpectedly refused: ${read.kind}`);
+    expect(read.state.commitments?.plans).toEqual([netflix]);
+  });
+});

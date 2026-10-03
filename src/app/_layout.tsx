@@ -621,6 +621,12 @@ export default function RootLayout() {
               name="category/[month]/[categoryId]"
               options={{ presentation: 'card', animation: animation('category/[month]/[categoryId]') }}
             />
+            {/* «Підсумок <місяця>»: one finished month read as a whole, pushed over Місяць, Звіти
+                or Головний — whichever opened it — and left with back. */}
+            <Stack.Screen
+              name="month-summary/[month]"
+              options={{ presentation: 'card', animation: animation('month-summary/[month]') }}
+            />
             {/* The breakdown of one ціль-накопичення, pushed over «Звіти» like «Рухи рахунку». */}
             <Stack.Screen
               name="goal/[id]"
@@ -720,6 +726,16 @@ export default function RootLayout() {
             <Stack.Screen
               name="installment/[id]"
               options={{ presentation: 'card', animation: animation('installment/[id]') }}
+            />
+            {/* «Зобов'язання»: from Налаштування; one зобов'язання also from Місяць's «Платежі
+                місяця». */}
+            <Stack.Screen
+              name="manage/commitments"
+              options={{ presentation: 'card', animation: animation('manage/commitments') }}
+            />
+            <Stack.Screen
+              name="commitment/[id]"
+              options={{ presentation: 'card', animation: animation('commitment/[id]') }}
             />
             <Stack.Screen
               name="manage/reminders"

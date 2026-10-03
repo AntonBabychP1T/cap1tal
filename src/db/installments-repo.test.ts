@@ -12,6 +12,7 @@ import { monthlyPicture } from '../domain/monthly-picture';
 import { isRefusal } from '../domain/refusal';
 import { expenseByDefault, transfer, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
+import { commitmentsRepo } from './commitments-repo';
 import { goalsRepo } from './goals-repo';
 import { installmentsRepo, type InstallmentsRepo } from './installments-repo';
 import { limitsRepo } from './limits-repo';
@@ -280,6 +281,44 @@ describe('installmentsRepo', () => {
 
       expect(() => repo.link(vacuum.id, 1, 't5')).toThrowError('вже є списанням');
       expect(repo.facts().links).toEqual([{ installmentId: iphone.id, number: 5, transactionId: 't5' }]);
+    });
+
+    it("Scenario: A витрата linked to a зобов'язання is not offered", () => {
+      seedReferences(storage.db, { categories: ['telecom'] });
+      const commitments = commitmentsRepo(storage.db);
+      commitments.save({
+        id: 'c-internet',
+        name: 'Інтернет',
+        amount: 30_000,
+        currency: 'UAH',
+        periodicity: 'monthly',
+        firstDue: '2026-10-05',
+        debitAccountId: 'black',
+        recordedAt: 1,
+      });
+      tx().save(debit('internet', '2026-10-06', 30_000), at);
+      tx().save(debit('free', '2026-10-07', 99_000), at);
+      commitments.link('c-internet', 1, 'internet');
+      expect(repo.choices(iphone.id, 5).map((c) => c.id)).toEqual(['free']);
+    });
+
+    it("Scenario: A витрата already linked to a зобов'язання is not taken", () => {
+      const commitments = commitmentsRepo(storage.db);
+      commitments.save({
+        id: 'c-gym',
+        name: 'Спортзал',
+        amount: 100_000,
+        currency: 'UAH',
+        periodicity: 'monthly',
+        firstDue: '2026-10-05',
+        debitAccountId: 'black',
+        recordedAt: 1,
+      });
+      tx().save(debit('gym', '2026-10-05', 100_000), at);
+      commitments.link('c-gym', 1, 'gym');
+      expect(repo.settle('2026-10-05')).toBe(false);
+      expect(repo.facts().links).toEqual([]);
+      expect(commitments.facts().links).toEqual([{ commitmentId: 'c-gym', number: 1, transactionId: 'gym' }]);
     });
 
     it('rejects linking a транзакція that is absent, not a UAH витрата, or on another рахунок', () => {

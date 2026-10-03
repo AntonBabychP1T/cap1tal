@@ -17,10 +17,15 @@ export interface HomeDashboardReadPlan {
   readonly needsMonthTransactions: boolean;
   /** «Останні 5 транзакцій» is visible. */
   readonly needsFeed: boolean;
-  /** «Статок» is visible — the only widget that reads every transaction ever recorded. */
+  /** «Статок» is visible — it reads every transaction ever recorded, as «Спостереження» does. */
   readonly needsNetWorth: boolean;
   /** «Прогрес» is visible. */
   readonly needsProgress: boolean;
+  /**
+   * «Спостереження» is visible — it reads the whole stored history (the stamp memo «Статок» fills
+   * too) and the «Не дубль» answers; hidden, it costs Головний no read at all.
+   */
+  readonly needsObservations: boolean;
 }
 
 export function homeDashboardReadPlan(items: readonly DashboardLayoutItem[]): HomeDashboardReadPlan {
@@ -32,5 +37,6 @@ export function homeDashboardReadPlan(items: readonly DashboardLayoutItem[]): Ho
     needsFeed: visible.has('latest-transactions'),
     needsNetWorth: visible.has('net-worth'),
     needsProgress: visible.has('progress'),
+    needsObservations: visible.has('observations'),
   };
 }

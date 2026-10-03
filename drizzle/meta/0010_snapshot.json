@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "73fb25bf-6ada-44c1-947e-fd23a5b0b2ae",
+  "id": "1fcfe0e6-e095-45e2-8629-99a5ebde418d",
   "prevId": "910efa58-3fe8-442f-ba61-56a5bf69ef59",
   "tables": {
     "accounts": {
@@ -605,6 +605,85 @@
         "drive_backup_single_row": {
           "name": "drive_backup_single_row",
           "value": "\"drive_backup\".\"id\" = 'drive'"
+        }
+      }
+    },
+    "duplicate_answers": {
+      "name": "duplicate_answers",
+      "columns": {
+        "first_id": {
+          "name": "first_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "second_id": {
+          "name": "second_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "answered_at": {
+          "name": "answered_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "duplicate_answers_second_idx": {
+          "name": "duplicate_answers_second_idx",
+          "columns": [
+            "second_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "duplicate_answers_first_id_transactions_id_fk": {
+          "name": "duplicate_answers_first_id_transactions_id_fk",
+          "tableFrom": "duplicate_answers",
+          "tableTo": "transactions",
+          "columnsFrom": [
+            "first_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "duplicate_answers_second_id_transactions_id_fk": {
+          "name": "duplicate_answers_second_id_transactions_id_fk",
+          "tableFrom": "duplicate_answers",
+          "tableTo": "transactions",
+          "columnsFrom": [
+            "second_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "duplicate_answers_first_id_second_id_pk": {
+          "columns": [
+            "first_id",
+            "second_id"
+          ],
+          "name": "duplicate_answers_first_id_second_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "duplicate_answers_pair_sorted": {
+          "name": "duplicate_answers_pair_sorted",
+          "value": "\"duplicate_answers\".\"first_id\" < \"duplicate_answers\".\"second_id\""
         }
       }
     },
@@ -1560,133 +1639,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "merchant_spellings": {
-      "name": "merchant_spellings",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "merchant_id": {
-          "name": "merchant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "spelling": {
-          "name": "spelling",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "merchant_spellings_spelling_unique": {
-          "name": "merchant_spellings_spelling_unique",
-          "columns": [
-            "spelling"
-          ],
-          "isUnique": true
-        },
-        "merchant_spellings_merchant_idx": {
-          "name": "merchant_spellings_merchant_idx",
-          "columns": [
-            "merchant_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "merchant_spellings_merchant_id_merchants_id_fk": {
-          "name": "merchant_spellings_merchant_id_merchants_id_fk",
-          "tableFrom": "merchant_spellings",
-          "tableTo": "merchants",
-          "columnsFrom": [
-            "merchant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "merchant_spellings_not_blank": {
-          "name": "merchant_spellings_not_blank",
-          "value": "length(trim(\"merchant_spellings\".\"spelling\")) > 0"
-        },
-        "merchant_spellings_trimmed": {
-          "name": "merchant_spellings_trimmed",
-          "value": "\"merchant_spellings\".\"spelling\" = trim(\"merchant_spellings\".\"spelling\")"
-        }
-      }
-    },
-    "merchants": {
-      "name": "merchants",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name_key": {
-          "name": "name_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "merchants_name_key_unique": {
-          "name": "merchants_name_key_unique",
-          "columns": [
-            "name_key"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "merchants_name_not_blank": {
-          "name": "merchants_name_not_blank",
-          "value": "length(trim(\"merchants\".\"name\")) > 0"
-        }
-      }
-    },
     "monobank_accounts": {
       "name": "monobank_accounts",
       "columns": {
@@ -2412,13 +2364,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "merchant_id": {
-          "name": "merchant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "mcc": {
           "name": "mcc",
           "type": "integer",
@@ -2450,19 +2395,6 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "rules_merchant_id_merchants_id_fk": {
-          "name": "rules_merchant_id_merchants_id_fk",
-          "tableFrom": "rules",
-          "tableTo": "merchants",
-          "columnsFrom": [
-            "merchant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
         "rules_category_id_categories_id_fk": {
           "name": "rules_category_id_categories_id_fk",
           "tableFrom": "rules",
@@ -2495,11 +2427,7 @@
       "checkConstraints": {
         "rules_criterion_present": {
           "name": "rules_criterion_present",
-          "value": "\"rules\".\"merchant\" IS NOT NULL OR \"rules\".\"mcc\" IS NOT NULL OR \"rules\".\"merchant_id\" IS NOT NULL"
-        },
-        "rules_one_merchant_criterion": {
-          "name": "rules_one_merchant_criterion",
-          "value": "\"rules\".\"merchant\" IS NULL OR \"rules\".\"merchant_id\" IS NULL"
+          "value": "\"rules\".\"merchant\" IS NOT NULL OR \"rules\".\"mcc\" IS NOT NULL"
         },
         "rules_merchant_not_blank": {
           "name": "rules_merchant_not_blank",
@@ -2692,13 +2620,6 @@
         "description": {
           "name": "description",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "mcc": {
-          "name": "mcc",
-          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

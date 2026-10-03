@@ -2,6 +2,7 @@ import { mergeAccounts as mergeAccountsImpl } from './account-merge-repo';
 import { accountsRepo } from './accounts-repo';
 import { backupRepo } from './backup-repo';
 import { driveBackupRepo } from './drive-backup-repo';
+import { duplicateAnswersRepo } from './duplicate-answers-repo';
 import { categoriesRepo } from './categories-repo';
 import { db } from './client';
 import { persistRetyped as persistRetypedImpl } from './counterpart-income-repo';
@@ -10,6 +11,7 @@ import { entryDefaultsRepo } from './entry-defaults-repo';
 import { goalsRepo } from './goals-repo';
 import { hapticsPreferenceRepo } from './haptics-preference-repo';
 import { importRepo } from './import-repo';
+import { commitmentsRepo } from './commitments-repo';
 import { installmentsRepo } from './installments-repo';
 import { investmentsRepo } from './investments-repo';
 import { limitsRepo } from './limits-repo';
@@ -17,6 +19,7 @@ import { merchantsRepo } from './merchants-repo';
 import { monobankRepo } from './monobank-repo';
 import { netWorthRepo } from './net-worth-repo';
 import { notificationsRepo } from './notifications-repo';
+import { settlePlans as settlePlansIn } from './plans-settle';
 import { progressRepo } from './progress-repo';
 import { ratesRepo } from './rates-repo';
 import { receiptsRepo } from './receipts-repo';
@@ -93,6 +96,13 @@ export const limits = limitsRepo(db);
 export const goals = goalsRepo(db);
 /** Розстрочки — the plans behind the monthly debits, and the states of their платежі. */
 export const installments = installmentsRepo(db);
+/** Зобов'язання — оренда, інтернет, підписки: plans the debits are linked to, like the розстрочки. */
+export const commitments = commitmentsRepo(db);
+/**
+ * Links both plans' платежі to their списання in one write, the розстрочки first (commitments
+ * design D4) — see `plans-settle.ts`. What the upkeep calls; never one plan alone.
+ */
+export const settlePlans = (today: string) => settlePlansIn(db, today);
 /** The поточна вартість of each інвестиційний рахунок — what the owner last said it is worth. */
 export const investments = investmentsRepo(db);
 /** Статок's bounded local reads — monthly movement, first dates and the future-record flag. */
@@ -118,3 +128,5 @@ export const progress = progressRepo(db);
 export const dashboardLayout = dashboardLayoutRepo(db);
 /** The «Вібрація» switch: whether the app plays its haptics. No row is on. */
 export const hapticsPreference = hapticsPreferenceRepo(db);
+/** The owner's «Не дубль» answers — the one thing about an спостереження that is ever stored. */
+export const duplicateAnswers = duplicateAnswersRepo(db);

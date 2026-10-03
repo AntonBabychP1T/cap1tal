@@ -11,18 +11,29 @@ import {
 import { homeDashboardReadPlan } from './home-dashboard';
 
 describe('homeDashboardReadPlan', () => {
-  it('the exact fresh default', () => {
+  it('Scenario: The first screen is entry plus the feed', () => {
     const plan = homeDashboardReadPlan(defaultDashboardLayout());
+    // The month leads, the latest records follow, the спостереження follow them, then categories
+    // and Статок; Прогрес is not among them.
     expect(plan.visibleIds).toEqual([
       'month-spent',
       'latest-transactions',
+      'observations',
       'top-categories',
       'net-worth',
     ]);
     expect(plan.needsMonthTransactions).toBe(true);
     expect(plan.needsFeed).toBe(true);
+    expect(plan.needsObservations).toBe(true);
     expect(plan.needsNetWorth).toBe(true);
     expect(plan.needsProgress).toBe(false);
+  });
+
+  it('Scenario: A hidden widget shows nothing', () => {
+    const plan = homeDashboardReadPlan(setWidgetVisibility(defaultDashboardLayout(), 'observations', false));
+    expect(plan.visibleIds).not.toContain('observations');
+    // No observation read at all: neither the history for it nor the answers.
+    expect(plan.needsObservations).toBe(false);
   });
 
   it('Scenario: A saved layout controls only known widgets', () => {
@@ -46,7 +57,9 @@ describe('homeDashboardReadPlan', () => {
       'latest-transactions',
       false,
     );
-    const plan = homeDashboardReadPlan(setWidgetVisibility(items, 'net-worth', false));
+    const plan = homeDashboardReadPlan(
+      setWidgetVisibility(setWidgetVisibility(items, 'net-worth', false), 'observations', false),
+    );
     expect(plan.visibleIds).toEqual(['top-categories']);
     expect(plan.needsMonthTransactions).toBe(true);
     expect(plan.needsFeed).toBe(false);
@@ -64,6 +77,7 @@ describe('homeDashboardReadPlan', () => {
     expect(plan.needsFeed).toBe(false);
     expect(plan.needsNetWorth).toBe(false);
     expect(plan.needsProgress).toBe(false);
+    expect(plan.needsObservations).toBe(false);
   });
 
   it('reads for «Прогрес» only when it is visible', () => {

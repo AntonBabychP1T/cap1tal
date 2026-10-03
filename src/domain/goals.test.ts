@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { account, computeBalances } from './account';
 import {
   composition,
+  compositionBalanceChange,
   compositionProblem,
   contribution,
   isOverdue,
@@ -388,5 +389,68 @@ describe('spendingGoalSpent', () => {
         monthEnded: false,
       }),
     ).toBe('within');
+  });
+});
+
+describe('compositionBalanceChange', () => {
+  const jarA = 'jar-a';
+  const jarB = 'jar-b';
+  const september: Transaction[] = [
+    transfer({
+      id: 'in',
+      date: '2026-09-05',
+      fromAccountId: 'black',
+      toAccountId: jarA,
+      left: money(1000000, 'UAH'),
+      arrived: money(1000000, 'UAH'),
+    }),
+    transfer({
+      id: 'inside',
+      date: '2026-09-20',
+      fromAccountId: jarA,
+      toAccountId: jarB,
+      left: money(200000, 'UAH'),
+      arrived: money(200000, 'UAH'),
+    }),
+    // Outside the month: neither counts.
+    transfer({
+      id: 'august',
+      date: '2026-08-31',
+      fromAccountId: 'black',
+      toAccountId: jarA,
+      left: money(500000, 'UAH'),
+      arrived: money(500000, 'UAH'),
+    }),
+    expenseByDefault({ id: 'coffee', date: '2026-09-10', accountId: 'black', amount: money(7500, 'UAH'), categoryId: 'cafe' }),
+  ];
+
+  it('Scenario: A cushion grew in September', () => {
+    expect(compositionBalanceChange(september, [jarA, jarB], '2026-09')).toEqual(
+      new Map([['UAH', money(1000000, 'UAH')]]),
+    );
+  });
+
+  it('Scenario: A ціль that did not move', () => {
+    expect(compositionBalanceChange(september, ['vacation-jar'], '2026-09')).toEqual(new Map());
+  });
+
+  it('keeps each currency of the склад apart and counts what left it', () => {
+    const moves: Transaction[] = [
+      transfer({
+        id: 'fx',
+        date: '2026-09-02',
+        fromAccountId: jarA,
+        toAccountId: 'usd-jar',
+        left: money(410000, 'UAH'),
+        arrived: money(10000, 'USD'),
+      }),
+      refund({ id: 'back', date: '2026-09-03', accountId: jarA, amount: money(500, 'UAH'), categoryId: 'cafe' }),
+    ];
+    expect(compositionBalanceChange(moves, [jarA, 'usd-jar'], '2026-09')).toEqual(
+      new Map([
+        ['UAH', money(-409500, 'UAH')],
+        ['USD', money(10000, 'USD')],
+      ]),
+    );
   });
 });

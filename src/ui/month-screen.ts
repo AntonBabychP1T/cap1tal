@@ -2,20 +2,26 @@ import type { Account } from '../domain/account';
 import { resolveCategoryIcon } from '../domain/category-icon';
 import type { ThemeColor } from '../constants/theme';
 import { overLimitCategories, type CategoryLimit } from '../domain/limits';
-import type { CurrencyCode } from '../domain/money';
 import {
   categoryBreakdown,
   monthlyPicture,
   type MonthlyNumbers,
 } from '../domain/monthly-picture';
 import {
-  freeAfterInstallments,
+  commitmentDues,
+  freeAfterCommitments,
+  owedByCurrency,
+  type Commitment,
+  type CommitmentDueStateKind,
+  type CommitmentFacts,
+} from '../domain/commitments';
+import {
   installmentPartStates,
+  INSTALLMENT_CURRENCY,
   type Installment,
   type InstallmentFacts,
-  type InstallmentPartStateKind,
 } from '../domain/installments';
-import { money } from '../domain/money';
+import { money, type CurrencyCode, type Money } from '../domain/money';
 import { monthOf, type Month, type Transaction } from '../domain/transaction';
 import { byCurrency, formatMinorUnitsGrouped, formatMoney } from './amount-input';
 import { approximatePicture } from './approx-uah';
@@ -32,7 +38,15 @@ import type { MonobankRate } from '../monobank/currency';
 import { categoryIconDefinition } from './category-icons';
 import type { IconName } from './icons';
 import { shortCalendarLabel, todayIso } from './dates';
-import { formatHryvnia } from './receipt-screen';
+import { formatPlanMoney } from './commitments-screen';
+import type { Observation } from '../observations/observation';
+import {
+  noObservationsSentence,
+  observationLines,
+  summaryOffer,
+  type ObservationLine,
+  type SummaryOffer,
+} from './observations';
 
 /**
  * Everything the Місяць screen renders, as strings — so what it says is under `verify` even though
@@ -102,48 +116,63 @@ export interface MonthCurrencyGroup {
   /** Says no дохід is recorded for the month yet — exactly when витрачено leads, `null` otherwise. */
   readonly note: string | null;
   /**
-   * «Вільно після розстрочок» — only on the current month's UAH group, and only while a платіж of
-   * the month is still owed (month-screen, "The current month's UAH group states Вільно після
-   * розстрочок"). Drawn directly beneath залишилось wherever залишилось stands; never the lead.
+   * «Вільно після зобов'язань» — only on the current month, only in a currency in which a платіж of
+   * the month is still owed (month-screen, "The current month states Вільно після зобов'язань in
+   * every currency that owes"). Drawn directly beneath залишилось wherever залишилось stands; never
+   * the lead.
    */
-  readonly freeAfterInstallments?: { readonly label: string; readonly amount: string };
+  readonly freeAfterCommitments?: { readonly label: string; readonly amount: string };
 }
 
 /** The name the reading goes by. */
-export const FREE_AFTER_INSTALLMENTS_LABEL = 'Вільно після розстрочок';
+export const FREE_AFTER_COMMITMENTS_LABEL = "Вільно після зобов'язань";
 
-/** One платіж of the month in the «Розстрочки» block. */
-export interface MonthInstallmentRow {
-  /** Unique within the month: the розстрочка's id and the платіж's number. */
+/** The title of the block. */
+export const MONTH_DUES_TITLE = 'Платежі місяця';
+
+/** One платіж of the month, of a розстрочка or of a зобов'язання. */
+export interface MonthDueRow {
+  /** Unique within the month: the plan's kind and id, and the платіж's number. */
   readonly key: string;
-  /** The назва of its розстрочка. */
+  /** The назва of its розстрочка or зобов'язання. */
   readonly name: string;
-  /** «платіж 5 з 10». */
-  readonly number: string;
+  /** «платіж 5 з 10» for a розстрочка; `null` for a зобов'язання, which has no count. */
+  readonly number: string | null;
   /** «5 жовт.». */
   readonly date: string;
-  /** «1 000,00 ₴». */
+  /** The scheduled сума in its currency: «1 000,00 ₴», «20,00 USD». */
   readonly amount: string;
-  readonly state: Exclude<InstallmentPartStateKind, 'closed'>;
-  /** «сплачено», «очікується», «списання не знайдено». */
+  readonly state: CommitmentDueStateKind;
+  /** «сплачено», «пропущено», «очікується», «списання не знайдено». */
   readonly stateLabel: string;
+  /** Its розстрочка or its зобов'язання. */
+  readonly href: string;
 }
 
-/**
- * The «Розстрочки» block of a month that holds a платіж not закрито (month-screen, "A month with
- * платежі shows its розстрочки"). Tapping it opens the «Розстрочки» screen. It changes none of the
- * six numbers.
- */
-export interface MonthInstallmentsBlock {
-  readonly rows: readonly MonthInstallmentRow[];
-  /** «1 500,00 ₴» — every платіж of the month. */
+/** One currency's total in the block. */
+export interface MonthDuesTotal {
+  readonly currency: string;
+  /** Every платіж of the month in this currency, пропущено ones left out. */
   readonly total: string;
-  /** «500,00 ₴» — what of that is not сплачено yet; `null` when all of it is. */
+  /** What of that is not сплачено yet; `null` when all of it is. */
   readonly unpaid: string | null;
 }
 
-const STATE_LABELS: Readonly<Record<Exclude<InstallmentPartStateKind, 'closed'>, string>> = {
+/**
+ * «Платежі місяця» (month-screen, "A month with платежі shows them in Платежі місяця"): the платежі
+ * of розстрочки (not закрито) and of зобов'язання dated in the shown month, each row opening its
+ * plan, totalled per currency. It changes none of the six numbers.
+ */
+export interface MonthDuesBlock {
+  readonly title: string;
+  readonly rows: readonly MonthDueRow[];
+  /** UAH first, then the rest alphabetically; a currency whose every платіж is пропущено has none. */
+  readonly totals: readonly MonthDuesTotal[];
+}
+
+const STATE_LABELS: Readonly<Record<CommitmentDueStateKind, string>> = {
   paid: 'сплачено',
+  skipped: 'пропущено',
   expected: 'очікується',
   notFound: 'списання не знайдено',
 };
@@ -202,8 +231,18 @@ export interface MonthViewModel {
    * offer at all.
    */
   readonly previous: PreviousMonth | null;
-  /** The «Розстрочки» block, or `null` for a month in which no розстрочка has a платіж. */
-  readonly installments: MonthInstallmentsBlock | null;
+  /** «Платежі місяця», or `null` for a month in which no розстрочка and no зобов'язання has a платіж. */
+  readonly dues: MonthDuesBlock | null;
+  /**
+   * «Підсумок вересня», beneath the month's name — only for a завершений активний місяць
+   * (month-screen, "A finished month on Місяць leads to its підсумок"); `null` otherwise.
+   */
+  readonly summaryOffer: SummaryOffer | null;
+  /**
+   * The «Спостереження» block, beneath the breakdown and before any block of the month's платежі —
+   * only when the month holds a транзакція; `null` otherwise. Changes none of the six numbers.
+   */
+  readonly observations: { readonly lines: readonly ObservationLine[]; readonly empty: string | null } | null;
 }
 
 /**
@@ -259,6 +298,10 @@ export function monthViewModel(input: {
   reach?: ReachableMonths;
   /** Every розстрочка and the states of their платежі; absent reads as none. */
   installments?: { readonly installments: readonly Installment[]; readonly facts: InstallmentFacts };
+  /** Every зобов'язання and the states of their платежі; absent reads as none. */
+  commitments?: { readonly commitments: readonly Commitment[]; readonly facts: CommitmentFacts };
+  /** The shown month's спостереження, already ordered (`observationsOf`); absent reads as none. */
+  observations?: readonly Observation[];
 }): MonthViewModel {
   const picture = monthlyPicture({
     month: input.month,
@@ -311,21 +354,24 @@ export function monthViewModel(input: {
     });
 
   const today = todayIso(input.now);
-  const statuses = (input.installments?.installments ?? []).map((installment) =>
-    installmentPartStates(installment, input.installments!.facts, today),
-  );
-  const free = freeAfterInstallments(
-    picture.get('UAH')?.left,
-    statuses.flatMap((status) => status.parts),
+  const dues = monthDuesOf(input, today);
+  const free = freeAfterCommitments(
+    new Map([...picture].map(([currency, numbers]): [string, Money] => [currency, numbers.left])),
+    owedByCurrency(
+      dues.map((d) => d.due),
+      input.month,
+    ),
     input.month,
     today,
   );
-  if (free !== undefined) {
-    const at = groups.findIndex((group) => group.currency === 'UAH');
-    groups[at] = {
-      ...groups[at]!,
-      freeAfterInstallments: { label: FREE_AFTER_INSTALLMENTS_LABEL, amount: formatMoney(free) },
-    };
+  for (const [at, group] of groups.entries()) {
+    const reading = free.get(group.currency);
+    if (reading !== undefined) {
+      groups[at] = {
+        ...group,
+        freeAfterCommitments: { label: FREE_AFTER_COMMITMENTS_LABEL, amount: formatMoney(reading) },
+      };
+    }
   }
 
   const approximatePic = approximatePicture(picture, input.rates);
@@ -338,6 +384,7 @@ export function monthViewModel(input: {
     : null;
 
   const inMonth = input.transactions.some((t) => t.date.startsWith(`${input.month}-`));
+  const observed = input.observations ?? [];
 
   return {
     month: input.month,
@@ -355,54 +402,137 @@ export function monthViewModel(input: {
           accounts: input.accounts,
           transactions: input.previousTransactions,
         }),
-    installments: installmentsBlockOf(statuses, input.month, input.now),
+    dues: duesBlockOf(dues, input.now),
+    // A finished month holding a транзакція is a завершений активний місяць; the current month,
+    // a month ahead and an empty one offer none.
+    summaryOffer: inMonth && input.month < currentMonth(input.now) ? summaryOffer(input.month) : null,
+    observations: inMonth
+      ? {
+          lines: observationLines(observed, {
+            categoryNames: input.categoryNames,
+            accountNames: new Map(input.accounts.map((a) => [a.id, a.name])),
+            now: input.now,
+          }),
+          empty: observed.length === 0 ? noObservationsSentence(input.month, today) : null,
+        }
+      : null,
   };
 }
 
+/** One платіж of the month with what orders it and what its row says. */
+interface MonthDue {
+  readonly kind: 'installment' | 'commitment';
+  readonly planId: string;
+  readonly name: string;
+  readonly recordedAt: number;
+  readonly number: number;
+  /** «платіж 5 з 10», a розстрочка's only. */
+  readonly ofCount: string | null;
+  readonly due: {
+    readonly due: string;
+    readonly amount: number;
+    readonly currency: string;
+    readonly state: CommitmentDueStateKind;
+  };
+}
+
+/** The last calendar day of a month — the bound a зобов'язання's графік is read to. */
+function lastDayOfMonth(month: Month): string {
+  const [year, m] = month.split('-').map(Number) as [number, number];
+  return `${month}-${String(new Date(Date.UTC(year, m, 0)).getUTCDate()).padStart(2, '0')}`;
+}
+
 /**
- * The month's платежі that are not закрито, by дата — then the розстрочка recorded first, then the
- * number — with their total and what of it is not сплачено yet.
+ * The month's платежі of both plans — a розстрочка's not закрито — by дата, then the plan recorded
+ * first, then a розстрочка before a зобов'язання, then the number.
  */
-function installmentsBlockOf(
-  statuses: readonly ReturnType<typeof installmentPartStates>[],
-  month: Month,
-  now: Date,
-): MonthInstallmentsBlock | null {
-  const parts = statuses
-    .flatMap((status) =>
-      status.parts
-        .filter((part) => monthOf(part.due) === month && part.state !== 'closed')
-        .map((part) => ({ status, part })),
-    )
-    .sort(
-      (a, b) =>
-        a.part.due.localeCompare(b.part.due) ||
-        a.status.installment.recordedAt - b.status.installment.recordedAt ||
-        a.part.number - b.part.number,
-    );
-  if (parts.length === 0) {
+function monthDuesOf(
+  input: {
+    readonly month: Month;
+    readonly installments?: { readonly installments: readonly Installment[]; readonly facts: InstallmentFacts };
+    readonly commitments?: { readonly commitments: readonly Commitment[]; readonly facts: CommitmentFacts };
+  },
+  today: string,
+): MonthDue[] {
+  const all: MonthDue[] = [];
+  for (const installment of input.installments?.installments ?? []) {
+    for (const part of installmentPartStates(installment, input.installments!.facts, today).parts) {
+      if (monthOf(part.due) !== input.month || part.state === 'closed') {
+        continue;
+      }
+      all.push({
+        kind: 'installment',
+        planId: installment.id,
+        name: installment.name,
+        recordedAt: installment.recordedAt,
+        number: part.number,
+        ofCount: `платіж ${part.number} з ${installment.partsCount}`,
+        due: { due: part.due, amount: part.amount, currency: INSTALLMENT_CURRENCY, state: part.state },
+      });
+    }
+  }
+  const until = lastDayOfMonth(input.month);
+  for (const commitment of input.commitments?.commitments ?? []) {
+    for (const due of commitmentDues(commitment, input.commitments!.facts, { until, today })) {
+      if (monthOf(due.due) !== input.month) {
+        continue;
+      }
+      all.push({
+        kind: 'commitment',
+        planId: commitment.id,
+        name: commitment.name,
+        recordedAt: commitment.recordedAt,
+        number: due.number,
+        ofCount: null,
+        due,
+      });
+    }
+  }
+  const kindOrder = (kind: MonthDue['kind']) => (kind === 'installment' ? 0 : 1);
+  return all.sort(
+    (a, b) =>
+      a.due.due.localeCompare(b.due.due) ||
+      a.recordedAt - b.recordedAt ||
+      kindOrder(a.kind) - kindOrder(b.kind) ||
+      a.number - b.number,
+  );
+}
+
+function duesBlockOf(dues: readonly MonthDue[], now: Date): MonthDuesBlock | null {
+  if (dues.length === 0) {
     return null;
   }
-  const uah = (amount: number) => formatHryvnia(money(amount, 'UAH'));
-  const total = parts.reduce((sum, { part }) => sum + part.amount, 0);
-  const unpaid = parts
-    .filter(({ part }) => part.state !== 'paid')
-    .reduce((sum, { part }) => sum + part.amount, 0);
+  const sums = new Map<string, { total: number; unpaid: number }>();
+  for (const { due } of dues) {
+    if (due.state === 'skipped') {
+      continue;
+    }
+    const sum = sums.get(due.currency) ?? { total: 0, unpaid: 0 };
+    sums.set(due.currency, {
+      total: sum.total + due.amount,
+      unpaid: sum.unpaid + (due.state === 'paid' ? 0 : due.amount),
+    });
+  }
   return {
-    rows: parts.map(({ status, part }) => {
-      const state = part.state as Exclude<InstallmentPartStateKind, 'closed'>;
+    title: MONTH_DUES_TITLE,
+    rows: dues.map((d) => ({
+      key: `${d.kind}:${d.planId}#${d.number}`,
+      name: d.name,
+      number: d.ofCount,
+      date: shortCalendarLabel(d.due.due, now),
+      amount: formatPlanMoney(money(d.due.amount, d.due.currency)),
+      state: d.due.state,
+      stateLabel: STATE_LABELS[d.due.state],
+      href: `/${d.kind}/${d.planId}`,
+    })),
+    totals: [...sums.keys()].sort(byCurrency).map((currency) => {
+      const sum = sums.get(currency)!;
       return {
-        key: `${status.installment.id}#${part.number}`,
-        name: status.installment.name,
-        number: `платіж ${part.number} з ${status.installment.partsCount}`,
-        date: shortCalendarLabel(part.due, now),
-        amount: uah(part.amount),
-        state,
-        stateLabel: STATE_LABELS[state],
+        currency,
+        total: formatPlanMoney(money(sum.total, currency)),
+        unpaid: sum.unpaid === 0 ? null : formatPlanMoney(money(sum.unpaid, currency)),
       };
     }),
-    total: uah(total),
-    unpaid: unpaid === 0 ? null : uah(unpaid),
   };
 }
 

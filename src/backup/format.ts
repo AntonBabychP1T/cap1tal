@@ -1,6 +1,16 @@
 import type { Account, AccountKind } from '../domain/account';
 import { identityKey, receiptIdentity } from '../domain/fiscal-receipt';
 import type { Category, Source } from '../domain/category';
+import {
+  commitmentDueDate,
+  commitmentRefusal,
+  dueExists,
+  isCommitmentDebitOn,
+  type Commitment,
+  type CommitmentDueLink,
+  type CommitmentDueMark,
+  type CommitmentRefusal,
+} from '../domain/commitments';
 import type { CategoryLimit } from '../domain/limits';
 import { foldSpelling, merchantNameKey } from '../domain/merchants';
 import { compositionProblem, type AccumulationGoal } from '../domain/goals';
@@ -47,7 +57,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 11;
+export const BACKUP_SCHEMA_VERSION = 13;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -176,9 +186,20 @@ export const BACKUP_TABLES: readonly string[] = [
   'installment_part_marks',
   'installment_refusals',
   'installment_reminder',
+  // Зобов'язання: the owner's word about money no statement announces in advance, the same reason
+  // the розстрочки travel — with the states of their платежі (commitments design D8).
+  'commitments',
+  'commitment_due_links',
+  'commitment_due_marks',
+  'commitment_refusals',
   // The owner's mapping of the шаблон категоризації onto their категорії — a choice they made,
   // never the шаблон itself, which is the app's (rule-template design T6).
   'rule_template_choices',
+  // The «Не дубль» answers: the owner's word that two транзакції are two purchases. Nothing derives
+  // them, and a restored phone that dropped them would ask again about every pair already answered.
+  // No спостереження travels — each is recomputed from the restored транзакції when shown
+  // (observations design D5).
+  'duplicate_answers',
 ];
 
 /**
@@ -389,6 +410,28 @@ export interface BackupInstallments {
 }
 
 /**
+ * The зобов'язання (commitments design D8): every plan and the states of its платежі — links, the
+ * owner's marks сплачено and пропущено, and the транзакції the owner unlinked.
+ */
+export interface BackupCommitments {
+  readonly plans: readonly Commitment[];
+  readonly links: readonly CommitmentDueLink[];
+  readonly marks: readonly CommitmentDueMark[];
+  readonly refusals: readonly CommitmentRefusal[];
+}
+
+/**
+ * One «Не дубль» answer: the two транзакції it names and the moment it was given. The pair is
+ * unordered — a file may name it either way round, and restoring sorts it (backup-file, "Either
+ * order restores the same answer").
+ */
+export interface BackupDuplicateAnswer {
+  readonly first: string;
+  readonly second: string;
+  readonly answeredAtMs: number;
+}
+
+/**
  * One choice the owner made about a базова категорія: the категорія it lands in, or `null` for
  * switched off. A базова категорія they never touched is not carried at all.
  */
@@ -448,12 +491,23 @@ export interface BackupState {
    */
   readonly installments?: BackupInstallments;
   /**
+   * The зобов'язання; absent on a бекап written before they existed, or on a device that never
+   * recorded one — which restores to none. An optional section, so `BACKUP_FORMAT_VERSION` stays.
+   */
+  readonly commitments?: BackupCommitments;
+  /**
    * The owner's choices about the шаблон категоризації; absent on a бекап written before the
    * mapping existed, or on a device where no базова категорія was ever touched — which restores to
    * none, every базова категорія following its типова категорія. An optional section, so
    * `BACKUP_FORMAT_VERSION` stays.
    */
   readonly templateChoices?: readonly BackupTemplateChoice[];
+  /**
+   * The «Не дубль» answers; absent on a бекап written before they existed, or on a device where
+   * none was ever given — which restores to none, every qualifying pair asked again. An optional
+   * section, so `BACKUP_FORMAT_VERSION` stays.
+   */
+  readonly duplicateAnswers?: readonly BackupDuplicateAnswer[];
 }
 
 /** The whole file: the marker, the versions, the moment, the integrity value and the contents. */
@@ -1019,11 +1073,78 @@ function installmentsAt(value: unknown, at: string): BackupInstallments {
   };
 }
 
+function commitmentAt(value: unknown, at: string): Commitment {
+  const row = objectAt(value, at);
+  const periodicity = stringAt(row.periodicity, `${at}.periodicity`);
+  if (periodicity !== 'monthly' && periodicity !== 'quarterly' && periodicity !== 'halfYearly' && periodicity !== 'yearly') {
+    fail(`${at}.periodicity не є періодичністю: «${periodicity}»`);
+  }
+  // The plan carries its сума as the domain does — `amount` beside `currency` — and both are read
+  // through the one money constructor, ceiling included.
+  const amount = moneyAt(row, at);
+  return {
+    id: stringAt(row.id, `${at}.id`),
+    name: stringAt(row.name, `${at}.name`),
+    amount: amount.amount,
+    currency: amount.currency,
+    periodicity,
+    firstDue: dateAt(row.firstDue, `${at}.firstDue`),
+    debitAccountId: stringAt(row.debitAccountId, `${at}.debitAccountId`),
+    ...optionalString(row, 'categoryId', at),
+    ...optionalString(row, 'marker', at),
+    recordedAt: integerAt(row.recordedAt, `${at}.recordedAt`),
+    ...(row.stoppedOn === undefined || row.stoppedOn === null
+      ? {}
+      : { stoppedOn: dateAt(row.stoppedOn, `${at}.stoppedOn`) }),
+  };
+}
+
+function commitmentDueAt(value: unknown, at: string): { commitmentId: string; number: number } {
+  const row = objectAt(value, at);
+  return {
+    commitmentId: stringAt(row.commitmentId, `${at}.commitmentId`),
+    number: integerAt(row.number, `${at}.number`),
+  };
+}
+
+function commitmentLinkAt(value: unknown, at: string): CommitmentDueLink {
+  const row = objectAt(value, at);
+  return { ...commitmentDueAt(value, at), transactionId: stringAt(row.transactionId, `${at}.transactionId`) };
+}
+
+function commitmentMarkAt(value: unknown, at: string): CommitmentDueMark {
+  const row = objectAt(value, at);
+  const kind = stringAt(row.kind, `${at}.kind`);
+  if (kind !== 'paid' && kind !== 'skipped') {
+    fail(`${at}.kind не є позначкою платежу: «${kind}»`);
+  }
+  return { ...commitmentDueAt(value, at), kind };
+}
+
+function commitmentsAt(value: unknown, at: string): BackupCommitments {
+  const row = objectAt(value, at);
+  return {
+    plans: listAt(row, 'plans', commitmentAt),
+    links: listAt(row, 'links', commitmentLinkAt),
+    marks: listAt(row, 'marks', commitmentMarkAt),
+    refusals: listAt(row, 'refusals', commitmentLinkAt),
+  };
+}
+
 function templateChoiceAt(value: unknown, at: string): BackupTemplateChoice {
   const row = objectAt(value, at);
   return {
     groupId: stringAt(row.groupId, `${at}.groupId`),
     categoryId: row.categoryId === null ? null : stringAt(row.categoryId, `${at}.categoryId`),
+  };
+}
+
+function duplicateAnswerAt(value: unknown, at: string): BackupDuplicateAnswer {
+  const row = objectAt(value, at);
+  return {
+    first: stringAt(row.first, `${at}.first`),
+    second: stringAt(row.second, `${at}.second`),
+    answeredAtMs: integerAt(row.answeredAtMs, `${at}.answeredAtMs`),
   };
 }
 
@@ -1100,12 +1221,22 @@ export function parseState(value: unknown): BackupState {
     ...(data.installments === undefined || data.installments === null
       ? {}
       : { installments: installmentsAt(data.installments, 'installments') }),
+    // A бекап written before зобов'язання existed names none, and restores to none (backup-file,
+    // "A бекап written before зобов'язання existed still restores").
+    ...(data.commitments === undefined || data.commitments === null
+      ? {}
+      : { commitments: commitmentsAt(data.commitments, 'commitments') }),
     // A бекап written before the шаблон mapping existed names none, and restores to every базова
     // категорія following its типова категорія (backup-file, "A бекап written before the mapping
     // existed restores the defaults").
     ...(data.templateChoices === undefined || data.templateChoices === null
       ? {}
       : { templateChoices: listAt(data, 'templateChoices', templateChoiceAt) }),
+    // A бекап written before the «Не дубль» answers existed names none, and restores to none
+    // (backup-file, "A бекап written before the answers existed restores with none").
+    ...(data.duplicateAnswers === undefined || data.duplicateAnswers === null
+      ? {}
+      : { duplicateAnswers: listAt(data, 'duplicateAnswers', duplicateAnswerAt) }),
   };
 }
 
@@ -1245,6 +1376,110 @@ function checkInstallments(
 }
 
 /**
+ * The зобов'язання checked against the rest of the бекап (backup-file, "A бекап carries the
+ * зобов'язання"): each names a рахунок списання and a категорія the бекап holds, in that рахунок's
+ * currency, and nothing the domain refuses — an archived рахунок or категорія excepted, since a card
+ * may be archived after its зобов'язання was recorded. Every платіж holds one fact at most, none
+ * after the дата припинення; a link names a транзакція the бекап holds that is a витрата on that
+ * рахунок in its currency, linked to no other платіж of either plan.
+ */
+function checkCommitments(
+  state: BackupState,
+  accounts: ReadonlyMap<string, Account>,
+  categories: ReadonlySet<string>,
+): void {
+  const section = state.commitments;
+  if (!section) {
+    return;
+  }
+  const plans = new Map<string, Commitment>();
+  for (const plan of section.plans) {
+    const what = `зобовʼязання «${plan.name}»`;
+    if (plans.has(plan.id)) {
+      fail(`${what} назване двічі`);
+    }
+    plans.set(plan.id, plan);
+    const account = accounts.get(plan.debitAccountId);
+    if (!account) {
+      fail(`${what} посилається на рахунок, якого в бекапі немає`);
+    }
+    if (plan.currency !== account.currency) {
+      fail(`${what} — у ${plan.currency}, а його рахунок списання «${account.name}» — у ${account.currency}`);
+    }
+    if (plan.categoryId !== undefined && !categories.has(plan.categoryId)) {
+      fail(`${what} посилається на категорію, якої в бекапі немає`);
+    }
+    const refusal = commitmentRefusal(plan, {
+      account,
+      ...(plan.categoryId === undefined ? {} : { category: { name: plan.categoryId, archived: false } }),
+      existing: {
+        debitAccountId: plan.debitAccountId,
+        ...(plan.categoryId === undefined ? {} : { categoryId: plan.categoryId }),
+      },
+    });
+    if (refusal) {
+      fail(`${what}: ${refusal.message}`);
+    }
+  }
+  const said = new Set<string>();
+  const planOf = (due: { commitmentId: string; number: number }, kind: string): Commitment => {
+    const plan = plans.get(due.commitmentId);
+    if (!plan) {
+      fail(`${kind} посилається на зобовʼязання, якого в бекапі немає`);
+    }
+    if (!dueExists(plan, due.number)) {
+      fail(
+        due.number >= 1 && plan.stoppedOn !== undefined
+          ? `${kind} зобовʼязання «${plan.name}» називає платіж ${commitmentDueDate(plan, due.number)}, після дати припинення`
+          : `${kind} зобовʼязання «${plan.name}» називає платіж ${due.number}, якого немає`,
+      );
+    }
+    return plan;
+  };
+  const sayOnce = (due: { commitmentId: string; number: number }, plan: Commitment): void => {
+    const key = `${due.commitmentId}|${due.number}`;
+    if (said.has(key)) {
+      fail(`платіж ${commitmentDueDate(plan, due.number)} зобовʼязання «${plan.name}» має більше ніж один стан`);
+    }
+    said.add(key);
+  };
+  const transactions = new Map(state.transactions.map((entry) => [entry.transaction.id, entry.transaction]));
+  const linkedTransactions = new Set(state.installments?.links.map((link) => link.transactionId) ?? []);
+  for (const link of section.links) {
+    const plan = planOf(link, 'списання');
+    sayOnce(link, plan);
+    const what = `списання платежу ${commitmentDueDate(plan, link.number)} зобовʼязання «${plan.name}»`;
+    if (linkedTransactions.has(link.transactionId)) {
+      fail(`транзакція «${link.transactionId}» є списанням двох платежів`);
+    }
+    linkedTransactions.add(link.transactionId);
+    const t = transactions.get(link.transactionId);
+    if (!t) {
+      fail(`${what} посилається на транзакцію, якої в бекапі немає`);
+    }
+    const candidate = {
+      id: t.id,
+      type: t.type,
+      date: t.date,
+      createdAt: 0,
+      ...(t.type === 'transfer' ? {} : { accountId: t.accountId, amount: t.amount }),
+    };
+    if (!isCommitmentDebitOn(candidate, plan)) {
+      fail(`${what} не є витратою з рахунку списання в його валюті`);
+    }
+  }
+  for (const mark of section.marks) {
+    sayOnce(mark, planOf(mark, mark.kind === 'paid' ? 'позначка сплаченого' : 'позначка пропущеного'));
+  }
+  for (const refused of section.refusals) {
+    planOf(refused, 'відвʼязане списання');
+    if (!transactions.has(refused.transactionId)) {
+      fail(`відвʼязане списання посилається на транзакцію, якої в бекапі немає`);
+    }
+  }
+}
+
+/**
  * What a бекап holds, checked against itself: nothing may name a рахунок, категорія, джерело or
  * monobank account the бекап does not also hold, and a ціль lives in its рахунок's currency.
  *
@@ -1367,6 +1602,7 @@ export function checkConsistent(state: BackupState): void {
     valued.add(value.accountId);
   }
   checkInstallments(state, accounts, categories);
+  checkCommitments(state, accounts, categories);
   // One choice per базова категорія, and a категорія it names is one this бекап carries — a
   // dangling one makes the whole бекап contradict itself. A group id this app's шаблон does not
   // carry is accepted and kept: an app downgrade must not throw the owner's choices away.
@@ -1429,5 +1665,28 @@ export function checkConsistent(state: BackupState): void {
     if (!receipts.has(item.receiptId)) {
       fail(`позиція «${item.rawName}» посилається на чек, якого в бекапі немає`);
     }
+  }
+
+  // The «Не дубль» contradictions (backup-file, "A бекап carries the «Не дубль» answers"): each is
+  // one storage would also refuse — a reference, the CHECK, the PRIMARY KEY — named here so the
+  // whole бекап is refused in the owner's words before anything local is touched. An unsorted pair
+  // is not among them: a pair is unordered, and restoring sorts it.
+  const answered = new Set<string>();
+  for (const answer of state.duplicateAnswers ?? []) {
+    const what = `відповідь «Не дубль» про «${answer.first}» і «${answer.second}»`;
+    if (!transactionIds.has(answer.first) || !transactionIds.has(answer.second)) {
+      fail(`${what} посилається на транзакцію, якої в бекапі немає`);
+    }
+    if (answer.first === answer.second) {
+      fail(`${what} називає ту саму транзакцію двічі`);
+    }
+    const pair =
+      answer.first < answer.second
+        ? `${answer.first}\u0000${answer.second}`
+        : `${answer.second}\u0000${answer.first}`;
+    if (answered.has(pair)) {
+      fail(`${what} записана двічі`);
+    }
+    answered.add(pair);
   }
 }

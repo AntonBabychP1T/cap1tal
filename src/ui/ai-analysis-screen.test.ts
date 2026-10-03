@@ -12,6 +12,7 @@ import {
   aiAnalysisModel,
   defaultChoices,
   fileToShare,
+  initialChoices,
   MERCHANTS_CHOICE_HINT,
   nextState,
   PERIOD_CHOICES,
@@ -86,6 +87,32 @@ describe('the choices', () => {
     expect(opened.preview!.handOver).toBe('Ці дані буде передано застосунку, який ви оберете.');
     expect(opened.preview!.descriptions).toBe(false);
     expect(opened.preview!.transactionsIncluded).toBe(false);
+  });
+
+  it('opens on the defaults when no month is given', () => {
+    expect(initialChoices(TODAY)).toEqual(defaultChoices(TODAY));
+  });
+
+  it('Scenario: Opened for one month', () => {
+    const choices = initialChoices(TODAY, '2026-08');
+    expect(choices).toEqual({ ...defaultChoices(TODAY), period: 'custom', from: '2026-08', to: '2026-08' });
+    expect(choices.descriptions).toBe(false);
+    expect(choices.transactions).toBe(false);
+
+    const opened = aiAnalysisModel({ choices, stored: stored(history), today: TODAY });
+    // The preview is that one month's пакет, built in memory; the one-month warning is shown.
+    expect(opened.state).toBe('preview');
+    expect(opened.preview!.monthsWithData).toBe(1);
+    expect(opened.preview!.transactions).toBe(2);
+    expect(opened.warning).toBe('Один місяць не показує тренду.');
+  });
+
+  it('Scenario: A malformed given month falls back to the default period', () => {
+    for (const given of ['2026-13', '2026-1', 'вересень', '', '2026-09-01']) {
+      const choices = initialChoices(TODAY, given);
+      expect(choices.period, given).toBe('last-3');
+      expect(choices).toEqual(defaultChoices(TODAY));
+    }
   });
 
   it('offers the five periods, in the owner’s words', () => {

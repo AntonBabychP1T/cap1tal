@@ -4,6 +4,7 @@ import { mergeRefusal } from '../domain/account-merge';
 import { toAccount } from './mappers';
 import {
   accounts,
+  commitments,
   entryDefaults,
   goalAccounts,
   installments,
@@ -106,6 +107,12 @@ export function mergeAccounts(
       tx.update(installments)
         .set({ debitAccountId: intoId })
         .where(eq(installments.debitAccountId, fromId))
+        .run();
+      // So does a зобов'язання (commitments design D8). A merge already requires one currency on
+      // both sides, so its сума stays in the currency of its рахунок списання.
+      tx.update(commitments)
+        .set({ debitAccountId: intoId })
+        .where(eq(commitments.debitAccountId, fromId))
         .run();
 
       // A ціль that counted both keeps counting the one; one that counted `from` now counts `into`.

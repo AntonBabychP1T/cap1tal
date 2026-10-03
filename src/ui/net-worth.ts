@@ -478,6 +478,29 @@ export interface NetWorthInput {
   readonly today: IsoDate;
 }
 
+/**
+ * The month-by-month figures of every currency, from the repository's bounded reads — the one
+ * derivation both «Статок» and the підсумок місяця read their зміна and розбивка from
+ * (month-summary, "The зміна equals Статок's"; design D6), so the two can never disagree.
+ */
+export function netWorthFigures(
+  input: Pick<
+    NetWorthInput,
+    'accounts' | 'monthlyMovement' | 'monthlyMovementByType' | 'firstDates' | 'firstDateMovement' | 'today'
+  >,
+): ReadonlyMap<CurrencyCode, readonly MonthFigure[]> {
+  return monthFigures({
+    accounts: buildHistoryInputs(
+      input.accounts,
+      input.monthlyMovement,
+      input.firstDates,
+      input.firstDateMovement,
+      input.monthlyMovementByType ?? [],
+    ),
+    today: input.today,
+  });
+}
+
 /** The current reading, the history months and the selected reading — one pass over the input. */
 export function netWorthSeries(input: NetWorthInput): NetWorthSeries {
   const current = currentNetWorth({
@@ -488,16 +511,7 @@ export function netWorthSeries(input: NetWorthInput): NetWorthSeries {
   });
   const currencies = [...new Set(input.accounts.map((a) => a.currency))].sort(byCurrency);
   const selection = selectHistory(currencies, input.rates, input.requestedHistory);
-  const figures = monthFigures({
-    accounts: buildHistoryInputs(
-      input.accounts,
-      input.monthlyMovement,
-      input.firstDates,
-      input.firstDateMovement,
-      input.monthlyMovementByType ?? [],
-    ),
-    today: input.today,
-  });
+  const figures = netWorthFigures(input);
   const future = input.accountsWithFutureRecords ?? new Set<string>();
   const hasFutureRecords = input.accounts.some(
     (a) => future.has(a.id) && (selection === TOTAL_HISTORY || a.currency === selection),

@@ -1455,6 +1455,121 @@ export type InstallmentRow = typeof installments.$inferSelect;
 export type NewInstallmentRow = typeof installments.$inferInsert;
 
 /**
+ * A зобов'язання (commitments design D1, D5): a payment the owner already knows will recur, kept as
+ * a plan. Only the owner's inputs are stored — the графік is endless and derived in
+ * `src/domain/commitments.ts`, so no row exists per платіж, and the states of the платежі are kept
+ * by number in the three tables below.
+ *
+ * Any currency, the рахунок списання's: the money pair is stored as everywhere else, and the
+ * repository checks it against the рахунок on insert, update and restore (no cross-table CHECK in
+ * SQLite). `debit_account_id` restricts like every reference to a рахунок, so a merge must move it
+ * (`account-merge-repo.ts`); `category_id` restricts like every reference to a категорія.
+ */
+export const commitments = sqliteTable(
+  'commitments',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    amountMinor: integer('amount_minor').notNull(),
+    currency: text('currency').notNull(),
+    /** `'monthly' | 'quarterly' | 'halfYearly' | 'yearly'`. */
+    periodicity: text('periodicity').notNull(),
+    firstDue: text('first_due').notNull(),
+    debitAccountId: text('debit_account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+    categoryId: text('category_id').references(() => categories.id, { onDelete: 'restrict' }),
+    /** The ознака, trimmed; NULL for none. */
+    marker: text('marker'),
+    /** Domain data: the tie-break between two plans' платежі of one дата. */
+    recordedAt: integer('recorded_at', { mode: 'timestamp_ms' }).notNull(),
+    /** The дата припинення; NULL while it runs. */
+    stoppedOn: text('stopped_on'),
+  },
+  (t) => [
+    check('commitments_name_not_blank', sql`length(trim(${t.name})) > 0`),
+    check('commitments_amount_positive', sql`${t.amountMinor} > 0`),
+    check(
+      'commitments_periodicity_known',
+      sql`${t.periodicity} IN ('monthly', 'quarterly', 'halfYearly', 'yearly')`,
+    ),
+    check(
+      'commitments_first_due_iso',
+      sql`${t.firstDue} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+    check(
+      'commitments_stopped_on_iso',
+      sql`${t.stoppedOn} IS NULL OR ${t.stoppedOn} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+    check('commitments_marker_length', sql`${t.marker} IS NULL OR length(trim(${t.marker})) >= 3`),
+    index('commitments_debit_account_idx').on(t.debitAccountId),
+  ],
+);
+
+/**
+ * A платіж of a зобов'язання linked to its списання. The primary key is «one списання per платіж»,
+ * the UNIQUE on `transaction_id` is «one платіж per транзакція» within this table; across this table
+ * and `installment_part_links` the repositories check it in the same write (design D4).
+ */
+export const commitmentDueLinks = sqliteTable(
+  'commitment_due_links',
+  {
+    commitmentId: text('commitment_id')
+      .notNull()
+      .references(() => commitments.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    transactionId: text('transaction_id')
+      .notNull()
+      .unique()
+      .references(() => transactions.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.commitmentId, t.number] }),
+    check('commitment_due_links_number_positive', sql`${t.number} >= 1`),
+  ],
+);
+
+/**
+ * The owner's word about a платіж: сплачено without a списання, or пропущено. One per платіж by the
+ * primary key; a link and a mark of one платіж are kept apart by the repository.
+ */
+export const commitmentDueMarks = sqliteTable(
+  'commitment_due_marks',
+  {
+    commitmentId: text('commitment_id')
+      .notNull()
+      .references(() => commitments.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    kind: text('kind').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.commitmentId, t.number] }),
+    check('commitment_due_marks_number_positive', sql`${t.number} >= 1`),
+    check('commitment_due_marks_kind_known', sql`${t.kind} IN ('paid', 'skipped')`),
+  ],
+);
+
+/** A транзакція the owner unlinked from a платіж of a зобов'язання. Gone with either side. */
+export const commitmentRefusals = sqliteTable(
+  'commitment_refusals',
+  {
+    commitmentId: text('commitment_id')
+      .notNull()
+      .references(() => commitments.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    transactionId: text('transaction_id')
+      .notNull()
+      .references(() => transactions.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.commitmentId, t.number, t.transactionId] }),
+    check('commitment_refusals_number_positive', sql`${t.number} >= 1`),
+  ],
+);
+
+export type CommitmentRow = typeof commitments.$inferSelect;
+
+/**
  * The owner's choices about the шаблон категоризації: for each базова категорія they have touched,
  * the категорія of this device it lands in, or NULL for switched off (rule-template design T3).
  *
@@ -1486,3 +1601,40 @@ export const ruleTemplateSweep = sqliteTable(
 );
 
 export type RuleTemplateChoiceRow = typeof ruleTemplateChoices.$inferSelect;
+
+/**
+ * The owner's «Не дубль»: a pair of транзакції a можливий дубль named, answered as two purchases
+ * (observations design D5). Nothing else about an спостереження is stored — every one is computed
+ * when shown.
+ *
+ * The pair is unordered, and the CHECK makes it so in storage rather than only in the repository:
+ * `first_id` is always the smaller id, so the PRIMARY KEY is «one answer per pair» whichever half
+ * the owner answered from. Either транзакція's removal cascades the answer away — it means nothing
+ * without both (persistence, "Deleting takes the answer with it") — while an edit keeps it, since
+ * `transactionsRepo.save` is an upsert and never deletes the row it replaces.
+ *
+ * The cascade is also this table's hazard, the one `counterpart_income_awaits` names: a later
+ * migration that rebuilds `transactions` runs under the migrator's own transaction, where
+ * `PRAGMA foreign_keys=OFF` is a no-op, and would cascade-delete every answer with it. Such a
+ * migration has to carry these rows across itself, with a test that fails without that.
+ */
+export const duplicateAnswers = sqliteTable(
+  'duplicate_answers',
+  {
+    firstId: text('first_id')
+      .notNull()
+      .references(() => transactions.id, { onDelete: 'cascade' }),
+    secondId: text('second_id')
+      .notNull()
+      .references(() => transactions.id, { onDelete: 'cascade' }),
+    answeredAt: integer('answered_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.firstId, t.secondId] }),
+    check('duplicate_answers_pair_sorted', sql`${t.firstId} < ${t.secondId}`),
+    // The cascade from `second_id` looks the row up by it; the primary key already covers `first_id`.
+    index('duplicate_answers_second_idx').on(t.secondId),
+  ],
+);
+
+export type DuplicateAnswerRow = typeof duplicateAnswers.$inferSelect;

@@ -13,9 +13,10 @@ import {
 
 describe('DASHBOARD_WIDGETS', () => {
   it('Scenario: Every known widget is listed once', () => {
-    expect(DASHBOARD_WIDGETS).toHaveLength(5);
+    expect(DASHBOARD_WIDGETS).toHaveLength(6);
     const ids = DASHBOARD_WIDGETS.map((w) => w.id);
-    expect(new Set(ids).size).toBe(5);
+    expect(new Set(ids).size).toBe(6);
+    expect(DASHBOARD_WIDGETS.find((w) => w.id === 'observations')?.label).toBe('Спостереження');
     for (const widget of DASHBOARD_WIDGETS) {
       expect(widget.label.length).toBeGreaterThan(0);
     }
@@ -23,11 +24,12 @@ describe('DASHBOARD_WIDGETS', () => {
 });
 
 describe('defaultDashboardLayout', () => {
-  it('Scenario: Fresh install uses the four-widget default', () => {
+  it('Scenario: Fresh install uses the five-widget default', () => {
     const layout = defaultDashboardLayout();
     expect(layout.map((i) => i.id)).toEqual([
       'month-spent',
       'latest-transactions',
+      'observations',
       'top-categories',
       'net-worth',
       'progress',
@@ -35,15 +37,23 @@ describe('defaultDashboardLayout', () => {
     expect(layout.filter((i) => i.visible).map((i) => i.id)).toEqual([
       'month-spent',
       'latest-transactions',
+      'observations',
       'top-categories',
       'net-worth',
     ]);
     expect(layout.find((i) => i.id === 'progress')!.visible).toBe(false);
   });
+
+  it('Scenario: Progress is available without taking priority by default', () => {
+    const layout = defaultDashboardLayout();
+    // Offered last, hidden, after the five financial widgets — and it can be made visible.
+    expect(layout.at(-1)).toEqual({ id: 'progress', visible: false });
+    expect(setWidgetVisibility(layout, 'progress', true).at(-1)).toEqual({ id: 'progress', visible: true });
+  });
 });
 
 describe('normalizeDashboardLayout', () => {
-  it('Scenario: Fresh install uses the four-widget default (no row)', () => {
+  it('Scenario: Fresh install uses the five-widget default (no row)', () => {
     const result = normalizeDashboardLayout(undefined);
     expect(result.diagnostic).toBeUndefined();
     expect(result.items).toEqual(defaultDashboardLayout());
@@ -67,8 +77,30 @@ describe('normalizeDashboardLayout', () => {
       { id: 'month-spent', visible: true },
       { id: 'latest-transactions', visible: false },
       { id: 'top-categories', visible: true },
+      { id: 'observations', visible: false },
       { id: 'progress', visible: false },
     ]);
+  });
+
+  it('Scenario: A customised dashboard meets «Спостереження» hidden at its end', () => {
+    // Saved before «Спостереження» existed: «Статок» moved first, «Топ категорій» hidden.
+    const raw = {
+      version: 1,
+      items: [
+        { id: 'net-worth', visible: true },
+        { id: 'month-spent', visible: true },
+        { id: 'latest-transactions', visible: true },
+        { id: 'top-categories', visible: false },
+        { id: 'progress', visible: false },
+      ],
+    };
+    const result = normalizeDashboardLayout(raw);
+    expect(result.diagnostic).toBeUndefined();
+    expect(result.items).toEqual([...raw.items, { id: 'observations', visible: false }]);
+    // The owner can show and move it like any other widget.
+    const shown = moveWidget(setWidgetVisibility(result.items, 'observations', true), 'observations', 'up');
+    expect(shown.filter((i) => i.id === 'observations')).toEqual([{ id: 'observations', visible: true }]);
+    expect(shown.map((i) => i.id).indexOf('observations')).toBe(4);
   });
 
   it('Scenario: Unknown and duplicate identities are harmless', () => {
@@ -86,7 +118,7 @@ describe('normalizeDashboardLayout', () => {
     const result = normalizeDashboardLayout(raw);
     expect(result.diagnostic).toBeUndefined();
     const ids = result.items.map((i) => i.id);
-    expect(ids).toEqual(['month-spent', 'net-worth', 'latest-transactions', 'top-categories', 'progress']);
+    expect(ids).toEqual(['month-spent', 'net-worth', 'latest-transactions', 'top-categories', 'observations', 'progress']);
     // Only the first «net-worth» entry is used.
     expect(result.items.find((i) => i.id === 'net-worth')!.visible).toBe(true);
   });
@@ -155,7 +187,7 @@ describe('setWidgetVisibility and moveWidget', () => {
     items = moveWidget(items, 'net-worth', 'up');
     const netWorthEntries = items.filter((i) => i.id === 'net-worth');
     expect(netWorthEntries).toHaveLength(1);
-    expect(items).toHaveLength(5);
+    expect(items).toHaveLength(6);
   });
 
   it('Scenario: Showing a hidden widget restores its chosen place', () => {
@@ -193,6 +225,7 @@ describe('setWidgetVisibility and moveWidget', () => {
     expect(moved.map((i) => i.id)).toEqual([
       'month-spent',
       'latest-transactions',
+      'observations',
       'net-worth',
       'top-categories',
       'progress',
@@ -204,7 +237,7 @@ describe('toStoredDashboardLayout and sameDashboardLayout', () => {
   it('serializes one entry per known id under the current version', () => {
     const stored = toStoredDashboardLayout(defaultDashboardLayout());
     expect(stored.version).toBe(1);
-    expect(stored.items).toHaveLength(5);
+    expect(stored.items).toHaveLength(6);
   });
 
   it('compares layouts by id, visibility and order', () => {

@@ -1,4 +1,4 @@
-import { installments } from '@/db/repos';
+import { installments, settlePlans } from '@/db/repos';
 import { localNotifications } from '@/platform/local-notifications-device';
 import {
   settleAndReassertQuietly,
@@ -6,13 +6,18 @@ import {
 } from '@/ui/installment-upkeep';
 
 /**
- * The розстрочки' upkeep bound to this phone — storage, the notification shade and the clock
- * (installments design D4, D5). It sits in `src/hooks/` for `monobank-ports.ts`'s reason: it reaches
+ * The plans' upkeep bound to this phone — storage, the notification shade and the clock
+ * (installments design D4, D5; commitments design D4: both plans settle in one write). It sits in `src/hooks/` for `monobank-ports.ts`'s reason: it reaches
  * for a platform adapter, which nothing under `verify` may load. Every decision is
  * `src/ui/installment-upkeep.ts`'s.
  */
 export const INSTALLMENT_UPKEEP_PORTS: InstallmentUpkeepPorts = {
-  storage: installments,
+  storage: {
+    settlePlans,
+    list: () => installments.list(),
+    facts: () => installments.facts(),
+    reminder: () => installments.reminder(),
+  },
   notifications: localNotifications,
   now: () => new Date(),
 };
@@ -22,9 +27,10 @@ export const keepInstallmentsQuietly = (): Promise<void> =>
   settleAndReassertQuietly(INSTALLMENT_UPKEEP_PORTS);
 
 /**
- * What a screen calls as it reads — Місяць, «Розстрочки», one розстрочка: the links are settled
- * synchronously, before the read that follows on the same tick, and the warnings re-asserted only
- * when settling changed something (installments design D4).
+ * What a screen calls as it reads — Місяць, «Розстрочки», one розстрочка, «Зобов'язання», one
+ * зобов'язання: the links of both plans are settled synchronously, before the read that follows on
+ * the same tick, and the warnings re-asserted only when the розстрочки' settle changed something
+ * (installments design D4, commitments design D4).
  */
 export const settleInstallmentsOnFocus = (): void => {
   void settleAndReassertQuietly(INSTALLMENT_UPKEEP_PORTS, { only: 'if-changed' });

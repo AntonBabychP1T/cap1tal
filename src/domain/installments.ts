@@ -1,10 +1,8 @@
-import { MAX_AMOUNT_MINOR, money, type Money } from './money';
+import { MAX_AMOUNT_MINOR, type Money } from './money';
 import {
   UNCATEGORISED_CATEGORY_ID,
   isoDate,
-  monthOf,
   type IsoDate,
-  type Month,
   type TransactionType,
 } from './transaction';
 
@@ -13,7 +11,9 @@ import {
  * as a **plan** the owner enters by hand (installments design D1). The bank never debits the повна
  * сума; it debits the платежі, and each arrives as an ordinary витрата on its own day. So nothing
  * here is money the monthly picture counts: this module derives the графік, the state of each
- * платіж, which витрата is which платіж, and «Вільно після розстрочок» — and stores nothing.
+ * платіж, which витрата is which платіж, and what the month still owes — and stores nothing. The
+ * month arithmetic, the windows and the tie-break are shared with the зобов'язання
+ * (`commitments.ts`, commitments design D2): one rule, stated once.
  *
  * Names follow the glossary's own glosses (design D0): розстрочка = `Installment`, платіж =
  * `InstallmentPart` (monobank's «частинами»; `Payment` is a forbidden synonym), списання = the
@@ -272,15 +272,16 @@ export function addDays(date: IsoDate, days: number): IsoDate {
 }
 
 /** Signed whole days from `from` to `to`. */
-function dayOffset(from: IsoDate, to: IsoDate): number {
+export function dayOffset(from: IsoDate, to: IsoDate): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
 /**
  * The дата `months` calendar months after `first`, on `first`'s own day — or the month's last day
- * when it has no such day. Always from the *original* day, never chained, so 31 → 28 → 31.
+ * when it has no such day. Always from the *original* day, never chained, so 31 → 28 → 31. A
+ * зобов'язання's графік steps it by its періодичність (commitments design D2).
  */
-function monthsAfter(first: IsoDate, months: number): IsoDate {
+export function monthsAfter(first: IsoDate, months: number): IsoDate {
   const { year, month, day } = partsOfDate(first);
   const index = year * 12 + (month - 1) + months;
   const y = Math.floor(index / 12);
@@ -442,6 +443,11 @@ export interface DebitCandidate {
   readonly amount?: Money;
   /** The категорія of a витрата or повернення. */
   readonly categoryId?: string;
+  /**
+   * The bank's опис, where it has one — read only by a зобов'язання's ознака (commitments design
+   * D3); the розстрочка matcher ignores it.
+   */
+  readonly description?: string;
   /** When it was first stored — the tie-break between equally near candidates. */
   readonly createdAt: number;
 }
@@ -500,12 +506,15 @@ export function daysApart(a: IsoDate, b: IsoDate): number {
  *   категорія — an existing link is never re-categorised, so the owner's later choice stands.
  *
  * `transactions` holds every транзакція already linked plus every candidate; a linked id absent
- * from it was removed.
+ * from it was removed. `takenByCommitments` holds the транзакції linked to a платіж of a
+ * зобов'язання: one транзакція is the списання of one платіж at most, whichever plan it belongs to
+ * (commitments design D4), and one already linked stays where it is.
  */
 export function matchInstallmentDebits(input: {
   readonly installments: readonly Installment[];
   readonly facts: InstallmentFacts;
   readonly transactions: readonly DebitCandidate[];
+  readonly takenByCommitments?: ReadonlySet<string>;
   readonly today: IsoDate;
 }): InstallmentMatch {
   const byId = new Map(input.transactions.map((t) => [t.id, t]));
@@ -523,7 +532,10 @@ export function matchInstallmentDebits(input: {
   }
 
   const factsAfterDrops: InstallmentFacts = { ...input.facts, links: keptLinks };
-  const taken = new Set(keptLinks.map((link) => link.transactionId));
+  const taken = new Set([
+    ...keptLinks.map((link) => link.transactionId),
+    ...(input.takenByCommitments ?? []),
+  ]);
   const refused = new Set(
     input.facts.refusals.map((r) => `${r.installmentId}|${r.number}|${r.transactionId}`),
   );
@@ -587,7 +599,8 @@ export function matchInstallmentDebits(input: {
   return { link, drop, categorise };
 }
 
-function recordedBefore(a: DebitCandidate, b: DebitCandidate): boolean {
+/** The tie-break between equally near candidates: the one stored first. */
+export function recordedBefore(a: DebitCandidate, b: DebitCandidate): boolean {
   return a.createdAt < b.createdAt || (a.createdAt === b.createdAt && a.id < b.id);
 }
 
@@ -602,37 +615,6 @@ export function autoLinkWindow(due: IsoDate): { readonly from: IsoDate; readonly
 /** The window «Обрати списання» lists from (installments-screen, "Picking the списання by hand"). */
 export function handLinkWindow(due: IsoDate): { readonly from: IsoDate; readonly to: IsoDate } {
   return { from: addDays(due, -HAND_LINK_WINDOW_DAYS), to: addDays(due, HAND_LINK_WINDOW_DAYS) };
-}
-
-// ---------------------------------------------------------------------------------------------
-// Вільно після розстрочок
-
-/** The сума of the month's платежі still owed: очікується or списання не знайдено. */
-export function owedInMonth(parts: readonly InstallmentPart[], month: Month): number {
-  return parts
-    .filter(
-      (part) => monthOf(part.due) === month && (part.state === 'expected' || part.state === 'notFound'),
-    )
-    .reduce((sum, part) => sum + part.amount, 0);
-}
-
-/**
- * «Вільно після розстрочок» (installments, "Вільно після розстрочок is залишилось less what this
- * month still owes"): the UAH залишилось less every платіж of the current month that is очікується
- * or списання не знайдено. `undefined` for any month but the current one, without a UAH
- * залишилось, or when nothing of the month is owed. `parts` are the платежі of every розстрочка.
- */
-export function freeAfterInstallments(
-  leftUah: Money | undefined,
-  parts: readonly InstallmentPart[],
-  month: Month,
-  today: IsoDate,
-): Money | undefined {
-  if (leftUah === undefined || leftUah.currency !== INSTALLMENT_CURRENCY || monthOf(today) !== month) {
-    return undefined;
-  }
-  const owed = owedInMonth(parts, month);
-  return owed === 0 ? undefined : money(leftUah.amount - owed, INSTALLMENT_CURRENCY);
 }
 
 // ---------------------------------------------------------------------------------------------

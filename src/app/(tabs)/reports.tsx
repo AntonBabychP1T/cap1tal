@@ -367,6 +367,7 @@ function Column({
  * carries the colour its bars are drawn in. One row instead of a legend and no numbers at all.
  */
 function HistoryNumbers({ readout }: { readout: HistoryReadout }) {
+  const router = useRouter();
   return (
     <View style={styles.readout}>
       <ThemedText type="overline" themeColor="textSecondary">
@@ -383,6 +384,17 @@ function HistoryNumbers({ readout }: { readout: HistoryReadout }) {
           </ThemedText>
         </View>
       ))}
+      {/* A finished month that holds a транзакція leads to its підсумок, beneath its numbers. */}
+      {readout.summaryOffer ? (
+        <Tap
+          onPress={() => router.push(readout.summaryOffer!.route)}
+          accessibilityRole="button"
+          accessibilityLabel={readout.summaryOffer.accessibilityLabel}
+          style={styles.summaryOffer}>
+          <ThemedText type="link">{readout.summaryOffer.label}</ThemedText>
+          <Chevron />
+        </Tap>
+      ) : null}
     </View>
   );
 }
@@ -778,6 +790,7 @@ const styles = StyleSheet.create({
   goalName: { flex: 1 },
   readout: { gap: Spacing.one },
   readoutRow: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.one },
+  summaryOffer: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, alignSelf: 'flex-start', paddingVertical: Spacing.one },
   readoutLabel: { flex: 1 },
   swatch: { width: Spacing.two, height: Spacing.two, borderRadius: Spacing.half },
   plot: { flexDirection: 'row', gap: Spacing.two },

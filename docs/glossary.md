@@ -84,8 +84,10 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   The second is a витрата's own категорія: the owner's правила read it, at recording exactly as at
   import, so typing «АТБ» proposes Groceries before «Записати» is pressed — a proposal, never an
   override, since a категорія the owner picked themselves always stands. Manual entry does ask for
-  one. It is the bank's words about the owner, or the owner's own, which is why it leaves the phone
-  only under «Продавці» (see AI).
+  one. The ознака of a зобов'язання reads it too, to recognise a списання — and so, through the
+  link, a «Без категорії» витрата may take the зобов'язання's категорія. It is the bank's words
+  about the owner, or the owner's own, which is why it leaves the phone only under «Продавці» (see
+  AI).
 - **MCC** (merchant category code) — the whole number a bank names for an imported транзакція: a
   monobank statement item carries one. Kept on the транзакція, informational like the опис — no
   total, balance or type reads it — and matched by the правила and the шаблон, at import and in the
@@ -279,14 +281,22 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
   would read as a synonym of транзакція) — one scheduled monthly debit of a розстрочка: a number, a дата and a сума.
   Every платіж but the last is the щомісячний платіж; the last is the повна сума minus the others,
   so they add up exactly. The щомісячний платіж is offered as повна сума ÷ кількість rounded down.
-- **Графік** (schedule) — the платежі of a розстрочка: one a month on the day of the first, on the
-  month's last day where that day does not exist. Derived, never entered платіж by платіж.
-- **Рахунок списання** (debit account) — the UAH рахунок the платежі are debited from.
-- **Списання** (debit) — the витрата a платіж is linked to: the bank's monthly debit, arrived by
-  monobank, a notification or by hand. The app links a UAH витрата on the рахунок списання of the
-  exact сума within three days of the платіж's дата; the owner can unlink (remembered), pick one by
-  hand, or mark a платіж paid without one. Linking never creates or moves money; it only gives a
-  «Без категорії» витрата the розстрочка's категорія.
+  A зобов'язання has платежі too (code `CommitmentDue`, see «Зобов'язання»): the word means one
+  scheduled debit of either plan, and nothing else.
+- **Графік** (schedule) — the платежі of a plan: for a розстрочка one a month on the day of the
+  first, for a зобов'язання one every period of its періодичність on that day — in either case on
+  the month's last day where that day does not exist. Derived, never entered платіж by платіж.
+- **Рахунок списання** (debit account) — the рахунок the платежі are debited from: a UAH рахунок
+  for a розстрочка, a рахунок of any currency for a зобов'язання.
+- **Списання** (debit) — the витрата a платіж is linked to: the bank's debit, arrived by monobank,
+  a notification or by hand. The app links a витрата on the рахунок списання within three days of
+  the платіж's дата: for a розстрочка a UAH витрата of exactly the платіж's сума; for a зобов'язання
+  a витрата in its currency of exactly its сума, or — when it has an ознака — one whose опис contains
+  the ознака, whatever the сума. The owner can unlink (remembered), pick one by hand within ten days,
+  or mark a платіж paid without one. Linking never creates or moves money; it only gives a «Без
+  категорії» витрата the plan's категорія. One транзакція is the списання of one платіж at most,
+  whichever plan the платіж belongs to; of the витрати not yet linked, one that could be either is
+  the розстрочка's, and one already linked stays where it is.
 - **Сплачено раніше** (paid before) — how many of the first платежі were already paid when the
   розстрочка was recorded; they need no списання.
 - **Стан платежу** (payment state) — exactly one of: **сплачено** (linked, paid before or marked),
@@ -297,12 +307,52 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
   **сплачена**.
 - **Закрити достроково** (close early) — the owner's word that a розстрочка is paid off: its
   unpaid платежі become закрито and are no longer expected, counted or reminded of.
-- **Вільно після розстрочок** (free after installments) — for the current month only, in UAH:
-  залишилось minus the сума of this month's платежі that are очікується or списання не знайдено.
-  A secondary reading beneath залишилось; it changes no number of the monthly picture.
+- Their платежі that are still owed this month are counted in **«Вільно після зобов'язань»** (see
+  «Зобов'язання»), which replaced «Вільно після розстрочок» on 2026-10-02.
 - **Нагадування про платіж** (payment reminder) — one local notification at 10:00 the day before a
-  дата with an очікується платіж, one per дата, with a fixed text naming no сума and no назва.
+  дата with an очікується платіж of a розстрочка (never of a зобов'язання), one per дата, with a fixed text naming no сума and no назва.
   Behind one switch, on until the owner turns it off.
+
+## Зобов'язання
+
+Owner's decision, 2026-10-02 (vision §4 «Зобов'язання», §8). Lines marked **[PROPOSED]** are
+defaults the owner may overturn.
+
+- **Зобов'язання** (commitment; code `Commitment`) — a payment the owner already knows will recur:
+  оренда, інтернет, мобільний, підписка, страхування. A **plan** the owner enters by hand: назва,
+  сума of one платіж, періодичність, дата першого платежу, рахунок списання, and optionally a
+  категорія and an ознака. It runs until the owner stops it. It is not a транзакція and not a
+  рахунок: it records, moves and counts no money by itself, and a платіж never debited counts
+  nowhere. **[PROPOSED]** Its сума is in the currency of its рахунок списання, any currency, never
+  converted.
+- **Періодичність** (how often) **[PROPOSED]** — one of **щомісяця**, **щокварталу**, **щопівроку**,
+  **щороку**: a платіж every 1, 3, 6 or 12 months on the day of the first, on the month's last day
+  where that day does not exist — the розстрочка's графік rule. The графік has no end until the
+  зобов'язання is stopped.
+- **Ознака** (marker; UI «Текст в описі списання») **[PROPOSED]** — a piece of the bank's опис, at
+  least three characters, that recognises the списання of a зобов'язання whatever its сума. Without
+  an ознака only a витрата of exactly the сума is recognised; with one, only a витрата whose опис
+  contains it, letters compared without regard to case. It exists for bills that vary and for
+  підписки charged in hryvnia at a moving rate.
+- **Стан платежу зобов'язання** — exactly one of: **сплачено** (linked, or marked by the owner),
+  **пропущено**, **очікується** (no later than three days after its дата), **списання не знайдено**
+  (more than three days after it, nothing linked). There is no закрито: a stopped зобов'язання
+  simply has no платежі after its дата припинення.
+- **Пропущено** (skipped) **[PROPOSED]** — the owner's word that a платіж of a зобов'язання did not
+  and will not happen: a paused підписка, a waived оренда. Neither expected, nor owed, nor linked.
+- **Припинити** (stop) — the owner's word that a зобов'язання has ended: its **дата припинення** is
+  today, and every платіж after it ceases to exist. **Відновити** removes the дата again.
+- **Оновити суму** (update the сума) **[PROPOSED]** — offered when the latest linked списання of a
+  зобов'язання differs from its сума; sets the сума to the debited one, for every платіж not yet
+  сплачено. Never done without the owner.
+- **Вільно після зобов'язань** (free after commitments) — for the current month only, separately
+  per currency: залишилось minus the сума of this month's платежі that are очікується or списання не
+  знайдено, of every зобов'язання and every розстрочка alike. A розстрочка is not a зобов'язання,
+  but its платежі are as promised as any, so the reading counts them too. A secondary reading
+  beneath залишилось; it changes no number of the monthly picture and is not a forecast.
+- **Платежі місяця** (the month's платежі) — the Місяць block listing the платежі of розстрочки and
+  зобов'язання dated in the shown month, закрито ones left out; it totals their scheduled сума per
+  currency, пропущено ones left out of the totals, and says how much is still not сплачено.
 
 ## Net worth
 
@@ -382,16 +432,50 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
 - **Reserve** (резерв) — сума розрахункових балансів рахунків виду `savings` в одній валюті.
   Ніколи не змішує валюти й ніщо в ньому не конвертується.
 
+## Спостереження і підсумок місяця
+
+Owner's decision, 2026-10-02 (vision §19). Lines marked **[PROPOSED]** are defaults the owner may
+overturn.
+
+- **Спостереження** (observation; code `Observation`) — a fact the app finds in the owner's own
+  транзакції of one month by a fixed, deterministic detector and states in one sentence with its
+  numbers. Computed when shown, stored nowhere, never dismissed; it changes no number, is never
+  advice, praise, blame or a forecast, and is never a language model's words. It exists for the
+  current month and for a завершений активний місяць, and leads to the records it is about.
+- **Типова сума** (typical amount) — the median, in one currency, of up to six завершені активні
+  місяці of that currency before a month, never fewer than three **[PROPOSED]**: of a категорія's
+  витрачено (net of повернення, a month without it counting as zero), or of the whole витрачено.
+  Fewer than three such months, or a typical витрачено that is not positive, and there is none.
+  It is read from the history, never confirmed by the owner, and feeds no other number.
+- **Поріг помітності** (noticeable threshold) **[PROPOSED]** — 3 % of a currency's типова сума of
+  витрачено: a difference smaller than it is not stated, however large its percentage.
+- **Можливий дубль** (possible duplicate) — two витрати on one рахунок with the same сума, dated at
+  most a day apart, whose описи are not the same bank text — a purchase that may have arrived
+  through two doors (the bank and the owner's hand). Never a переказ, a дохід, a повернення, a
+  коригування or a «Комісія». The app asks and does not guess: **«Не дубль»** is the owner's
+  answer, remembered for that unordered pair, carried in the бекап, and gone when either транзакція
+  is deleted. A real дубль is deleted like any транзакція.
+- **Підсумок місяця** (month summary) — one finished month read as a whole on its own screen,
+  per currency: витрачено against the month before and the типова сума, the категорії that changed
+  most, the місячна картина, the зміна статку with its розбивка, what moved toward each ціль and
+  which ліміти held, what is still unanswered, the коригування with their частка, and the month's
+  спостереження. Every завершений активний місяць has one; the current month does not. Computed
+  when shown, stored nowhere.
+- **Частка коригувань** (corrections share) **[PROPOSED]** — the sum of a month's коригування taken
+  by their absolute сум, divided by that month's витрачено in the same currency, to one decimal
+  place rounded toward zero. Vision §15's measure of a trusted month is below 2 %.
+
 ## Keeping the data
 
 - **Backup** (бекап) — one file holding everything the owner has: every рахунок with its opening
   balance, every категорія, джерело, правило, ліміт and ціль, every транзакція, what the app has
   already imported, and every фіскальний чек with its позиції and the source document the tax
   service served — so a restored phone shows a чек without asking the tax service again. It also
-  holds every розстрочка with the states of its платежі — the owner's word about money no statement
-  shows — and the прогрес the owner has built up: кожне отримане досягнення зі своєю датою й свідченням,
+  holds every розстрочка and every зобов'язання with the states of their платежі — the owner's word
+  about money no statement shows in advance — and the прогрес the owner has built up: кожне отримане досягнення зі своєю датою й свідченням,
   кожне рішення про виклик і кожна підтверджена місячна норма витрат — жодне з них не рахується з
-  транзакцій, тож без них відновлений телефон виглядав би так, ніби нічого не досягнуто. It never
+  транзакцій, тож без них відновлений телефон виглядав би так, ніби нічого не досягнуто. It holds
+  the owner's «Не дубль» answers too, and no спостереження: those are recomputed when shown. It never
   holds the monobank token, the чернетки awaiting a word, or the text of the notifications behind
   them. The file the owner saves by hand is not encrypted: whoever holds it can read the money in
   it. The copy that goes to Google Drive is a different matter — it is sealed under the owner's own
@@ -643,9 +727,22 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
 | Reminder (нагадування) | Failure alert (сповіщення про збій) | the нагадування asks the owner to do something; the сповіщення says the app failed to |
 | Reminder (нагадування) | Нагадування про платіж | the нагадування invites recording, daily, at the owner's time; the нагадування про платіж warns of a розстрочка платіж tomorrow, at 10:00, only before one |
 | Розстрочка | Транзакція / рахунок-борг | a розстрочка is a plan the bank's debits are linked to: its повна сума is no витрата and no balance, and it owes money to a bank on a графік — a рахунок-борг is money the owner lent to a person, with no графік |
+| Зобов'язання | Регулярна / запланована транзакція | a зобов'язання is a plan the real debit is linked to when it arrives; a scheduled транзакція would be recorded by the app before any money left, and the app never records one |
+| Зобов'язання | Розстрочка | a розстрочка is a purchase with a повна сума, a кількість платежів and a залишок; a зобов'язання has none of these and runs until stopped — their платежі are alike, so «Вільно після зобов'язань» counts both |
+| Зобов'язання | monobank «Регулярні платежі» | the bank's standing order moves money by itself; a зобов'язання only expects a debit and moves nothing |
+| Зобов'язання | Recurring candidates (тренди) | a зобов'язання is declared by the owner; a recurring candidate is what the app noticed in the history for a пакет, and becomes nothing by itself |
+| Пропущено | Сплачено | both stop a платіж from being owed; сплачено says the money left (linked, or paid where the app does not see), пропущено says it never will |
 | Failure alert (сповіщення про збій) | Bank notification (сповіщення банку) | one the app posts about itself; the other is what another bank's app posted and this app read |
 | Фіскальний чек | Квитанція | the чек is what the seller's реєстратор registered with the tax service and names the позиції; a квитанція (monobank's `receiptId`, check.gov.ua) only proves a payment happened and names no product — it cannot be used to find a чек |
 | Позиція чека | Транзакція | a позиція is detail under one транзакція; it has no категорія, no рахунок and no effect on any number the app computes |
 | Репорт про помилку | Сповіщення про збій | the репорт is what the owner writes for the developer; the сповіщення is what the app posts to the owner |
 | Ціль витрат | Ціль-накопичення | they point in opposite directions — one is a ceiling not to be crossed, the other a сума to be reached — so they share no word: spending under a ліміт is never «досягнуто», and saving is never «перевищено» |
 | Прогрес цілі | Розрахунковий баланс | a прогрес may sum several рахунки, may read an інвестиційний рахунок's поточна вартість instead of its баланс, and may be приблизний; a баланс is one рахунок's own number in its own currency and is never approximate |
+| Спостереження | AI-аналіз | an спостереження is a fact a fixed rule found and the app states in its own fixed words, on the phone; AI-аналіз is a language model explaining numbers the owner chose to hand over |
+| Спостереження | Досягнення | an досягнення is earned once, stored and never taken back; an спостереження is recomputed whenever shown and goes away when the транзакції stop making it true |
+| Типова сума | Місячна норма витрат | the норма needs six завершені місяці and the owner's confirmation, and Прогрес reads it; a типова сума needs three, is never confirmed, and feeds nothing |
+| Типова сума | Типова категорія | the same adjective for two unrelated things: a median сума of past months, and the starter категорія a базова категорія lands in |
+| Типова сума | Typical amount of a recurring candidate (тренди) | the тренди's typical amount is the median of one категорія's or продавець's largest витрата per month inside a пакет's period; a типова сума is the median of whole months before the month read |
+| Можливий дубль | Підказка про дубль | the можливий дубль is two транзакції that may be one purchase, answered «Не дубль»; the підказка is about two рахунки in a Saldo імпорт that may be one рахунок, offered as a merge |
+| Можливий дубль | Зустрічний дохід | a зустрічний дохід is the other leg of a переказ, absorbed by it; a можливий дубль is two витрати on one рахунок, and the app never merges or deletes either |
+| Підсумок місяця | Місячна картина | the картина is the six numbers of a month; the підсумок is one finished month read as a whole, with the картина as one of its parts |

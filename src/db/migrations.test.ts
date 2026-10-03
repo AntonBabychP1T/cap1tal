@@ -22,15 +22,22 @@ import {
   categories,
   categoryLimits,
   challengeDecisions,
+  commitmentDueLinks,
+  commitmentDueMarks,
+  commitmentRefusals,
+  commitments,
   counterpartIncomeAwaits,
   dailyReminder,
   dashboardLayout,
+  duplicateAnswers,
   earnedAchievements,
   entryDefaults,
   fiscalReceipts,
   goalAccounts,
   goals,
   hapticsPreference,
+  installmentPartLinks,
+  installments,
   investmentValues,
   journal,
   merchantSpellings,
@@ -1894,7 +1901,7 @@ describe('migrations — the dashboard layout', () => {
     storage.close();
   });
 
-  it('Scenario: Fresh install uses the four-widget default', () => {
+  it('Scenario: Fresh install uses the five-widget default', () => {
     const { db } = storage;
 
     // No row means «follow this installed version's current default» — nothing is written by
@@ -2165,10 +2172,185 @@ describe('migrations — the шаблон mapping', () => {
   });
 });
 
+describe('migrations — the «Не дубль» answers', () => {
+  it('Scenario: An upgraded device keeps everything and has no answers', () => {
+    const staged = openTestDbMigratedTo(10);
+    try {
+      const { db } = staged;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      insertLegacyTransactions(db, oneOfEachType);
+      db.insert(goals)
+        .values({ id: 'g1', name: 'Подушка', amount: 20000000, currency: 'UAH', deadline: null })
+        .run();
+      db.insert(goalAccounts).values({ goalId: 'g1', accountId: 'jar' }).run();
+      db.insert(earnedAchievements)
+        .values({
+          key: 'ledger.transactions:500',
+          template: 'ledger.transactions',
+          achievedOn: '2025-04-18',
+          recordedAt: new Date('2026-09-02T09:00:00.000Z'),
+          seenAt: null,
+          evidence: '{"count":500}',
+        })
+        .run();
+      const read = () => ({
+        accounts: db.select().from(accounts).all(),
+        // `mcc` arrives with a later migration than this one, empty.
+        transactions: rawRows(db, 'transactions', ['mcc']),
+        goals: db.select().from(goals).all(),
+        goalAccounts: db.select().from(goalAccounts).all(),
+        earned: db.select().from(earnedAchievements).all(),
+      });
+      const before = read();
+      // Before this migration the table does not exist at all.
+      expect(() => db.select().from(duplicateAnswers).all()).toThrow();
+
+      staged.migrateToLatest();
+
+      expect(read()).toEqual(before);
+      expect(db.select().from(duplicateAnswers).all()).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('The migrated shape keeps a pair unordered, single and tied to both транзакції', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      db.insert(transactions).values(oneOfEachType.map(toTransactionRow)).run();
+      const at = new Date('2026-10-04T10:00:00.000Z');
+
+      db.insert(duplicateAnswers).values({ firstId: 'e1', secondId: 'r1', answeredAt: at }).run();
+      // The CHECK: the smaller id first, so `r1, e1` is not a second spelling of the same pair.
+      expect(() =>
+        db.insert(duplicateAnswers).values({ firstId: 'r1', secondId: 'e1', answeredAt: at }).run(),
+      ).toThrow();
+      // One with itself is not a pair.
+      expect(() =>
+        db.insert(duplicateAnswers).values({ firstId: 'e1', secondId: 'e1', answeredAt: at }).run(),
+      ).toThrow();
+      // The PRIMARY KEY: one answer per pair.
+      expect(() =>
+        db.insert(duplicateAnswers).values({ firstId: 'e1', secondId: 'r1', answeredAt: at }).run(),
+      ).toThrow();
+      // Both references are real.
+      expect(() =>
+        db.insert(duplicateAnswers).values({ firstId: 'e1', secondId: 'zz', answeredAt: at }).run(),
+      ).toThrow();
+
+      // Either half's removal takes the answer with it, and nothing else.
+      db.delete(transactions).where(eq(transactions.id, 'r1')).run();
+      expect(db.select().from(duplicateAnswers).all()).toEqual([]);
+      expect(db.select().from(transactions).where(eq(transactions.id, 'e1')).all()).toHaveLength(1);
+    } finally {
+      storage.close();
+    }
+  });
+});
+
+describe('migrations — the зобов\'язання', () => {
+  // Everything up to the «Не дубль» answers' migration, then this one.
+  const BEFORE_COMMITMENTS = 11;
+
+  it('Scenario: Existing data survives the migration', () => {
+    const staged = openTestDbMigratedTo(BEFORE_COMMITMENTS);
+    try {
+      const { db } = staged;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values([toAccountRow(card), toAccountRow(jar)]).run();
+      insertLegacyTransactions(db, oneOfEachType);
+      db.insert(categoryLimits).values({ categoryId: 'food', amount: 250000, currency: 'UAH' }).run();
+      db.insert(goals).values({ id: 'g1', name: 'Авто', amount: 100, currency: 'UAH', deadline: null }).run();
+      db.insert(installments)
+        .values({
+          id: 'i1',
+          name: 'iPhone',
+          totalMinor: 1_000_000,
+          currency: 'UAH',
+          partsCount: 10,
+          partMinor: 100_000,
+          firstDue: '2026-10-05',
+          debitAccountId: card.id,
+          paidBefore: 0,
+          categoryId: null,
+          recordedAt: new Date(1),
+          closedOn: null,
+        })
+        .run();
+      db.insert(installmentPartLinks)
+        .values({ installmentId: 'i1', number: 1, transactionId: oneOfEachType[0]!.id })
+        .run();
+      const read = () => ({
+        accounts: db.select().from(accounts).all(),
+        // `mcc` arrives with a later migration than this one, empty.
+        transactions: rawRows(db, 'transactions', ['mcc']),
+        categories: db.select().from(categories).all(),
+        limits: db.select().from(categoryLimits).all(),
+        goals: db.select().from(goals).all(),
+        installments: db.select().from(installments).all(),
+        links: db.select().from(installmentPartLinks).all(),
+      });
+      const before = read();
+
+      staged.migrateToLatest();
+
+      expect(read()).toEqual(before);
+      expect(db.select().from(commitments).all()).toEqual([]);
+      expect(db.select().from(commitmentDueLinks).all()).toEqual([]);
+      expect(db.select().from(commitmentDueMarks).all()).toEqual([]);
+      expect(db.select().from(commitmentRefusals).all()).toEqual([]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('The migrated shape refuses a blank назва, a zero сума, an unknown періодичність and a short ознака', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      seedReferences(db, VOCABULARY);
+      db.insert(accounts).values(toAccountRow(card)).run();
+      const row = {
+        id: 'c1',
+        name: 'Інтернет',
+        amountMinor: 30_000,
+        currency: 'UAH',
+        periodicity: 'monthly',
+        firstDue: '2026-10-05',
+        debitAccountId: card.id,
+        categoryId: null,
+        marker: null,
+        recordedAt: new Date(1),
+        stoppedOn: null,
+      };
+      expect(() => db.insert(commitments).values({ ...row, name: '  ' }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, amountMinor: 0 }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, periodicity: 'weekly' }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, marker: ' tv ' }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, firstDue: '5 жовт.' }).run()).toThrow();
+      expect(() => db.insert(commitments).values({ ...row, debitAccountId: 'nowhere' }).run()).toThrow();
+      db.insert(commitments).values({ ...row, marker: 'ukrtelecom' }).run();
+      db.insert(commitmentDueMarks).values({ commitmentId: 'c1', number: 1, kind: 'skipped' }).run();
+      expect(() =>
+        db.insert(commitmentDueMarks).values({ commitmentId: 'c1', number: 2, kind: 'later' }).run(),
+      ).toThrow();
+      expect(() =>
+        db.insert(commitmentDueMarks).values({ commitmentId: 'c1', number: 1, kind: 'paid' }).run(),
+      ).toThrow();
+    } finally {
+      storage.close();
+    }
+  });
+});
+
 describe('migrations — продавці and the MCC', () => {
   it('Scenario: Existing data survives the migration', () => {
-    // Ten migrations precede this one; everything below is written as a device on that shape did.
-    const staged = openTestDbMigratedTo(10);
+    // Twelve migrations precede this one; everything below is written as a device on that shape did.
+    const staged = openTestDbMigratedTo(12);
     try {
       const { db } = staged;
       seedReferences(db, VOCABULARY);
