@@ -23,7 +23,6 @@ import {
 } from '@/db/repos';
 import { account, type AccountKind } from '@/domain/account';
 import { monobankConnection, type ConnectionResult } from '@/monobank/connection';
-import { suggestLinks } from '@/monobank/link';
 import type { SyncProgress, SyncRun } from '@/monobank/coordinator';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { useTheme } from '@/hooks/use-theme';
@@ -70,7 +69,7 @@ import {
   REFRESH_LIST_LABEL,
   outcomeLabel,
   progressLabel,
-  proposalRows,
+  proposalsForReview,
   removeTokenConfirmation,
   syncBoundary,
   syncFailed,
@@ -232,22 +231,15 @@ export default function MonobankScreen() {
 
   /**
    * What the app would propose for every monobank account no link feeds yet, and the lines the
-   * review list shows for them. Recomputed from what is on screen and what is stored — a
-   * proposal is never remembered, so accepting one and reloading simply leaves one proposal
-   * fewer.
+   * review list shows for them. Built from `fetched`, never from `shown`: a cached
+   * `monobank_accounts` row is enough to list an account, but not enough to propose linking it —
+   * this opening's own client-info answer has to have succeeded first (design D8 of
+   * recovered-branch-fixes). A proposal is never remembered either way, so accepting one and
+   * reloading simply leaves one proposal fewer.
    */
   const proposals = useMemo(
-    () =>
-      proposalRows({
-        proposals: suggestLinks({
-          monobankAccounts: shown,
-          accounts: stored.accounts,
-          links: stored.links,
-        }),
-        monobankAccounts: shown,
-        accounts: stored.accounts,
-      }),
-    [shown, stored.accounts, stored.links],
+    () => proposalsForReview({ fetched, accounts: stored.accounts, links: stored.links }),
+    [fetched, stored.accounts, stored.links],
   );
   const accepted = useMemo(
     () => proposals.filter((row) => row.acceptable && !refused.has(row.monobankAccountId)),

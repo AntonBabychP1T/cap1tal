@@ -29,6 +29,7 @@ import {
   outcomeLabel,
   progressLabel,
   proposalRows,
+  proposalsForReview,
   removeTokenConfirmation,
   syncBoundary,
   syncFailed,
@@ -833,6 +834,25 @@ describe('the review list of proposals', () => {
     // The two things the owner must know before five links are made at once.
     expect(sentence).toContain('включно');
     expect(sentence).toContain('Saldo');
+  });
+
+  it('Scenario: No successful answer this opening proposes nothing', () => {
+    // A cached `monobank_accounts` row is not a fetch: seen on the emulator during
+    // monobank-sync-cadence's smoke, where a year-old row alone was enough to offer «Приєднати
+    // все» with no token ever entered this session (recovered-branch-fixes design D8).
+    expect(proposalsForReview({ fetched: undefined, accounts: [monoBlack], links: [] })).toEqual(
+      [],
+    );
+
+    // The gate is not a blanket refusal: once this opening's own client-info answer holds the
+    // same account, the matching heuristic runs exactly as it does everywhere else.
+    const withFetch = proposalsForReview({
+      fetched: [blackCard],
+      accounts: [monoBlack],
+      links: [],
+    });
+    expect(withFetch).toHaveLength(1);
+    expect(withFetch[0]?.accountId).toBe('a-black');
   });
 });
 

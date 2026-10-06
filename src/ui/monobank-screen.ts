@@ -3,7 +3,7 @@ import type { CurrencyCode, Money } from '../domain/money';
 import type { IsoDate } from '../domain/transaction';
 import { countedResults } from '../monobank/auto';
 import { NOT_SHOWN, type AccountOutcome, type SyncProgress, type SyncRun } from '../monobank/coordinator';
-import { suggestKind, type LinkProposal, type MonobankLink } from '../monobank/link';
+import { suggestKind, suggestLinks, type LinkProposal, type MonobankLink } from '../monobank/link';
 import { shownLinks } from '../monobank/sync';
 import type { BackgroundRestriction } from '../platform/background-sync';
 import { formatMoney } from './amount-input';
@@ -755,6 +755,36 @@ export function proposalRows(input: {
         acceptable: false,
       },
     ];
+  });
+}
+
+/**
+ * The proposals the review list shows — or none at all, before this opening's own client-info
+ * answer has succeeded.
+ *
+ * `fetched` is that answer, not `configured`: a token can sit in secure storage for a device that
+ * has not reached the bank all session, or whose last attempt came back invalid, rate-limited or
+ * unavailable, and none of that resets `configured` (design D8 of recovered-branch-fixes). A
+ * `monobank_accounts` row left by an earlier connection is a fine thing to show on the list
+ * beneath — it is not "a successful client-info answer", so it is never what a proposal, or the
+ * link `linkMany` would make of one, is built from.
+ */
+export function proposalsForReview(input: {
+  readonly fetched: readonly MonobankAccountView[] | undefined;
+  readonly accounts: readonly Account[];
+  readonly links: readonly MonobankLink[];
+}): ProposalRow[] {
+  if (input.fetched === undefined) {
+    return [];
+  }
+  return proposalRows({
+    proposals: suggestLinks({
+      monobankAccounts: input.fetched,
+      accounts: input.accounts,
+      links: input.links,
+    }),
+    monobankAccounts: input.fetched,
+    accounts: input.accounts,
   });
 }
 
