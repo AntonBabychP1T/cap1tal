@@ -14,6 +14,7 @@ import { Refusal, isRefusal } from '../domain/refusal';
 import type { IsoDate } from '../domain/transaction';
 import { formatMinorUnits, parseAmount } from './amount-input';
 import { isPerson, withCurrent } from './account-choices';
+import { NO_CATEGORY } from './commitment-form';
 import { parseTypedDate } from './dates';
 import { accountChoiceLabel, byName } from './labels';
 import { sameFields } from './same-fields';
@@ -121,9 +122,6 @@ export function installmentCategoryChoices(categories: readonly Category[]): Cat
 export function installmentAccountRows(accounts: readonly Account[], currentId?: string): Named[] {
   return debitAccountChoices(accounts, currentId).map((a) => ({ id: a.id, name: accountChoiceLabel(a) }));
 }
-
-/** The form's one offer of no категорія; its value is the draft's empty `categoryId`. */
-const NO_CATEGORY: Named = { id: '', name: 'Без категорії' };
 
 /** «Категорія» as the picker draws it: «Без категорії» once and first, as in the entry form. */
 export function installmentCategoryRows(categories: readonly Category[]): Named[] {

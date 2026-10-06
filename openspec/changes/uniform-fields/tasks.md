@@ -104,7 +104,12 @@ the tree that holds it.
       Test Files  241 passed (241) · Tests  5112 passed (5112)
       ✔ verify passed (3a13438b82aaa2931c78f7a185ff76df36e6f5d3)
       ```
-- [ ] 6.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+      (The hash is of the tree at that run; every later commit re-ran verify green.)
+- [x] 6.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+      2026-10-06: 0 critical, 0 major in code; every scenario evidenced except "Typing keeps the
+      matches in sight", which is 6.3's by design. Minor fixed: the розстрочка form reuses
+      `NO_CATEGORY`. Not taken: one shared `RECENT_WINDOW` — every screen already keeps its own
+      copy, and consolidating them touches screens `quick-entry` is reworking.
 - [ ] 6.3 Smoke on the emulator with the owner's бекап (smoke-runner, `.claude/rules/android.md`):
       розстрочка, зобов'язання, правило, базова категорія, ціль витрат, watch and monobank link
       pickers show five + «Всі … (N)»; each full list opens with no keyboard and the matches stay above
