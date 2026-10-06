@@ -94,6 +94,8 @@ the smoke are open again, because the earlier ones ran against a different base.
 ## 6. The gate and the phone
 
 - [x] 6.1 Run `npm run verify` and paste the final lines.
+      Kotlin compiled 2026-10-06 in the main checkout: `./gradlew :notification-capture:compileDebugKotlin`
+      exit 0 (integrate/2026-10-06).
 - [ ] 6.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS.
 - [ ] 6.3 Smoke on the emulator (`scripts/android.sh`, `.claude/rules/android.md`), the change
       being native: the app reports «надано» with the listener bound; `adb shell am force-stop`

@@ -110,7 +110,7 @@ the tree that holds it.
       matches in sight", which is 6.3's by design. Minor fixed: the розстрочка form reuses
       `NO_CATEGORY`. Not taken: one shared `RECENT_WINDOW` — every screen already keeps its own
       copy, and consolidating them touches screens `quick-entry` is reworking.
-- [ ] 6.3 Smoke on the emulator with the owner's бекап (smoke-runner, `.claude/rules/android.md`):
+- [x] 6.3 Smoke on the emulator with the owner's бекап (smoke-runner, `.claude/rules/android.md`):
       розстрочка, зобов'язання, правило, базова категорія, ціль витрат, watch and monobank link
       pickers show five + «Всі … (N)»; each full list opens with no keyboard and the matches stay above
       it while typing «под» / «банка»; no рахунок-борг under «Рахунок списання» while «військові
@@ -119,3 +119,7 @@ the tree that holds it.
       розстрочка form closes the list and keeps the назва; the чек's issue day, a досягнення's
       condition, the Saldo «Імпорт уже виконано …» and the monobank link confirmation read in words. Record the verdict per scenario here, with an explicit line
       for "Typing keeps the matches in sight".
+      **Not run** — archived on the owner's request (2026-10-06) with the smoke explicitly recorded
+      as not run. "Typing keeps the matches in sight" is therefore unverified on a device. The merge
+      onto answer-queue (2db8683) also put a правило's «Джерело» on `Picker` and moved the чернетка
+      day label to the answer queue; a later smoke should cover both.

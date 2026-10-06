@@ -40,7 +40,8 @@ While access is granted it SHALL show the watched apps management.
 
 The section SHALL let the owner add a watch by choosing a known bank app by name or by naming
 an app package by hand, mapped to exactly one existing unarchived рахунок; archived рахунки
-SHALL NOT be offered. The watch SHALL be stored only after the capture layer accepts the
+SHALL NOT be offered, and neither SHALL a рахунок-борг — a bank's сповіщення never lands on a
+person. The watch SHALL be stored only after the capture layer accepts the
 resulting watched set; a refused or unavailable answer SHALL leave the stored watches and the
 list unchanged, with the answer shown. The monobank app SHALL never be offered among the known
 apps, and a hand-named monobank package SHALL be refused — mono is synced by its API, and a
@@ -110,6 +111,12 @@ before the form has ever been opened, and after the form has been opened and aba
 - **WHEN** the owner adds a watch while a рахунок is archived
 - **THEN** that рахунок is not among the offered рахунки, while an existing watch mapped to it
   stays listed
+
+#### Scenario: A watched bank app is not mapped to a person
+
+- **WHEN** the owner adds a watch while holding «Приват» (spending, UAH), «військові облігації»
+  (investment, UAH) and «Оля» (debt, UAH)
+- **THEN** «Приват» and «військові облігації» are offered and «Оля» is not
 
 ### Requirement: Removing a watch stops capture and keeps everything recorded
 
