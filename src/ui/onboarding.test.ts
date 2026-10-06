@@ -97,7 +97,8 @@ describe('the setup steps', () => {
 
   it('Scenario: A step that cannot be acted on offers nothing', () => {
     // Exactly one action, or none at all — and none is exactly the unavailable ones.
-    for (const access of ['granted', 'denied', 'unsupported'] as NotificationAccess[]) {
+    const answers: NotificationAccess[] = ['granted', 'denied', 'unsupported', 'not-listening'];
+    for (const access of answers) {
       for (const step of steps({ notificationAccess: access })) {
         expect(step.action === undefined).toBe(step.state === 'unavailable');
       }
@@ -151,9 +152,21 @@ describe('the notification permission step', () => {
     expect(notifications('granted').state).toBe('done');
   });
 
+  it('A permission granted to a capture layer that hears nothing does not read as done', () => {
+    // Nothing in `onboarding.ts` mentions this state: the step reads «granted or not», and the
+    // fourth answer falls on the correct side of that on purpose (design D2, D7). Invisible in a
+    // diff, so it is pinned here rather than trusted — the setup is not behind the owner while
+    // сповіщення are not being read, and the action that fixes it is still offered.
+    const step = notifications('not-listening');
+
+    expect(step.state).toBe('todo');
+    expect(step.action).toEqual({ kind: 'notification-settings', title: 'Налаштування доступу' });
+  });
+
   it('Says the reading stays on the phone, whatever the answer', () => {
     // The promise this permission has to make before it is asked for (vision §12).
-    for (const access of ['granted', 'denied', 'unsupported'] as NotificationAccess[]) {
+    const answers: NotificationAccess[] = ['granted', 'denied', 'unsupported', 'not-listening'];
+    for (const access of answers) {
       expect(notifications(access).hint).toContain('не залишає пристрій');
     }
   });

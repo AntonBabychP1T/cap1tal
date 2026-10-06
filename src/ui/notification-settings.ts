@@ -133,6 +133,24 @@ export function accessSection(access: NotificationAccess): AccessSection {
       manageable: false,
     };
   }
+  if (access === 'not-listening') {
+    // Switched on and hearing nothing — what an app update, a reinstall or «Зупинити примусово»
+    // leaves behind. The status says both halves, because either alone misleads: «надано» is true
+    // and useless, «не надано» would send the owner to switch on a switch that is already on.
+    // The way out is the one Android actually accepts, so it is named rather than implied.
+    return {
+      access,
+      explanation,
+      status:
+        'Доступ надано, але сповіщення не читаються. Вимкніть і знову ввімкніть доступ ' +
+        'у налаштуваннях телефона.',
+      grant: 'Налаштування доступу',
+      // The watched apps are untouched by this: the set is stored, the рахунки it maps onto are
+      // unchanged, and reading resumes the moment the listener is bound again. Hiding the list
+      // would hide the very thing the owner opened the section to check.
+      manageable: true,
+    };
+  }
   return {
     access,
     explanation,

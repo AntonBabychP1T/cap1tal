@@ -94,11 +94,43 @@ class CaptureListenerService : NotificationListenerService() {
   }
 
   override fun onDestroy() {
+    // A destroyed instance hears nothing, whatever it last recorded. `onListenerDisconnected` is
+    // documented as a notification that the listener was disconnected, not as a guarantee on every
+    // teardown, so an instance destroyed without it inside a surviving process would leave the
+    // flag saying "bound" while nothing is — the very lie this change exists to end, one layer
+    // down. The two mistakes are not symmetric: a stale `false` costs one rebind request and, at
+    // worst, one сповіщення that clears itself on the next collection, while a stale `true` is
+    // silence the owner never finds out about. So it is cleared here as well.
+    CaptureStore.setListening(false)
     if (devReceiverRegistered) {
       unregisterReceiver(devReceiver)
       devReceiverRegistered = false
     }
     super.onDestroy()
+  }
+
+  /**
+   * The system has bound this listener: from here on, notifications actually arrive.
+   *
+   * This is the only place that fact exists. `NotificationManagerCompat.getEnabledListenerPackages`
+   * answers from Android's *settings*, and being switched on there is not the same as being bound
+   * — an app update, a reinstall or a «Force stop» leaves the switch on and the service unbound,
+   * hearing nothing while the app reports «Доступ до сповіщень надано». Recording the binding is
+   * what lets the app tell the two apart and say so.
+   *
+   * A flag and nothing else: no notification is read, stored or logged here.
+   */
+  override fun onListenerConnected() {
+    super.onListenerConnected()
+    CaptureStore.setListening(true)
+    Log.d(TAG, "listener connected")
+  }
+
+  /** And let go of. Recorded before the super call, so nothing can observe a stale "bound". */
+  override fun onListenerDisconnected() {
+    CaptureStore.setListening(false)
+    Log.d(TAG, "listener disconnected")
+    super.onListenerDisconnected()
   }
 
   /**

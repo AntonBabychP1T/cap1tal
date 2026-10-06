@@ -245,8 +245,9 @@ export default function RootLayout() {
   // сповіщень» screen is another app, so returning from it is a foreground transition.
   //
   // Everything this does is `drainCaptures`, which `verify` proves against the in-memory capture
-  // port and a real database. Here there is only the trigger and the one condition: no access, no
-  // collection. Storage waits for the migrations, like every other read in this file.
+  // port and a real database. Here there is only the trigger and the one condition: nowhere to
+  // collect from, no collection. Storage waits for the migrations, like every other read in this
+  // file.
   //
   // One drain at a time: opening and a foreground event can land together, and two loops over one
   // collection would each acknowledge a prefix — safe for the money (the fingerprint leads every
@@ -266,7 +267,12 @@ export default function RootLayout() {
       // nothing on screen says a word about it either way (design D5, D5a).
       const access = await notificationAccess.state();
       const watched = notificationsRepo.watches().length > 0;
-      if (access !== 'granted') {
+      // Only the two answers with no queue behind them stop here. A listener switched on and
+      // unbound — «not-listening» — still has one: everything it heard before it fell silent is
+      // waiting on the device, and those are транзакції the owner cannot recover any other way
+      // once the bounded queue forgets them. So it drains, and `reportCollection` announces the
+      // silence afterwards, because the answer is still not «granted» (design D5).
+      if (access === 'denied' || access === 'unsupported') {
         await reportCollection({ access, watched, failed: false }, NOTIFY);
         return;
       }

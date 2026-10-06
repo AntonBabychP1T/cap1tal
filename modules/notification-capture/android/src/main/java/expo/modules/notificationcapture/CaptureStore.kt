@@ -47,6 +47,33 @@ internal object CaptureStore {
   private val lock = Any()
 
   /**
+   * Whether the system has this app's listener bound right now — the fact Android's own list of
+   * enabled listeners does not carry, and the one an update, a reinstall or a «Force stop» makes
+   * a liar of. `CaptureListenerService` sets it from `onListenerConnected` and clears it from
+   * `onListenerDisconnected`; nothing else writes it and it holds no notification content.
+   *
+   * Memory, and never a file — the opposite of every other fact in this object, on purpose. A
+   * binding keeps the process alive and dies with it, so a flag that lives in the process is a
+   * flag that cannot be stale: a process that was killed comes back saying "not bound" until the
+   * system says otherwise, which is exactly the truth. A flag on disk would outlive the process
+   * it describes and answer "bound" after a «Force stop» — reintroducing, one layer down, the
+   * precise lie this exists to end.
+   *
+   * `@Volatile` because the system's callbacks and the module's own calls are not guaranteed the
+   * same thread; a boolean needs no lock beyond that.
+   */
+  @Volatile
+  private var listening: Boolean = false
+
+  /** The service, connecting or disconnecting. The only writer. */
+  fun setListening(value: Boolean) {
+    listening = value
+  }
+
+  /** Whether the listener is bound in this process. False until the system has said otherwise. */
+  fun isListening(): Boolean = listening
+
+  /**
    * The lines the last collection handed over. An acknowledgement may forget these and nothing
    * else — never a blind count from the head of the file, which a bound eviction between the two
    * calls would turn into eating records that were never delivered. Held in memory on purpose: a

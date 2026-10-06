@@ -99,8 +99,32 @@ describe('the «Сповіщення банків» access state', () => {
     expect(revoked.manageable).toBe(false);
   });
 
+  it('Scenario: A switched-on but silent capture layer is reported and explained', async () => {
+    // Switched on and hearing nothing: what an app update, a reinstall or «Зупинити примусово»
+    // leaves behind, and what the app used to draw as «Доступ до сповіщень надано».
+    const section = accessSection(await inMemoryNotificationAccess('not-listening').state());
+
+    // It says сповіщення are not being read — not «надано», which is true and useless here.
+    expect(section.status).toContain('не читаються');
+    expect(section.status).not.toBe(accessSection('granted').status);
+    // And it says what actually restores it, because the offered screen only helps if the owner
+    // knows to switch the access off before switching it on again.
+    expect(section.status).toContain('Вимкніть і знову ввімкніть');
+    expect(section.grant).toBeDefined();
+    // The watched apps stay: the set is stored and unaffected, and taking the list away would
+    // hide what the owner opened the section to check.
+    expect(section.manageable).toBe(true);
+  });
+
+  it('is not the same answer as denied — the switch is already on', () => {
+    // Two different states that would otherwise both read as "go to the system screen": one asks
+    // the owner to switch it on, the other to switch it off and on. Nothing may collapse them.
+    expect(accessSection('not-listening').status).not.toBe(accessSection('denied').status);
+    expect(accessSection('not-listening').manageable).not.toBe(accessSection('denied').manageable);
+  });
+
   it('Every wording keeps the promise the permission raises', () => {
-    for (const access of ['granted', 'denied', 'unsupported'] as const) {
+    for (const access of ['granted', 'denied', 'unsupported', 'not-listening'] as const) {
       expect(accessSection(access).explanation).toContain('не залишає пристрій');
       expect(accessSection(access).explanation).toContain('чернетками');
     }
