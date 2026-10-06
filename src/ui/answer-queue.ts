@@ -6,6 +6,7 @@ import { inOrder } from '../observations/order';
 import { ledgerOf, type Ledger } from '../observations/window';
 import { isCompleted } from '../progress/summary';
 import { plural } from './labels';
+import { dayLabel } from './dates';
 import { monthInYearLabel, monthLabel, prevMonth } from './months';
 import { isMonth } from '../analysis/period';
 
@@ -169,7 +170,8 @@ export function answerQueue(input: AnswerQueueInput): AnswerQueue {
   const inScope = (date: IsoDate) => input.month === undefined || monthOf(date) === input.month;
   const ledger = ledgerOf(input.transactions, input.today);
 
-  const drafts = input.drafts.filter((d) => inScope(d.date));
+  // Newest дата first, as the other groups; storage's own order (newest drafted) breaks a tie.
+  const drafts = newestFirst(input.drafts.filter((d) => inScope(d.date)));
   const duplicates = duplicatesFor(ledger, input);
   const uncategorised = newestFirst(input.transactions.filter((t) => isUncategorisedQuestion(t) && inScope(t.date)));
   const unsourced = newestFirst(input.transactions.filter((t): t is Income => isUnsourced(t) && inScope(t.date)));
@@ -235,6 +237,20 @@ export function queueRow(queue: AnswerQueue): { readonly total: number; readonly
       .map((g) => KIND_WORDS[g.kind](g.entries.length))
       .join(' · '),
   };
+}
+
+/**
+ * The second line of a «Без категорії» or «Без джерела» entry: its рахунок, what it is when its
+ * title does not say, and its дата (answer-queue, "Every entry states its сума in its own currency").
+ * The feed's subtitle names a повернення by its type alone; an entry here names its рахунок always.
+ */
+export function queueSubtitle(
+  line: { readonly type: string; readonly accounts: string; readonly date: IsoDate; readonly category?: string; readonly source?: string },
+  now: Date,
+): string {
+  const labelled = line.category !== undefined || line.source !== undefined;
+  const kind = line.type === 'повернення' || !labelled ? ` · ${line.type}` : '';
+  return `${line.accounts}${kind} · ${dayLabel(line.date, now)}`;
 }
 
 /** How many entries a long group shows at first, and how many more each offer adds. */

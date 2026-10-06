@@ -7,7 +7,7 @@ import { Choices, Picker, RowAction } from '@/components/form';
 import { Appear, ListItem, Reflow, Tap } from '@/components/motion';
 import { ObservationsList } from '@/components/observations-list';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
-import { Card, Chevron, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
+import { Banner, Card, Chevron, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import { TransactionRow } from '@/components/transaction-row';
 import {
@@ -39,6 +39,7 @@ import {
   QUEUE_PAGE,
   answerMonthFromRoute,
   answerQueue,
+  queueSubtitle,
   visibleEntries,
   type QueueGroupKind,
 } from '@/ui/answer-queue';
@@ -58,7 +59,7 @@ import { monthLabel } from '@/ui/months';
 import { observationLines } from '@/ui/observations';
 import { assignSource, offersTransferMark, recategorise } from '@/ui/retype';
 import { PICKER_SIZE } from '@/ui/shortlist';
-import { accountsById, feedSubtitle, feedTitle, transactionLine } from '@/ui/transaction-line';
+import { accountsById, feedTitle, transactionLine } from '@/ui/transaction-line';
 
 import { Spacing } from '@/constants/theme';
 
@@ -192,7 +193,18 @@ export default function AnswersScreen() {
       ? undefined
       : resolveCategory(tiers, { description: t.description ?? '', mcc: 'mcc' in t ? t.mcc : undefined });
 
-  const ruleOffer = useRuleOffer(reportBug);
+  /** What the last accepted правило's розбір did, said where it was triggered; nothing if nothing. */
+  const [sweptMessage, setSweptMessage] = useState<string>();
+  const ruleOffer = useRuleOffer(
+    reportBug,
+    useCallback(
+      (said: string | undefined) => {
+        setSweptMessage(said);
+        reload();
+      },
+      [reload],
+    ),
+  );
 
   /** One pick: the same транзакція under the same id, now carrying the категорія; then the offer. */
   const categorise = useCallback(
@@ -309,7 +321,7 @@ export default function AnswersScreen() {
             marked
             title={line.transferEnds ?? feedTitle(line)}
             titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
-            subtitle={feedSubtitle(line, new Date())}
+            subtitle={queueSubtitle(line, new Date())}
             description={line.descriptionShown}
             amount={line.amount}
             amountTone={line.amountTone}
@@ -418,6 +430,12 @@ export default function AnswersScreen() {
             <Chevron />
           </Card>
         </Tap>
+      ) : null}
+
+      {sweptMessage ? (
+        <Appear>
+          <Banner>{sweptMessage}</Banner>
+        </Appear>
       ) : null}
 
       {queue.emptyMessage ? (

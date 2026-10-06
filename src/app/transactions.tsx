@@ -28,7 +28,7 @@ import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { usePagedList } from '@/hooks/use-paged-list';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { useRuleOffer } from '@/hooks/use-rule-offer';
+import { RULE_STORED_TITLE, useRuleOffer } from '@/hooks/use-rule-offer';
 import { expenseCategoryChoices, recentlyUsed, sourceChoices } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import { accountChoiceLabel } from '@/ui/labels';
@@ -282,7 +282,20 @@ export default function TransactionsScreen() {
    * категорії» narrowing the line is simply not returned any more and the rest keep their order.
    */
   /** The offer to remember today's tap as a правило — raised only after the категорія is stored. */
-  const ruleOffer = useRuleOffer(reportBug);
+  /**
+   * Once an accepted правило is stored, its розбір may have answered other lines on this screen:
+   * say what it did and re-read.
+   */
+  const ruleOffer = useRuleOffer(
+    reportBug,
+    useCallback(
+      (said: string | undefined) => {
+        if (said) Alert.alert(RULE_STORED_TITLE, said);
+        reload();
+      },
+      [reload],
+    ),
+  );
 
   const categorise = useCallback(
     (t: Transaction, picked: string) => {

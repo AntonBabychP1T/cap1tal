@@ -22,6 +22,7 @@ import {
   answerQueue,
   answersRoute,
   queueRow,
+  queueSubtitle,
   visibleEntries,
   type AnswerQueueInput,
 } from './answer-queue';
@@ -466,5 +467,42 @@ describe('every entry is answered where it stands', () => {
     expect(screen).toContain('onPress={() => router.push(`/transaction/${t.id}`)}');
     expect(screen).toContain('const sourceRows = useMemo(() => sourceChoices(stored.sources), [stored.sources]);');
     expect(screen).toMatch(/label="Джерело"\s+rows=\{sourceRows\}/);
+  });
+});
+
+describe('defects found on the emulator (answer-queue smoke, 2026-10-06)', () => {
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+
+  it('D1: «Чернетки» stand newest дата first, whatever order they were drafted in', () => {
+    // Storage hands them over newest drafted first: the one dated 2026-09-28 was drafted last.
+    const late = draft('2026-09-28', { id: 'd-late' });
+    const a = draft('2026-10-04', { id: 'd-a' });
+    const b = draft('2026-10-04', { id: 'd-b' });
+    const q = answerQueue(input({ drafts: [late, a, b] }));
+    expect(q.groups[0]?.entries.map((d) => (d as Draft).id)).toEqual(['d-a', 'd-b', 'd-late']);
+  });
+
+  it('D2/D3: accepting the offer says what the розбір did, and the screen re-reads', () => {
+    const hook = read('../hooks/use-rule-offer.ts');
+    const accept = hook.slice(hook.indexOf('const accept = useCallback'));
+    // The sentence `storeRule` returns is kept, not thrown away, and handed to the screen.
+    expect(accept).toContain('const said = await storeRule(rule, rulesRepo.save);');
+    expect(accept).toContain('if (onStored) onStored(said);');
+    // The queue re-reads after a stored правило — its розбір may have answered other entries.
+    const screen = read('../app/answers.tsx');
+    expect(screen).toMatch(/useRuleOffer\(\s*reportBug,\s*useCallback\(\s*\(said: string \| undefined\) => \{[\s\S]*?reload\(\);/);
+    // Головний and «Транзакції» say it in a dialog and re-read too; editing gets the hook's dialog.
+    for (const other of ['../app/(tabs)/index.tsx', '../app/transactions.tsx']) {
+      expect(read(other)).toContain('if (said) Alert.alert(RULE_STORED_TITLE, said);');
+    }
+    expect(hook).toContain('else if (said) Alert.alert(RULE_STORED_TITLE, said);');
+    expect(screen).toContain('setSweptMessage(said);');
+  });
+
+  it('D4: a «Без категорії» entry names its рахунок, a повернення too', () => {
+    const line = { type: 'повернення', accounts: 'гаманець', date: '2026-10-02' } as const;
+    expect(queueSubtitle(line, new Date('2026-10-06T12:00:00Z'))).toBe('гаманець · повернення · 2 жовтня');
+    const labelled = { type: 'витрата', accounts: 'гаманець', date: '2026-10-02', category: 'Без категорії' } as const;
+    expect(queueSubtitle(labelled, new Date('2026-10-06T12:00:00Z'))).toBe('гаманець · 2 жовтня');
   });
 });

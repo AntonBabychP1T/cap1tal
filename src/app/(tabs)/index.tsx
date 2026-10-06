@@ -54,7 +54,7 @@ import { useCurrentRates } from '@/hooks/use-current-rates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { syncOutcomeEvent } from '@/ui/haptics';
 import { syncEvent } from '@/ui/read-policy';
-import { useRuleOffer } from '@/hooks/use-rule-offer';
+import { RULE_STORED_TITLE, useRuleOffer } from '@/hooks/use-rule-offer';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
 import { expenseCategoryChoices, recentlyUsed, sourceChoices } from '@/ui/category-choices';
@@ -691,7 +691,20 @@ function MainScreen() {
   useCloseOnBack(sourcing !== undefined && sourceListOpen, closeSourceList);
 
   /** The offer to remember today's tap as a правило — raised only after the категорія is stored. */
-  const ruleOffer = useRuleOffer(reportBug);
+  /**
+   * Once an accepted правило is stored, its розбір may have answered other lines on this screen:
+   * say what it did and re-read.
+   */
+  const ruleOffer = useRuleOffer(
+    reportBug,
+    useCallback(
+      (said: string | undefined) => {
+        if (said) Alert.alert(RULE_STORED_TITLE, said);
+        reload();
+      },
+      [reload],
+    ),
+  );
 
   /** One tap from the стрічка: the same transaction under the same id, now carrying the pick. */
   const categorise = useCallback(

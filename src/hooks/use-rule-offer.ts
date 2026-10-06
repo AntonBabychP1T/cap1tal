@@ -34,7 +34,18 @@ import {
  * This lives in `src/hooks/` and not `src/ui/` because it holds React state and touches
  * `Alert`; the decisions it wraps are already pure and already under `verify`.
  */
-export function useRuleOffer(reportBug: (entryId: string) => void) {
+/** The title of the sentence a розбір leaves when the screen has no place of its own for it. */
+export const RULE_STORED_TITLE = 'Правило збережено';
+
+export function useRuleOffer(
+  reportBug: (entryId: string) => void,
+  /**
+   * Called once an accepted правило is stored, with what its розбір did in the owner's words —
+   * «2 доходи отримали джерело.» — or nothing when it moved nothing. The screen says it and re-reads:
+   * the розбір may have answered more than the one транзакція the offer came from.
+   */
+  onStored?: (said: string | undefined) => void,
+) {
   const [offer, setOffer] = useState<RuleOffer | undefined>();
   const haptics = useHaptics();
 
@@ -64,11 +75,15 @@ export function useRuleOffer(reportBug: (entryId: string) => void) {
           id: newId(),
           createdAt: new Date(),
         });
-        await storeRule(rule, rulesRepo.save);
+        const said = await storeRule(rule, rulesRepo.save);
         // The sheet's accept is its own owner action, after the store it followed: felt once the
         // правило is written (motion, "An outcome the owner caused is felt once").
         haptics.play('rule-accepted');
         setOffer(undefined);
+        // Said where it was triggered (categorisation-rules, "The owner is told how many moved"):
+        // by the screen when it has its own place for it, in a dialog otherwise.
+        if (onStored) onStored(said);
+        else if (said) Alert.alert(RULE_STORED_TITLE, said);
       } catch (error) {
         Alert.alert(
           ...failureAlert({
@@ -80,7 +95,7 @@ export function useRuleOffer(reportBug: (entryId: string) => void) {
         );
       }
     },
-    [haptics, offer, reportBug],
+    [haptics, offer, onStored, reportBug],
   );
 
   return { offer, raise, accept, decline };
