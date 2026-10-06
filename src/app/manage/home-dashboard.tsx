@@ -128,6 +128,7 @@ export default function HomeDashboardScreen() {
                 </ThemedText>
               </View>
               <ThemedSwitch
+                accessibilityLabel={row.switchLabel}
                 value={row.visible}
                 onValueChange={(visible) => toggle(row.id, visible)}
               />

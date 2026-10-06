@@ -7,8 +7,9 @@ import {
 } from '../domain/commitments';
 import { money } from '../domain/money';
 import type { IsoDate } from '../domain/transaction';
-import { PERIODICITY_LABELS, formatPlanMoney } from './commitments-screen';
-import { shortCalendarLabel, todayIso } from './dates';
+import { formatMoney } from './amount-input';
+import { PERIODICITY_LABELS } from './commitments-screen';
+import { calendarLabel, todayIso } from './dates';
 
 /**
  * One зобов'язання's screen, with none of its JSX (commitments-screen, "One зобов'язання shows its
@@ -30,13 +31,13 @@ export const DUE_VERB_LABELS: Readonly<Record<DueVerb, string>> = {
 
 export interface DueRow {
   readonly number: number;
-  /** «5 жовт.». */
+  /** «5 жовтня». */
   readonly date: string;
-  /** The scheduled сума: «300,00 ₴». */
+  /** The scheduled сума: «300,00 UAH». */
   readonly amount: string;
   /** «сплачено», «позначено сплаченим», «пропущено», «очікується», «списання не знайдено». */
   readonly state: string;
-  /** For a linked платіж, its списання: «списання 5 жовт. · 300,00 ₴». */
+  /** For a linked платіж, its списання: «списання 5 жовтня · 300,00 UAH». */
   readonly debit?: string;
   readonly verbs: readonly DueVerb[];
   /** Whether the row is a warning — списання не знайдено. */
@@ -52,7 +53,7 @@ export interface LinkedDebit {
 
 /** «Оновити суму»: what the bank charged last, against the сума. */
 export interface NewAmountOffer {
-  /** «Останнє списання — 349,00 ₴, а сума зобовʼязання — 299,00 ₴.» */
+  /** «Останнє списання — 349,00 UAH, а сума зобовʼязання — 299,00 UAH.» */
   readonly message: string;
   /** The сума choosing it sets, minor units. */
   readonly amount: number;
@@ -60,14 +61,14 @@ export interface NewAmountOffer {
 
 export interface CommitmentDetail {
   readonly name: string;
-  /** «299,00 ₴ щомісяця». */
+  /** «299,00 UAH щомісяця». */
   readonly amount: string;
   readonly account: string;
   readonly category?: string;
   /** «Текст в описі: netflix». */
   readonly marker?: string;
   readonly stopped: boolean;
-  /** «Припинено 2 жовт.», once stopped. */
+  /** «Припинено 2 жовтня», once stopped. */
   readonly stoppedOn?: string;
   /** Newest first. */
   readonly dues: readonly DueRow[];
@@ -130,7 +131,7 @@ export function newAmountOffer(
   if (debit === undefined || debit.amount === commitment.amount) {
     return undefined;
   }
-  const as = (amount: number) => formatPlanMoney(money(amount, commitment.currency));
+  const as = (amount: number) => formatMoney(money(amount, commitment.currency));
   return {
     message: `Останнє списання — ${as(debit.amount)}, а сума зобовʼязання — ${as(commitment.amount)}.`,
     amount: debit.amount,
@@ -148,7 +149,7 @@ export function commitmentDetail(input: {
 }): CommitmentDetail {
   const { commitment, now } = input;
   const dues = shownDues(commitment, input.facts, todayIso(now));
-  const as = (amount: number) => formatPlanMoney(money(amount, commitment.currency));
+  const as = (amount: number) => formatMoney(money(amount, commitment.currency));
   const offer = newAmountOffer(commitment, dues, input.debits);
   return {
     name: commitment.name,
@@ -159,15 +160,15 @@ export function commitmentDetail(input: {
     stopped: commitment.stoppedOn !== undefined,
     ...(commitment.stoppedOn === undefined
       ? {}
-      : { stoppedOn: `Припинено ${shortCalendarLabel(commitment.stoppedOn, now)}` }),
+      : { stoppedOn: `Припинено ${calendarLabel(commitment.stoppedOn, now)}` }),
     dues: [...dues].reverse().map((due) => {
       const debit = due.transactionId === undefined ? undefined : input.debits.get(due.transactionId);
       return {
         number: due.number,
-        date: shortCalendarLabel(due.due, now),
+        date: calendarLabel(due.due, now),
         amount: as(due.amount),
         state: stateOf(due),
-        ...(debit ? { debit: `списання ${shortCalendarLabel(debit.date, now)} · ${as(debit.amount)}` } : {}),
+        ...(debit ? { debit: `списання ${calendarLabel(debit.date, now)} · ${as(debit.amount)}` } : {}),
         verbs: verbsOf(due),
         missed: due.state === 'notFound',
       };
@@ -192,7 +193,7 @@ export function deleteCommitmentConfirmation(name: string): { readonly title: st
 /** A candidate «Обрати списання» lists. */
 export interface CommitmentChoiceRow {
   readonly id: string;
-  /** «12 жовт. · 320,00 ₴ · Укртелеком». */
+  /** «12 жовтня · 320,00 UAH · Укртелеком». */
   readonly label: string;
 }
 
@@ -203,7 +204,7 @@ export function commitmentChoiceRows(
 ): CommitmentChoiceRow[] {
   return choices.map((choice) => ({
     id: choice.id,
-    label: [shortCalendarLabel(choice.date, now), formatPlanMoney(money(choice.amount, currency)), choice.description]
+    label: [calendarLabel(choice.date, now), formatMoney(money(choice.amount, currency)), choice.description]
       .filter((part) => part !== undefined && part !== '')
       .join(' · '),
   }));

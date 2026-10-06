@@ -8,7 +8,13 @@ import type { Category, Source } from '../domain/category';
 import { merchant, merchantIndex } from '../domain/merchants';
 import { account } from '../domain/account';
 import { money } from '../domain/money';
-import { expenseByDefault, UNCATEGORISED_CATEGORY_ID, type Transaction } from '../domain/transaction';
+import {
+  expenseByDefault,
+  UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
+  type Income,
+  type Transaction,
+} from '../domain/transaction';
 import { accountsRepo } from '../db/accounts-repo';
 import { storageStamp } from '../db/stamp';
 import {
@@ -29,12 +35,18 @@ import {
   searchCriteria,
   searchLineTitle,
   showMore,
-  uncategorisedFromRoute,
+  narrowedMonthRoute,
+  onlyFromRoute,
+  onlyNarrowing,
+  ONLY_CHOICES,
+  ONLY_UNCATEGORISED,
+  ONLY_UNSOURCED,
   accountFilterOrder,
   firstPage,
   nextPage,
   rereadPages,
   searchDelayMs,
+  SEARCH_HINT,
   SEARCH_PAUSE_MS,
   type PagePorts,
 } from './transaction-search';
@@ -250,30 +262,116 @@ describe('«Без категорії» a route may ask for', () => {
   const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
 
   it('Scenario: Opened narrowed, and widened by hand', () => {
-    expect(uncategorisedFromRoute('uncategorised')).toBe(true);
+    expect(onlyFromRoute('uncategorised')).toBe(ONLY_UNCATEGORISED);
     // The other half lives in the screen: seeded state, not a prop, and the same setter the chip
     // and «Показати все» call — so the route's narrowing is a starting point like any other.
-    expect(screen).toMatch(
-      /const \[uncategorisedOnly, setUncategorisedOnly\] = useState\(\s*uncategorisedFromRoute\(/,
-    );
-    expect(screen).toMatch(/ask\(\(\) => setUncategorisedOnly\(picked === ONLY_UNCATEGORISED\)\)/);
-    expect(screen).toContain('setUncategorisedOnly(false);');
+    expect(screen).toMatch(/const \[only, setOnly\] = useState\(\s*onlyFromRoute\(/);
+    expect(screen).toMatch(/ask\(\(\) => setOnly\(onlyFromRoute\(picked\)\)\)/);
+    expect(screen).toContain('setOnly(undefined);');
   });
 
   it('Scenario: Anything else asked for narrows nothing', () => {
-    expect(uncategorisedFromRoute('продукти')).toBe(false);
-    expect(uncategorisedFromRoute('')).toBe(false);
-    expect(uncategorisedFromRoute(undefined)).toBe(false);
+    expect(onlyFromRoute('продукти')).toBeUndefined();
+    expect(onlyFromRoute('')).toBeUndefined();
+    expect(onlyFromRoute(undefined)).toBeUndefined();
   });
 
   it('The narrowing reaches storage and counts as narrowed', () => {
-    expect(screen).toMatch(/uncategorisedOnly \? \{ uncategorised: true \} : \{\}/);
-    expect(screen).toMatch(/const narrowed =[^;]*uncategorisedOnly/);
+    expect(screen).toContain('...onlyNarrowing(only),');
+    expect(screen).toMatch(/const narrowed =[^;]*only !== undefined/);
+    // One row holds both «only …» narrowings beside «Всі», so choosing one takes the other off.
+    expect(screen).toContain("choices={[{ value: ANY, label: 'Всі' }, ...ONLY_CHOICES]}");
+    expect(screen).toContain('selected={only ?? ANY}');
   });
 
   it('Scenario: Nothing left uncategorised says so', () => {
     // An empty list under the narrowing is a narrowing that matched nothing, not an empty history.
     expect(emptyMessage({ shown: 0, narrowed: true })).toContain('Нічого не знайдено');
+  });
+});
+
+describe('«Без джерела», beside «Без категорії»', () => {
+  let storage: TestStorage;
+  const page = { limit: 50, offset: 0 };
+
+  const kasian: Income = {
+    type: 'income',
+    id: 'i-kasian',
+    date: '2026-09-16',
+    accountId: 'card',
+    amount: money(500000, 'UAH'),
+    sourceId: UNSOURCED_SOURCE_ID,
+    description: "Від: Міхаіл Кас'ян",
+  };
+  const august: Income = { ...kasian, id: 'i-august', date: '2026-08-20', description: 'Від: Олена' };
+  const salary: Income = { ...kasian, id: 'i-salary', sourceId: 'salary', description: 'ЗП' };
+  const waiting = expenseByDefault({
+    id: 'e-waiting',
+    date: '2026-09-14',
+    accountId: 'card',
+    amount: money(7000, 'UAH'),
+  });
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, {
+      categories: [UNCATEGORISED_CATEGORY_ID],
+      sources: ['salary', UNSOURCED_SOURCE_ID],
+    });
+    accountsRepo(storage.db).save(
+      account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' }),
+    );
+    for (const t of [kasian, august, salary, waiting]) {
+      transactionsRepo(storage.db).save(t, new Date('2026-09-20T09:00:00.000Z'));
+    }
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  const shown = (only: ReturnType<typeof onlyFromRoute>, month?: string) =>
+    transactionsRepo(storage.db)
+      .search({ ...page, ...(month ? { month } : {}), ...onlyNarrowing(only) })
+      .map((t) => t.id);
+
+  it('Scenario: Only the unsourced доходи are shown', () => {
+    expect(ONLY_UNSOURCED).toBe('unsourced');
+    expect(shown(onlyFromRoute(ONLY_UNSOURCED))).toEqual(['i-kasian', 'i-august']);
+  });
+
+  it('Scenario: «Без джерела» and «Без категорії» take turns', () => {
+    // One narrowing in force at a time: choosing «Без джерела» is the whole new value, so
+    // «Без категорії» cannot stay on beside it.
+    const before = onlyFromRoute(ONLY_UNCATEGORISED);
+    expect(onlyNarrowing(before)).toEqual({ uncategorised: true });
+    expect(shown(before)).toEqual(['e-waiting']);
+
+    const after = onlyFromRoute(ONLY_UNSOURCED);
+    expect(onlyNarrowing(after)).toEqual({ unsourced: true });
+    expect(shown(after)).toEqual(['i-kasian', 'i-august']);
+    // The screen draws both as choices of one row, beside «Всі».
+    expect(ONLY_CHOICES).toEqual([
+      { value: ONLY_UNCATEGORISED, label: 'Без категорії' },
+      { value: ONLY_UNSOURCED, label: 'Без джерела' },
+    ]);
+  });
+
+  it("Scenario: Opened narrowed to one month's unsourced доходи", () => {
+    const only = onlyFromRoute('unsourced');
+    const month = monthFromRoute('2026-09');
+
+    // Both read as in force, and the list is their intersection.
+    expect(only).toBe(ONLY_UNSOURCED);
+    expect(month).toBe('2026-09');
+    expect(shown(only, month)).toEqual(['i-kasian']);
+  });
+
+  it('Anything else asked for narrows nothing', () => {
+    for (const asked of ['продукти', '', 'all', undefined]) {
+      expect(onlyFromRoute(asked)).toBeUndefined();
+      expect(onlyNarrowing(onlyFromRoute(asked))).toEqual({});
+    }
   });
 });
 
@@ -317,11 +415,11 @@ describe('searchLineTitle', () => {
 
   it('The screen titles its lines through it', () => {
     const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
-    expect(screen).toContain('searchLineTitle(line, uncategorisedOnly)');
+    expect(screen).toContain('searchLineTitle(line, only === ONLY_UNCATEGORISED)');
     // The опис line is dropped only when the narrowing made it the title — never with it off, where
     // a line reads as the стрічка reads even if its опис happens to equal its категорія.
     expect(screen).toContain(
-      'line.descriptionShown && !(uncategorisedOnly && title === line.descriptionShown)',
+      'line.descriptionShown && !(only === ONLY_UNCATEGORISED && title === line.descriptionShown)',
     );
   });
 
@@ -397,6 +495,43 @@ describe('«Транзакції» and the продавці', () => {
       expect(call, path).toMatch(/merchants/);
       expect(screen, path).toContain('line.descriptionShown');
     }
+  });
+});
+
+describe('giving a дохід its джерело from «Транзакції»', () => {
+  const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+
+  it('Scenario: The same mark in «Транзакції»', () => {
+    // Beside the «Без категорії» one, the same flow Головний has: marked, a picker in place behind
+    // «Обрати джерело», shortlisted from the latest доходи's джерела, stored on the same id.
+    expect(screen).toContain('marked={line.uncategorised || line.unsourced}');
+    const mark = screen.slice(screen.indexOf('{line.unsourced ? ('));
+    const markBlock = mark.slice(0, mark.indexOf(') : null}'));
+    expect(markBlock).toContain("sourcing === line.id ? 'Згорнути' : 'Обрати джерело'");
+    expect(markBlock).not.toContain('router.push');
+    expect(markBlock).not.toContain('Обрати категорію');
+
+    const picker = screen.slice(screen.indexOf('{line.unsourced && sourcing === line.id ? ('));
+    const pickerBlock = picker.slice(0, picker.indexOf(') : null}'));
+    expect(pickerBlock).toContain('<Picker');
+    expect(pickerBlock).toContain('rows={sourceRows}');
+    expect(pickerBlock).toContain('recentIds={recent.sources}');
+    expect(pickerBlock).toContain('noun="sources"');
+    expect(pickerBlock).toContain('onSelect={(picked: string) => giveSource(t, picked)}');
+    expect(pickerBlock).not.toContain('router.push');
+    expect(screen).toContain('const sourceRows = useMemo(() => sourceChoices(stored.sources), [stored.sources]);');
+
+    // Stored, then every page re-read: under «Без джерела» the line is simply not returned any
+    // more — the mark is gone with the pick — and editing never opened.
+    const give = screen.slice(screen.indexOf('const giveSource = useCallback('));
+    const giveBody = give.slice(0, give.indexOf('],'));
+    expect(giveBody).toContain('transactionsRepo.save(assignSource(t, picked), new Date())');
+    expect(giveBody).toContain('setSourcing(undefined)');
+    expect(giveBody).toContain('reload();');
+    expect(giveBody).not.toContain('router.push');
+    expect(giveBody).not.toContain('ruleOffer.raise(');
+    // The line's own tap still opens its editing.
+    expect(screen).toContain('onPress={() => router.push(`/transaction/${line.id}`)}');
   });
 });
 
@@ -611,7 +746,7 @@ describe('the pages «Транзакції» shows', () => {
     const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
     // The продавець narrowing is part of the question too: changing it starts its own first page.
     expect(screen).toMatch(
-      /const question = JSON\.stringify\(\{\s*criteria: criteria \?\? null,\s*accountId,\s*month,\s*uncategorisedOnly,\s*merchantId,\s*\}\);/,
+      /const question = JSON\.stringify\(\{\s*criteria: criteria \?\? null,\s*accountId,\s*month,\s*only,\s*merchantId,\s*\}\);/,
     );
     expect(screen).toContain('usePagedList(question, pagePorts)');
     const hook = readFileSync(new URL('../hooks/use-paged-list.ts', import.meta.url), 'utf8');
@@ -666,5 +801,29 @@ describe('the pages «Транзакції» shows', () => {
       background.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the search field’s hint', () => {
+  it('Scenario: The hint fits', () => {
+    // On a 360 dp phone the field's text box is about 260 dp wide (the screen's and the card's
+    // padding, the glyph, the «×»), and a 17 sp hint averages near 9 dp a letter: 28 letters is
+    // the bound. «опис, продавець, категорія або сума» was 35 and was drawn cut off (QA 2026-10).
+    expect(SEARCH_HINT).toBe('опис, продавець або сума');
+    expect(SEARCH_HINT.length).toBeLessThanOrEqual(28);
+    const screen = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
+    expect(screen).toContain('placeholder={SEARCH_HINT}');
+    expect(screen).not.toContain('категорія або сума');
+  });
+});
+
+describe('narrowedMonthRoute', () => {
+  it('opens «Транзакції» on the місяць, narrowed only when a narrowing is given, and reads back', () => {
+    expect(narrowedMonthRoute('2026-09', ONLY_UNCATEGORISED)).toBe('/transactions?month=2026-09&only=uncategorised');
+    expect(narrowedMonthRoute('2026-09', ONLY_UNSOURCED)).toBe('/transactions?month=2026-09&only=unsourced');
+    expect(narrowedMonthRoute('2026-09')).toBe('/transactions?month=2026-09');
+    const query = new URLSearchParams(narrowedMonthRoute('2026-09', ONLY_UNSOURCED).split('?')[1]);
+    expect(monthFromRoute(query.get('month') ?? undefined)).toBe('2026-09');
+    expect(onlyFromRoute(query.get('only') ?? undefined)).toBe(ONLY_UNSOURCED);
   });
 });

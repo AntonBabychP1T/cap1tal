@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { foldCase } from './fold';
+import { capitalised, foldCase } from './fold';
 
 describe('foldCase', () => {
   it('Scenario: The fold agrees with Ukrainian casing on every character', () => {
@@ -30,5 +30,14 @@ describe('foldCase', () => {
     // `foldCase` takes no locale, so this holds on every phone.
     expect(foldCase('BILLA')).toBe('billa');
     expect(foldCase('BILLA').includes(foldCase('billa'))).toBe(true);
+  });
+});
+
+describe('capitalised', () => {
+  it('raises the first character only and leaves the rest as written', () => {
+    expect(capitalised('у вересні нічого незвичного')).toBe('У вересні нічого незвичного');
+    expect(capitalised('їжа')).toBe('Їжа');
+    expect(capitalised('вересень ATB')).toBe('Вересень ATB');
+    expect(capitalised('')).toBe('');
   });
 });

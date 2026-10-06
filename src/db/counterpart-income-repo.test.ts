@@ -230,6 +230,35 @@ describe('counterpart-income-repo', () => {
       expect(txs.get('i2')).toEqual(interest);
     });
 
+    it('Scenario: Replacing a transaction keeps its place — an edited опис, through persistRetyped and the plain save', () => {
+      // Three витрати of one day, stored a minute apart, as an import leaves them: the third
+      // stored is listed first.
+      const of = (id: string, description: string) =>
+        expenseByDefault({
+          id,
+          date: '2026-09-12',
+          accountId: 'platinum',
+          amount: money(10000, 'UAH'),
+          categoryId: UNCATEGORISED_CATEGORY_ID,
+          description,
+        });
+      txs.save(of('e1', 'АТБ'), new Date('2026-09-12T09:00:00.000Z'));
+      txs.save(of('e2', 'Сільпо'), new Date('2026-09-12T09:01:00.000Z'));
+      txs.save(of('e3', 'Новус'), new Date('2026-09-12T09:02:00.000Z'));
+      const order = () => txs.listLatest(10).map((t) => t.id);
+      expect(order()).toEqual(['e3', 'e2', 'e1']);
+
+      // The edit screen's write: `persistRetyped`, an hour later, with the опис corrected.
+      persistRetyped(storage.db, [{ transaction: of('e1', 'АТБ-Маркет'), needsPairing: false }], new Date('2026-09-12T10:00:00.000Z'));
+      expect(order()).toEqual(['e3', 'e2', 'e1']);
+      expect(txs.get('e1')).toMatchObject({ description: 'АТБ-Маркет' });
+
+      // The plain save under the same id, later still.
+      txs.save(of('e2', 'Сільпо на Хрещатику'), new Date('2026-09-12T11:00:00.000Z'));
+      expect(order()).toEqual(['e3', 'e2', 'e1']);
+      expect(txs.get('e2')).toMatchObject({ description: 'Сільпо на Хрещатику' });
+    });
+
     it('a plain write with needsPairing: false never calls the pairing step', () => {
       txs.save(unsourcedIncome({ id: 'i1', amount: 616, date: '2026-09-12' }), storedAt);
 

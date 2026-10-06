@@ -1,7 +1,12 @@
 import { computeBalance, reconcile, type Account } from '../domain/account';
 import type { Money } from '../domain/money';
 import type { Correction, IsoDate, Transaction } from '../domain/transaction';
-import { formatMoney, formatSignedMoney, parseActualBalance } from './amount-input';
+import {
+  formatMinorUnits,
+  formatMoney,
+  formatSignedMoney,
+  parseActualBalance,
+} from './amount-input';
 
 /**
  * Рухи рахунку — what a рахунок's own screen says: its назва, its розрахунковий баланс, the latest
@@ -22,6 +27,12 @@ export interface AccountMovements {
   readonly computed: Money;
   /** The latest known баланс банку, in the same currency; absent unless a link feeds one. */
   readonly bankBalance?: string;
+  /**
+   * «Як у банку: …», the chip under «Звірити»'s field: the same баланс банку, offered as the
+   * фактичний залишок so one tap puts it in the field. `fill` is the field's own text for it,
+   * ungrouped so it reads back through `parseActualBalance` unchanged. Absent with `bankBalance`.
+   */
+  readonly bankBalanceOffer?: { readonly label: string; readonly fill: string };
   /** Everything touching the рахунок — a переказ on either leg included — newest first. */
   readonly transactions: readonly Transaction[];
   /** What to say instead of an empty list, or `null` when there is history to show. */
@@ -59,7 +70,15 @@ export function accountMovements(input: {
     name: input.account.name,
     balance: formatMoney(computed),
     computed,
-    ...(bank ? { bankBalance: formatMoney(bank) } : {}),
+    ...(bank
+      ? {
+          bankBalance: formatMoney(bank),
+          bankBalanceOffer: {
+            label: `Як у банку: ${formatMoney(bank)}`,
+            fill: formatMinorUnits(bank.amount),
+          },
+        }
+      : {}),
     transactions: ordered,
     emptyMessage: ordered.length > 0 ? null : 'На цьому рахунку ще нічого не записано.',
   };
@@ -100,6 +119,14 @@ export type ReconcileAnswer =
       readonly confirmation: string;
     }
   | { readonly kind: 'agree'; readonly message: string };
+
+/**
+ * Whether «Звірити» holds a фактичний залишок the owner typed — it opens empty, so anything in the
+ * field is theirs, and «назад» asks «Відкинути зміни?» before dropping it (app-shell).
+ */
+export function reconcileHoldsEdits(actual: string): boolean {
+  return actual !== '';
+}
 
 /**
  * Звірити any рахунок against what the owner counted. The typed залишок is parsed in the рахунок's

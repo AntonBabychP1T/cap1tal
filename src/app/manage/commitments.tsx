@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field } from '@/components/form';
+import { Action, Choices, DateField, Field, Picker } from '@/components/form';
 import { Tap } from '@/components/motion';
 import { Card, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
@@ -10,6 +10,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   commitments as commitmentsRepo,
+  transactions as transactionsRepo,
 } from '@/db/repos';
 import type { CommitmentField } from '@/domain/commitments';
 import { INSTALLMENT_UPKEEP_PORTS, settleInstallmentsOnFocus } from '@/hooks/installment-ports';
@@ -21,7 +22,8 @@ import {
   MARKER_HINT,
   PERIODICITY_CHOICES,
   commitmentAccountChoices,
-  commitmentCategoryChoices,
+  commitmentAccountRows,
+  commitmentCategoryRows,
   commitmentDraftOf,
   commitmentDraftProblems,
   commitmentFromDraft,
@@ -31,10 +33,13 @@ import {
   type CommitmentDraft,
 } from '@/ui/commitment-form';
 import { NEW_COMMITMENT, STOPPED_COMMITMENTS, commitmentList, type CommitmentRow } from '@/ui/commitments-screen';
+import { recentlyUsed } from '@/ui/category-choices';
 import { todayIso } from '@/ui/dates';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
+import { sameFields } from '@/ui/same-fields';
 import { settleAndReassertQuietly } from '@/ui/installment-upkeep';
+import { PICKER_SIZE } from '@/ui/shortlist';
 
 import { Spacing } from '@/constants/theme';
 
@@ -47,8 +52,20 @@ import { Spacing } from '@/constants/theme';
  * the form on that зобов'язання.
  */
 
+/** How far back the pickers look for what the owner reached for last — the entry form's window. */
+const RECENT_WINDOW = 50;
+
+/** Which picker has its full list open, if any — the one thing «назад» closes before the form. */
+type OpenPicker = 'debitAccount' | 'category';
+
 /** An open form: a new зобов'язання, or the one being edited. */
-type Editor = { readonly id?: string; readonly draft: CommitmentDraft; readonly tried: boolean };
+type Editor = {
+  readonly id?: string;
+  readonly draft: CommitmentDraft;
+  /** What the form opened on — «назад» asks «Відкинути зміни?» only once the draft differs. */
+  readonly opened: CommitmentDraft;
+  readonly tried: boolean;
+};
 
 export default function CommitmentsScreen() {
   const router = useRouter();
@@ -70,6 +87,8 @@ export default function CommitmentsScreen() {
         // Every рахунок and категорія: the pickers filter, a stored one keeps its name.
         accounts: accountsRepo.list(),
         categories: categoriesRepo.list(),
+        // What the owner reached for last, read off the latest транзакції, as the entry form does.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
       };
     }, []),
   );
@@ -80,11 +99,25 @@ export default function CommitmentsScreen() {
   );
 
   const [editor, setEditor] = useState<Editor>();
+  // Which picker has its full list open: «назад» closes it first, and asks nothing. Every opening
+  // of the form starts with both lists folded.
+  const [openPicker, setOpenPicker] = useState<OpenPicker>();
+  const closePicker = useCallback(() => setOpenPicker(undefined), []);
+  const opening = (picker: OpenPicker) => (isOpen: boolean) => setOpenPicker(isOpen ? picker : undefined);
   const closeForm = useCallback(() => setEditor(undefined), []);
-  // WHILE the form is open the phone's back gesture closes it, storing nothing.
-  useCloseOnBack(editor !== undefined, closeForm);
+  // WHILE the form is open the phone's back gesture closes it, storing nothing — after «Відкинути
+  // зміни?» when the form holds edits. Only while no picker is open, so an open list closes first
+  // whichever subscription React Native asks first.
+  const pickerClosed = openPicker === undefined;
+  const dirty = editor !== undefined && !sameFields(editor.draft, editor.opened);
+  useCloseOnBack(editor !== undefined && pickerClosed, closeForm, pickerClosed && dirty);
+  useCloseOnBack(!pickerClosed, closePicker);
 
   const debitAccounts = useMemo(() => commitmentAccountChoices(stored.accounts), [stored.accounts]);
+  // The pickers: five — the last reached for, topped up by name — and «Всі … (N)» with a search.
+  const accountRows = useMemo(() => commitmentAccountRows(stored.accounts), [stored.accounts]);
+  const categoryRows = useMemo(() => commitmentCategoryRows(stored.categories), [stored.categories]);
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE), [stored.latest]);
 
   // «Редагувати» on one зобов'язання lands here with its id: the form opens on it, once — on the
   // first render whose read holds that зобов'язання, not merely the first render.
@@ -92,11 +125,15 @@ export default function CommitmentsScreen() {
   const toEdit = edit && edit !== openedEdit ? stored.commitments.find((c) => c.id === edit) : undefined;
   if (toEdit) {
     setOpenedEdit(toEdit.id);
-    setEditor({ id: toEdit.id, draft: commitmentDraftOf(toEdit), tried: false });
+    setOpenPicker(undefined);
+    const draft = commitmentDraftOf(toEdit);
+    setEditor({ id: toEdit.id, draft, opened: draft, tried: false });
   }
 
   const startNew = useCallback(() => {
-    setEditor({ draft: newCommitmentDraft(todayIso(new Date()), debitAccounts), tried: false });
+    const draft = newCommitmentDraft(todayIso(new Date()), debitAccounts);
+    setOpenPicker(undefined);
+    setEditor({ draft, opened: draft, tried: false });
   }, [debitAccounts]);
 
   const change = useCallback(
@@ -143,14 +180,6 @@ export default function CommitmentsScreen() {
     void settleAndReassertQuietly(INSTALLMENT_UPKEEP_PORTS).then(reload);
   }, [context, editor, reload, reportBug]);
 
-  const categoryChoices = useMemo(
-    () => [
-      { value: '', label: 'Без категорії' },
-      ...commitmentCategoryChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
-    ],
-    [stored.categories],
-  );
-
   const open = (row: CommitmentRow) =>
     router.push({ pathname: '/commitment/[id]', params: { id: row.id } });
 
@@ -173,12 +202,15 @@ export default function CommitmentsScreen() {
             placeholder="напр. Netflix"
             hint={problemOf('name')}
           />
-          <Choices
+          <Picker
             label={COMMITMENT_FIELD_LABELS.debitAccount}
-            choices={debitAccounts.map((a) => ({ value: a.id, label: a.name }))}
+            rows={accountRows}
+            recentIds={recent.accounts}
             selected={editor.draft.debitAccountId || undefined}
             onSelect={(debitAccountId) => change({ debitAccountId })}
-            scroll
+            noun="accounts"
+            expanded={openPicker === 'debitAccount'}
+            onExpandedChange={opening('debitAccount')}
           />
           {problemOf('debitAccount') ? (
             <ThemedText type="small" themeColor="textDanger">
@@ -199,20 +231,22 @@ export default function CommitmentsScreen() {
             selected={editor.draft.periodicity}
             onSelect={(periodicity) => change({ periodicity })}
           />
-          <Field
+          <DateField
             label={COMMITMENT_FIELD_LABELS.firstDue}
             value={editor.draft.firstDue}
-            onChangeText={(firstDue) => change({ firstDue })}
-            autoCapitalize="none"
-            placeholder="РРРР-ММ-ДД"
+            onChange={(firstDue) => change({ firstDue })}
+            now={new Date()}
             hint={problemOf('firstDue') ?? FIRST_DUE_HINT}
           />
-          <Choices
+          <Picker
             label={`${COMMITMENT_FIELD_LABELS.category} (необовʼязково)`}
-            choices={categoryChoices}
+            rows={categoryRows}
+            recentIds={recent.categories}
             selected={editor.draft.categoryId}
             onSelect={(categoryId) => change({ categoryId })}
-            scroll
+            noun="categories"
+            expanded={openPicker === 'category'}
+            onExpandedChange={opening('category')}
           />
           {problemOf('category') ? (
             <ThemedText type="small" themeColor="textDanger">

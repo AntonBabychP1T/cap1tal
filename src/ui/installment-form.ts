@@ -1,3 +1,4 @@
+import { capitalised } from '../domain/fold';
 import type { Account } from '../domain/account';
 import type { Category } from '../domain/category';
 import {
@@ -13,6 +14,8 @@ import { Refusal, isRefusal } from '../domain/refusal';
 import type { IsoDate } from '../domain/transaction';
 import { formatMinorUnits, parseAmount } from './amount-input';
 import { parseTypedDate } from './dates';
+import { byName } from './labels';
+import { sameFields } from './same-fields';
 
 /**
  * The create/edit form of a розстрочка, with none of its JSX (installments-screen, "The form fills
@@ -68,6 +71,16 @@ export function newInstallmentDraft(today: IsoDate, debitAccounts: readonly Acco
   };
 }
 
+/**
+ * Whether the form still holds what it opened on, for «Відкинути зміни?» (app-shell). The two
+ * "typed by hand" flags are the form's bookkeeping, not something the owner sees: a платіж typed
+ * and erased again leaves the flag set and every field as it was, which is no change.
+ */
+export function sameInstallmentFields(current: InstallmentDraft, opened: InstallmentDraft): boolean {
+  const flagsAside = { partTyped: false, paidBeforeTyped: false };
+  return sameFields({ ...current, ...flagsAside }, { ...opened, ...flagsAside });
+}
+
 /** The form opened on a stored розстрочка: every value is the owner's already. */
 export function installmentDraftOf(installment: Installment): InstallmentDraft {
   return {
@@ -84,14 +97,14 @@ export function installmentDraftOf(installment: Installment): InstallmentDraft {
   };
 }
 
-/** The рахунки a розстрочка can be debited from: unarchived and in гривнях. */
+/** The рахунки a розстрочка can be debited from: unarchived and in гривнях, by name. */
 export function debitAccountChoices(accounts: readonly Account[]): Account[] {
-  return accounts.filter((a) => !a.archived && a.currency === INSTALLMENT_CURRENCY);
+  return accounts.filter((a) => !a.archived && a.currency === INSTALLMENT_CURRENCY).sort(byName);
 }
 
-/** The категорії offered: unarchived ones. */
+/** The категорії offered: unarchived ones, by name. */
 export function installmentCategoryChoices(categories: readonly Category[]): Category[] {
-  return categories.filter((c) => !c.archived);
+  return categories.filter((c) => !c.archived).sort(byName);
 }
 
 function amountOf(typed: string): number | undefined {
@@ -201,10 +214,6 @@ function parsedAmount(
         : 'Сума завелика.';
     return 0;
   }
-}
-
-function capitalised(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /**

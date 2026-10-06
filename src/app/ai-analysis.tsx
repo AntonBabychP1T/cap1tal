@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, ScrollView, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field, ThemedSwitch } from '@/components/form';
+import { Action, Choices, MonthStepper, ThemedSwitch } from '@/components/form';
 import { Banner, Card, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -104,7 +104,8 @@ export default function AiAnalysisScreen() {
 
   // The day the пакет is built for, read once on the screen and passed down — nothing below reads
   // a clock, which is what lets the whole model be tested against a fixed date.
-  const today = useMemo(() => todayIso(new Date()), []);
+  const now = useMemo(() => new Date(), []);
+  const today = useMemo(() => todayIso(now), [now]);
   // Opened from a month's підсумок, `?month=2026-09` presets that month alone as the period; every
   // other choice is the default, and a malformed month leaves the default period (design D9).
   const { month: givenMonth } = useLocalSearchParams<{ month?: string }>();
@@ -187,22 +188,10 @@ export default function AiAnalysisScreen() {
         {choices.period === 'custom' ? (
           <View style={styles.range}>
             <View style={styles.rangeField}>
-              <Field
-                label="Від"
-                value={choices.from}
-                onChangeText={(from) => change({ from })}
-                placeholder="2026-01"
-                autoCapitalize="none"
-              />
+              <MonthStepper label="Від" value={choices.from} onChange={(from) => change({ from })} now={now} />
             </View>
             <View style={styles.rangeField}>
-              <Field
-                label="До"
-                value={choices.to}
-                onChangeText={(to) => change({ to })}
-                placeholder="2026-06"
-                autoCapitalize="none"
-              />
+              <MonthStepper label="До" value={choices.to} onChange={(to) => change({ to })} now={now} />
             </View>
           </View>
         ) : null}
@@ -221,6 +210,7 @@ export default function AiAnalysisScreen() {
             </ThemedText>
           </View>
           <ThemedSwitch
+            accessibilityLabel="Продавці"
             value={choices.descriptions}
             onValueChange={(descriptions) => change({ descriptions })}
           />
@@ -233,6 +223,7 @@ export default function AiAnalysisScreen() {
             </ThemedText>
           </View>
           <ThemedSwitch
+            accessibilityLabel="Окремі транзакції"
             value={choices.transactions}
             onValueChange={(transactions) => change({ transactions })}
           />
@@ -325,7 +316,8 @@ const styles = StyleSheet.create({
   card: { gap: Spacing.three },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   rowText: { flex: 1, gap: Spacing.half },
-  range: { flexDirection: 'row', gap: Spacing.three },
+  // One end under the other: a місяць in words between two steps does not fit half a phone's width.
+  range: { gap: Spacing.three },
   rangeField: { flex: 1 },
   // Tall enough to read a section of the файл in, short enough that the actions stay reachable.
   file: { maxHeight: 320 },

@@ -1,5 +1,5 @@
 import type { Account } from './account';
-import { foldCase } from './fold';
+import { foldCase, occursAtWordStart } from './fold';
 import { proposeMerchant, type MerchantIndex, type Recognition } from './merchants';
 import { Refusal } from './refusal';
 import { TEMPLATE_GROUPS } from './rule-template';
@@ -26,8 +26,8 @@ export type RuleTarget =
 export interface Rule {
   readonly id: string;
   /**
-   * A substring of the merchant description; absent when the rule matches on MCC alone or names a
-   * продавець instead. A rule never carries both this and `merchantId`.
+   * A pattern of the merchant description, matched as `match` says; absent when the rule matches on
+   * MCC alone or names a продавець instead. A rule never carries both this and `merchantId`.
    */
   readonly merchant?: string;
   /**
@@ -40,6 +40,12 @@ export interface Rule {
   readonly target: RuleTarget;
   /** The tie-break between two equally specific rules — domain data, not storage metadata. */
   readonly createdAt: Date;
+  /**
+   * How `merchant` is matched: where a word of the опис begins — every правило the owner stores, and
+   * what absent means — or anywhere inside it, set only by `templateRules`, because the шаблон's
+   * patterns are fragments written to occur inside words (design D7).
+   */
+  readonly match?: 'word-start' | 'substring';
 }
 
 /**
@@ -75,8 +81,11 @@ function matches(
   // rejected"); should one ever reach here it matches nothing rather than everything.
   if (!hasMerchantCriterion(rule) && rule.mcc === undefined) return false;
   // Both criteria present means both must hold — the tiers below rank rules, they never relax them.
-  if (merchant !== undefined && !foldCase(transaction.description).includes(foldCase(merchant))) {
-    return false;
+  if (merchant !== undefined) {
+    const folded = foldCase(transaction.description);
+    const pattern = foldCase(merchant);
+    const occurs = rule.match === 'substring' ? folded.includes(pattern) : occursAtWordStart(folded, pattern);
+    if (!occurs) return false;
   }
   if (rule.merchantId !== undefined && recognised?.merchantId !== rule.merchantId) return false;
   if (rule.mcc !== undefined && rule.mcc !== transaction.mcc) return false;
@@ -241,10 +250,10 @@ export function templateRules(targets: ReadonlyMap<string, string>): readonly Ru
     if (categoryId === undefined) continue;
     const target = { kind: 'category', categoryId } as const;
     group.merchants.forEach((merchant, n) => {
-      rules.push({ id: `tpl:${group.id}:m${n}`, merchant, target, createdAt: TEMPLATE_EPOCH });
+      rules.push({ id: `tpl:${group.id}:m${n}`, merchant, match: 'substring', target, createdAt: TEMPLATE_EPOCH });
     });
     group.mcc.forEach((mcc, n) => {
-      rules.push({ id: `tpl:${group.id}:c${n}`, mcc, target, createdAt: TEMPLATE_EPOCH });
+      rules.push({ id: `tpl:${group.id}:c${n}`, mcc, match: 'substring', target, createdAt: TEMPLATE_EPOCH });
     });
   }
   return rules;

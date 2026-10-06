@@ -29,8 +29,10 @@ import {
   buildEntry,
   defaultAccountId,
   entryDateCheck,
+  entryHoldsEdits,
   normaliseDescription,
   proposedCategoryId,
+  type EntryDraft,
   type EntryType,
 } from '@/ui/entry-form';
 import { failureAlert } from '@/ui/failure-alert';
@@ -184,6 +186,28 @@ export default function NewTransactionScreen() {
   useCloseOnBack(open !== undefined, closePicker);
   const opening = (picker: OpenPicker) => (isOpen: boolean) =>
     setOpen(isOpen ? picker : undefined);
+
+  /**
+   * The form as it stands, and as it opened (the first draw's, kept by `useState`). While they
+   * differ, «назад» asks «Відкинути зміни?» first and «Відкинути» leaves exactly as the gesture
+   * would have (app-shell). Registered after the picker's hook and only while no picker is open,
+   * so an open list still closes first and asks nothing.
+   */
+  const fields: EntryDraft = {
+    type: entry,
+    accountId: fromId,
+    toAccountId: toId,
+    amount,
+    arrived,
+    date,
+    categoryId,
+    sourceId,
+    description,
+  };
+  const [opened] = useState(fields);
+  const dirty = entryHoldsEdits(fields, opened);
+  const leave = useCallback(() => router.back(), [router]);
+  useCloseOnBack(false, leave, open === undefined && dirty);
 
   const from = offered.find((a) => a.id === fromId);
   const to = offered.find((a) => a.id === toId);

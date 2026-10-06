@@ -18,10 +18,14 @@ export function ObservationsWidget({
   model,
   onOpen,
   onNotDuplicate,
+  onUndoNotDuplicate,
+  onDeleteOne,
 }: {
   readonly model: ObservationsWidgetModel;
   readonly onOpen: (route: string) => void;
   readonly onNotDuplicate: (pair: { readonly first: string; readonly second: string }) => void;
+  readonly onUndoNotDuplicate: (pair: { readonly first: string; readonly second: string }) => void;
+  readonly onDeleteOne: (id: string) => void;
 }) {
   return (
     <View style={styles.widget}>
@@ -42,13 +46,14 @@ export function ObservationsWidget({
           </Card>
         </Tap>
       ) : null}
-      {model.empty ? (
-        <ThemedText type="small" themeColor="textSecondary">
-          {model.empty}
-        </ThemedText>
-      ) : (
-        <ObservationsList lines={model.lines} onOpen={onOpen} onNotDuplicate={onNotDuplicate} />
-      )}
+      <ObservationsList
+        lines={model.lines}
+        empty={model.empty}
+        onOpen={onOpen}
+        onNotDuplicate={onNotDuplicate}
+        onUndoNotDuplicate={onUndoNotDuplicate}
+        onDeleteOne={onDeleteOne}
+      />
     </View>
   );
 }

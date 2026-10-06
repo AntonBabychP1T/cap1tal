@@ -15,6 +15,7 @@ import {
 } from '../domain/transaction';
 import type { MonobankRate } from '../monobank/currency';
 import { freshnessLabel, momentLabel } from './dates';
+import { manualRefresh } from './home-refresh';
 import { homeViewModel, NEVER_SYNCED_LINE, SYNCING_LINE } from './home-screen';
 import { lastSyncLine, syncCoverage } from './monobank-screen';
 
@@ -591,6 +592,66 @@ describe('Головний as the overview', () => {
     expect(categoriseBody).not.toContain('router.push');
   });
 
+  it('Scenario: One tap gives a дохід its джерело', () => {
+    // The line is marked like a «Без категорії» one, and the mark's own action opens a джерело
+    // picker in place — never a navigation, so editing never opens.
+    expect(main).toContain('marked={line.uncategorised || line.unsourced}');
+    const mark = main.slice(main.indexOf('{line.unsourced ? ('));
+    const markBlock = mark.slice(0, mark.indexOf(') : null}'));
+    expect(markBlock).toContain("sourcing === line.id ? 'Згорнути' : 'Обрати джерело'");
+    expect(markBlock).toContain('setSourcing(sourcing === line.id ? undefined : line.id)');
+    expect(markBlock).not.toContain('router.push');
+
+    // The picker: shortlisted like the категорії of «Без категорії» — the latest доходи's джерела
+    // first, at most five, the rest behind «Всі джерела (N)» — and only while the line is still
+    // «Без джерела», for the stale-picker reason the категорія picker is gated on its mark.
+    const picker = main.slice(main.indexOf('{line.unsourced && sourcing === line.id ? ('));
+    const pickerBlock = picker.slice(0, picker.indexOf(') : null}'));
+    expect(pickerBlock).toContain('<Picker');
+    expect(pickerBlock).toContain('label="Джерело"');
+    expect(pickerBlock).toContain('rows={sourceRows}');
+    expect(pickerBlock).toContain('recentIds={recent.sources}');
+    expect(pickerBlock).toContain('noun="sources"');
+    expect(pickerBlock).toContain('onSelect={(picked: string) => giveSource(t, picked)}');
+    expect(pickerBlock).not.toContain('router.push');
+
+    // Storing: the same дохід under the pick, written by the same save the editing screen's plain
+    // write is; the picker closes and Головний re-reads, so the mark is gone with the pick.
+    const give = main.slice(main.indexOf('const giveSource = useCallback('));
+    const giveBody = give.slice(0, give.indexOf('[haptics, reload, reportBug]'));
+    expect(giveBody).toContain('transactionsRepo.save(assignSource(t, picked), new Date())');
+    expect(giveBody).toContain('setSourcing(undefined)');
+    expect(giveBody).toContain('reload()');
+    expect(giveBody).not.toContain('router.push');
+    // A джерело is not a категорія: no правило is offered for it.
+    expect(giveBody).not.toContain('ruleOffer.raise(');
+  });
+
+  it('Scenario: A дохід that is really a повернення is retyped from its editing', () => {
+    // The mark offers nothing but джерела: the rows are `sourceChoices` — every unarchived
+    // джерело but «Без джерела» — and the mark carries no «Обрати категорію» or «Це переказ».
+    expect(main).toContain('const sourceRows = useMemo(() => sourceChoices(stored.sources), [stored.sources]);');
+    const mark = main.slice(main.indexOf('{line.unsourced ? ('));
+    const markBlock = mark.slice(0, mark.indexOf(') : null}'));
+    expect(markBlock).not.toContain('Обрати категорію');
+    expect(markBlock).not.toContain('Це переказ');
+    // Tapping the line itself, outside the mark, still opens its editing — where the дохід is
+    // retyped as a повернення as it is today. The row is drawn once, so this is its only press.
+    expect([...main.matchAll(/<TransactionRow\b/g)]).toHaveLength(1);
+    expect(main).toContain('onPress={() => router.push(`/transaction/${line.id}`)}');
+    // Opening any picker closes the other: one line, one question at a time.
+    const categoriseAction = main.slice(main.indexOf("title={categorising === line.id ? 'Згорнути' : 'Обрати категорію'}"));
+    expect(categoriseAction.slice(0, categoriseAction.indexOf('/>'))).toContain('setSourcing(undefined)');
+    expect(markBlock).toContain('setCategorising(undefined)');
+  });
+
+  it('Scenario: Nothing else is offered a джерело — the feed draws the mark on `unsourced` alone', () => {
+    // `unsourced` is true only for a дохід in «Без джерела» (transaction-line.test.ts); the feed
+    // opens its picker on nothing else.
+    expect([...main.matchAll(/'Обрати джерело'/g)]).toHaveLength(1);
+    expect([...main.matchAll(/<Picker\b/g)]).toHaveLength(2);
+  });
+
   it('The «Усі транзакції» picker is gated on «Без категорії» the same way as Головний', () => {
     const search = readFileSync(new URL('../app/transactions.tsx', import.meta.url), 'utf8');
     expect(search).toContain('{line.uncategorised && categorising === line.id ? (');
@@ -1012,5 +1073,144 @@ describe('what Головний itself wires', () => {
     expect(main).toContain('setConfigured(read.kind === \'ok\' && Boolean(read.token))');
     expect(main).not.toContain('setConfigured(read.token');
     expect(main.match(/read\.token/g)).toHaveLength(1);
+  });
+});
+
+describe('a linked bank without a token', () => {
+  /** The scenarios' own today. */
+  const OCT_5 = new Date('2026-10-05T12:00:00');
+  const day = (iso: string) => new Date(`${iso}T09:30:00`).getTime();
+  const link = (id: string, lastSyncedAtMs: number | null) => ({
+    monobankAccountId: `mono-${id}`,
+    accountId: id,
+    lastSyncedAtMs,
+  });
+  /** What the screen passes in: `syncCoverage`'s answer over the links, with or without a token. */
+  const reading = (
+    links: readonly { readonly lastSyncedAtMs: number | null }[],
+    configured: boolean,
+  ): NonNullable<Parameters<typeof homeViewModel>[0]['monobank']> => {
+    const coverage = syncCoverage(links);
+    return {
+      configured,
+      linked: coverage.linked,
+      synced: coverage.synced,
+      ...(coverage.oldestCompletedMs === undefined
+        ? {}
+        : { oldestCompletedAtMs: coverage.oldestCompletedMs }),
+      ...(coverage.oldestSyncedMs === undefined ? {} : { oldestSyncedAtMs: coverage.oldestSyncedMs }),
+      syncing: false,
+    };
+  };
+  const nineSynced = [
+    link('a', day('2026-09-21')),
+    ...['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].map((id) => link(id, day('2026-09-28'))),
+  ];
+
+  it('Scenario: Twelve days without a token are said', () => {
+    const view = model({ monobank: reading(nineSynced, false), now: OCT_5 });
+
+    expect(view.alerts.failureRow).toBe(
+      'Немає токена monobank — дані 9 рахунків не оновлюються з 21 вересня',
+    );
+    // A reading, not a run: no freshness line in this branch.
+    expect(view.monobank).toBeNull();
+  });
+
+  it('Scenario: Some linked рахунки never synced', () => {
+    // Seven synced between 21 and 28 вересня, two never did: the two do not hide the others' дата.
+    const links = [
+      link('a', day('2026-09-21')),
+      ...['b', 'c', 'd', 'e', 'f'].map((id) => link(id, day('2026-09-25'))),
+      link('g', day('2026-09-28')),
+      link('h', null),
+      link('i', null),
+    ];
+    expect(syncCoverage(links).oldestSyncedMs).toBe(day('2026-09-21'));
+    expect(syncCoverage(links).oldestCompletedMs).toBeUndefined();
+
+    const view = model({ monobank: reading(links, false), now: OCT_5 });
+
+    expect(view.alerts.failureRow).toBe(
+      'Немає токена monobank — дані 9 рахунків не оновлюються з 21 вересня',
+    );
+    expect(view.monobank).toBeNull();
+  });
+
+  it('Scenario: No linked рахунок ever synced', () => {
+    const links = [link('a', null), link('b', null)];
+    expect(syncCoverage(links).oldestSyncedMs).toBeUndefined();
+
+    const view = model({ monobank: reading(links, false), now: OCT_5 });
+
+    expect(view.alerts.failureRow).toBe('Немає токена monobank — дані 2 рахунків ще не синхронізовано');
+    expect(view.alerts.failureRow).not.toMatch(/вересня|жовтня/);
+    expect(view.monobank).toBeNull();
+  });
+
+  it('names one рахунок and twenty-one in the genitive they take', () => {
+    expect(
+      model({ monobank: reading([link('a', null)], false), now: OCT_5 }).alerts.failureRow,
+    ).toBe('Немає токена monobank — дані 1 рахунку ще не синхронізовано');
+    const many = Array.from({ length: 21 }, (_, i) => link(`r${i}`, day('2026-09-21')));
+    expect(model({ monobank: reading(many, false), now: OCT_5 }).alerts.failureRow).toContain(
+      'дані 21 рахунку',
+    );
+  });
+
+  it('Scenario: A device that never connected a bank stays quiet', () => {
+    for (const view of [
+      model({ monobank: reading([], false), now: OCT_5 }),
+      model({ now: OCT_5 }),
+    ]) {
+      expect(view.alerts.failureRow).toBeNull();
+      expect(view.monobank).toBeNull();
+    }
+  });
+
+  it('Scenario: Entering the token clears the row', () => {
+    const before = model({ monobank: reading(nineSynced, false), now: OCT_5 });
+    expect(before.alerts.failureRow).not.toBeNull();
+
+    const after = model({ monobank: reading(nineSynced, true), now: OCT_5 });
+
+    expect(after.alerts.failureRow).toBeNull();
+    expect(after.monobank?.freshness).toBe(
+      `оновлено ${freshnessLabel(day('2026-09-21'), OCT_5)}`,
+    );
+  });
+
+  it('Scenario: Without monobank there is no line — linked, without a token', () => {
+    // The twin of the no-link case: рахунки are linked, the token is gone. The row speaks; the
+    // freshness line does not, whatever the links once read.
+    for (const links of [nineSynced, [link('a', null)]]) {
+      expect(model({ monobank: reading(links, false), now: OCT_5 }).monobank).toBeNull();
+    }
+  });
+
+  it('Scenario: A linked bank without a token is not synced by the gesture', async () => {
+    let started = 0;
+    await manualRefresh({
+      configured: false,
+      linkedCount: 9,
+      startSync: async () => {
+        started += 1;
+      },
+    });
+    expect(started).toBe(0);
+    // The row is a reading of what is stored, so the pull that only reloads leaves it standing.
+    expect(model({ monobank: reading(nineSynced, false), now: OCT_5 }).alerts.failureRow).toContain(
+      'Немає токена monobank',
+    );
+  });
+
+  it('its tap opens the monobank screen, from the rail', () => {
+    const main = readFileSync(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
+    const at = main.indexOf('{model.alerts.failureRow ? (');
+    expect(at).toBeGreaterThan(-1);
+    const row = main.slice(at, main.indexOf('{model.alerts.failureRow}', at));
+    expect(row).toContain("router.push('/manage/monobank')");
+    // Read where the links are, and passed in whole: the date is the oldest of those that synced.
+    expect(main).toContain('oldestSyncedAtMs: coverage.oldestSyncedMs');
   });
 });

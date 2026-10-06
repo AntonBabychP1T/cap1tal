@@ -30,7 +30,12 @@ import { NO_INSTALLMENT_FACTS } from '@/domain/installments';
 import { settleInstallmentsOnFocus } from '@/hooks/installment-ports';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { useCurrentRates } from '@/hooks/use-current-rates';
-import { answerNotDuplicate, monthObservations } from '@/hooks/observations-reads';
+import {
+  answerNotDuplicate,
+  deleteOneOfDuplicate,
+  forgetNotDuplicate,
+  monthObservations,
+} from '@/hooks/observations-reads';
 import { todayIso } from '@/ui/dates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { monthViewModel } from '@/ui/month-screen';
@@ -187,6 +192,9 @@ function MonthScreen() {
 
   const reach = useMemo(() => reachableMonths(stored.recorded, new Date()), [stored.recorded]);
 
+  /** The month whose «Ще N» the owner chose; stepping to another month folds its list again. */
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+
   const model = useMemo(
     () =>
       monthViewModel({
@@ -203,8 +211,9 @@ function MonthScreen() {
         installments: { installments: stored.installments, facts: stored.installmentFacts },
         commitments: { commitments: stored.commitments, facts: stored.commitmentFacts },
         observations: stored.observations,
+        observationsExpanded: expandedMonth === (stored.month ?? shown),
       }),
-    [reach, shown, stored],
+    [expandedMonth, reach, shown, stored],
   );
 
   if (stored === UNSEEN) {
@@ -404,20 +413,25 @@ function MonthScreen() {
         {model.observations ? (
           <>
             <SectionLabel>Спостереження</SectionLabel>
-            {model.observations.empty ? (
-              <ThemedText type="small" themeColor="textSecondary">
-                {model.observations.empty}
-              </ThemedText>
-            ) : (
-              <ObservationsList
-                lines={model.observations.lines}
-                onOpen={(route) => router.push(route)}
-                onNotDuplicate={(pair) => {
-                  answerNotDuplicate(pair);
-                  reload();
-                }}
-              />
-            )}
+            <ObservationsList
+              lines={model.observations.lines}
+              empty={model.observations.empty}
+              more={model.observations.more}
+              onMore={() => setExpandedMonth(model.month)}
+              onOpen={(route) => router.push(route)}
+              onNotDuplicate={(pair) => {
+                answerNotDuplicate(pair);
+                reload();
+              }}
+              onUndoNotDuplicate={(pair) => {
+                forgetNotDuplicate(pair);
+                reload();
+              }}
+              onDeleteOne={(id) => {
+                deleteOneOfDuplicate(id);
+                reload();
+              }}
+            />
           </>
         ) : null}
 

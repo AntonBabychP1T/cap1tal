@@ -7,7 +7,7 @@ import { suggestKind, type LinkProposal, type MonobankLink } from '../monobank/l
 import { shownLinks } from '../monobank/sync';
 import type { BackgroundRestriction } from '../platform/background-sync';
 import { formatMoney } from './amount-input';
-import { momentLabel, parseTypedDate, startOfLocalDayMs } from './dates';
+import { calendarLabel, momentLabel, parseTypedDate, startOfLocalDayMs } from './dates';
 import {
   accountChoiceLabel,
   accountCount,
@@ -52,8 +52,11 @@ export interface MonobankAccountRow {
   readonly linked: boolean;
   /** The рахунок it feeds, when it feeds one. */
   readonly accountName?: string;
-  /** The inclusive first day sync may import for it, when it is linked. */
-  readonly syncStartDate?: IsoDate;
+  /**
+   * The inclusive first day sync may import for it, when it is linked, in words — «1 серпня», and
+   * «30 грудня 2025» once the year is not this one.
+   */
+  readonly syncStartLabel?: string;
   /**
    * When a sync last completed for it, in the owner's words — «Синхронізовано вчора о 18:05» — or
    * «Ще не синхронізовано» when none has. Only a linked account has one: an unlinked account is
@@ -181,6 +184,12 @@ export interface SyncCoverage {
    * because until then there is no moment that is true of the whole picture.
    */
   readonly oldestCompletedMs?: number;
+  /**
+   * The oldest completed moment among the linked рахунки that have one — present whenever at least
+   * one has synced, so a рахунок that never synced does not hide the others' дата. Only the
+   * no-token row on Головний reads it; every freshness line reads `oldestCompletedMs`.
+   */
+  readonly oldestSyncedMs?: number;
 }
 
 /**
@@ -199,10 +208,12 @@ export function syncCoverage(
   const moments = links
     .map((link) => link.lastSyncedAtMs)
     .filter((ms): ms is number => ms !== null && ms !== undefined);
-  const coverage = { linked: links.length, synced: moments.length };
-  return moments.length > 0 && moments.length === links.length
-    ? { ...coverage, oldestCompletedMs: Math.min(...moments) }
-    : coverage;
+  if (moments.length === 0) {
+    return { linked: links.length, synced: 0 };
+  }
+  const oldest = Math.min(...moments);
+  const coverage = { linked: links.length, synced: moments.length, oldestSyncedMs: oldest };
+  return moments.length === links.length ? { ...coverage, oldestCompletedMs: oldest } : coverage;
 }
 
 /**
@@ -262,7 +273,7 @@ export function monobankAccountRows(input: {
         // A link whose рахунок cannot be resolved shows the id rather than an empty gap — the
         // same fallback the feed uses, and as transient as that one.
         ...(link ? { accountName: account ? account.name : link.accountId } : {}),
-        ...(link?.syncStartDate ? { syncStartDate: link.syncStartDate } : {}),
+        ...(link?.syncStartDate ? { syncStartLabel: calendarLabel(link.syncStartDate, input.now) } : {}),
         ...(link
           ? {
               lastSync: input.notShown?.has(monobankAccount.id)

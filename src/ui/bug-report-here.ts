@@ -1,6 +1,7 @@
 import type { ScreenCapturePort, CaptureOutcome } from '../platform/screen-capture';
 import type { BugReportFilesPort } from '../platform/bug-report-files';
 import { routeOf, type NewReport, type ReportContext } from './bug-report-screen';
+import { sameFields } from './same-fields';
 
 /**
  * Everything filing a репорт from the screen the owner is on decides, as values: what the gesture
@@ -101,6 +102,15 @@ export interface SheetFields {
 }
 
 export const EMPTY_SHEET: SheetFields = { happened: '', expected: '' };
+
+/**
+ * Whether the репорт sheet holds anything the owner typed that closing would throw away — the
+ * question «назад» asks «Відкинути зміни?» about (app-shell). Once its репорт is stored there is
+ * nothing left to lose, whatever the fields still show.
+ */
+export function sheetHoldsEdits(fields: SheetFields, stored: boolean): boolean {
+  return !stored && !sameFields(fields, EMPTY_SHEET);
+}
 
 /**
  * The capture the sheet is showing, as the sheet knows it: a picture, or a sentence saying why

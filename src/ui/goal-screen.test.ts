@@ -128,7 +128,7 @@ describe('goalScreenModel', () => {
     expect(shown.accounts[0]).toMatchObject({
       name: 'ОВДП',
       own: '172 700,00 UAH',
-      valueAsOf: '2026-08-28',
+      valueAsOf: '28 серпня',
     });
     expect(shown.readout.progress).toBe('172 700,00 UAH');
   });

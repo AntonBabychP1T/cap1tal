@@ -7,6 +7,7 @@ import { MAX_AMOUNT_MINOR } from '../domain/money';
 import {
   monthOf,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
   type Correction,
   type Expense,
   type Income,
@@ -28,6 +29,12 @@ import type { ThemeColor } from '../constants/theme';
  * currency, the account (both accounts for a переказ) and the date. Pure, so the feed's content
  * is proven by `verify` even though the list itself is JSX.
  */
+/** A переказ's two рахунки, by name, in the direction the money went. */
+export interface TransferEnds {
+  readonly from: string;
+  readonly to: string;
+}
+
 export interface TransactionLine {
   readonly id: string;
   /** витрата, переказ, дохід, повернення, коригування. */
@@ -38,6 +45,12 @@ export interface TransactionLine {
   readonly iconTone: ThemeColor;
   readonly amountTone: ThemeColor;
   readonly accounts: string;
+  /**
+   * A переказ's рахунки kept apart, so its title can draw each name on its own row (app-shell, "A
+   * name in a line breaks between words, never inside one"); `accounts` is the same two joined by
+   * «→». Absent on every other type.
+   */
+  readonly transferEnds?: TransferEnds;
   readonly date: IsoDate;
   /** The category label where the type has one; absent otherwise. */
   readonly category?: string;
@@ -66,6 +79,12 @@ export interface TransactionLine {
    * rather than in the feed keeps the reserved id out of JSX and puts the rule under `verify`.
    */
   readonly uncategorised: boolean;
+  /**
+   * The line is a дохід carrying «Без джерела», so the feed and «Транзакції» mark it and offer the
+   * one-tap джерело (main-screen: "A дохід «Без джерела» is given its джерело in one tap"). Only a
+   * дохід ever carries it — no other type has a джерело to give.
+   */
+  readonly unsourced: boolean;
   /**
    * The line's category is over its ліміт for the calendar month of this транзакція's date, so the
    * feed shows the category red. It is the *category* that is over, not the line: a витрата and a
@@ -172,6 +191,7 @@ export function transactionLine(
     type: transactionTypeLabel(t.type),
     date: t.date,
     uncategorised: false,
+    unsourced: false,
     overLimit: false,
     icon: 'tag' as IconName,
     iconTone: 'textSecondary' as ThemeColor,
@@ -185,11 +205,14 @@ export function transactionLine(
       : {}),
   };
   if (t.type === 'transfer') {
+    const from = accountNameOf(t.fromAccountId, accountsById);
+    const to = accountNameOf(t.toAccountId, accountsById);
     return {
       ...common,
       amount: transferAmount(t),
       icon: 'transfer',
-      accounts: `${accountNameOf(t.fromAccountId, accountsById)} → ${accountNameOf(t.toAccountId, accountsById)}`,
+      accounts: `${from} → ${to}`,
+      transferEnds: { from, to },
     };
   }
   const line: TransactionLine = {
@@ -205,7 +228,9 @@ export function transactionLine(
           overLimit: overLimit.get(monthOf(t.date))?.has(t.categoryId) ?? false,
         }
       : {}),
-    ...(t.type === 'income' ? { source: sourceLabel(t.sourceId, sourceNames) } : {}),
+    ...(t.type === 'income'
+      ? { source: sourceLabel(t.sourceId, sourceNames), unsourced: t.sourceId === UNSOURCED_SOURCE_ID }
+      : {}),
   };
   if (t.type === 'expense' || t.type === 'refund') {
     const icon = categoryIconDefinition(resolveCategoryIcon({
@@ -237,6 +262,36 @@ export function feedTitle(line: TransactionLine): string {
 export function feedSubtitle(line: TransactionLine, now: Date): string {
   const labelled = line.category !== undefined || line.source !== undefined;
   return `${line.type === 'повернення' ? 'повернення' : labelled ? line.accounts : line.type} · ${dayLabel(line.date, now)}`;
+}
+
+/** What a drawn line of транзакції shows, as `TransactionRow` receives it. */
+export interface DrawnLine {
+  readonly title: string | TransferEnds;
+  readonly subtitle: string;
+  readonly amount: string;
+  readonly description?: string;
+  /** The title is drawn red because its категорія is over its ліміт — `TransactionLine.overLimit`. */
+  readonly overLimit?: boolean;
+}
+
+/** Said after the title of a line whose категорія is over its ліміт, where the colour shows it. */
+export const OVER_LIMIT_SPOKEN = 'понад ліміт';
+
+/**
+ * A line's accessible name: what it draws, in the order it reads, and «понад ліміт» after the title
+ * when the title is red — the colour alone tells a screen reader nothing (app-shell, "Every switch
+ * and every coloured mark has an accessible name"). A переказ names its two рахунки as its title
+ * draws them.
+ */
+export function feedA11yLabel(line: DrawnLine): string {
+  const title = typeof line.title === 'string' ? line.title : `${line.title.from} → ${line.title.to}`;
+  return [
+    title,
+    ...(line.overLimit ? [OVER_LIMIT_SPOKEN] : []),
+    line.amount,
+    line.subtitle,
+    ...(line.description ? [line.description] : []),
+  ].join(', ');
 }
 
 /** What one line inside a рахунок's рухи reads — see `accountSideLine`. */

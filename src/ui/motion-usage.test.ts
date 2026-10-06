@@ -255,7 +255,10 @@ describe('the bottom sheet', () => {
 
   it('rises over a fading scrim, driven by the phase machine', () => {
     expect(sheet).toContain('const motion = useSheetMotion({ open, onDismiss: onClose, onExited });');
-    expect(sheet).toMatch(/visible=\{motion\.visible\}\s+transparent\s+animationType="none"\s+onRequestClose=\{motion\.dismiss\}/);
+    expect(sheet).toMatch(/visible=\{motion\.visible\}\s+transparent\s+animationType="none"\s+onRequestClose=\{requestClose\}/);
+    // The back gesture dismisses through the same `motion.dismiss` — after «Відкинути» when the
+    // form inside holds edits (app-shell).
+    expect(sheet).toContain('answerBackPress(isDirty, motion.dismiss,');
     expect(sheet).toContain('<MotionView style={[styles.backdrop, motion.scrimStyle]}>');
     expect(sheet).toContain("pointerEvents={motion.interactive ? 'auto' : 'none'}");
     // It keeps showing what it showed while open, all the way out.
@@ -358,8 +361,9 @@ describe('haptics', () => {
       'app/transaction/scan.tsx': ["'scanned'", "'scanned'"],
       'app/account/[id].tsx': ["'merged'"],
       'hooks/use-rule-offer.ts': ["'rule-accepted'"],
-      'app/(tabs)/index.tsx': ['event', "'stored'", "'stored'"],
-      'app/transactions.tsx': ["'stored'"],
+      // The third and the second: a джерело picked behind the «Без джерела» mark stores the дохід.
+      'app/(tabs)/index.tsx': ['event', "'stored'", "'stored'", "'stored'"],
+      'app/transactions.tsx': ["'stored'", "'stored'"],
       'app/manage/monobank.tsx': ["'failed'", "'failed'", 'event'],
       'app/manage/drive-backup.tsx': ["'failed'"],
       'app/(tabs)/month.tsx': ['event'],

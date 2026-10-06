@@ -1,11 +1,12 @@
 import { money, type Money } from '../domain/money';
-import type { IsoDate } from '../domain/transaction';
+import type { IsoDate, Month } from '../domain/transaction';
 import type { Candidate, Progress } from '../progress/catalogue';
 import { plural } from '../progress/plural';
 import { newestFirst, type EarnedAchievement, type Evidence } from '../progress/earned';
-import type { Challenge, ChallengeAction, ChallengeProgress } from '../progress/challenges';
+import type { Challenge, ChallengeAction, ChallengeProgress, MonthLeft } from '../progress/challenges';
 import { formatMoney } from './amount-input';
 import { calendarLabel, todayIso } from './dates';
+import { narrowedMonthRoute, ONLY_UNCATEGORISED, ONLY_UNSOURCED } from './transaction-search';
 
 /**
  * What «Прогрес», the «Прогрес» section of Головний and the two detail screens say.
@@ -424,6 +425,23 @@ export function challengeDetail(input: {
 }
 
 /**
+ * Where «Закрий <місяць>» opens: already narrowed to the місяць and to what is left in it. The
+ * чернетки are confirmed or dismissed on Головний; a closed місяць opens on its own транзакції.
+ */
+function answerMonthRoute(month: Month, left: MonthLeft): string {
+  switch (left) {
+    case 'uncategorised':
+      return narrowedMonthRoute(month, ONLY_UNCATEGORISED);
+    case 'unsourced':
+      return narrowedMonthRoute(month, ONLY_UNSOURCED);
+    case 'drafts':
+      return '/';
+    case 'nothing':
+      return narrowedMonthRoute(month);
+  }
+}
+
+/**
  * Where a виклик's one action leads, as a route.
  *
  * The action is the виклик's own — «recording a переказ onto a рахунок of вид `savings`» is not
@@ -441,7 +459,7 @@ export function challengeStart(
 ): string | null {
   switch (action.kind) {
     case 'answer-month':
-      return `/transactions?month=${action.month}`;
+      return answerMonthRoute(action.month, action.left);
     case 'record-transfer': {
       const onto = accounts.find((one) => one.kind === action.accountKind && !one.archived);
       return onto === undefined

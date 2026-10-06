@@ -14,6 +14,7 @@ import {
   transfer,
   INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
+  type Correction,
   type Transaction,
   type Transfer,
 } from '../domain/transaction';
@@ -23,12 +24,14 @@ import {
   buildEntry,
   defaultAccountId,
   entryDateCheck,
+  entryHoldsEdits,
   normaliseDescription,
   proposeForTransfer,
   proposedCategoryId,
   recordedConfirmation,
   type EntryDraft,
 } from './entry-form';
+import { initialForm } from './retype';
 import { accountsById } from './transaction-line';
 
 const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
@@ -1288,5 +1291,53 @@ describe('the дата check as wired', () => {
     }
     // Editing passes the stored дата, so an untouched one is never re-judged.
     expect(source('../app/transaction/[id].tsx')).toMatch(/entryDateCheck\(built\.date, new Date\(\), original\.date\)/);
+  });
+});
+
+/**
+ * app-shell, "A form with unsaved edits asks before «назад» discards it" — the entry form and the
+ * editing of a транзакція. Each passes its own field object as it stands and as it opened.
+ */
+describe('entryHoldsEdits', () => {
+  const opened: EntryDraft = {
+    type: 'expense',
+    accountId: 'card',
+    amount: '',
+    date: '2026-10-06',
+    categoryId: undefined,
+    sourceId: undefined,
+    description: '',
+  };
+
+  it('Scenario: An untouched form closes at once', () => {
+    expect(entryHoldsEdits({ ...opened }, opened)).toBe(false);
+  });
+
+  it('Scenario: An edited form asks first — a typed сума, a picked категорія, a moved дата', () => {
+    expect(entryHoldsEdits({ ...opened, amount: '125,50' }, opened)).toBe(true);
+    expect(entryHoldsEdits({ ...opened, categoryId: 'cafe' }, opened)).toBe(true);
+    expect(entryHoldsEdits({ ...opened, date: '2026-10-05' }, opened)).toBe(true);
+    expect(entryHoldsEdits({ ...opened, type: 'income' }, opened)).toBe(true);
+  });
+
+  it('a сума typed and erased again is no change', () => {
+    expect(entryHoldsEdits({ ...opened, amount: '' }, opened)).toBe(false);
+  });
+
+  it('no транзакція opens no form, so there is nothing to discard', () => {
+    expect(entryHoldsEdits(undefined, undefined)).toBe(false);
+  });
+
+  it('Scenario: Its опис is corrected — a коригування\'s form asks only once its опис changed', () => {
+    const reconciled: Correction = {
+      type: 'correction',
+      id: 'c1',
+      date: '2026-09-16',
+      accountId: 'reserve',
+      amount: money(-77686, 'UAH'),
+    };
+    const opened = initialForm(reconciled)!;
+    expect(entryHoldsEdits({ ...opened }, opened)).toBe(false);
+    expect(entryHoldsEdits({ ...opened, description: 'перерахунок готівки' }, opened)).toBe(true);
   });
 });

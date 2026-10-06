@@ -16,7 +16,6 @@ import {
   decoded,
   decodedFromImage,
   detachConfirmation,
-  formatHryvnia,
   formatQuantity,
   IDLE,
   itemCount,
@@ -124,7 +123,7 @@ describe('what a транзакція offers', () => {
 
     expect(offer).toEqual({
       kind: 'attached',
-      label: 'Фіскальний чек · 9 позицій · 742,30\u00a0₴',
+      label: 'Фіскальний чек · 9 позицій · 742,30 UAH',
       receiptId: 'rc-1',
     });
   });
@@ -155,7 +154,7 @@ describe('what a транзакція offers', () => {
     // And the чек opens and reads normally: a переказ has no single сума, so nothing is marked as
     // differing from one.
     const header = receiptHeader({ stored: storedReceipt(), transaction: transfer });
-    expect(header.total).toBe('742,30\u00a0₴');
+    expect(header.total).toBe('742,30 UAH');
     expect(header.differsFrom).toBeUndefined();
   });
 });
@@ -171,9 +170,9 @@ describe('the позиції list', () => {
     ]);
 
     expect(rows.map((r) => [r.name, r.total])).toEqual([
-      ['Молоко 2.5%', '47,20\u00a0₴'],
-      ['Хліб житній', '38,90\u00a0₴'],
-      ['Coca-Cola 2L', '64,90\u00a0₴'],
+      ['Молоко 2.5%', '47,20 UAH'],
+      ['Хліб житній', '38,90 UAH'],
+      ['Coca-Cola 2L', '64,90 UAH'],
     ]);
   });
 
@@ -191,8 +190,8 @@ describe('the позиції list', () => {
       },
     ]);
 
-    expect(row?.quantity).toBe('5,701 кг × 52,30\u00a0₴');
-    expect(row?.total).toBe('298,16\u00a0₴');
+    expect(row?.quantity).toBe('5,701 кг × 52,30 UAH');
+    expect(row?.total).toBe('298,16 UAH');
   });
 
   it('A позиція without a unit price shows no invented one', () => {
@@ -200,7 +199,7 @@ describe('the позиції list', () => {
       { id: 'a', receiptId: 'r', line: 1, rawName: 'Вода', quantityThousandths: 1000, lineTotal: money(2340, 'UAH') },
     ]);
 
-    expect(row?.total).toBe('23,40\u00a0₴');
+    expect(row?.total).toBe('23,40 UAH');
     expect(row?.quantity).toBeUndefined();
   });
 
@@ -218,7 +217,7 @@ describe('the позиції list', () => {
       },
     ]);
 
-    expect(row?.discount).toBe('Знижка 50,00\u00a0₴');
+    expect(row?.discount).toBe('Знижка 50,00 UAH');
   });
 
   it('lists позиції in document order whatever order they arrive in', () => {
@@ -236,7 +235,7 @@ describe('the позиції list', () => {
       transaction: expense({ amount: money(70000, 'UAH') }),
     });
 
-    expect(header.total).toBe('742,30\u00a0₴');
+    expect(header.total).toBe('742,30 UAH');
     expect(header.differsFrom).toContain('742,30');
     expect(header.differsFrom).toContain('700,00');
   });
@@ -261,7 +260,7 @@ describe('the позиції list', () => {
     const tampered = storedReceipt({ snapshot: '<RQ>ЩОСЬ ЗОВСІМ ІНШЕ</RQ>' }, items);
 
     expect(receiptItemRows(tampered.items)).toEqual(before);
-    expect(receiptHeader({ stored: tampered, transaction: expense() }).total).toBe('742,30\u00a0₴');
+    expect(receiptHeader({ stored: tampered, transaction: expense() }).total).toBe('742,30 UAH');
   });
 
   it('formats quantities the way a till prints them', () => {
@@ -278,8 +277,16 @@ describe('the позиції list', () => {
     expect(itemCount(11)).toBe('11 позицій');
   });
 
-  it('writes a сума with the hryvnia sign', () => {
-    expect(formatHryvnia(money(74230, 'UAH'))).toBe('742,30\u00a0₴');
+  it('Scenario: A чек writes UAH too', () => {
+    const items: ReceiptItem[] = [
+      { id: 'a', receiptId: 'rc-1', line: 1, rawName: 'Кава', quantityThousandths: 1000, lineTotal: money(4500, 'UAH') },
+    ];
+    const receipt = storedReceipt({ total: money(23750, 'UAH') }, items);
+
+    expect(receiptHeader({ stored: receipt, transaction: expense({ amount: money(23750, 'UAH') }) }).total).toBe(
+      '237,50 UAH',
+    );
+    expect(receiptItemRows(receipt.items).map((r) => r.total)).toEqual(['45,00 UAH']);
   });
 });
 
@@ -566,7 +573,7 @@ describe('what the lookup answered', () => {
     expect(state.kind).toBe('preview');
     if (state.kind !== 'preview') return;
     const view = previewView(state);
-    expect(view.total).toBe('437,40\u00a0₴');
+    expect(view.total).toBe('437,40 UAH');
     expect(view.items).toHaveLength(8);
     expect(view.confirmLabel).toBe(ATTACH_LABEL);
     expect(view.mismatch).toBeUndefined();
@@ -795,7 +802,7 @@ describe('detaching', () => {
       ]),
     );
 
-    expect(text).toContain('742,30\u00a0₴');
+    expect(text).toContain('742,30 UAH');
     expect(text).toContain('1 позицію');
     expect(text).toContain('Транзакція залишиться без змін');
   });

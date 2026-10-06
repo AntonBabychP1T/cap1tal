@@ -352,6 +352,15 @@ describe('ruleLine', () => {
   });
 });
 
+/** The names the offer's sentence is written with, as the screens hand them to the sheet. */
+const offerNames = {
+  categoryNames: new Map([
+    ['groceries', 'Groceries'],
+    ['subscriptions', 'Підписки'],
+  ]),
+  accountNames: new Map([['reserve', 'РЕЗЕРВ']]),
+};
+
 describe('ruleOffer', () => {
   const noRules: readonly Rule[] = [];
   const silpoToGroceries: Rule = {
@@ -513,7 +522,7 @@ describe('ruleOffer', () => {
         recognised: { merchantId: 'atb', name: 'АТБ' },
         target: category('groceries'),
       });
-      const view = ruleOfferView(offer!, false, offer!.merchant);
+      const view = ruleOfferView(offer!, false, offer!.merchant, offerNames);
       expect(view.merchantLabel).toBe('продавець АТБ');
       expect(view.canSwitchToPattern).toBe(true);
       // The sheet names «продавець АТБ» and offers the switch to the pattern (main-screen).
@@ -530,7 +539,7 @@ describe('ruleOffer', () => {
 
     it('Scenario: The продавець can be replaced by a pattern', () => {
       const offer = ruleOffer({ description: 'ATB MARKET', target: category('groceries'), rules: noRules, merchants })!;
-      const view = ruleOfferView(offer, true, offer.merchant);
+      const view = ruleOfferView(offer, true, offer.merchant, offerNames);
       expect(view.showsPattern).toBe(true);
       expect(ruleFromDraft(ruleDraftFromOffer(offer, view.criterion), { id: 'r1', createdAt: new Date(0) })).toEqual({
         id: 'r1',
@@ -567,7 +576,9 @@ describe('ruleOffer', () => {
 
     it('an offer with no продавець is the pattern field', () => {
       const offer = ruleOffer({ description: 'СІЛЬПО 123', target: category('groceries'), rules: noRules, merchants })!;
-      expect(ruleOfferView(offer, false, 'сільпо 123')).toEqual({
+      expect(ruleOfferView(offer, false, 'сільпо 123', offerNames)).toEqual({
+        sentence: 'Наступного разу такий опис одразу піде в «Groceries».',
+        targetLabel: 'Groceries',
         showsPattern: true,
         canSwitchToPattern: false,
         criterion: { kind: 'pattern', pattern: 'сільпо 123' },
@@ -749,7 +760,7 @@ describe('who raises and answers the offer to remember a правило', () => 
   it('Scenario: The proposed pattern can be changed before it is stored', () => {
     // The sheet's own edited state is what `onAccept` is called with — never the offer's original
     // pattern — and the hook builds the правило from exactly that argument.
-    expect(sheet).toContain('ruleOfferView(offer, usePattern, pattern)');
+    expect(sheet).toContain('ruleOfferView(offer, usePattern, pattern, { categoryNames, accountNames })');
     expect(sheet).toContain('onPress={() => view && onAccept(view.criterion)}');
     const accept = hook.slice(hook.indexOf('const accept = useCallback'));
     expect(accept).toContain('async (criterion: RuleCriterion) => {');
@@ -760,7 +771,7 @@ describe('who raises and answers the offer to remember a правило', () => 
       rules: [],
       merchants: NO_MERCHANTS,
     })!;
-    const edited = ruleOfferView(offer, false, 'сільпо 123').criterion;
+    const edited = ruleOfferView(offer, false, 'сільпо 123', offerNames).criterion;
     expect(ruleFromDraft(ruleDraftFromOffer(offer, edited), { id: 'r1', createdAt: new Date(0) }).merchant).toBe(
       'сільпо 123',
     );
@@ -802,5 +813,42 @@ describe('who raises and answers the offer to remember a правило', () => 
     expect(decline).toContain('setOffer(undefined)');
     expect(decline).not.toContain('storeRule');
     expect(decline).not.toContain('rulesRepo.save');
+  });
+});
+
+describe('the offer to remember a правило says what that правило will do', () => {
+  it('Scenario: A правило-переказ is offered as a переказ', () => {
+    const offer = ruleOffer({
+      description: 'Double tap',
+      target: { kind: 'transfer', toAccountId: 'reserve' },
+      fromAccount: { accountId: 'platinum', currency: 'UAH' },
+      accounts: [{ id: 'reserve', currency: 'UAH' }],
+      rules: [],
+      merchants: NO_MERCHANTS,
+    })!;
+    const view = ruleOfferView(offer, false, offer.merchant, offerNames);
+    expect(view.sentence).toBe('Наступного разу такий опис одразу стане переказом на «РЕЗЕРВ».');
+    expect(view.sentence).not.toContain('категорі');
+    expect(view.targetLabel).toBe('переказ на РЕЗЕРВ');
+  });
+
+  it('Scenario: A категорія правило is offered as a категорія', () => {
+    const offer = ruleOffer({
+      description: 'Megogo',
+      target: { kind: 'category', categoryId: 'subscriptions' },
+      rules: [],
+      merchants: NO_MERCHANTS,
+    })!;
+    const view = ruleOfferView(offer, false, offer.merchant, offerNames);
+    expect(view.sentence).toBe('Наступного разу такий опис одразу піде в «Підписки».');
+    expect(view.targetLabel).toBe('Підписки');
+  });
+
+  it('the sheet holds no sentence of its own', () => {
+    const sheet = readFileSync(new URL('../components/rule-offer-sheet.tsx', import.meta.url), 'utf8');
+    expect(sheet).toContain('{view?.sentence}');
+    expect(sheet).toContain('{view?.targetLabel}');
+    expect(sheet).not.toContain('Наступного разу');
+    expect(sheet).not.toContain('категорію');
   });
 });

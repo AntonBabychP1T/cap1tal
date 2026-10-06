@@ -25,7 +25,9 @@ import {
   type Transaction,
   type Transfer,
 } from '../domain/transaction';
+import { observationsOf } from '../observations/observations';
 import { accountsRepo } from './accounts-repo';
+import { duplicateAnswersRepo } from './duplicate-answers-repo';
 import { merchantsRepo } from './merchants-repo';
 import { countingDb, openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
@@ -1219,6 +1221,48 @@ describe('transactionsRepo re-dating', () => {
   });
 });
 
+/**
+ * transactions, "A коригування opened from a list shows what it did": deleting one changes its
+ * рахунок's розрахунковий баланс by exactly its сума — nothing else is written alongside it.
+ */
+describe('transactionsRepo deleting a коригування', () => {
+  let storage: TestStorage;
+  let repo: TransactionsRepo;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    seedAccounts(storage);
+    repo = transactionsRepo(storage.db);
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: Deleting it says what goes — the розрахунковий баланс rises by its сума', () => {
+    const reserve = account({
+      id: 'reserve',
+      name: 'РЕЗЕРВ',
+      kind: 'cash',
+      currency: 'UAH',
+      openingBalance: money(100000, 'UAH'),
+    });
+    accountsRepo(storage.db).save(reserve);
+    repo.save(
+      { type: 'correction', id: 'c1', date: '2026-09-16', accountId: 'reserve', amount: money(-77686, 'UAH') },
+      storedAt,
+    );
+    expect(computeBalance(reserve, repo.listByAccount('reserve'))).toEqual(money(22314, 'UAH'));
+
+    repo.remove('c1');
+
+    expect(repo.get('c1')).toBeUndefined();
+    // Up by 776,86 UAH — exactly the сума the confirmation named, and nothing more.
+    expect(computeBalance(reserve, repo.listByAccount('reserve'))).toEqual(money(100000, 'UAH'));
+  });
+});
+
 describe('transactionsRepo reverse retype', () => {
   let storage: TestStorage;
   let repo: TransactionsRepo;
@@ -1823,6 +1867,55 @@ describe('transactionsRepo search', () => {
     });
   });
 
+  describe('narrowed to «Без джерела»', () => {
+    const kasian: Income = {
+      id: 'i-kasian',
+      type: 'income',
+      date: '2026-03-16',
+      accountId: 'card',
+      amount: money(500000, 'UAH'),
+      sourceId: UNSOURCED_SOURCE_ID,
+      description: "Від: Міхаіл Кас'ян",
+    };
+    const salary: Income = { ...income, id: 'i-salary', date: '2026-03-05' };
+    const waiting = expenseByDefault({
+      id: 'e-waiting',
+      date: '2026-03-14',
+      accountId: 'card',
+      amount: money(7000, 'UAH'),
+    });
+    const april: Income = {
+      ...kasian,
+      id: 'i-kasian-april',
+      date: '2026-04-02',
+      description: 'Від: Олена',
+    };
+
+    beforeEach(() => {
+      for (const t of [kasian, salary, waiting, april]) {
+        repo.save(t, storedAt);
+      }
+    });
+
+    it('Scenario: Only the unsourced доходи are shown', () => {
+      // Beside them: a дохід in «Зарплата», a витрата «Без категорії», a переказ and categorised
+      // витрати — none of them is a дохід without a джерело.
+      expect(ids(repo.search({ ...page, unsourced: true }))).toEqual(['i-kasian-april', 'i-kasian']);
+      expect(waiting.categoryId).toBe(UNCATEGORISED_CATEGORY_ID);
+    });
+
+    it('Scenario: Opened narrowed to one month\'s unsourced доходи', () => {
+      expect(ids(repo.search({ ...page, unsourced: true, month: '2026-03' }))).toEqual(['i-kasian']);
+    });
+
+    it('«Без джерела» combines with a рахунок and a search like the other narrowings', () => {
+      expect(ids(repo.search({ ...page, unsourced: true, accountId: 'wallet' }))).toEqual([]);
+      expect(
+        ids(repo.search({ ...page, unsourced: true, match: { ...noLabels, text: 'олена' } })),
+      ).toEqual(['i-kasian-april']);
+    });
+  });
+
   it('Searching changes nothing stored', () => {
     const before = repo.listAll();
 
@@ -2060,5 +2153,62 @@ describe('transactionsRepo search — продавці', () => {
     expect(counting.rowsRead()).toBe(1); // the change stamp, and nothing else
     expect([...first, ...second]).toHaveLength(60);
     expect([...first, ...second]).toEqual(repo.search({ merchantId: 'atb', limit: 100, offset: 0 }));
+  });
+});
+
+describe('transactionsRepo — deleting one of a можливий дубль', () => {
+  let storage: TestStorage;
+  let repo: TransactionsRepo;
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, VOCABULARY);
+    seedAccounts(storage);
+    repo = transactionsRepo(storage.db);
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  const coffee = (id: string, date: string, description?: string) =>
+    expenseByDefault({
+      id,
+      date,
+      accountId: 'card',
+      amount: money(12500, 'UAH'),
+      categoryId: 'food',
+      ...(description ? { description } : {}),
+    });
+
+  it('Scenario: Deleting the дубль ends the question — «Видалити одну» deletes as the editing does', () => {
+    const answers = duplicateAnswersRepo(storage.db);
+    const stated = () =>
+      observationsOf({
+        month: '2026-10',
+        today: '2026-10-10',
+        transactions: repo.listAll(),
+        categories: [],
+        answers: answers.list(),
+        linkedAccountIds: new Set(),
+      }).flatMap((o) => (o.kind === 'possible-duplicate' ? [`${o.first.id}+${o.second.id}`] : []));
+    repo.save(coffee('a', '2026-10-03', 'Aroma Kava'), storedAt);
+    repo.save(coffee('b', '2026-10-04'), storedAt);
+    repo.save(coffee('c', '2026-10-04'), storedAt);
+    answers.answer('a', 'c', storedAt);
+    expect(stated().sort()).toEqual(['a+b', 'b+c']);
+
+    // The later of the pair a+b, chosen and confirmed: the one delete path the editing takes.
+    repo.remove('b');
+
+    // The answer that named it is not touched by a pair it was not part of; no pair is left.
+    expect(stated()).toEqual([]);
+    expect(answers.list()).toEqual([{ first: 'a', second: 'c', answeredAt: storedAt }]);
+    expect(repo.get('a')).toEqual(coffee('a', '2026-10-03', 'Aroma Kava'));
+
+    // A pair that was answered loses its answer with the транзакція.
+    repo.remove('c');
+    expect(answers.list()).toEqual([]);
+    expect(repo.get('a')).toEqual(coffee('a', '2026-10-03', 'Aroma Kava'));
   });
 });

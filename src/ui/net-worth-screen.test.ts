@@ -9,7 +9,7 @@ import { money } from '../domain/money';
 import type { HistoryPeriod } from '../domain/net-worth';
 import { expenseByDefault, type Correction, type Income, type Transaction } from '../domain/transaction';
 import { OVERFLOW_REASON, TOTAL_HISTORY, netWorthSeries } from './net-worth';
-import { netWorthScreenModel, type HistoryView, type ScreenChoices } from './net-worth-screen';
+import { MIN_LABEL_DP, netWorthScreenModel, type HistoryView, type ScreenChoices } from './net-worth-screen';
 import { netWorthInputFrom } from './net-worth-test-fixtures';
 
 /** The thousands separator every amount uses (U+00A0). */
@@ -57,6 +57,7 @@ function screen(
     rates?: readonly StoredRate[];
     requestedHistory?: string;
     currentValues?: ReadonlyMap<string, CurrentValue>;
+    chartWidth?: number;
   },
   choices: Partial<ScreenChoices> = {},
 ) {
@@ -70,6 +71,7 @@ function screen(
     choices: { period: 12 as HistoryPeriod, view: 'bars' as HistoryView, forecast: false, ...choices },
     now,
     today,
+    ...(input.chartWidth === undefined ? {} : { chartWidth: input.chartWidth }),
   });
 }
 
@@ -106,6 +108,55 @@ describe('Every month is named and its direction readable without colour', () =>
     expect(chart.values.slice(-5).filter((v) => v! > 0)).toHaveLength(4);
     expect(chart.ticks.map((t) => t.text)).toEqual(['тра', 'чер', 'лип', 'сер', 'вер', 'жов']);
     expect(chart.monthLabels[2]).toContain('спад');
+  });
+
+  it('Scenario: The forecast does not crowd the names', () => {
+    // «1 рік» with «Прогноз» on: twelve recorded months, листопад 2025 to жовтень 2026, and six
+    // forecast ones. A phone 360 dp wide leaves the chart 288 dp: a 16 dp gutter and a 20 dp card
+    // padding on each side.
+    const width = 288;
+    const model = screen(
+      {
+        accounts: [uah('card', 1000000, '2025-11-01')],
+        transactions: monthly('2025-11', [10000, 12000, 14000, 16000, 18000, 20000, 15000, 15000, 9000, 11000, 13000, 0]),
+        chartWidth: width,
+      },
+      { period: 12 as HistoryPeriod, view: 'bars', forecast: true },
+    );
+    const chart = model.chart!;
+    expect(chart.values).toHaveLength(12);
+    expect(chart.forecast?.values).toHaveLength(6);
+    const slot = width / (chart.values.length + chart.forecast!.values.length);
+    const indexes = chart.ticks.map((t) => t.index);
+    // A regular interval that includes the first and the current month; the forecast's months are
+    // named like any other.
+    expect(indexes).toEqual([0, 3, 6, 9, 11, 14, 17]);
+    expect(chart.ticks.map((t) => t.text)).toEqual(['лис', 'лют', 'тра', 'сер', 'жов', 'гру', 'бер']);
+    expect(chart.ticks.filter((t) => t.current).map((t) => t.index)).toEqual([11]);
+    // No two of them overlap.
+    const gaps = indexes.slice(1).map((index, i) => (index - indexes[i]!) * slot);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(MIN_LABEL_DP);
+  });
+
+  it('Scenario: The forecast does not crowd the names — the current month is named once', () => {
+    // «6 міс» with «Прогноз» on: six recorded months, травень to жовтень, and six forecast ones
+    // whose first is жовтень's own end. Twelve slots on a 360 dp chart: every slot has room.
+    const model = screen(
+      {
+        accounts: [uah('card', 1000000, '2025-11-01')],
+        transactions: monthly('2025-11', [10000, 12000, 14000, 16000, 18000, 20000, 15000, 15000, 9000, 11000, 13000, 0]),
+        chartWidth: 360,
+      },
+      { period: 6 as HistoryPeriod, view: 'bars', forecast: true },
+    );
+    const chart = model.chart!;
+    expect(chart.values).toHaveLength(6);
+    expect(chart.forecast?.values).toHaveLength(6);
+    const names = chart.ticks.map((t) => t.text);
+    expect(names).toEqual(['тра', 'чер', 'лип', 'сер', 'вер', 'жов', 'лис', 'гру', 'січ', 'лют', 'бер']);
+    expect(new Set(names).size).toBe(names.length);
+    // жовтень is named under its recorded bar, which is the current one.
+    expect(chart.ticks.filter((t) => t.current).map((t) => t.index)).toEqual([5]);
   });
 
   it('Scenario: An entry month is marked', () => {
@@ -147,6 +198,55 @@ describe('Selecting a month explains its change', () => {
       `дохід +60${T}000,00 UAH · витрати −110${T}000,00 UAH · коригування −6${T}000,00 UAH`,
     );
     expect(model.table.find((r) => r.selected)?.month).toBe('2026-07');
+  });
+
+  it('Scenario: The owner sees why July fell — in «Усе ≈ грн» every розбивка amount carries «≈»', () => {
+    const transactions = [
+      income('base', 'card', '2026-06-02', 50000000),
+      income('pay', 'card', '2026-07-05', 6000000),
+      expense('spend', 'card', '2026-07-10', 11000000),
+      correction('fix', 'card', '2026-07-20', -600000),
+    ];
+    const accounts = [
+      uah('card', 0, '2026-06-01'),
+      account({ id: 'usd', name: 'usd', kind: 'savings', currency: 'USD', openingDate: '2026-06-01' }),
+    ];
+    const model = screen(
+      { accounts, transactions, rates: [usdRate], requestedHistory: TOTAL_HISTORY },
+      { selectedMonth: '2026-07' },
+    );
+    expect(model.choices.find((c) => c.selected)?.id).toBe(TOTAL_HISTORY);
+    const breakdown = model.card?.breakdown ?? [];
+    expect(breakdown.map((line) => line.label)).toEqual(['дохід', 'витрати', 'коригування']);
+    for (const line of breakdown) expect(line.text).toContain('≈');
+    expect(model.card?.breakdownText).toBe(
+      `дохід +≈60${T}000 грн · витрати −≈110${T}000 грн · коригування −≈6${T}000 грн`,
+    );
+  });
+});
+
+/**
+ * app-shell, "Every switch and every coloured mark has an accessible name": the card draws a fall
+ * in the danger colour, so its accessible name says the fall in words, as the month table and the
+ * «Статок» widget already do.
+ */
+describe('The card\'s зміна is heard as well as seen', () => {
+  it('Scenario: A зміна that fell is heard as a fall', () => {
+    const transactions = [
+      income('base', 'card', '2026-06-02', 50000000),
+      income('pay', 'card', '2026-07-05', 6000000),
+      expense('spend', 'card', '2026-07-10', 11000000),
+      correction('fix', 'card', '2026-07-20', -600000),
+    ];
+    const model = screen({ accounts: [uah('card', 0, '2026-06-01')], transactions }, { selectedMonth: '2026-07' });
+    expect(model.card?.changeDirection).toBe('down');
+    expect(model.card?.changeA11yLabel).toContain(`зміна мінус 56${T}000 гривень, спад`);
+    expect(model.card?.changeA11yLabel).toBe(`зміна мінус 56${T}000 гривень, спад, від 30 червня`);
+  });
+
+  it('a month with no зміна to give is named by its sentence', () => {
+    const model = screen({ accounts: [uah('card', 0, '2026-10-01')], transactions: [] });
+    expect(model.card?.changeA11yLabel).toBe(model.card?.changeText);
   });
 });
 

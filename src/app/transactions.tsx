@@ -9,6 +9,7 @@ import { TransactionRow } from '@/components/transaction-row';
 import { ThemedText } from '@/components/themed-text';
 import {
   accounts as accountsRepo,
+  categorisationContext,
   categories as categoriesRepo,
   limits as limitsRepo,
   merchants as merchantsRepo,
@@ -20,6 +21,7 @@ import {
 import { activeAccounts } from '@/domain/account';
 import { namesById } from '@/domain/category';
 import { merchantIndex } from '@/domain/merchants';
+import { resolveCategory } from '@/domain/rules';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { judgeProgressLater } from '@/hooks/progress-ports';
@@ -27,23 +29,25 @@ import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { usePagedList } from '@/hooks/use-paged-list';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { useRuleOffer } from '@/hooks/use-rule-offer';
-import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
+import { expenseCategoryChoices, recentlyUsed, sourceChoices } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import { accountChoiceLabel } from '@/ui/labels';
-import { ruleTargetLabel } from '@/ui/list-management';
 import { monthLabel } from '@/ui/months';
-import { recategorise } from '@/ui/retype';
+import { assignSource, recategorise } from '@/ui/retype';
 import { PICKER_SIZE } from '@/ui/shortlist';
 import {
   accountFilterOrder,
   emptyMessage,
   merchantFromRoute,
   monthFromRoute,
+  ONLY_CHOICES,
   ONLY_UNCATEGORISED,
+  onlyFromRoute,
+  onlyNarrowing,
   searchCriteria,
+  SEARCH_HINT,
   searchDelayMs,
   searchLineTitle,
-  uncategorisedFromRoute,
 } from '@/ui/transaction-search';
 import {
   accountsById,
@@ -56,15 +60,16 @@ import { Spacing } from '@/constants/theme';
 
 /**
  * «Транзакції» — every stored транзакція, not only the latest, with a search over what they say
- * and narrowing by рахунок, місяць and «Без категорії». It exists because a history that cannot be searched cannot
+ * and narrowing by рахунок, місяць, «Без категорії» and «Без джерела». It exists because a history that cannot be searched cannot
  * answer «куди пішли гроші» once it is longer than one screen.
  *
  * Pushed over the tabs and reached from the стрічка on Головний (design D14): search is somewhere
  * you go from the стрічка, not somewhere you live. Every decision — what the query means, what a
  * page is, what to say when there is nothing — is in `src/ui/transaction-search.ts` and
- * `src/db/transactions-repo.ts` under `verify`; this file is the wiring. The one thing it changes
- * is the категорія of a line in «Без категорії», through the стрічка's own one-tap flow — this is
- * where «Потребує уваги» sends the owner to sort that pile.
+ * `src/db/transactions-repo.ts` under `verify`; this file is the wiring. The two things it changes
+ * are the категорія of a line in «Без категорії» and the джерело of a дохід in «Без джерела»,
+ * through the стрічка's own one-tap flows — this is where «Потребує уваги» and the підсумок send
+ * the owner to sort those piles.
  */
 
 /** How far back the categorising picker reads what the owner reached for last — Головний's window. */
@@ -112,9 +117,10 @@ export default function TransactionsScreen() {
   // `monthFromRoute` is what decides whether that text is a місяць at all, under `verify`.
   const asked = useLocalSearchParams<{ month?: string }>().month;
   const [month, setMonth] = useState(monthFromRoute(asked) ?? ANY);
-  // «Без категорії», on when «Потребує уваги» opened the screen with `?only=uncategorised`.
-  const only = useLocalSearchParams<{ only?: string }>().only;
-  const [uncategorisedOnly, setUncategorisedOnly] = useState(uncategorisedFromRoute(only));
+  // «Без категорії» or «Без джерела» — never both — on when the screen was opened with
+  // `?only=uncategorised` or `?only=unsourced`: an initial value, not a lock.
+  const askedOnly = useLocalSearchParams<{ only?: string }>().only;
+  const [only, setOnly] = useState(onlyFromRoute(askedOnly));
   // One продавець, when a продавець's «Транзакції» opened the screen with `?merchant=`: exact, judged
   // on the опис, and an initial value rather than a lock. An id no продавець carries narrows nothing.
   const askedMerchant = merchantFromRoute(
@@ -140,12 +146,12 @@ export default function TransactionsScreen() {
         ...(criteria ? { match: criteria } : {}),
         ...(accountId === ANY ? {} : { accountId }),
         ...(month === ANY ? {} : { month }),
-        ...(uncategorisedOnly ? { uncategorised: true } : {}),
+        ...onlyNarrowing(only),
         ...(merchantId === ANY ? {} : { merchantId }),
         limit,
         offset,
       }),
-    [accountId, criteria, merchantId, month, uncategorisedOnly],
+    [accountId, criteria, merchantId, month, only],
   );
 
   /** What the search reads from, and storage's change stamp: a new question starts over. */
@@ -159,7 +165,7 @@ export default function TransactionsScreen() {
     criteria: criteria ?? null,
     accountId,
     month,
-    uncategorisedOnly,
+    only,
     merchantId,
   });
   const [shown, showNext, reload] = usePagedList(question, pagePorts);
@@ -185,7 +191,7 @@ export default function TransactionsScreen() {
     criteria !== undefined ||
     accountId !== ANY ||
     month !== ANY ||
-    uncategorisedOnly ||
+    only !== undefined ||
     merchantId !== ANY;
   const nothing = emptyMessage({ shown: shown.transactions.length, narrowed });
 
@@ -204,7 +210,7 @@ export default function TransactionsScreen() {
       setSearchReset((n) => n + 1);
       setAccountId(ANY);
       setMonth(ANY);
-      setUncategorisedOnly(false);
+      setOnly(undefined);
       setMerchantId(ANY);
     });
   }, [ask]);
@@ -218,6 +224,11 @@ export default function TransactionsScreen() {
       expenseCategoryChoices(stored.categories).filter((c) => c.id !== UNCATEGORISED_CATEGORY_ID),
     [stored.categories],
   );
+  /**
+   * What the «Без джерела» mark offers: every unarchived джерело but «Без джерела» itself, which is
+   * what the дохід is being moved off — the editing screen's own list, nothing but джерела.
+   */
+  const sourceRows = useMemo(() => sourceChoices(stored.sources), [stored.sources]);
   const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE + 1), [stored.latest]);
   /** Every рахунок the latest транзакції touched, for the order of the рахунок row. */
   const recentAccounts = useMemo(
@@ -231,6 +242,30 @@ export default function TransactionsScreen() {
   const [categoryListOpen, setCategoryListOpen] = useState(false);
   const closeCategoryList = useCallback(() => setCategoryListOpen(false), []);
   useCloseOnBack(categorising !== undefined && categoryListOpen, closeCategoryList);
+
+  /**
+   * What a правило or the шаблон would give the «Без категорії» line whose picker is open: offered
+   * first among the five and marked, stored only when tapped (main-screen, "The шаблон's категорія
+   * is one tap away"). The tiers are read once per opened picker, not per render, so typing in its
+   * full list reads no storage.
+   */
+  const tiers = useMemo(
+    () => (categorising === undefined ? undefined : categorisationContext()),
+    [categorising],
+  );
+  const suggestedCategory = (t: Transaction) =>
+    tiers === undefined
+      ? undefined
+      : resolveCategory(tiers, {
+          description: t.description ?? '',
+          mcc: 'mcc' in t ? t.mcc : undefined,
+        });
+
+  /** The «Без джерела» line whose one-tap джерело picker is open, if any — and its full list. */
+  const [sourcing, setSourcing] = useState<string>();
+  const [sourceListOpen, setSourceListOpen] = useState(false);
+  const closeSourceList = useCallback(() => setSourceListOpen(false), []);
+  useCloseOnBack(sourcing !== undefined && sourceListOpen, closeSourceList);
 
   const reportBug = useCallback(
     (entryId: string) =>
@@ -280,16 +315,42 @@ export default function TransactionsScreen() {
     [haptics, reload, reloadStored, reportBug, ruleOffer],
   );
 
+  /**
+   * One tap behind the «Без джерела» mark: the same дохід under the same id, now carrying the pick
+   * — the editing screen's plain save of a дохід. Under the «Без джерела» narrowing the reload
+   * simply no longer returns the line. A джерело is not a категорія: no правило is offered.
+   */
+  const giveSource = useCallback(
+    (t: Transaction, picked: string) => {
+      try {
+        transactionsRepo.save(assignSource(t, picked), new Date());
+        judgeProgressLater();
+        haptics.play('stored');
+        setSourcing(undefined);
+        setSourceListOpen(false);
+        reload();
+        // The pick is now the most recent джерело: the next picker on this screen puts it first.
+        reloadStored();
+      } catch (error) {
+        Alert.alert(
+          ...failureAlert({
+            title: 'Не збережено',
+            where: 'transaction-source',
+            error,
+            report: reportBug,
+          }),
+        );
+      }
+    },
+    [haptics, reload, reloadStored, reportBug],
+  );
+
   const accountChoices = [
     { value: ANY, label: 'Всі' },
     ...accountFilterOrder(activeAccounts(stored.accounts), recentAccounts).map((a) => ({
       value: a.id,
       label: accountChoiceLabel(a),
     })),
-  ];
-  const categoryChoices = [
-    { value: ANY, label: 'Всі' },
-    { value: ONLY_UNCATEGORISED, label: 'Без категорії' },
   ];
   const monthChoices = [
     { value: ANY, label: 'Всі' },
@@ -330,20 +391,20 @@ export default function TransactionsScreen() {
   /** One row of the list — drawn only while it is on or near the screen. */
   const renderRow = (t: Transaction, index: number) => {
     const { line, subtitle } = lines.get(t.id)!;
-    const title = searchLineTitle(line, uncategorisedOnly);
+    const title = searchLineTitle(line, only === ONLY_UNCATEGORISED);
     return (
       <ListRow key={line.id} last={index === shown.transactions.length - 1}>
         {/* Under «Без категорії» the опис already is the title; said once. */}
         <TransactionRow
           icon={line.icon}
           iconTone={line.iconTone}
-          marked={line.uncategorised}
-          title={title}
-          titleTone={line.overLimit ? 'textDanger' : undefined}
+          marked={line.uncategorised || line.unsourced}
+          title={line.transferEnds ?? title}
+          overLimit={line.overLimit}
           titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
           subtitle={subtitle}
           description={
-            line.descriptionShown && !(uncategorisedOnly && title === line.descriptionShown)
+            line.descriptionShown && !(only === ONLY_UNCATEGORISED && title === line.descriptionShown)
               ? line.descriptionShown
               : undefined
           }
@@ -361,6 +422,7 @@ export default function TransactionsScreen() {
               onPress={() => {
                 setCategorising(categorising === line.id ? undefined : line.id);
                 setCategoryListOpen(false);
+                setSourcing(undefined);
               }}
             />
           </View>
@@ -375,9 +437,39 @@ export default function TransactionsScreen() {
             recentIds={recent.categories}
             selected={undefined}
             onSelect={(picked: string) => categorise(t, picked)}
+            suggestedId={suggestedCategory(t)}
             noun="categories"
             expanded={categoryListOpen}
             onExpandedChange={setCategoryListOpen}
+          />
+        ) : null}
+
+        {/* The same one tap for a дохід «Без джерела», as on Головний: only джерела are offered,
+            and tapping the line itself still opens editing, where a дохід that is really a
+            повернення or a переказ is retyped. */}
+        {line.unsourced ? (
+          <View style={styles.rowActions}>
+            <RowAction
+              title={sourcing === line.id ? 'Згорнути' : 'Обрати джерело'}
+              onPress={() => {
+                setSourcing(sourcing === line.id ? undefined : line.id);
+                setSourceListOpen(false);
+                setCategorising(undefined);
+              }}
+            />
+          </View>
+        ) : null}
+        {/* Gated on the mark too, for the reason the категорія picker is. */}
+        {line.unsourced && sourcing === line.id ? (
+          <Picker
+            label="Джерело"
+            rows={sourceRows}
+            recentIds={recent.sources}
+            selected={undefined}
+            onSelect={(picked: string) => giveSource(t, picked)}
+            noun="sources"
+            expanded={sourceListOpen}
+            onExpandedChange={setSourceListOpen}
           />
         ) : null}
       </ListRow>
@@ -405,11 +497,9 @@ export default function TransactionsScreen() {
           />
           <Choices
             label="Категорія"
-            choices={categoryChoices}
-            selected={uncategorisedOnly ? ONLY_UNCATEGORISED : ANY}
-            onSelect={(picked: string) =>
-              ask(() => setUncategorisedOnly(picked === ONLY_UNCATEGORISED))
-            }
+            choices={[{ value: ANY, label: 'Всі' }, ...ONLY_CHOICES]}
+            selected={only ?? ANY}
+            onSelect={(picked: string) => ask(() => setOnly(onlyFromRoute(picked)))}
             scroll
           />
           {/* Only the місяці something is actually recorded in: a month the owner has nothing in
@@ -461,9 +551,8 @@ export default function TransactionsScreen() {
       }>
       <RuleOfferSheet
         offer={ruleOffer.offer}
-        targetLabel={
-          ruleOffer.offer ? ruleTargetLabel(ruleOffer.offer.target, categoryNames, accountNames) : ''
-        }
+        categoryNames={categoryNames}
+        accountNames={accountNames}
         onAccept={ruleOffer.accept}
         onDecline={ruleOffer.decline}
       />
@@ -495,7 +584,7 @@ function PausedSearchBar({ onSearch }: { onSearch: (text: string) => void }) {
       onSearch(text);
     }
   };
-  return <SearchBar value={typed} onChange={change} placeholder="опис, продавець, категорія або сума" />;
+  return <SearchBar value={typed} onChange={change} placeholder={SEARCH_HINT} />;
 }
 
 const styles = StyleSheet.create({

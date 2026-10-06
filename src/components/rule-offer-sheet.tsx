@@ -11,7 +11,8 @@ import { Spacing } from '@/constants/theme';
 /**
  * «Запамʼятати правило?» — the offer that follows a категорія just set on a витрата or
  * повернення that carries an опис. `ruleOffer` in `src/ui/list-management.ts` decides whether one
- * exists at all and what it would say, and `ruleOfferView` how it reads; this is only the asking,
+ * exists at all and what it would say, and `ruleOfferView` how it reads — its sentence included,
+ * by the target's kind (design D17); this is only the asking,
  * because `verify` never runs JSX (rules-everywhere design D5, D6).
  *
  * When the опис is recognised as a продавець the offer names «продавець <назва>» and lets the owner
@@ -24,14 +25,16 @@ import { Spacing } from '@/constants/theme';
  */
 export function RuleOfferSheet({
   offer,
-  targetLabel,
+  categoryNames,
+  accountNames,
   onAccept,
   onDecline,
   onExited,
 }: {
   offer: RuleOffer | undefined;
-  /** The category's name, or «переказ на <назва>» for a правило-переказ (design D6). */
-  targetLabel: string;
+  /** The names the offer's target is said with — a категорія's, or a правило-переказ's рахунок. */
+  categoryNames: ReadonlyMap<string, string>;
+  accountNames: ReadonlyMap<string, string>;
   onAccept: (criterion: RuleCriterion) => void;
   onDecline: () => void;
   /** Once the sheet has left, however it was answered — where a screen change after it belongs. */
@@ -50,7 +53,7 @@ export function RuleOfferSheet({
     setPattern(offer?.merchant ?? '');
     setUsePattern(false);
   }
-  const view = offer ? ruleOfferView(offer, usePattern, pattern) : undefined;
+  const view = offer ? ruleOfferView(offer, usePattern, pattern, { categoryNames, accountNames }) : undefined;
 
   return (
     <Sheet
@@ -60,7 +63,7 @@ export function RuleOfferSheet({
       onExited={onExited}>
       <View style={styles.body}>
         <ThemedText type="small" themeColor="textSecondary">
-          Наступного разу такий опис одразу піде в цю категорію.
+          {view?.sentence}
         </ThemedText>
         {view?.showsPattern === false ? (
           <ThemedText type="rowTitle">{view.merchantLabel}</ThemedText>
@@ -72,7 +75,7 @@ export function RuleOfferSheet({
             autoCapitalize="none"
           />
         )}
-        <ThemedText>→ {targetLabel}</ThemedText>
+        <ThemedText>→ {view?.targetLabel}</ThemedText>
       </View>
       <View style={styles.actions}>
         <Action title="Запамʼятати" onPress={() => view && onAccept(view.criterion)} />

@@ -32,6 +32,7 @@ export default function NetWorthScreen() {
   const selection = useNetWorthSelection();
   const [forecastOn, setForecastOn] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<Month>();
+  const [chartWidth, setChartWidth] = useState<number>();
   const [explanationOpen, setExplanationOpen] = useState(false);
 
   const [stored] = useReloadOnFocus(
@@ -79,8 +80,9 @@ export default function NetWorthScreen() {
         },
         now: new Date(),
         today: stored.today,
+        ...(chartWidth ? { chartWidth } : {}),
       }),
-    [forecastOn, selectedMonth, selection.period, selection.view, series, stored.accounts, stored.rates, stored.today],
+    [chartWidth, forecastOn, selectedMonth, selection.period, selection.view, series, stored.accounts, stored.rates, stored.today],
   );
 
   const colorOf = (direction: ChangeDirection | undefined) =>
@@ -129,7 +131,11 @@ export default function NetWorthScreen() {
                   {model.card.futureLine}
                 </ThemedText>
               ) : null}
-              <ThemedText type="small" themeColor={colorOf(model.card.changeDirection)} tabular>
+              <ThemedText
+                type="small"
+                themeColor={colorOf(model.card.changeDirection)}
+                tabular
+                accessibilityLabel={model.card.changeA11yLabel}>
                 {model.card.changeText}
               </ThemedText>
               {model.card.breakdown.map((line) => (
@@ -162,6 +168,7 @@ export default function NetWorthScreen() {
                 chart={model.chart}
                 view={selection.view}
                 onSelect={(index) => setSelectedMonth(model.chart!.months[index])}
+                onWidth={setChartWidth}
               />
               {model.forecastSwitch ? (
                 <View style={styles.row}>

@@ -62,6 +62,16 @@ export function parseAmount(typed: string, currency: CurrencyCode): Money {
  * the one check: −999 999 999,99 is the lowest balance there is, as 999 999 999,99 is the highest.
  */
 function magnitudeOf(digits: string, typed: string, currency: CurrencyCode): number {
+  // An empty сума and a negative one are named for what they are, before the number test
+  // (main-screen). Only where no sign was taken off: a signed field's «-» and «--5» are still
+  // quoted back as not a сума.
+  const unsigned = digits === typed.trim();
+  if (unsigned && digits === '') {
+    throw new Refusal('Напишіть суму');
+  }
+  if (unsigned && digits.startsWith('-')) {
+    throw new Refusal('Сума має бути більшою за нуль');
+  }
   const match = TYPED_AMOUNT.exec(digits);
   if (!match) {
     throw new Refusal(`«${typed}» — це не сума; напишіть число, напр. 125,50`);
@@ -85,7 +95,9 @@ function magnitudeOf(digits: string, typed: string, currency: CurrencyCode): num
   }
   const minorUnits = Number(`${whole}${fraction.padEnd(MINOR_DIGITS, '0')}`);
   if (minorUnits <= 0) {
-    throw new Refusal(`сума має бути більша за нуль, а не «${typed}»`);
+    // The words a negative сума gets above: zero and below are one refusal (main-screen), on the
+    // entry form and on every other form a сума is typed into, a ліміт's included.
+    throw new Refusal('Сума має бути більшою за нуль');
   }
   if (minorUnits > MAX_AMOUNT_MINOR) {
     throw tooBig();

@@ -1,3 +1,4 @@
+import { capitalised } from '../domain/fold';
 import type { Account } from '../domain/account';
 import type { Category } from '../domain/category';
 import {
@@ -10,9 +11,16 @@ import {
   type Periodicity,
 } from '../domain/commitments';
 import { Refusal, isRefusal } from '../domain/refusal';
-import type { IsoDate } from '../domain/transaction';
+import {
+  CORRECTION_CATEGORY_ID,
+  FEES_CATEGORY_ID,
+  UNCATEGORISED_CATEGORY_ID,
+  type IsoDate,
+} from '../domain/transaction';
 import { formatMinorUnits, parseAmount } from './amount-input';
 import { parseTypedDate } from './dates';
+import { accountChoiceLabel, byName } from './labels';
+import type { Named } from './shortlist';
 
 /**
  * The create/edit form of a зобов'язання, with none of its JSX (commitments-screen, "The
@@ -89,14 +97,37 @@ export function commitmentDraftOf(commitment: Commitment): CommitmentDraft {
   };
 }
 
-/** The рахунки a зобов'язання can be debited from: every unarchived one, of any currency. */
+/** The рахунки a зобов'язання can be debited from: every unarchived one, of any currency, by name. */
 export function commitmentAccountChoices(accounts: readonly Account[]): Account[] {
-  return accounts.filter((a) => !a.archived);
+  return accounts.filter((a) => !a.archived).sort(byName);
 }
 
-/** The категорії offered: unarchived ones. */
+/** The categories the form never offers among its категорії (see `commitmentCategoryChoices`). */
+const NOT_OFFERED: readonly string[] = [UNCATEGORISED_CATEGORY_ID, CORRECTION_CATEGORY_ID, FEES_CATEGORY_ID];
+
+/**
+ * The категорії offered: unarchived ones, by name — without «Без категорії», which the form offers
+ * itself as having none, and without «Коригування» and «Комісія»: a коригування is fixed to its own
+ * категорія, and a комісія is recorded with its переказ, never as a платіж of a зобов'язання.
+ */
 export function commitmentCategoryChoices(categories: readonly Category[]): Category[] {
-  return categories.filter((c) => !c.archived);
+  return categories.filter((c) => !c.archived && !NOT_OFFERED.includes(c.id)).sort(byName);
+}
+
+/** The form's one offer of no категорія; its value is the draft's empty `categoryId`. */
+export const NO_CATEGORY: Named = { id: '', name: 'Без категорії' };
+
+/**
+ * «Рахунок списання» as the picker draws it — the entry form's short list (`shortlist`,
+ * `allOffer`) — each рахунок wearing its currency, so a search for «USD» finds the USD ones.
+ */
+export function commitmentAccountRows(accounts: readonly Account[]): Named[] {
+  return commitmentAccountChoices(accounts).map((a) => ({ id: a.id, name: accountChoiceLabel(a) }));
+}
+
+/** «Категорія» as the picker draws it: «Без категорії» once and first, as in the entry form. */
+export function commitmentCategoryRows(categories: readonly Category[]): Named[] {
+  return [NO_CATEGORY, ...commitmentCategoryChoices(categories).map((c) => ({ id: c.id, name: c.name }))];
 }
 
 /**
@@ -131,10 +162,6 @@ export interface CommitmentFormContext {
   readonly categories: readonly Category[];
   /** The stored зобов'язання being edited, where it is one. */
   readonly existing?: Commitment;
-}
-
-function capitalised(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /**

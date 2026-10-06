@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Fragment, useCallback, useMemo } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ObservationsList } from '@/components/observations-list';
@@ -16,7 +16,12 @@ import {
   storedHistory,
 } from '@/db/repos';
 import { monthOf } from '@/domain/transaction';
-import { answerNotDuplicate } from '@/hooks/observations-reads';
+import {
+  answerNotDuplicate,
+  deleteOneOfDuplicate,
+  forgetNotDuplicate,
+  linkedAccountIds,
+} from '@/hooks/observations-reads';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { monthSummaryOf } from '@/month-summary/summary';
 import { todayIso } from '@/ui/dates';
@@ -67,6 +72,7 @@ export default function MonthSummaryScreen() {
           today,
         }),
         answers: duplicateAnswersRepo.list(),
+        linkedAccountIds: linkedAccountIds(),
       });
       return {
         today,
@@ -80,12 +86,17 @@ export default function MonthSummaryScreen() {
     }, [param]),
   );
 
+  /** «Ще N» chosen: every спостереження of the month is listed, in place. */
+  const [observationsExpanded, setObservationsExpanded] = useState(false);
+
   const screen = useMemo(
     () =>
       stored.summary && stored.names
-        ? monthSummaryScreen(stored.summary, { ...stored.names, now: new Date() }, stored.today)
+        ? monthSummaryScreen(stored.summary, { ...stored.names, now: new Date() }, stored.today, {
+            observationsExpanded,
+          })
         : null,
-    [stored],
+    [observationsExpanded, stored],
   );
 
   const open = (route: string) => router.push(route);
@@ -107,18 +118,29 @@ export default function MonthSummaryScreen() {
       {screen.sections.map((section) => (
         <View key={section.key} style={styles.section}>
           <SectionLabel>{section.title}</SectionLabel>
-          {section.observations && section.observations.length > 0 ? (
+          {section.observations ? (
             <ObservationsList
               lines={section.observations}
+              empty={section.empty}
+              more={section.observationsMore}
+              onMore={() => setObservationsExpanded(true)}
               onOpen={open}
               onNotDuplicate={(pair) => {
                 // Stored at once; the reload re-derives the підсумок without the pair, in place.
                 answerNotDuplicate(pair);
                 reload();
               }}
+              onUndoNotDuplicate={(pair) => {
+                forgetNotDuplicate(pair);
+                reload();
+              }}
+              onDeleteOne={(id) => {
+                deleteOneOfDuplicate(id);
+                reload();
+              }}
             />
           ) : null}
-          {section.empty ? (
+          {section.empty && !section.observations ? (
             <ThemedText type="small" themeColor="textSecondary">
               {section.empty}
             </ThemedText>

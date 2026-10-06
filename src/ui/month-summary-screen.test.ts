@@ -58,6 +58,7 @@ function screenOf(rows: readonly Transaction[], over: Partial<MonthSummaryInput>
     waitingDrafts: 0,
     figures: new Map(),
     answers: [],
+    linkedAccountIds: new Set(),
     ...over,
   });
   if (!summary) throw new Error('no підсумок');
@@ -65,6 +66,59 @@ function screenOf(rows: readonly Transaction[], over: Partial<MonthSummaryInput>
 }
 
 const ACTIVE = new Set(['2026-08', '2026-09', '2026-10']);
+
+describe('the спостереження of a підсумок', () => {
+  it('Scenario: More than five спостереження fold under «Ще N»', () => {
+    // Seven категорії doubled in September against six flat months, and one можливий дубль.
+    const b = ledgerBuilder();
+    const rows: Transaction[] = [];
+    for (const month of monthsFrom('2026-03', '2026-09')) {
+      for (let i = 0; i < 7; i++) {
+        const usual = 800000 + i * 1000;
+        const day = `${month}-${String(i + 1).padStart(2, '0')}`;
+        rows.push(b.expense(day, `c${i}`, month === '2026-09' ? usual * 2 : usual));
+      }
+    }
+    rows.push(
+      b.expense('2026-09-20', 'cafe', 12500, { id: 'bank', description: 'Aroma Kava' }),
+      b.expense('2026-09-21', 'cafe', 12500, { id: 'hand' }),
+    );
+    const summary = monthSummaryOf({
+      month: '2026-09',
+      today: TODAY,
+      transactions: rows,
+      accounts: ACCOUNTS,
+      categories: CATEGORIES,
+      limits: [],
+      goals: [],
+      waitingDrafts: 0,
+      figures: new Map(),
+      answers: [],
+      linkedAccountIds: new Set(),
+    })!;
+    expect(summary.observations).toHaveLength(8);
+    const section = (expanded: boolean) =>
+      monthSummaryScreen(summary, NAMES, TODAY, { observationsExpanded: expanded }).sections.find(
+        (s) => s.key === 'observations',
+      )!;
+
+    const folded = section(false);
+    expect(folded.observations!.map((l) => l.key)).toEqual(summary.observations.slice(0, 5).map((o) => o.key));
+    const duplicate = folded.observations!.find((l) => l.kind === 'possible-duplicate');
+    expect(duplicate?.answer).toEqual({ first: 'bank', second: 'hand' });
+    expect(folded.observationsMore).toEqual({ label: 'Ще 3', accessibilityLabel: 'Показати ще 3 спостереження' });
+
+    // «Ще 3» shows the other three without leaving the підсумок.
+    const shown = section(true);
+    expect(shown.observations!.map((l) => l.key)).toEqual(summary.observations.map((o) => o.key));
+    expect(shown.observationsMore).toBeNull();
+
+    // The screen hands «Ще N» to the list and toggles the flag itself.
+    const screen = readFileSync(new URL('../app/month-summary/[month].tsx', import.meta.url), 'utf8');
+    expect(screen).toContain('more={section.observationsMore}');
+    expect(screen).toContain('observationsExpanded');
+  });
+});
 
 describe('a month without a підсумок is said in words', () => {
   it('names the month in words with its year', () => {
@@ -163,6 +217,19 @@ describe('the sections of a підсумок', () => {
     }
   });
 
+  it('Scenario: Коригування inside витрачено are named', () => {
+    const b = ledgerBuilder();
+    const rows = [...plainSeptember(), b.correction('2026-09-30', -77686)];
+    const spentRow = (r: readonly Transaction[]) =>
+      screenOf(r).sections.find((s) => s.key === 'spent')!.groups[0]!.rows.find((x) => x.key === 'spent')!;
+    const named = spentRow(rows);
+    expect(plain(named.value)).toBe('64 826,86 UAH');
+    expect(plain(named.detail)).toBe('з них коригування 776,86 UAH');
+    expect(plain(named.accessibilityLabel)).toContain('з них коригування 776,86 UAH');
+    // A month without a negative коригування names none.
+    expect(spentRow(plainSeptember()).detail).toBeUndefined();
+  });
+
   it('Scenario: A changed категорія opens its month', () => {
     const changed = screenOf(plainSeptember()).sections.find((s) => s.key === 'changed')!;
     const food = changed.groups[0]!.rows.find((r) => r.label === 'Продукти')!;
@@ -179,6 +246,44 @@ describe('the sections of a підсумок', () => {
     // A clean month leads to the month's транзакції unnarrowed.
     const clean = screenOf(plainSeptember()).sections.find((s) => s.key === 'unanswered')!;
     expect(clean.groups[0]!.rows[0]).toMatchObject({ label: 'Вересень — чистий місяць', route: '/transactions?month=2026-09' });
+  });
+
+  it('Scenario: «Без джерела» opens the unsourced доходи', () => {
+    const b = ledgerBuilder();
+    const nine = Array.from({ length: 9 }, (_, i) =>
+      b.income(`2026-09-${String(i + 1).padStart(2, '0')}`, 10000, { sourceId: 'unsourced' }),
+    );
+    const unanswered = screenOf([...plainSeptember(), ...nine]).sections.find((s) => s.key === 'unanswered')!;
+    const rows = unanswered.groups[0]!.rows;
+    // No витрата «Без категорії»: the one count is «Без джерела», and it opens those nine.
+    expect(rows.map((r) => r.key)).toEqual(['unsourced']);
+    expect(rows[0]).toMatchObject({
+      label: '«Без джерела»',
+      route: '/transactions?month=2026-09&only=unsourced',
+    });
+    expect(plain(rows[0]!.value)).toMatch(/^9 · /);
+  });
+
+  it('Scenario: Unsourced records open narrowed too', () => {
+    const b = ledgerBuilder();
+    const rows = [
+      ...plainSeptember(),
+      b.expense('2026-09-20', 'uncategorised', 45000),
+      b.income('2026-09-21', 200000, { sourceId: 'unsourced' }),
+    ];
+    const unanswered = screenOf(rows).sections.find((s) => s.key === 'unanswered')!;
+    const byKey = new Map(unanswered.groups[0]!.rows.map((r) => [r.key, r]));
+    // Each count leads to its own narrowing, even when both stand side by side.
+    expect(byKey.get('uncategorised')!.route).toBe('/transactions?month=2026-09&only=uncategorised');
+    expect(byKey.get('unsourced')!.route).toBe('/transactions?month=2026-09&only=unsourced');
+  });
+
+  it('leads the waiting чернетки to Головний, where they are answered', () => {
+    const drafts = screenOf(plainSeptember(), { waitingDrafts: 2 })
+      .sections.find((s) => s.key === 'unanswered')!
+      .groups[0]!.rows.find((r) => r.key === 'drafts')!;
+    expect(drafts.route).toBe('/');
+    expect(drafts.accessibilityLabel).toMatch(/Відкрити$/);
   });
 
   it('marks a частка of two per cent in words and opens the month’s коригування', () => {

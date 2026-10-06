@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
+import { Defs, LinearGradient, Rect, Stop, Svg } from 'react-native-svg';
 
 import { FillColumn, Swap, TabFade, Tap } from '@/components/motion';
 import { Choices } from '@/components/form';
@@ -26,6 +27,8 @@ import {
   columnBarKey,
   columnMorph,
   type ColumnMorph,
+  EARLIER_MONTHS_MARK,
+  earlierMonthsCue,
   historyBars,
   type HistoryReadout,
   type ReportsBar,
@@ -203,12 +206,30 @@ const MeasureColumn = createContext<
  * the readout said «ВЕР 2026» over a chart showing Лют–Тра 2026 and no pill anywhere. Remounting
  * on a new span throws the stale measurements away and makes every column report itself again.
  */
-function MonthStrip({ marked, children }: { marked?: string; children: React.ReactNode }) {
+function MonthStrip({
+  marked,
+  latest,
+  children,
+}: {
+  marked?: string;
+  /** The span's newest month: the strip opens on it (reports-screen, "Seven months on a narrow phone"). */
+  latest?: string;
+  children: React.ReactNode;
+}) {
+  const theme = useTheme();
   const scroller = useRef<ScrollView>(null);
   const columns = useRef(new Map<string, { x: number; width: number }>());
   const viewport = useRef(0);
   const offset = useRef(0);
   const markedNow = useRef(marked);
+  const latestNow = useRef(latest);
+  /** Whether the strip has been brought to its newest month once, as it opens. */
+  const opened = useRef(false);
+  /**
+   * Earlier months lie beyond the leading edge, drawn as a «‹» fade there. A boolean in state, so a
+   * drag re-renders the strip only when it leaves or returns to its first offset.
+   */
+  const [earlier, setEarlier] = useState(false);
   /** The chart's own width, without the tail below. */
   const chartWidth = useRef(0);
   /**
@@ -223,16 +244,16 @@ function MonthStrip({ marked, children }: { marked?: string; children: React.Rea
   /** An offset waiting for the tail it needs to be laid out before it can be scrolled to. */
   const pending = useRef<number | undefined>(undefined);
 
-  const bring = useCallback(() => {
-    const month = markedNow.current;
+  /** Scrolls `month`'s column whole into the window; false while it cannot be measured yet. */
+  const bringWhole = useCallback((month: string | undefined): boolean => {
     const column = month === undefined ? undefined : columns.current.get(month);
     const width = viewport.current;
     if (!column || width === 0 || chartWidth.current === 0) {
-      return;
+      return false;
     }
     const whole = column.x >= offset.current && column.x + column.width <= offset.current + width;
     if (whole) {
-      return;
+      return true;
     }
     // Every offset at which a column begins (less the pill's breathing room), from which the
     // marked column is still whole with its own breathing room; the smallest of them wins, so the
@@ -248,14 +269,24 @@ function MonthStrip({ marked, children }: { marked?: string; children: React.Rea
     // scroll event on every platform, and the containment test above would then keep reading the
     // window the strip was at before this call and scroll again on the next measurement.
     offset.current = x;
+    setEarlier(earlierMonthsCue(x));
     if (needed !== tailNow.current) {
       tailNow.current = needed;
       pending.current = x;
       setTail(needed);
-      return;
+      return true;
     }
     scroller.current?.scrollTo({ x, animated: false });
+    return true;
   }, []);
+
+  // Opening: the newest month first; then the marked one, should that have left it out.
+  const bring = useCallback(() => {
+    if (!opened.current && bringWhole(latestNow.current)) {
+      opened.current = true;
+    }
+    bringWhole(markedNow.current);
+  }, [bringWhole]);
 
   // The mark moved — on opening, or because the owner picked a month on the other chart.
   useEffect(() => {
@@ -275,36 +306,60 @@ function MonthStrip({ marked, children }: { marked?: string; children: React.Rea
 
   return (
     <MeasureColumn.Provider value={measure}>
-      <ScrollView
-        ref={scroller}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        scrollEventThrottle={32}
-        onScroll={({ nativeEvent }) => {
-          offset.current = nativeEvent.contentOffset.x;
-        }}
-        onContentSizeChange={() => {
-          // The tail has been laid out: the offset it was grown for is reachable now.
-          if (pending.current !== undefined) {
-            const x = pending.current;
-            pending.current = undefined;
-            scroller.current?.scrollTo({ x, animated: false });
-          }
-        }}
-        onLayout={({ nativeEvent }) => {
-          viewport.current = nativeEvent.layout.width;
-          bring();
-        }}>
-        <View
-          style={styles.chart}
+      <View>
+        <ScrollView
+          ref={scroller}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          scrollEventThrottle={32}
+          onScroll={({ nativeEvent }) => {
+            offset.current = nativeEvent.contentOffset.x;
+            setEarlier(earlierMonthsCue(nativeEvent.contentOffset.x));
+          }}
+          onContentSizeChange={() => {
+            // The tail has been laid out: the offset it was grown for is reachable now.
+            if (pending.current !== undefined) {
+              const x = pending.current;
+              pending.current = undefined;
+              scroller.current?.scrollTo({ x, animated: false });
+            }
+          }}
           onLayout={({ nativeEvent }) => {
-            chartWidth.current = nativeEvent.layout.width;
+            viewport.current = nativeEvent.layout.width;
             bring();
           }}>
-          {children}
-        </View>
-        <View style={{ width: tail }} />
-      </ScrollView>
+          <View
+            style={styles.chart}
+            onLayout={({ nativeEvent }) => {
+              chartWidth.current = nativeEvent.layout.width;
+              bring();
+            }}>
+            {children}
+          </View>
+          <View style={{ width: tail }} />
+        </ScrollView>
+        {earlier ? (
+          // Earlier months lie to the left (reports-screen, "The history chart says that earlier
+          // months lie beyond its edge"): the card's own colour fading over the first column.
+          <View
+            style={styles.earlier}
+            pointerEvents="none"
+            importantForAccessibility="no-hide-descendants">
+            <Svg style={StyleSheet.absoluteFill}>
+              <Defs>
+                <LinearGradient id="earlier" x1="0" y1="0" x2="1" y2="0">
+                  <Stop offset="0" stopColor={theme.backgroundElement} stopOpacity={1} />
+                  <Stop offset="1" stopColor={theme.backgroundElement} stopOpacity={0} />
+                </LinearGradient>
+              </Defs>
+              <Rect x="0" y="0" width="100%" height="100%" fill="url(#earlier)" />
+            </Svg>
+            <ThemedText type="small" themeColor="textMuted">
+              {EARLIER_MONTHS_MARK}
+            </ThemedText>
+          </View>
+        ) : null}
+      </View>
     </MeasureColumn.Provider>
   );
 }
@@ -523,7 +578,10 @@ function ReportsScreen() {
               {/* Re-drawn with a cross-fade only when the bars cannot move (a sign flip, the room
                   below the baseline appearing or going); otherwise every bar moves. */}
               <Swap key={charts.historyFades} still={charts.historyFades === 0} style={styles.strip}>
-                <MonthStrip key={spanOf(model.history)} marked={model.historyReadout?.month}>
+                <MonthStrip
+                  key={spanOf(model.history)}
+                  marked={model.historyReadout?.month}
+                  latest={model.history.at(-1)?.month}>
                   {model.history.map((column) => (
                     <Column
                       key={column.month}
@@ -582,7 +640,8 @@ function ReportsScreen() {
                     style={styles.strip}>
                     <MonthStrip
                       key={spanOf(model.categoryChart)}
-                      marked={model.categoryReadout?.month}>
+                      marked={model.categoryReadout?.month}
+                      latest={model.categoryChart.at(-1)?.month}>
                       {model.categoryChart.map((column) => (
                         <Column
                           key={column.month}
@@ -803,6 +862,15 @@ const styles = StyleSheet.create({
   // The horizontal padding is the mark's breathing room: a pill on the first or last column must
   // not sit flush against the edge the strip clips at, even when nothing scrolls.
   chart: { flexDirection: 'row', gap: Spacing.one, padding: Spacing.one },
+  // The «‹» over the strip's leading edge, on a fade of the card's own colour.
+  earlier: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: Spacing.four,
+    justifyContent: 'center',
+  },
   column: { alignItems: 'center', gap: Spacing.one },
   columnLabel: {
     paddingHorizontal: Spacing.one,

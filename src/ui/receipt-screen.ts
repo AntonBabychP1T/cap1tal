@@ -4,14 +4,13 @@ import {
   type ReceiptComparison,
   type ReceiptItem,
 } from '../domain/fiscal-receipt';
-import type { Money } from '../domain/money';
 import type { Transaction } from '../domain/transaction';
 import type { LookupOutcome } from '../fiscal/lookup';
 import { attachable, parseFiscalDocument, type ParsedReceipt } from '../fiscal/parse';
 import { readReceiptQr, type MissingRequisite, type ReceiptLookup } from '../fiscal/qr';
 import type { QrImagePickOutcome } from '../platform/qr-image';
 import type { CameraPermission } from '../platform/qr-scan';
-import { formatMinorUnitsGrouped, formatMoney } from './amount-input';
+import { formatMoney } from './amount-input';
 import { plural } from './labels';
 
 /**
@@ -29,19 +28,6 @@ import { plural } from './labels';
 /** The seeded groceries category, by id — the scan offer's prominence keys on this and never on
  * the name «Продукти», which the owner may rename to anything at all. */
 const GROCERIES_CATEGORY_ID = 'groceries';
-
-/**
- * The sign, and the no-break space in front of it — written as an escape because an invisible
- * character in a format string is how «742,30 ₴» and «742,30 ₴» become two different strings
- * nobody can tell apart in a diff. No-break for the reason `THOUSANDS` is: a сума must never be
- * split from its currency across two lines.
- */
-const HRYVNIA = '\u00a0₴';
-
-/** «742,30 ₴» — a чек is UAH by construction, so its own figures are shown with the sign. */
-export function formatHryvnia(amount: Money): string {
-  return `${formatMinorUnitsGrouped(amount.amount)}${HRYVNIA}`;
-}
 
 /**
  * A quantity in thousandths as the чек would print it: 5701 → «5,701», 2000 → «2», 1500 → «1,5».
@@ -64,7 +50,7 @@ export function itemCount(n: number): string {
 export type ReceiptOffer =
   /** «Сканувати QR чека». `prominent` is the seeded groceries category and nothing else. */
   | { readonly kind: 'scan'; readonly label: string; readonly prominent: boolean }
-  /** «Фіскальний чек · 9 позицій · 742,30 ₴», which opens the позиції. */
+  /** «Фіскальний чек · 9 позицій · 742,30 UAH», which opens the позиції. */
   | { readonly kind: 'attached'; readonly label: string; readonly receiptId: string }
   /** A переказ, дохід or коригування carrying no чек: nothing at all. */
   | { readonly kind: 'none' };
@@ -97,7 +83,7 @@ export function receiptOffer(input: {
   if (receipt) {
     return {
       kind: 'attached',
-      label: `Фіскальний чек · ${itemCount(receipt.items.length)} · ${formatHryvnia(receipt.receipt.total)}`,
+      label: `Фіскальний чек · ${itemCount(receipt.items.length)} · ${formatMoney(receipt.receipt.total)}`,
       receiptId: receipt.receipt.id,
     };
   }
@@ -119,10 +105,10 @@ export function receiptOffer(input: {
 export interface ReceiptItemRow {
   readonly id: string;
   readonly name: string;
-  /** «5,701 кг × 52,30 ₴» — absent when the позиція names no unit price to multiply by. */
+  /** «5,701 кг × 52,30 UAH» — absent when the позиція names no unit price to multiply by. */
   readonly quantity?: string;
   readonly total: string;
-  /** «Знижка 1,00 ₴», beside its own позиція. */
+  /** «Знижка 1,00 UAH», beside its own позиція. */
   readonly discount?: string;
 }
 
@@ -140,12 +126,12 @@ export function receiptItemRows(items: readonly ReceiptItem[]): ReceiptItemRow[]
       ...(item.unitPrice === undefined
         ? {}
         : {
-            quantity: `${formatQuantity(item.quantityThousandths)}${item.unit ? ` ${item.unit}` : ''} × ${formatHryvnia(item.unitPrice)}`,
+            quantity: `${formatQuantity(item.quantityThousandths)}${item.unit ? ` ${item.unit}` : ''} × ${formatMoney(item.unitPrice)}`,
           }),
-      total: formatHryvnia(item.lineTotal),
+      total: formatMoney(item.lineTotal),
       ...(item.discount === undefined
         ? {}
-        : { discount: `Знижка ${formatHryvnia(item.discount)}` }),
+        : { discount: `Знижка ${formatMoney(item.discount)}` }),
     }));
 }
 
@@ -168,7 +154,7 @@ export function receiptHeader(input: {
     transaction,
   });
   return {
-    total: formatHryvnia(stored.receipt.total),
+    total: formatMoney(stored.receipt.total),
     ...(stored.receipt.sellerName === undefined ? {} : { seller: stored.receipt.sellerName }),
     issued: `${stored.receipt.issuedDate} ${stored.receipt.issuedTime}`,
     // A переказ has no single сума to differ from — `compareReceiptToTransaction` falls back to
@@ -613,7 +599,7 @@ export function previewView(state: Extract<FlowState, { kind: 'preview' }>): Pre
   }
 
   return {
-    total: formatHryvnia(parsed.total),
+    total: formatMoney(parsed.total),
     // Позиції need ids to be listed; the parsed чек has none yet, so the line number is the key
     // until the repository gives each one its own.
     items: receiptItemRows(
@@ -639,5 +625,5 @@ export function detachConfirmation(stored: StoredReceipt): string {
   // The accusative, which the nominative `itemCount` label does not give: «видалити його
   // 1 позицію», «3 позиції», «9 позицій».
   const items = `${n} ${plural(n, 'позицію', 'позиції', 'позицій')}`;
-  return `Відкріпити чек на ${formatHryvnia(stored.receipt.total)} і видалити його ${items}? Транзакція залишиться без змін.`;
+  return `Відкріпити чек на ${formatMoney(stored.receipt.total)} і видалити його ${items}? Транзакція залишиться без змін.`;
 }

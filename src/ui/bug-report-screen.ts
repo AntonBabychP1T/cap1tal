@@ -13,6 +13,7 @@ import {
 import type { AnalysisShareOutcome } from '../platform/analysis-share';
 import type { BugReportFilesPort } from '../platform/bug-report-files';
 import { reportFailure } from './journal';
+import { sameFields } from './same-fields';
 
 /**
  * Everything the репорт про помилку's screens decide, as values: what the form refuses, what the
@@ -38,6 +39,15 @@ export interface FormFields {
 }
 
 export const EMPTY_FORM: FormFields = { did: '', happened: '', expected: '' };
+
+/**
+ * Whether the репорт form holds anything typed — it always opens empty — so that «назад» asks
+ * «Відкинути зміни?» before throwing it away (app-shell; bug-report-screen, "The back gesture
+ * discards the form").
+ */
+export function formHoldsEdits(fields: FormFields): boolean {
+  return !sameFields(fields, EMPTY_FORM);
+}
 
 export const FORM_TITLE = 'Повідомити про помилку';
 export const FIELD_LABELS = {

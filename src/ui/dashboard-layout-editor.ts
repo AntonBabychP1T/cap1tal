@@ -11,6 +11,11 @@ export interface DashboardLayoutEditorRow {
   readonly id: DashboardWidgetId;
   readonly label: string;
   readonly visible: boolean;
+  /**
+   * The switch's accessible name: the widget's own name, so a screen reader hears which widget it
+   * shows or hides; the switch reads its state with it (dashboard-layout, "Six switches, six names").
+   */
+  readonly switchLabel: string;
   /** «2 з 5» — its place among every known widget, shown before the owner leaves the screen. */
   readonly ordinal: string;
   /** Absent (not merely disabled) at the top of the list — this row is already first. */
@@ -36,6 +41,7 @@ export function dashboardLayoutEditorRows(
       id: item.id,
       label,
       visible: item.visible,
+      switchLabel: label,
       ordinal: `${index + 1} з ${total}`,
       canMoveUp: index > 0,
       canMoveDown: index < total - 1,

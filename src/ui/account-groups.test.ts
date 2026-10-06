@@ -9,6 +9,9 @@ import {
   reconcileConfirmation,
 } from './account-groups';
 
+/** The clock, data the tests control: 5 жовтня 2026. */
+const now = new Date(2026, 9, 5, 12);
+
 const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
 const jar = account({ id: 'jar', name: 'банка', kind: 'savings', currency: 'UAH' });
 const oldCard = account({
@@ -80,6 +83,7 @@ describe('accountRows', () => {
     const rows = accountRows(
       [linked],
       new Map([['card', money(47000, 'UAH')]]),
+      now,
       new Map([['card', money(50000, 'UAH')]]),
     );
 
@@ -95,6 +99,7 @@ describe('accountRows', () => {
     const rows = accountRows(
       [linked],
       new Map([['card', money(50000, 'UAH')]]),
+      now,
       new Map([['card', money(50000, 'UAH')]]),
     );
 
@@ -105,7 +110,7 @@ describe('accountRows', () => {
   });
 
   it('A рахунок no monobank account feeds shows only its own balance', () => {
-    const rows = accountRows([linked], new Map([['card', money(47000, 'UAH')]]));
+    const rows = accountRows([linked], new Map([['card', money(47000, 'UAH')]]), now);
 
     expect(rows[0]?.computed).toBe('470,00 UAH');
     expect(rows[0]).not.toHaveProperty('bankBalance');
@@ -119,6 +124,7 @@ describe('accountRows', () => {
         ['card', money(47000, 'UAH')],
         ['usd', money(12345, 'USD')],
       ]),
+      now,
       new Map([
         ['card', money(50000, 'UAH')],
         // A figure that could only come from a link that should not exist: ignored, never
@@ -137,6 +143,7 @@ describe('accountRows', () => {
     const rows = accountRows(
       [linked],
       new Map([['card', money(50000, 'UAH')]]),
+      now,
       new Map([['card', money(47000, 'UAH')]]),
     );
 
@@ -153,6 +160,7 @@ describe('accountRows — an інвестиційний рахунок', () => {
     accountRows(
       [bonds],
       new Map([['bonds', money(500000, 'UAH')]]),
+      now,
       new Map(),
       value ? new Map([['bonds', value]]) : new Map(),
     )[0]!;
@@ -164,7 +172,7 @@ describe('accountRows — an інвестиційний рахунок', () => {
     expect(row.computed).toBe('5\u00A0000,00 UAH');
     expect(row.investment?.contributedLabel).toBe('вкладено');
     expect(row.investment?.value?.amount).toBe('5\u00A0600,00 UAH');
-    expect(row.investment?.value?.asOf).toBe('2026-08-28');
+    expect(row.investment?.value?.asOfLabel).toBe('поточна вартість на 28 серпня');
     expect(row.investment?.value?.gainLoss).toBe('+600,00 UAH');
     expect(row.investment?.value?.gainLossLabel).toBe('прибуток');
   });
@@ -206,6 +214,7 @@ describe('accountRows — an інвестиційний рахунок', () => {
         ['card', money(50000, 'UAH')],
         ['jar', money(700000, 'UAH')],
       ]),
+      now,
       new Map(),
       // A вартість naming a рахунок of another вид could only come from a row storage refuses.
       new Map([['jar', { amount: money(800000, 'UAH'), asOf: '2026-08-28' }]]),
@@ -222,6 +231,7 @@ describe('accountRows — an інвестиційний рахунок', () => {
     const row = accountRows(
       [archived],
       new Map([['bonds', money(500000, 'UAH')]]),
+      now,
       new Map(),
       new Map([['bonds', { amount: money(560000, 'UAH'), asOf: '2026-08-28' }]]),
     )[0]!;
@@ -236,6 +246,15 @@ describe('accountRows — an інвестиційний рахунок', () => {
 
     expect(row.investment).not.toHaveProperty('value');
     expect(row.investment?.recordLabel).toBe('Записати вартість');
+  });
+
+  it('Scenario: The поточна вартість says when it was recorded in words', () => {
+    const row = rowFor({ amount: money(560000, 'UAH'), asOf: '2026-09-21' });
+
+    expect(row.investment?.value?.asOfLabel).toBe('поточна вартість на 21 вересня');
+    expect(rowFor({ amount: money(560000, 'UAH'), asOf: '2025-12-30' }).investment?.value?.asOfLabel).toBe(
+      'поточна вартість на 30 грудня 2025',
+    );
   });
 
   it('Scenario: A вартість is never reconciled / No коригування is ever offered for a вартість', () => {
@@ -256,6 +275,7 @@ describe('accountRows — an інвестиційний рахунок', () => {
     const row = accountRows(
       [bonds],
       new Map([['bonds', money(500000, 'UAH')]]),
+      now,
       new Map([['bonds', money(470000, 'UAH')]]),
       new Map([['bonds', { amount: money(560000, 'UAH'), asOf: '2026-08-28' }]]),
     )[0]!;

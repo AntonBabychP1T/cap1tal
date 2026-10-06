@@ -1,4 +1,4 @@
-import { asc } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 
 import { duplicateAnswers } from './schema';
 import { stampedMemo } from './stamp';
@@ -50,6 +50,18 @@ export function duplicateAnswersRepo(db: Storage) {
       db.insert(duplicateAnswers)
         .values({ firstId: first, secondId: second, answeredAt: now })
         .onConflictDoNothing()
+        .run();
+    },
+
+    /**
+     * Takes back «Не дубль» for the pair, in either order (observations, "«Не дубль» given by
+     * mistake is undone"): the pair is stated again exactly as before. A pair never answered stays
+     * as it is.
+     */
+    forget(a: string, b: string): void {
+      const [first, second] = sortedPair(a, b);
+      db.delete(duplicateAnswers)
+        .where(and(eq(duplicateAnswers.firstId, first), eq(duplicateAnswers.secondId, second)))
         .run();
     },
 

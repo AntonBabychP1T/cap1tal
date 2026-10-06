@@ -1,3 +1,4 @@
+import { capitalised } from '../domain/fold';
 import type { AccountKind } from '../domain/account';
 import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
@@ -72,9 +73,16 @@ export type ChallengeProgress =
     }
   | { readonly kind: 'remaining'; readonly remaining: number };
 
+/**
+ * What «Закрий <місяць>» opens on: what is left in the місяць, in this order — витрати and
+ * повернення «Без категорії» while any carry it, else доходи «Без джерела», else waiting чернетки
+ * dated in it; `nothing` once the місяць is closed.
+ */
+export type MonthLeft = 'uncategorised' | 'unsourced' | 'drafts' | 'nothing';
+
 /** Where the виклик's one action leads — the screen where the work is actually done. */
 export type ChallengeAction =
-  | { readonly kind: 'answer-month'; readonly month: Month }
+  | { readonly kind: 'answer-month'; readonly month: Month; readonly left: MonthLeft }
   | { readonly kind: 'record-transfer'; readonly accountKind: AccountKind }
   | { readonly kind: 'open-goal'; readonly goalId: string }
   | { readonly kind: 'open-category-month'; readonly categoryId: string; readonly month: Month }
@@ -116,6 +124,10 @@ export interface ChallengeInput {
    * them here would turn the layering of design D14 into a cycle.
    */
   readonly monthLabel: (month: Month) => string;
+  /** «вересень 2026» — the місяць as the object of «Закрий …». Passed in for the same reason. */
+  readonly monthAccusativeYearLabel: (month: Month) => string;
+  /** «у вересні 2026» — the місяць a sentence is about. Passed in for the same reason. */
+  readonly monthInYearLabel: (month: Month) => string;
   /**
    * «9 000,00 UAH» from a `Money` — `src/ui/amount-input.ts`'s `formatMoney`, passed in for
    * `monthLabel`'s reason. A виклик states сум to the owner, and «900000 мінорних одиниць» is the
@@ -139,21 +151,32 @@ function closeMonth(input: ChallengeInput): Challenge | undefined {
   if (month === undefined) {
     return undefined;
   }
-  const left = unansweredIn(input.summary, month) + waitingDraftsIn(input.summary, month);
-  const label = input.monthLabel(month);
+  const drafts = waitingDraftsIn(input.summary, month);
+  const left = unansweredIn(input.summary, month) + drafts;
+  const rows = input.summary.months.filter((row) => row.month === month);
+  const what: MonthLeft = rows.some((row) => row.uncategorised > 0)
+    ? 'uncategorised'
+    : rows.some((row) => row.unsourced > 0)
+      ? 'unsourced'
+      : drafts > 0
+        ? 'drafts'
+        : 'nothing';
+  // The місяць as Ukrainian grammar asks inside a sentence — «Закрий вересень 2026», «У вересні
+  // 2026 ще…» — and the nominative only where it is the subject: «Вересень 2026 закрито».
+  const inMonth = capitalised(input.monthInYearLabel(month));
   return {
     key: `close-month:${month}`,
     template: 'close-month',
-    name: `Закрий ${label}`,
+    name: `Закрий ${input.monthAccusativeYearLabel(month)}`,
     reason:
       left === 0
-        ? `${label} закрито: жодного запису без відповіді не лишилось.`
-        : `У ${label} ще ${left} ${plural(left, 'запис', 'записи', 'записів')} без відповіді — витрати «Без категорії», доходи «Без джерела» та чернетки, які чекають на слово.`,
+        ? `${input.monthLabel(month)} закрито: жодного запису без відповіді не лишилось.`
+        : `${inMonth} ще ${left} ${plural(left, 'запис', 'записи', 'записів')} без відповіді — витрати «Без категорії», доходи «Без джерела» та чернетки, які чекають на слово.`,
     // A countdown, and never «7 з 12»: only the owner's decision is stored, so there is no
     // remembered total to read this against. The number only ever falls.
     progress: { kind: 'remaining', remaining: left },
-    criterion: `У ${label} не лишилось витрат «Без категорії», доходів «Без джерела» й чернеток, що чекають.`,
-    action: { kind: 'answer-month', month },
+    criterion: `${inMonth} не лишилось витрат «Без категорії», доходів «Без джерела» й чернеток, що чекають.`,
+    action: { kind: 'answer-month', month, left: what },
     finished: left === 0,
   };
 }

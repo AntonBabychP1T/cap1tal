@@ -22,7 +22,7 @@ import type { ProgressSummary } from '@/progress/summary';
 import type { EarnedAchievement } from '@/progress/earned';
 import { todayIso } from '@/ui/dates';
 import { reportFailure } from '@/ui/journal';
-import { monthLabel } from '@/ui/months';
+import { monthAccusativeYearLabel, monthInYearLabel, monthLabel } from '@/ui/months';
 import { formatMoney } from '@/ui/amount-input';
 import { goalProgress, type Contribution } from '@/ui/goal-progress';
 
@@ -219,6 +219,8 @@ export function progressScreenData(now: Date = new Date()): ProgressScreenData {
     norms,
     decisions: progressRepo.listDecisions(),
     monthLabel,
+    monthAccusativeYearLabel,
+    monthInYearLabel,
     formatMoney,
   };
 

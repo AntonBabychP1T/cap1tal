@@ -328,7 +328,7 @@ describe('a поточна вартість moves no money and no monthly number
     expect(model.kind).toBe('goal');
     if (model.kind === 'goal') {
       expect(model.readout.progress).toContain('5\u00A0600,00 UAH');
-      expect(model.accounts[0]?.valueAsOf).toBe('2026-08-28');
+      expect(model.accounts[0]?.valueAsOf).toBe('28 серпня');
     }
 
     // Clearing puts the розрахунковий баланс back as the внесок; nothing else moved either way.

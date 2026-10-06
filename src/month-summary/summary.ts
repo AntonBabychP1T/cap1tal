@@ -83,6 +83,11 @@ export interface SpentReading {
   readonly currency: CurrencyCode;
   /** Equal to the витрачено Місяць shows for the month and currency. */
   readonly spent: Money;
+  /**
+   * How much of `spent` the negative коригування are, so the «Витрати» of the зміна статку, which
+   * keep коригування on their own line, is not read as a second витрачено. Absent when none is.
+   */
+  readonly corrections?: Money;
   readonly previous: Comparison;
   readonly typical: TypicalComparison;
 }
@@ -188,6 +193,8 @@ export interface MonthSummaryInput {
   /** `monthFigures`' own reading, per currency of the статок — the «Статок» screen's. */
   readonly figures: ReadonlyMap<CurrencyCode, readonly MonthFigure[]>;
   readonly answers: readonly AnsweredPair[];
+  /** The рахунки linked to monobank, for the можливий дубль. */
+  readonly linkedAccountIds: ReadonlySet<string>;
   readonly merchantKeyOf?: MerchantKeyOf;
 }
 
@@ -223,9 +230,12 @@ export function monthSummaryOf(input: MonthSummaryInput, ledger?: Ledger): Month
           ? { status: 'available', months: window.length, ...compare(median, amount) }
           : { status: 'not-positive' };
     }
+    // The коригування `categoryBreakdown` counts into витрачено, by size.
+    const inside = breakdown.get(currency)?.get(CORRECTION_CATEGORY_ID);
     return {
       currency,
       spent: amount,
+      ...(inside && inside.amount > 0 ? { corrections: inside } : {}),
       previous: compare(previousPicture.get(currency)?.spent ?? zero(currency), amount),
       typical,
     };
@@ -275,6 +285,7 @@ export function monthSummaryOf(input: MonthSummaryInput, ledger?: Ledger): Month
     month,
     categories: input.categories,
     answers: input.answers,
+    linkedAccountIds: input.linkedAccountIds,
     ...(input.merchantKeyOf ? { merchantKeyOf: input.merchantKeyOf } : {}),
   });
 

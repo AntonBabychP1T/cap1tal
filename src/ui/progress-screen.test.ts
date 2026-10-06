@@ -572,13 +572,28 @@ describe('where a виклик`s action leads', () => {
   });
 
   it('opens the місяць «Закрий <місяць>» is about, the ціль, and the категорія`s місяць', () => {
-    expect(challengeStart({ kind: 'answer-month', month: '2026-08' }, accounts)).toBe(
-      '/transactions?month=2026-08',
+    expect(challengeStart({ kind: 'answer-month', month: '2026-08', left: 'uncategorised' }, accounts)).toBe(
+      '/transactions?month=2026-08&only=uncategorised',
     );
     expect(challengeStart({ kind: 'open-goal', goalId: 'auto' }, accounts)).toBe('/goal/auto');
     expect(
       challengeStart({ kind: 'open-category-month', categoryId: 'food', month: '2026-07' }, accounts),
     ).toBe('/category/2026-07/food');
+  });
+
+  it('Scenario: Only доходи left opens them', () => {
+    // No витрата «Без категорії» and nine доходи «Без джерела»: «Транзакції» opens narrowed to the
+    // місяць and «Без джерела», not on its own defaults.
+    expect(challengeStart({ kind: 'answer-month', month: '2026-09', left: 'unsourced' }, accounts)).toBe(
+      '/transactions?month=2026-09&only=unsourced',
+    );
+  });
+
+  it('opens Головний when only чернетки are left, and the plain місяць once nothing is', () => {
+    expect(challengeStart({ kind: 'answer-month', month: '2026-09', left: 'drafts' }, accounts)).toBe('/');
+    expect(challengeStart({ kind: 'answer-month', month: '2026-09', left: 'nothing' }, accounts)).toBe(
+      '/transactions?month=2026-09',
+    );
   });
 
   it('leads nowhere for the норма, which is asked on the виклик`s own screen', () => {

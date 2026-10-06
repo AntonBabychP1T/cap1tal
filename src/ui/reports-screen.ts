@@ -7,8 +7,9 @@ import {
   type AccumulationGoal,
 } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
-import { money, type CurrencyCode, type Money } from '../domain/money';
+import type { CurrencyCode, Money } from '../domain/money';
 import { categoryBreakdown } from '../domain/monthly-picture';
+import { roundHalfAway } from '../domain/net-worth';
 import {
   categoriesInHistory,
   categorySeries,
@@ -19,7 +20,7 @@ import { monthOf, type IsoDate, type Month, type Transaction } from '../domain/t
 import type { MonobankRate } from '../monobank/currency';
 import type { Candidate } from '../progress/catalogue';
 import type { EarnedAchievement } from '../progress/earned';
-import { formatMoney } from './amount-input';
+import { formatMinorUnitsGrouped, formatMoney } from './amount-input';
 import { todayIso } from './dates';
 import {
   accumulationReadout,
@@ -280,10 +281,33 @@ function historyColumns(
  */
 function axisOf(scale: number, currency: CurrencyCode, hasNegative: boolean): ChartAxis {
   return {
-    top: formatMoney(money(scale, currency)),
-    zero: formatMoney(money(0, currency)),
-    bottom: hasNegative ? formatMoney(money(-scale, currency)) : null,
+    top: wholeUnits(scale, currency),
+    zero: wholeUnits(0, currency),
+    bottom: hasNegative ? wholeUnits(-scale, currency) : null,
   };
+}
+
+/**
+ * A scale's сума rounded to whole units of its currency, halves away from zero: «160 263 UAH»
+ * rather than «160 263,13 UAH» (reports-screen, "The history chart says that earlier months lie
+ * beyond its edge") — short enough that on a narrow phone the bars, not the scale, take the width.
+ * The bars and the read-outs keep every копійка; only the scale is rounded.
+ */
+function wholeUnits(minor: number, currency: CurrencyCode): string {
+  const whole = roundHalfAway(minor, 100);
+  return `${formatMinorUnitsGrouped(whole * 100).slice(0, -3)} ${currency}`;
+}
+
+/** What the history strip shows at its leading edge while earlier months lie to the left. */
+export const EARLIER_MONTHS_MARK = '‹';
+
+/**
+ * Whether a month strip scrolled to `offsetX` has earlier months beyond its leading edge
+ * (reports-screen, "The history chart says that earlier months lie beyond its edge"): anywhere but
+ * its very start.
+ */
+export function earlierMonthsCue(offsetX: number): boolean {
+  return offsetX > 0;
 }
 
 /**

@@ -32,7 +32,8 @@ export const PICKER_SIZE = 5;
  * The rows a picker draws: what the owner reached for last, topped up from the head of the list,
  * and then whatever is chosen if that is not already among them.
  *
- * The order of those three steps is the whole design.
+ * The order of those three steps is the whole design. A `suggestedId`, when a screen has one, goes
+ * ahead of all three — see its own comment below.
  *
  * *Recents first* is the shortcut itself — resolved against `offered` and not against the whole
  * list, so an archived категорія is not resurrected by having been used and «Без джерела» is not
@@ -61,6 +62,7 @@ export function shortlist<Row extends Named>(
     recentIds,
     chosenIds = [],
     selectedId,
+    suggestedId,
     size = PICKER_SIZE,
   }: {
     recentIds: readonly string[];
@@ -73,6 +75,13 @@ export function shortlist<Row extends Named>(
      * proposal the опис no longer gives was never the owner's pick.
      */
     selectedId?: string;
+    /**
+     * What a правило or the шаблон would give the транзакція being categorised, when the screen
+     * knows one. Drawn first, ahead of the recents, because it is the one guess with a reason behind
+     * it (main-screen, "The шаблон's категорія is one tap away"). An offer and not a choice: it is
+     * not `selectedId`, so nothing is stored until the owner taps it.
+     */
+    suggestedId?: string;
     size?: number;
   },
 ): Row[] {
@@ -84,6 +93,7 @@ export function shortlist<Row extends Named>(
     }
   };
 
+  if (suggestedId !== undefined) take(byId.get(suggestedId));
   for (const id of recentIds) take(byId.get(id));
   for (const row of offered) take(row);
 

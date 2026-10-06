@@ -23,6 +23,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { choiceEvent } from '@/ui/haptics';
 import { dateStepOffers, parseTypedDate, pickedDate, pickerInstant, todayIso } from '@/ui/dates';
 import { type IconName } from '@/ui/icons';
+import { monthStepOffers } from '@/ui/months';
 import {
   allOffer,
   COLLAPSE_LABEL,
@@ -212,6 +213,42 @@ export function DateField({
   );
 }
 
+/**
+ * A місяць the owner sets — either end of AI-аналіз's custom range (app-shell, "A дата or a місяць
+ * the owner sets is set with the app's own control"): ‹ місяць ›, read in words, never a code to be
+ * typed, and never stepped past the current month. Which steps stand and what the місяць reads as
+ * is `monthStepOffers`; this draws them, with `DateField`'s chips.
+ */
+export function MonthStepper({
+  label,
+  value,
+  onChange,
+  now,
+}: {
+  label: string;
+  /** A whole місяць, `YYYY-MM`. */
+  value: string;
+  onChange: (value: string) => void;
+  /** The screen's clock — what the current month is. */
+  now: Date;
+}) {
+  const offers = monthStepOffers(value, now);
+  return (
+    <View style={styles.field}>
+      <ThemedText type="overline" themeColor="textSecondary">
+        {label}
+      </ThemedText>
+      <View style={styles.monthSteps}>
+        <DateStep label="‹" hint="На місяць раніше" onPress={() => onChange(offers.back)} />
+        <ThemedText accessibilityLabel={`${label}: ${offers.label}`}>{offers.label}</ThemedText>
+        {offers.forward ? (
+          <DateStep label="›" hint="На місяць пізніше" onPress={() => onChange(offers.forward!)} />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function DateStep({
   label,
   hint,
@@ -248,6 +285,8 @@ function DateStep({
 export interface Choice<T extends string> {
   readonly value: T;
   readonly label: string;
+  /** Offered as what a правило or the шаблон would give — drawn marked, never picked by itself. */
+  readonly suggested?: boolean;
 }
 
 /**
@@ -265,12 +304,18 @@ export interface Choice<T extends string> {
 export function Chip({
   label,
   picked,
+  suggested,
   disabled,
   icon,
   onPress,
 }: {
   label: string;
   picked: boolean;
+  /**
+   * What a правило or the шаблон would give, offered and not yet picked: an accent outline drawn
+   * dashed, the label in accent, no fill — a pointer at a chip, never a choice made for the owner.
+   */
+  suggested?: boolean;
   disabled?: boolean;
   /** A glyph before the label — a категорія's own, the вид of a рахунок. Tinted with the label. */
   icon?: IconName;
@@ -278,6 +323,8 @@ export function Chip({
 }) {
   const theme = useTheme();
   const haptics = useHaptics();
+  // A picked chip is simply picked; the mark is for an offer still waiting on the owner.
+  const marked = Boolean(suggested) && !picked;
   return (
     <Tap
       disabled={disabled}
@@ -291,19 +338,23 @@ export function Chip({
       }}
       // The chip is 38 tall; the finger gets its 48 either way.
       hitSlop={Spacing.two}
+      accessibilityHint={marked ? 'Пропозиція' : undefined}
       style={[
         styles.choice,
         {
           // An outline, not a fill: in a row of eight categories a filled chip shouts.
           backgroundColor: picked ? theme.accentSurface : theme.backgroundSelected,
-          borderColor: picked ? theme.accent : theme.cardEdge,
+          borderColor: picked || marked ? theme.accent : theme.cardEdge,
+          borderStyle: marked ? 'dashed' : 'solid',
           opacity: disabled ? 0.5 : 1,
         },
       ]}>
-      {icon ? <Icon name={icon} size={14} color={picked ? 'accent' : 'textSecondary'} /> : null}
+      {icon ? (
+        <Icon name={icon} size={14} color={picked || marked ? 'accent' : 'textSecondary'} />
+      ) : null}
       <ThemedText
         type={picked ? 'smallBold' : 'small'}
-        themeColor={picked ? 'accent' : 'textSecondary'}>
+        themeColor={picked || marked ? 'accent' : 'textSecondary'}>
         {label}
       </ThemedText>
     </Tap>
@@ -424,6 +475,7 @@ export function Choices<T extends string>({
               key={choice.value}
               label={choice.label}
               picked={choice.value === selected}
+              suggested={choice.suggested}
               disabled={disabled}
               onPress={() => onSelect(choice.value)}
             />
@@ -493,7 +545,13 @@ function ScrollingChips<T extends string>({
  * black and the thumb vanished into the card. Android's default thumb is teal — the one hue
  * nothing else in the app uses — so every switch goes through here and none is drawn bare.
  */
-export function ThemedSwitch(props: Omit<SwitchProps, 'trackColor' | 'thumbColor'>) {
+/**
+ * A switch always carries an accessible name saying what it switches; the switch reads its own state
+ * with it (app-shell, "Every switch and every coloured mark has an accessible name").
+ */
+export function ThemedSwitch(
+  props: Omit<SwitchProps, 'trackColor' | 'thumbColor' | 'accessibilityLabel'> & { accessibilityLabel: string },
+) {
   const theme = useTheme();
   const haptics = useHaptics();
   return (
@@ -647,6 +705,7 @@ export function Picker({
   noun,
   expanded,
   onExpandedChange,
+  suggestedId,
 }: {
   label: string;
   /** The whole offered list, in the order it already has. What may be picked is decided upstream. */
@@ -657,6 +716,11 @@ export function Picker({
   noun: PickerNoun;
   expanded: boolean;
   onExpandedChange: (open: boolean) => void;
+  /**
+   * What a правило or the шаблон would give the транзакція — the quick категорія picker of a
+   * «Без категорії» line passes it. Shortlisted first and marked; stored only when tapped.
+   */
+  suggestedId?: string;
 }) {
   const [query, setQuery] = useState('');
   /**
@@ -668,10 +732,14 @@ export function Picker({
     selected === undefined ? [] : [selected],
   );
 
-  const shown = shortlist(rows, { recentIds, chosenIds, selectedId: selected });
+  const shown = shortlist(rows, { recentIds, chosenIds, selectedId: selected, suggestedId });
   const offer = allOffer(rows, noun);
   const asChoices = (list: readonly Named[]) =>
-    list.map((row) => ({ value: row.id, label: row.name }));
+    list.map((row) => ({
+      value: row.id,
+      label: row.name,
+      suggested: row.id === suggestedId && row.id !== selected,
+    }));
 
   const choose = (id: string) => {
     setChosenIds((already) => (already.includes(id) ? already : [...already, id]));
@@ -707,7 +775,6 @@ export function Picker({
         onChangeText={setQuery}
         autoCapitalize="none"
         placeholder="почніть вводити назву"
-        autoFocus
       />
       {narrowed.length === 0 ? (
         <ThemedText type="small" themeColor="textSecondary">
@@ -742,6 +809,7 @@ const styles = StyleSheet.create({
   },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
   dateSteps: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, paddingTop: Spacing.one },
+  monthSteps: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingTop: Spacing.one },
   dateStep: {
     paddingHorizontal: Spacing.twoHalf,
     paddingVertical: Spacing.oneHalf,

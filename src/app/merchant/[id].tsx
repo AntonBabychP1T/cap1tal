@@ -16,6 +16,7 @@ import {
   changeAndSay,
   deleteOutcome,
   mergeConfirmation,
+  merchantHoldsEdits,
   merchantTransactionsHref,
   renameError,
   spellingRows,
@@ -112,6 +113,15 @@ function MerchantView({
   );
 
   const shownName = name ?? merchant.name;
+  /**
+   * A назва changed and not renamed to, or a написання typed and not added: «назад» asks
+   * «Відкинути зміни?» first and «Відкинути» leaves as the gesture would have (app-shell).
+   * Registered after the «Обʼєднати з» picker's hook and only while it is closed, so it closes first.
+   */
+  const dirty = merchantHoldsEdits({ name: shownName, added }, merchant);
+  const leave = useCallback(() => router.back(), [router]);
+  useCloseOnBack(false, leave, !merging && dirty);
+
   const rename = () => {
     const refused = renameError(shownName, merchant, stored.merchants);
     setNameError(refused);

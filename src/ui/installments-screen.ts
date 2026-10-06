@@ -10,8 +10,8 @@ import type {
   LocalNotificationPermission,
   LocalNotificationsPort,
 } from '../platform/local-notifications';
-import { shortCalendarLabel, todayIso } from './dates';
-import { formatHryvnia } from './receipt-screen';
+import { formatMoney } from './amount-input';
+import { calendarLabel, todayIso } from './dates';
 
 /**
  * The «Розстрочки» screen, with none of its JSX (installments-screen, "Розстрочки opens on the
@@ -31,9 +31,9 @@ export interface InstallmentRow {
   readonly name: string;
   /** «4 з 10». */
   readonly progress: string;
-  /** The залишок розстрочки: «6 000,00 ₴». */
+  /** The залишок розстрочки: «6 000,00 UAH». */
   readonly remaining: string;
-  /** «5 жовт. · 1 000,00 ₴» — the next платіж not сплачено; absent once none is left. */
+  /** «5 жовтня · 1 000,00 UAH» — the next платіж not сплачено; absent once none is left. */
   readonly next?: string;
   /** Said on the row when a платіж of it is списання не знайдено. */
   readonly missed?: string;
@@ -49,7 +49,7 @@ export interface InstallmentList {
   readonly empty?: string;
 }
 
-const uah = (amount: number) => formatHryvnia(money(amount, 'UAH'));
+const uah = (amount: number) => formatMoney(money(amount, 'UAH'));
 
 /** «Списання не знайдено» — said on a row whose платіж passed three days ago with nothing linked. */
 export const MISSED_DEBIT = 'Списання не знайдено';
@@ -63,7 +63,7 @@ function rowOf(status: InstallmentStatus, now: Date): InstallmentRow {
     progress: `${status.paidCount} з ${installment.partsCount}`,
     remaining: uah(status.remaining),
     ...(next && next.state !== 'closed'
-      ? { next: `${shortCalendarLabel(next.due, now)} · ${uah(next.amount)}` }
+      ? { next: `${calendarLabel(next.due, now)} · ${uah(next.amount)}` }
       : {}),
     ...(missed && !status.closed ? { missed: MISSED_DEBIT } : {}),
     ...(status.closed ? { closedEarly: true as const } : {}),

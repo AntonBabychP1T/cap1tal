@@ -1,8 +1,8 @@
 import type { Account, AccountKind } from '../domain/account';
 import { gainLoss, type CurrentValue } from '../domain/investments';
 import { money, subtract, type Money } from '../domain/money';
-import type { IsoDate } from '../domain/transaction';
 import { formatMoney, formatSignedMoney } from './amount-input';
+import { calendarLabel } from './dates';
 
 /**
  * The Рахунки sections as pure data, so the screen only renders them. Archived accounts never
@@ -86,7 +86,8 @@ export interface InvestmentNumbers {
   /** The поточна вартість with the дата it describes and the прибуток / збиток between the two. */
   readonly value?: {
     readonly amount: string;
-    readonly asOf: IsoDate;
+    /** «поточна вартість на 21 вересня» — the дата in words, its year only when not this one. */
+    readonly asOfLabel: string;
     /** Signed, always: «+60 000,00 UAH» and «−50 000,00 UAH» read differently from «60 000,00». */
     readonly gainLoss: string;
     /** «прибуток» or «збиток» — zero is a прибуток of nothing, not a збиток. */
@@ -107,6 +108,8 @@ export interface InvestmentNumbers {
 export function accountRows(
   accounts: readonly Account[],
   computed: ReadonlyMap<string, Money>,
+  /** The clock, passed in: which year a вартість's дата needs no year in is the caller's. */
+  now: Date,
   bankBalances: ReadonlyMap<string, Money> = new Map(),
   currentValues: ReadonlyMap<string, CurrentValue> = new Map(),
 ): AccountRow[] {
@@ -122,7 +125,7 @@ export function accountRows(
       reconcilable: difference !== undefined && difference.amount !== 0,
       ...(difference && difference.amount !== 0 ? { difference: formatMoney(difference) } : {}),
       ...(a.kind === 'investment'
-        ? { investment: investmentNumbers(a, own, currentValues.get(a.id)) }
+        ? { investment: investmentNumbers(a, own, currentValues.get(a.id), now) }
         : {}),
     };
   });
@@ -142,6 +145,7 @@ function investmentNumbers(
   account: Account,
   contributed: Money,
   value: CurrentValue | undefined,
+  now: Date,
 ): InvestmentNumbers {
   const own = value && value.amount.currency === account.currency ? value : undefined;
   const difference = gainLoss(own?.amount, contributed);
@@ -151,7 +155,7 @@ function investmentNumbers(
       ? {
           value: {
             amount: formatMoney(own.amount),
-            asOf: own.asOf,
+            asOfLabel: `поточна вартість на ${calendarLabel(own.asOf, now)}`,
             gainLoss: formatSignedMoney(difference),
             gainLossLabel: difference.amount < 0 ? 'збиток' : 'прибуток',
           },

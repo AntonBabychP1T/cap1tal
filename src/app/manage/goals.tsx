@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field, RowAction } from '@/components/form';
+import { Action, Choices, DateField, Field, RowAction } from '@/components/form';
 import { Card, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -38,6 +38,7 @@ import {
   type SpendingDraft,
 } from '@/ui/goals-section';
 import { newId } from '@/ui/id';
+import { sameFields } from '@/ui/same-fields';
 import { accountChoiceLabel } from '@/ui/labels';
 
 import { Spacing } from '@/constants/theme';
@@ -53,9 +54,20 @@ import { Spacing } from '@/constants/theme';
  * the ціль's own screen read it.
  */
 
+/** `opened` — what the form opened on, so «назад» knows whether it would discard anything. */
 type Draft =
-  | { readonly kind: 'accumulation'; readonly id?: string; readonly fields: AccumulationDraft }
-  | { readonly kind: 'spending'; readonly editing?: string; readonly fields: SpendingDraft };
+  | {
+      readonly kind: 'accumulation';
+      readonly id?: string;
+      readonly fields: AccumulationDraft;
+      readonly opened: AccumulationDraft;
+    }
+  | {
+      readonly kind: 'spending';
+      readonly editing?: string;
+      readonly fields: SpendingDraft;
+      readonly opened: SpendingDraft;
+    };
 
 export default function GoalsScreen() {
   const router = useRouter();
@@ -93,9 +105,13 @@ export default function GoalsScreen() {
   /** `undefined` — nothing open; `'kind'` — the kind is being asked; otherwise a form. */
   const [draft, setDraft] = useState<Draft | 'kind' | undefined>();
 
-  /** The phone's own «назад» closes the open form first, and only then leaves the section. */
+  /**
+   * The phone's own «назад» closes the open form first — asking «Відкинути зміни?» when it holds
+   * edits — and only then leaves the section. Asking the kind holds nothing to discard.
+   */
   const closeForm = useCallback(() => setDraft(undefined), []);
-  useCloseOnBack(draft !== undefined, closeForm);
+  const dirty = typeof draft === 'object' && !sameFields(draft.fields, draft.opened);
+  useCloseOnBack(draft !== undefined, closeForm, dirty);
 
   /**
    * The рахунки the склад offers: the unarchived ones, plus whatever this ціль already holds even
@@ -183,23 +199,23 @@ export default function GoalsScreen() {
   );
 
   const startKind = useCallback((kind: GoalKind) => {
-    setDraft(
-      kind === 'accumulation'
-        ? {
-            kind: 'accumulation',
-            fields: {
-              name: '',
-              target: '',
-              currency: DEFAULT_GOAL_CURRENCY,
-              deadline: '',
-              accountIds: [],
-            },
-          }
-        : {
-            kind: 'spending',
-            fields: { categoryId: undefined, amount: '', currency: DEFAULT_GOAL_CURRENCY },
-          },
-    );
+    if (kind === 'accumulation') {
+      const fields: AccumulationDraft = {
+        name: '',
+        target: '',
+        currency: DEFAULT_GOAL_CURRENCY,
+        deadline: '',
+        accountIds: [],
+      };
+      setDraft({ kind: 'accumulation', fields, opened: fields });
+    } else {
+      const fields: SpendingDraft = {
+        categoryId: undefined,
+        amount: '',
+        currency: DEFAULT_GOAL_CURRENCY,
+      };
+      setDraft({ kind: 'spending', fields, opened: fields });
+    }
   }, []);
 
   const currencyChoices = GOAL_CURRENCIES.map((currency) => ({
@@ -261,12 +277,11 @@ export default function GoalsScreen() {
             placeholder="0,00"
             hint={draft.fields.currency}
           />
-          <Field
+          <DateField
             label="До дати (якщо потрібна)"
             value={draft.fields.deadline}
-            onChangeText={(deadline) => setDraft({ ...draft, fields: { ...draft.fields, deadline } })}
-            autoCapitalize="none"
-            placeholder="РРРР-ММ-ДД"
+            onChange={(deadline) => setDraft({ ...draft, fields: { ...draft.fields, deadline } })}
+            now={new Date()}
           />
 
           <View style={styles.field}>
@@ -396,19 +411,16 @@ export default function GoalsScreen() {
                     onPress={() => {
                       const goal = stored.goals.find((g) => g.id === row.id);
                       if (!goal) return;
-                      setDraft({
-                        kind: 'accumulation',
-                        id: goal.id,
-                        fields: {
-                          name: goal.name,
-                          // Back into the field in the form it will be parsed out of it again —
-                          // integer string arithmetic, never a division.
-                          target: formatMinorUnits(goal.target.amount),
-                          currency: goal.target.currency,
-                          deadline: goal.deadline ?? '',
-                          accountIds: [...goal.accountIds],
-                        },
-                      });
+                      const fields: AccumulationDraft = {
+                        name: goal.name,
+                        // Back into the field in the form it will be parsed out of it again —
+                        // integer string arithmetic, never a division.
+                        target: formatMinorUnits(goal.target.amount),
+                        currency: goal.target.currency,
+                        deadline: goal.deadline ?? '',
+                        accountIds: [...goal.accountIds],
+                      };
+                      setDraft({ kind: 'accumulation', id: goal.id, fields, opened: fields });
                     }}
                   />
                   <RowAction
@@ -450,15 +462,12 @@ export default function GoalsScreen() {
                     onPress={() => {
                       const limit = stored.limits.find((l) => l.categoryId === row.categoryId);
                       if (!limit) return;
-                      setDraft({
-                        kind: 'spending',
-                        editing: limit.categoryId,
-                        fields: {
-                          categoryId: limit.categoryId,
-                          amount: formatMinorUnits(limit.amount.amount),
-                          currency: limit.amount.currency,
-                        },
-                      });
+                      const fields: SpendingDraft = {
+                        categoryId: limit.categoryId,
+                        amount: formatMinorUnits(limit.amount.amount),
+                        currency: limit.amount.currency,
+                      };
+                      setDraft({ kind: 'spending', editing: limit.categoryId, fields, opened: fields });
                     }}
                   />
                   <RowAction tone="danger" title="Видалити" onPress={() => removeSpending(row)} />

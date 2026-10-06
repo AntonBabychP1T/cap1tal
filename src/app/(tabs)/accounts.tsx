@@ -149,6 +149,7 @@ function AccountsScreen() {
         accountRows(
           stored.all,
           stored.balances,
+          new Date(),
           stored.bankBalances,
           stored.currentValues,
         ).map((row) => [row.account.id, row]),
@@ -409,7 +410,7 @@ function AccountsScreen() {
                           <>
                             <View style={styles.line}>
                               <ThemedText type="small" themeColor="textSecondary">
-                                поточна вартість на {row.investment.value.asOf}
+                                {row.investment.value.asOfLabel}
                               </ThemedText>
                               <ThemedText type="small" tabular themeColor="textSecondary">
                                 {row.investment.value.amount}

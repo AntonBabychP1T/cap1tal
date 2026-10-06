@@ -106,6 +106,15 @@ export interface RuleDraft {
   readonly toAccountId?: string;
 }
 
+/** What «Нове правило» opens on — and so what an untouched one is compared against. */
+export const EMPTY_RULE_DRAFT: RuleDraft = {
+  merchant: '',
+  criterion: 'pattern',
+  mcc: '',
+  target: 'category',
+  categoryId: undefined,
+};
+
 /**
  * The rule form's one decision: either the draft is a rule, or it is refused in the owner's own
  * language (`failureMessage` puts these in an Alert verbatim). The id and the creation moment
@@ -234,29 +243,46 @@ export type RuleCriterion =
 
 /**
  * How the offer reads while it is showing (main-screen, "Categorising a транзакція offers to
- * remember it as a правило"): «продавець <назва>» with a way to switch to the pattern, or the
- * pattern field, and what the accept button stores in either state. `usePattern` is the owner's
- * switch; an offer with no продавець is always on the pattern.
+ * remember it as a правило"): what the правило will do, said by its target's kind
+ * (categorisation-rules, "The offer to remember a правило says what that правило will do"; design
+ * D17), «продавець <назва>» with a way to switch to the pattern, or the pattern field, and what the
+ * accept button stores in either state. `usePattern` is the owner's switch; an offer with no
+ * продавець is always on the pattern.
  */
 export function ruleOfferView(
   offer: RuleOffer,
   usePattern: boolean,
   pattern: string,
+  names: {
+    readonly categoryNames: ReadonlyMap<string, string>;
+    readonly accountNames: ReadonlyMap<string, string>;
+  },
 ): {
+  readonly sentence: string;
+  readonly targetLabel: string;
   readonly merchantLabel?: string;
   readonly showsPattern: boolean;
   readonly canSwitchToPattern: boolean;
   readonly criterion: RuleCriterion;
 } {
+  const { target } = offer;
+  const said = {
+    sentence:
+      target.kind === 'category'
+        ? `Наступного разу такий опис одразу піде в «${categoryLabel(target.categoryId, names.categoryNames)}».`
+        : `Наступного разу такий опис одразу стане переказом на «${accountLabel(target.toAccountId, names.accountNames)}».`,
+    targetLabel: ruleTargetLabel(target, names.categoryNames, names.accountNames),
+  };
   if (offer.recognised !== undefined && !usePattern) {
     return {
+      ...said,
       merchantLabel: `продавець ${offer.recognised.name}`,
       showsPattern: false,
       canSwitchToPattern: true,
       criterion: { kind: 'merchant', merchantId: offer.recognised.merchantId },
     };
   }
-  return { showsPattern: true, canSwitchToPattern: false, criterion: { kind: 'pattern', pattern } };
+  return { ...said, showsPattern: true, canSwitchToPattern: false, criterion: { kind: 'pattern', pattern } };
 }
 
 /** The draft an accepted offer is stored through, so it is refused in the same words as the form. */

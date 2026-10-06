@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
-import { namesById } from '../domain/category';
+import type { Account } from '../domain/account';
+import { namesById, type Category, type Source } from '../domain/category';
+import { money } from '../domain/money';
 import {
   CORRECTION_CATEGORY_ID,
   FEES_CATEGORY_ID,
@@ -16,6 +20,12 @@ import {
   transactionTypeLabel,
   OFFERED_CURRENCIES,
 } from './labels';
+import { expenseCategoryChoices, sourceChoices } from './category-choices';
+import { commitmentAccountChoices, commitmentCategoryChoices } from './commitment-form';
+import { goalAccountChoices, spendingGoalCategoryChoices } from './goals-section';
+import { debitAccountChoices, installmentCategoryChoices } from './installment-form';
+import { linkChoices } from './monobank-screen';
+import { templateTargetChoices } from './rule-template-screen';
 
 /** The seeded list as a screen loads it: the three reserved rows and one ordinary category. */
 const CATEGORY_NAMES = namesById([
@@ -84,6 +94,13 @@ describe('kindLabel', () => {
 describe('OFFERED_CURRENCIES', () => {
   it('An account can be opened in UAH, EUR, PLN or USD — UAH first, the rest alphabetical', () => {
     expect([...OFFERED_CURRENCIES]).toEqual(['UAH', 'EUR', 'PLN', 'USD']);
+  });
+
+  it('Scenario: An account can be created from the screen — PLN among the валюти offered', () => {
+    // The amended requirement names PLN; «Рахунки» offers exactly this list (`CURRENCY_CHOICES`).
+    expect(OFFERED_CURRENCIES).toContain('PLN');
+    const accounts = readFileSync(new URL('../app/(tabs)/accounts.tsx', import.meta.url), 'utf8');
+    expect(accounts).toContain('const CURRENCY_CHOICES = OFFERED_CURRENCIES.map(');
   });
 });
 
@@ -175,5 +192,50 @@ describe('the counts the owner reads', () => {
       '25 джерел',
       '0 джерел',
     ]);
+  });
+});
+
+/**
+ * Every `*Choices` builder that offers the owner's own named rows (app-shell, "An alphabetical list
+ * follows Ukrainian order, letter case folded"). The repos order by SQL `asc(name)`, which is
+ * BINARY — capitals first — so each builder must reorder with `byName` itself (design D4). The
+ * builders that offer no named rows (`appChoices`, `historyChoices`, the AI-аналіз period
+ * `defaultChoices`/`initialChoices`) have no alphabet to keep and are not listed.
+ */
+describe('Capitals do not jump the queue', () => {
+  // As the repo hands them over: BINARY order, capitals first.
+  const NAMES = ['ПУМБ', 'РЕЗЕРВ', 'валюта моно', 'гаманець'];
+  const UKRAINIAN_ORDER = ['валюта моно', 'гаманець', 'ПУМБ', 'РЕЗЕРВ'];
+
+  const accounts: Account[] = NAMES.map((name, i) => ({
+    id: `a${i}`,
+    name,
+    kind: 'spending',
+    currency: 'UAH',
+    openingBalance: money(0, 'UAH'),
+    archived: false,
+  }));
+  const categories: Category[] = NAMES.map((name, i) => ({ id: `c${i}`, name, archived: false }));
+  const sources: Source[] = NAMES.map((name, i) => ({ id: `s${i}`, name, archived: false }));
+  const names = (rows: readonly { name: string }[]) => rows.map((r) => r.name);
+
+  const builders: readonly [string, () => readonly { name: string }[]][] = [
+    ['expenseCategoryChoices', () => expenseCategoryChoices(categories)],
+    ['sourceChoices', () => sourceChoices(sources)],
+    ['commitmentAccountChoices', () => commitmentAccountChoices(accounts)],
+    ['commitmentCategoryChoices', () => commitmentCategoryChoices(categories)],
+    ['goalAccountChoices', () => goalAccountChoices(accounts)],
+    ['spendingGoalCategoryChoices', () => spendingGoalCategoryChoices({ categories, limits: [] })],
+    ['debitAccountChoices', () => debitAccountChoices(accounts)],
+    ['installmentCategoryChoices', () => installmentCategoryChoices(categories)],
+    [
+      'linkChoices',
+      () => linkChoices({ monobankAccount: { id: 'm1', currency: 'UAH' }, accounts, links: [] }),
+    ],
+    ['templateTargetChoices', () => templateTargetChoices(categories)],
+  ];
+
+  it.each(builders)('%s reads «валюта моно», «гаманець», «ПУМБ», «РЕЗЕРВ»', (_, build) => {
+    expect(names(build())).toEqual(UKRAINIAN_ORDER);
   });
 });

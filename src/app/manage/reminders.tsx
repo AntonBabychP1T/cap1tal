@@ -143,6 +143,7 @@ export default function RemindersScreen() {
             <View style={styles.row}>
               <ThemedText type="small">Нагадувати щодня</ThemedText>
               <ThemedSwitch
+                accessibilityLabel="Нагадувати щодня"
                 value={section.on}
                 onValueChange={toggle}
                 disabled={busy || !section.permission.switchable}

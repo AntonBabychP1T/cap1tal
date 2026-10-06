@@ -30,6 +30,7 @@ import {
   canStepBack,
   canStepForward,
   currentMonth,
+  monthInLabel,
   monthLabel,
   prevMonth,
   type ReachableMonths,
@@ -37,14 +38,15 @@ import {
 import type { MonobankRate } from '../monobank/currency';
 import { categoryIconDefinition } from './category-icons';
 import type { IconName } from './icons';
-import { shortCalendarLabel, todayIso } from './dates';
-import { formatPlanMoney } from './commitments-screen';
+import { calendarLabel, todayIso } from './dates';
 import type { Observation } from '../observations/observation';
 import {
+  foldedObservationLines,
   noObservationsSentence,
   observationLines,
   summaryOffer,
   type ObservationLine,
+  type ObservationsMore,
   type SummaryOffer,
 } from './observations';
 
@@ -138,9 +140,9 @@ export interface MonthDueRow {
   readonly name: string;
   /** «платіж 5 з 10» for a розстрочка; `null` for a зобов'язання, which has no count. */
   readonly number: string | null;
-  /** «5 жовт.». */
+  /** «5 жовтня». */
   readonly date: string;
-  /** The scheduled сума in its currency: «1 000,00 ₴», «20,00 USD». */
+  /** The scheduled сума in its currency: «1 000,00 UAH», «20,00 USD». */
   readonly amount: string;
   readonly state: CommitmentDueStateKind;
   /** «сплачено», «пропущено», «очікується», «списання не знайдено». */
@@ -183,6 +185,15 @@ const STATE_LABELS: Readonly<Record<CommitmentDueStateKind, string>> = {
  * rather than two screens wording it differently.
  */
 export const NO_INCOME_NOTE = 'У цьому місяці ще не записано дохід.';
+
+/**
+ * `NO_INCOME_NOTE` for the month it is said about: a finished month will not get its дохід any
+ * more, so it is told without «ще» — «Дохід у вересні не записано.» (month-screen). The current
+ * month, and one ahead of it, keep the promise.
+ */
+export function noIncomeNote(month: Month, now: Date): string {
+  return month < currentMonth(now) ? `Дохід ${monthInLabel(month)} не записано.` : NO_INCOME_NOTE;
+}
 
 /** The secondary «≈ … грн» line for one monthly number, across every currency of that number. */
 export interface MonthApproximateRow {
@@ -242,7 +253,12 @@ export interface MonthViewModel {
    * The «Спостереження» block, beneath the breakdown and before any block of the month's платежі —
    * only when the month holds a транзакція; `null` otherwise. Changes none of the six numbers.
    */
-  readonly observations: { readonly lines: readonly ObservationLine[]; readonly empty: string | null } | null;
+  readonly observations: {
+    readonly lines: readonly ObservationLine[];
+    /** «Ще N» past the first five (design D11); `null` when every line is shown. */
+    readonly more: ObservationsMore | null;
+    readonly empty: string | null;
+  } | null;
 }
 
 /**
@@ -302,6 +318,8 @@ export function monthViewModel(input: {
   commitments?: { readonly commitments: readonly Commitment[]; readonly facts: CommitmentFacts };
   /** The shown month's спостереження, already ordered (`observationsOf`); absent reads as none. */
   observations?: readonly Observation[];
+  /** The owner chose «Ще N» on this month: every спостереження is listed. */
+  observationsExpanded?: boolean;
 }): MonthViewModel {
   const picture = monthlyPicture({
     month: input.month,
@@ -349,7 +367,7 @@ export function monthViewModel(input: {
         numbers: numbersOf(numbers),
         breakdown: rows,
         lead,
-        note: lead === 'spent' ? NO_INCOME_NOTE : null,
+        note: lead === 'spent' ? noIncomeNote(input.month, input.now) : null,
       };
     });
 
@@ -408,11 +426,14 @@ export function monthViewModel(input: {
     summaryOffer: inMonth && input.month < currentMonth(input.now) ? summaryOffer(input.month) : null,
     observations: inMonth
       ? {
-          lines: observationLines(observed, {
-            categoryNames: input.categoryNames,
-            accountNames: new Map(input.accounts.map((a) => [a.id, a.name])),
-            now: input.now,
-          }),
+          ...foldedObservationLines(
+            observationLines(observed, {
+              categoryNames: input.categoryNames,
+              accountNames: new Map(input.accounts.map((a) => [a.id, a.name])),
+              now: input.now,
+            }),
+            input.observationsExpanded ?? false,
+          ),
           empty: observed.length === 0 ? noObservationsSentence(input.month, today) : null,
         }
       : null,
@@ -519,8 +540,8 @@ function duesBlockOf(dues: readonly MonthDue[], now: Date): MonthDuesBlock | nul
       key: `${d.kind}:${d.planId}#${d.number}`,
       name: d.name,
       number: d.ofCount,
-      date: shortCalendarLabel(d.due.due, now),
-      amount: formatPlanMoney(money(d.due.amount, d.due.currency)),
+      date: calendarLabel(d.due.due, now),
+      amount: formatMoney(money(d.due.amount, d.due.currency)),
       state: d.due.state,
       stateLabel: STATE_LABELS[d.due.state],
       href: `/${d.kind}/${d.planId}`,
@@ -529,8 +550,8 @@ function duesBlockOf(dues: readonly MonthDue[], now: Date): MonthDuesBlock | nul
       const sum = sums.get(currency)!;
       return {
         currency,
-        total: formatPlanMoney(money(sum.total, currency)),
-        unpaid: sum.unpaid === 0 ? null : formatPlanMoney(money(sum.unpaid, currency)),
+        total: formatMoney(money(sum.total, currency)),
+        unpaid: sum.unpaid === 0 ? null : formatMoney(money(sum.unpaid, currency)),
       };
     }),
   };

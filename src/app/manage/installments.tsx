@@ -2,7 +2,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field, RowAction, ThemedSwitch } from '@/components/form';
+import { Action, Choices, DateField, Field, RowAction, ThemedSwitch } from '@/components/form';
 import { Tap } from '@/components/motion';
 import { Card, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
@@ -35,6 +35,7 @@ import {
   installmentFromDraft,
   lastPartOf,
   newInstallmentDraft,
+  sameInstallmentFields,
   type InstallmentDraft,
 } from '@/ui/installment-form';
 import {
@@ -61,7 +62,13 @@ import { Spacing } from '@/constants/theme';
 const SWITCH_PORTS = { notifications: localNotifications, storage: installmentsRepo };
 
 /** An open form: a new розстрочка, or the one being edited. */
-type Editor = { readonly id?: string; readonly draft: InstallmentDraft; readonly tried: boolean };
+type Editor = {
+  readonly id?: string;
+  readonly draft: InstallmentDraft;
+  /** What the form opened on — «назад» asks «Відкинути зміни?» only once the draft differs. */
+  readonly opened: InstallmentDraft;
+  readonly tried: boolean;
+};
 
 export default function InstallmentsScreen() {
   const router = useRouter();
@@ -103,8 +110,10 @@ export default function InstallmentsScreen() {
 
   const [editor, setEditor] = useState<Editor>();
   const closeForm = useCallback(() => setEditor(undefined), []);
-  // WHILE the form is open the phone's back gesture closes it, storing nothing.
-  useCloseOnBack(editor !== undefined, closeForm);
+  // WHILE the form is open the phone's back gesture closes it, storing nothing — after «Відкинути
+  // зміни?» when the form holds edits.
+  const dirty = editor !== undefined && !sameInstallmentFields(editor.draft, editor.opened);
+  useCloseOnBack(editor !== undefined, closeForm, dirty);
 
   const debitAccounts = useMemo(() => debitAccountChoices(stored.accounts), [stored.accounts]);
 
@@ -114,11 +123,13 @@ export default function InstallmentsScreen() {
   const toEdit = edit && edit !== openedEdit ? stored.installments.find((i) => i.id === edit) : undefined;
   if (toEdit) {
     setOpenedEdit(toEdit.id);
-    setEditor({ id: toEdit.id, draft: installmentDraftOf(toEdit), tried: false });
+    const draft = installmentDraftOf(toEdit);
+    setEditor({ id: toEdit.id, draft, opened: draft, tried: false });
   }
 
   const startNew = useCallback(() => {
-    setEditor({ draft: newInstallmentDraft(todayIso(new Date()), debitAccounts), tried: false });
+    const draft = newInstallmentDraft(todayIso(new Date()), debitAccounts);
+    setEditor({ draft, opened: draft, tried: false });
   }, [debitAccounts]);
 
   const change = useCallback(
@@ -238,12 +249,11 @@ export default function InstallmentsScreen() {
             }
             reserveHint
           />
-          <Field
+          <DateField
             label={INSTALLMENT_FIELD_LABELS.firstDue}
             value={editor.draft.firstDue}
-            onChangeText={(firstDue) => change({ firstDue })}
-            autoCapitalize="none"
-            placeholder="РРРР-ММ-ДД"
+            onChange={(firstDue) => change({ firstDue })}
+            now={new Date()}
             hint={problemOf('firstDue')}
           />
           <Choices
@@ -314,7 +324,11 @@ export default function InstallmentsScreen() {
           <ThemedText type="small" style={styles.grow}>
             {INSTALLMENT_REMINDER_SWITCH}
           </ThemedText>
-          <ThemedSwitch value={stored.reminder.enabled} onValueChange={toggle} />
+          <ThemedSwitch
+            accessibilityLabel={INSTALLMENT_REMINDER_SWITCH}
+            value={stored.reminder.enabled}
+            onValueChange={toggle}
+          />
         </View>
         {line?.text ? (
           <ThemedText type="small" themeColor="textSecondary">

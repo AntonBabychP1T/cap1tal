@@ -5,8 +5,11 @@ import {
   canStepBack,
   canStepForward,
   currentMonth,
+  monthAccusativeYearLabel,
   monthInLabel,
+  monthInYearLabel,
   monthLabel,
+  monthStepOffers,
   monthsOf,
   nextMonth,
   prevMonth,
@@ -238,5 +241,50 @@ describe('monthInLabel', () => {
     for (const bad of ['2026-13', '2026-00', '2026', 'вересень'] as const) {
       expect(() => monthInLabel(bad)).toThrow();
     }
+  });
+});
+
+describe('the month inside a sentence with its year', () => {
+  it('Scenario: The month is named in its case', () => {
+    // «Закрий вересень 2026», «У вересні 2026 ще 9 записів» — never the heading's «Вересень 2026».
+    expect(monthAccusativeYearLabel('2026-09')).toBe('вересень 2026');
+    expect(monthInYearLabel('2026-09')).toBe('у вересні 2026');
+    expect(monthAccusativeYearLabel('2026-08')).toBe('серпень 2026');
+    expect(monthInYearLabel('2026-03')).toBe('у березні 2026');
+  });
+
+  it('carries the year, because the month it names is over', () => {
+    expect(monthInYearLabel('2019-09')).toBe('у вересні 2019');
+    expect(monthAccusativeYearLabel('2019-09')).toBe('вересень 2019');
+  });
+
+  it('refuses a month that is not one', () => {
+    for (const bad of ['2026-13', '2026-00', 'вересень'] as const) {
+      expect(() => monthInYearLabel(bad)).toThrow();
+      expect(() => monthAccusativeYearLabel(bad)).toThrow();
+    }
+  });
+});
+
+/**
+ * app-shell, "A дата or a місяць the owner sets is set with the app's own control": a місяць is
+ * stepped ‹ › and read in words, capped at the current month. What the `MonthStepper` draws and
+ * which steps it offers is this one pure answer.
+ */
+describe('monthStepOffers', () => {
+  const october = new Date(2026, 9, 6, 12, 0, 0);
+
+  it('reads the місяць in words, lower case, with its year', () => {
+    expect(monthStepOffers('2026-09', october).label).toBe('вересень 2026');
+    expect(monthStepOffers('2025-12', october).label).toBe('грудень 2025');
+  });
+
+  it('steps back across a year', () => {
+    expect(monthStepOffers('2026-01', october).back).toBe('2025-12');
+  });
+
+  it('steps forward up to the current month and offers no step past it', () => {
+    expect(monthStepOffers('2026-09', october).forward).toBe('2026-10');
+    expect(monthStepOffers('2026-10', october).forward).toBeUndefined();
   });
 });

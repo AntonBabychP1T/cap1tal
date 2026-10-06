@@ -4,7 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field, RowAction } from '@/components/form';
+import { Action, Choices, DateField, Field, RowAction } from '@/components/form';
 import {
   Banner,
   Card,
@@ -710,7 +710,9 @@ export default function MonobankScreen() {
               variant="secondary"
               title={busy ? 'Оновлюємо…' : REFRESH_LIST_LABEL}
               onPress={() => void refresh({ asked: true })}
-              disabled={busy}
+              // No token, no list to re-read: shown unavailable (monobank-sync-screen, "Without a
+              // token there is nothing to refresh"); entering one is offered above.
+              disabled={busy || configured !== true}
             />
             {configured ? (
               <Action variant="destructive" title="Видалити токен" onPress={removeToken} />
@@ -729,12 +731,11 @@ export default function MonobankScreen() {
             </ThemedText>
             {/* One boundary for the whole set, chosen before it is accepted — the same date the
                 per-account path uses, and the same promise about what is not imported. */}
-            <Field
+            <DateField
               label="Синхронізувати з"
               value={boundary}
-              onChangeText={setBoundary}
-              autoCapitalize="none"
-              placeholder="РРРР-ММ-ДД"
+              onChange={setBoundary}
+              now={new Date()}
               hint="включно; раніші записи не імпортуються"
             />
             <ListCard>
@@ -808,7 +809,7 @@ export default function MonobankScreen() {
                 <ThemedText type="small" themeColor="textSecondary">
                   {row.kind === 'jar' ? 'банка' : 'картка'} ·{' '}
                   {row.linked
-                    ? `приєднано до «${row.accountName}»${row.syncStartDate ? `, з ${row.syncStartDate}` : ''}`
+                    ? `приєднано до «${row.accountName}»${row.syncStartLabel ? `, з ${row.syncStartLabel}` : ''}`
                     : 'не приєднано — у синхронізації не бере участі'}
                 </ThemedText>
                 {/* When a sync last completed for this account, or plainly that none has. */}
@@ -843,12 +844,11 @@ export default function MonobankScreen() {
                     {/* The boundary is chosen before either link path is taken, because both make
                         one: today imports nothing the owner already has, and moving it back is
                         how they meet the end of their Saldo history. */}
-                    <Field
+                    <DateField
                       label="Синхронізувати з"
                       value={boundary}
-                      onChangeText={setBoundary}
-                      autoCapitalize="none"
-                      placeholder="РРРР-ММ-ДД"
+                      onChange={setBoundary}
+                      now={new Date()}
                       hint="включно; раніші записи не імпортуються"
                     />
                     <Choices

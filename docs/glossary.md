@@ -156,8 +156,10 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   5411 is продукти, shipped with the app as data and updated with it: a fixed set of базові
   категорії, each holding merchant patterns, MCC codes or both. It is the second tier of
   автокатегоризація — consulted only when none of the owner's правила matches, so a правило of the
-  owner's own always wins. Never stored and never carried in a бекап; only the owner's mapping of
-  it is.
+  owner's own always wins. Its merchant patterns are fragments («ярня», «kava») matched anywhere
+  in the опис, still inside words — unlike a правило's pattern or a написання, which match only
+  where a word begins. Never stored and never carried in a бекап; only the owner's mapping of it
+  is.
 - **Base category** (базова категорія) — one group of the шаблон категоризації («Продукти»,
   «Транспорт», «Здоровʼя», …). Not a категорія of the device and not a parent of one: it points at
   exactly one категорія of this device — its типова категорія unless the owner chose another — or,
@@ -223,19 +225,27 @@ owner may overturn.
   the word meant the folded опис the пакет grouped by; it is now this entity.
 - **Написання** (spelling; code `MerchantSpelling`) — one text a продавець is **recognised** by in
   an опис: stored trimmed and folded to lower case, held by exactly one продавець. An опис is
-  recognised as the продавець holding the longest написання that occurs in it, case folded and
+  recognised as the продавець holding the longest написання that occurs in it where a word begins
+  — at the start of the опис or right after a character that is neither a letter nor a digit, so
+  «коло» recognises «Коло 12» and «WFP*Коло» but not «Навколо»; a написання that itself starts
+  with such a character («*megogo», «-маркет») is recognised wherever it occurs. Case folded and
   nothing else — no transliteration, so a продавець the bank spells in both scripts carries both;
   of two of equal length the newest decides **[PROPOSED]**. An опис nothing occurs in is
   recognised as no продавець.
 - **Без продавця** (nameless) — the first part of Налаштування → «Продавці»: the stored витрати and
   повернення whose опис no продавець recognises, grouped by the написання the proposal gives that
   опис («АТБ-Маркет 1234» and «АТБ-Маркет 5678» are one row for «атб»), the largest groups first,
-  twenty of them, each with «Назвати». A дохід, a переказ and a коригування are not listed.
+  twenty of them, each with «Назвати». A дохід, a переказ and a коригування are not listed, nor
+  is a payment to a person or a банка — an опис whose folded text begins with «від:», «переказ на
+  картку», «переказ з картки» or «поповнення «» — which can still be named from its own editing.
 - **Назвати** (name) — making an опис recognised: a new продавець with a назва and one написання,
   or one написання added to a продавець that exists. The написання must occur in that опис. The
   form proposes the назва and the написання **[PROPOSED]**: the bank's leading service words
-  skipped, the leading name of at most two words kept, an all-capitals word longer than three
-  letters written as a name («СІЛЬПО» → «Сільпо», «АТБ» stays).
+  skipped, in Cyrillic, English or Latin transliteration («Оплата послуг», «PAYMENT», «Oplata
+  poslug», «Pokupka»), then a payment processor's prefix («LIQPAY*», «WFP*», «GOOGLE *», «SUMUP*»
+  and the like), the leading name of at most two words kept, an all-capitals word longer than
+  three letters written as a name («СІЛЬПО» → «Сільпо», «АТБ» stays). The proposed написання
+  always begins where a word begins in that опис.
 - **«Продавці»** names two things: the AI-аналіз choice that lets описи — and the назви the owner
   gave their продавці — into a пакет, and the Налаштування section where продавці are named and
   managed. Which one is meant is always clear from where it is read.
@@ -451,10 +461,14 @@ overturn.
   витрачено: a difference smaller than it is not stated, however large its percentage.
 - **Можливий дубль** (possible duplicate) — two витрати on one рахунок with the same сума, dated at
   most a day apart, whose описи are not the same bank text — a purchase that may have arrived
-  through two doors (the bank and the owner's hand). Never a переказ, a дохід, a повернення, a
-  коригування or a «Комісія». The app asks and does not guess: **«Не дубль»** is the owner's
-  answer, remembered for that unordered pair, carried in the бекап, and gone when either транзакція
-  is deleted. A real дубль is deleted like any транзакція.
+  through two doors (the bank and the owner's hand), or the same витрата written twice by hand.
+  Equal описи count as bank text only when a bank is behind them: either of the two carries an MCC,
+  or the рахунок is linked to monobank; equal описи without either are a можливий дубль too. Never
+  a переказ, a дохід, a повернення, a коригування or a «Комісія». The app asks and does not guess:
+  **«Не дубль»** is the owner's answer, remembered for that unordered pair, carried in the бекап,
+  undoable with «Скасувати» while the screen still shows it was given, and gone when either
+  транзакція is deleted. A real дубль is deleted like any транзакція — from its editing, or with
+  **«Видалити одну»** on the спостереження, which asks which of the two and confirms.
 - **Підсумок місяця** (month summary) — one finished month read as a whole on its own screen,
   per currency: витрачено against the month before and the типова сума, the категорії that changed
   most, the місячна картина, the зміна статку with its розбивка, what moved toward each ціль and
@@ -744,5 +758,5 @@ overturn.
 | Типова сума | Типова категорія | the same adjective for two unrelated things: a median сума of past months, and the starter категорія a базова категорія lands in |
 | Типова сума | Typical amount of a recurring candidate (тренди) | the тренди's typical amount is the median of one категорія's or продавець's largest витрата per month inside a пакет's period; a типова сума is the median of whole months before the month read |
 | Можливий дубль | Підказка про дубль | the можливий дубль is two транзакції that may be one purchase, answered «Не дубль»; the підказка is about two рахунки in a Saldo імпорт that may be one рахунок, offered as a merge |
-| Можливий дубль | Зустрічний дохід | a зустрічний дохід is the other leg of a переказ, absorbed by it; a можливий дубль is two витрати on one рахунок, and the app never merges or deletes either |
+| Можливий дубль | Зустрічний дохід | a зустрічний дохід is the other leg of a переказ, absorbed by it; a можливий дубль is two витрати on one рахунок, and the app never merges or deletes either on its own; «Видалити одну» is the owner's own delete, offered beside «Не дубль» |
 | Підсумок місяця | Місячна картина | the картина is the six numbers of a month; the підсумок is one finished month read as a whole, with the картина as one of its parts |

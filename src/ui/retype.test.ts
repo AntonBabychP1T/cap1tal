@@ -9,6 +9,7 @@ import {
   refund,
   transfer,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
   type Correction,
   type Income,
   type Transaction,
@@ -16,6 +17,10 @@ import {
 import { buildEntry } from './entry-form';
 import { formatMinorUnits } from './amount-input';
 import {
+  assignSource,
+  correctionDeleteQuestion,
+  correctionReadOut,
+  initialForm,
   initialShape,
   labelsAfterRetype,
   offersTransferMark,
@@ -23,6 +28,7 @@ import {
   shapesFor,
   transferWriteNeedsPairing,
   type RetypeShape,
+  withCorrectedDescription,
 } from './retype';
 
 const card = account({ id: 'card', name: 'mono black', kind: 'spending', currency: 'UAH' });
@@ -117,7 +123,7 @@ describe('shapesFor — what a stored transaction may become', () => {
     expect(shapesFor(storedTransfer)).toEqual(['expense', 'transfer']);
   });
 
-  it('A коригування offers nothing, because nothing can record one yet', () => {
+  it('A коригування offers no type: «Звірити» wrote it, and only its опис is edited', () => {
     expect(shapesFor(storedCorrection)).toEqual([]);
   });
 
@@ -376,6 +382,36 @@ describe('recategorise — the feed\'s one tap', () => {
   });
 });
 
+describe('assignSource — the «Без джерела» mark\'s one tap', () => {
+  const kasian: Income = {
+    type: 'income',
+    id: 'i-kasian',
+    date: '2026-09-14',
+    accountId: 'card',
+    amount: money(96000, 'UAH'),
+    sourceId: UNSOURCED_SOURCE_ID,
+    description: "Від: Міхаіл Кас'ян",
+    mcc: 4829,
+  };
+
+  it('Scenario: One tap gives a дохід its джерело — the same дохід, under the pick', () => {
+    // Every field but the джерело stays as stored: the type, the id, the сума, the рахунок, the
+    // date, the опис and the MCC — which is what makes "editing never opened" honest.
+    expect(assignSource(kasian, 'gifts')).toEqual({ ...kasian, sourceId: 'gifts' });
+  });
+
+  it('An unanswered picker is not a pick', () => {
+    expect(() => assignSource(kasian, '')).toThrow('оберіть джерело');
+  });
+
+  it('Scenario: Nothing else is offered a джерело — any other type is refused', () => {
+    expect(() => assignSource(storedExpense, 'gifts')).toThrow('джерело має лише дохід');
+    expect(() => assignSource(storedRefund, 'gifts')).toThrow('джерело має лише дохід');
+    expect(() => assignSource(storedTransfer, 'gifts')).toThrow('джерело має лише дохід');
+    expect(() => assignSource(storedCorrection, 'gifts')).toThrow('джерело має лише дохід');
+  });
+});
+
 describe('offersTransferMark', () => {
   it('a витрата offers «Це переказ»', () => {
     expect(offersTransferMark(storedExpense)).toBe(true);
@@ -448,5 +484,76 @@ describe('transferWriteNeedsPairing', () => {
   it('a витрата retyped into anything but a переказ never needs pairing', () => {
     expect(transferWriteNeedsPairing(storedExpense, storedIncome)).toBe(false);
     expect(transferWriteNeedsPairing(storedExpense, storedRefund)).toBe(false);
+  });
+});
+
+/**
+ * transactions, "A коригування opened from a list shows what it did": what «Звірити» wrote is read
+ * as it is — its signed сума, its рахунок, its дата in words — and only its опис is a field.
+ */
+describe('a коригування is read, its опис edited', () => {
+  const reserve = account({ id: 'reserve', name: 'РЕЗЕРВ', kind: 'cash', currency: 'UAH' });
+  const names = new Map([[reserve.id, reserve.name]]);
+  const reconciled: Correction = {
+    type: 'correction',
+    id: 'c1',
+    date: '2026-09-16',
+    accountId: 'reserve',
+    amount: money(-77686, 'UAH'),
+  };
+  const now = new Date(2026, 9, 6, 12);
+  const editor = readFileSync(new URL('../app/transaction/[id].tsx', import.meta.url), 'utf8');
+  const correctionScreen = editor.slice(
+    editor.indexOf("if (form.shape === 'correction') {"),
+    editor.indexOf('/** A рахунок wears its currency'),
+  );
+
+  it('Scenario: A коригування reads as one', () => {
+    expect(correctionReadOut(reconciled, names, now)).toEqual({
+      amount: '−776,86 UAH',
+      account: 'РЕЗЕРВ',
+      date: '16 вересня',
+    });
+    // The form holds the опис and nothing else: no type, сума, рахунок or дата to change.
+    expect(initialForm(reconciled)).toEqual({ shape: 'correction', description: '' });
+    expect(shapesFor(reconciled)).toEqual([]);
+    // The screen draws the read-out, the опис field, «Зберегти» and «Видалити транзакцію» — and
+    // none of the controls that would change the rest.
+    expect(correctionScreen).toContain('correctionReadOut(original, accountNames, new Date())');
+    expect(correctionScreen).toContain('label="Опис"');
+    expect(correctionScreen).toContain('title="Зберегти"');
+    expect(correctionScreen).toContain('title="Видалити транзакцію"');
+    for (const control of ['<Choices', '<Picker', '<DateField']) {
+      expect(correctionScreen).not.toContain(control);
+    }
+    // One field, and it is the опис.
+    expect(correctionScreen.match(/<Field\b/g)).toHaveLength(1);
+  });
+
+  it('Scenario: Its опис is corrected', () => {
+    const opened = initialForm({ ...reconciled, description: 'Звірка' });
+    expect(opened).toEqual({ shape: 'correction', description: 'Звірка' });
+
+    const corrected = withCorrectedDescription(reconciled, '  перерахунок готівки ');
+    expect(corrected).toEqual({ ...reconciled, description: 'перерахунок готівки' });
+    // сума, рахунок and дата are the stored ones, untouched.
+    expect(corrected).toMatchObject({
+      type: 'correction',
+      id: 'c1',
+      date: '2026-09-16',
+      accountId: 'reserve',
+      amount: money(-77686, 'UAH'),
+    });
+    // An emptied field clears the опис rather than storing «».
+    expect(withCorrectedDescription({ ...reconciled, description: 'Звірка' }, '  ')).toEqual(reconciled);
+    // The screen stores exactly that, through the same write and the same refusal as every edit.
+    expect(editor).toContain('persist(withCorrectedDescription(original, form.description));');
+  });
+
+  it('Scenario: Deleting it says what goes', () => {
+    const question = correctionDeleteQuestion(reconciled, names);
+    expect(question).toContain('−776,86 UAH');
+    expect(question).toContain('«РЕЗЕРВ»');
+    expect(editor).toContain('correctionDeleteQuestion(original, accountNames)');
   });
 });

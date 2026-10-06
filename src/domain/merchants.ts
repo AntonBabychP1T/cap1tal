@@ -1,4 +1,4 @@
-import { foldCase } from './fold';
+import { foldCase, occursAtWordStart } from './fold';
 import { Refusal } from './refusal';
 
 /**
@@ -148,7 +148,7 @@ export function merchantIndex(merchants: readonly Merchant[]): MerchantIndex {
       const known = memo.get(description);
       if (known !== undefined) return known ?? undefined;
       const folded = foldCase(description);
-      const found = ordered.find((s) => folded.includes(s.spelling))?.recognition;
+      const found = ordered.find((s) => occursAtWordStart(folded, s.spelling))?.recognition;
       memo.set(description, found ?? null);
       return found;
     },
@@ -168,10 +168,34 @@ export const SERVICE_WORDS: readonly string[] = [
   'оплата',
   'покупка',
   'списання',
+  'oplata poslug',
+  'oplata tovariv',
+  'oplata',
+  'pokupka',
+  'spysannia',
+  'spysannya',
   'payment',
   'purchase',
   'pos',
 ].sort((a, b) => b.length - a.length);
+
+/**
+ * Payment processors whose name the bank writes before a «*» and the name of whoever was paid
+ * («LIQPAY*…», «GOOGLE *…»). Compared folded (merchants spec, step 3).
+ */
+export const PROCESSOR_PREFIXES: readonly string[] = [
+  'liqpay',
+  'wfp',
+  'google',
+  'paypal',
+  'fondy',
+  'portmone',
+  'ipay',
+  'sumup',
+];
+
+/** Optional spaces, the «*», any spaces after it, and something else after those. */
+const PROCESSOR_STAR = /^\s*\*\s*(?=\S)/u;
 
 /** Whitespace or punctuation, then something that is neither. */
 const AFTER_SERVICE_WORD = /^[\s\p{P}]+(?=[^\s\p{P}])/u;
@@ -195,6 +219,20 @@ function skipServiceWord(trimmed: string): string {
   return separator === undefined ? trimmed : rest.slice(separator.length);
 }
 
+/**
+ * What remains with a payment processor's name, the spaces around its «*» and the «*» skipped, when
+ * anything else follows. «Uklon *trip» keeps itself: «uklon» is not a processor.
+ */
+function skipProcessorPrefix(remainder: string): string {
+  const folded = foldCase(remainder);
+  const name = PROCESSOR_PREFIXES.find((p) => folded.startsWith(p));
+  if (name === undefined) return remainder;
+  if (foldCase(remainder.slice(0, name.length)) !== name) return remainder;
+  const rest = remainder.slice(name.length);
+  const star = PROCESSOR_STAR.exec(rest)?.[0];
+  return star === undefined ? remainder : rest.slice(star.length);
+}
+
 /** «СІЛЬПО» → «Сільпо»; «АТБ», three letters, stays as it is. */
 function titleCaseShouting(name: string): string {
   return name.replace(/\p{L}+/gu, (word) => {
@@ -211,6 +249,7 @@ function titleCaseShouting(name: string): string {
  *
  * 1. the опис trimmed;
  * 2. one leading service word of the bank's skipped, with what separates it, when anything follows;
+ *    then a payment processor's name and its «*» with the spaces around it, when anything else follows;
  * 3. a remainder starting with a letter cut to its leading run of letters and spaces, then to two
  *    words — «Нова Пошта відділення 5» → «Нова Пошта» — and any other remainder kept whole;
  * 4. the написання is that name folded; the назва is that name with every all-capitals word longer
@@ -225,7 +264,7 @@ export function proposeMerchant(
 ): { readonly name: string; readonly spelling: string } | undefined {
   const trimmed = (description ?? '').trim();
   if (trimmed === '') return undefined;
-  const remainder = skipServiceWord(trimmed);
+  const remainder = skipProcessorPrefix(skipServiceWord(trimmed));
   const letters = LEADING_LETTERS.exec(remainder)?.[0].trim();
   const name =
     letters === undefined || letters === '' ? remainder : (TWO_WORDS.exec(letters)?.[0] ?? letters);

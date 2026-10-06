@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 
-import { foldCase } from '../domain/fold';
+import { foldCase, occursAtWordStart } from '../domain/fold';
 import {
   checkMerchantName,
   checkSpelling,
@@ -107,7 +107,7 @@ export function merchantsRepo(db: Storage) {
           throw new Refusal(`Цей опис уже розпізнано як «${recognised.name}»`);
         }
         const spelling = freeSpelling(tx, input.spelling);
-        if (!foldCase(input.description).includes(spelling)) {
+        if (!occursAtWordStart(foldCase(input.description), spelling)) {
           throw new Refusal('Написання має бути частиною опису');
         }
         let merchantId: string;

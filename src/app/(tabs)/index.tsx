@@ -43,6 +43,7 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
+import { resolveCategory } from '@/domain/rules';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { useNetWorthSelection } from '@/hooks/net-worth-selection';
@@ -65,11 +66,16 @@ import {
   type DraftAnswer,
   type DraftLine,
 } from '@/ui/drafts-section';
-import { expenseCategoryChoices, recentlyUsed } from '@/ui/category-choices';
+import { expenseCategoryChoices, recentlyUsed, sourceChoices } from '@/ui/category-choices';
 import { CategoryWidget } from '@/components/category-widget';
 import { NetWorthWidget } from '@/components/net-worth-widget';
 import { ObservationsWidget } from '@/components/observations-widget';
-import { answerNotDuplicate, currentObservations } from '@/hooks/observations-reads';
+import {
+  answerNotDuplicate,
+  currentObservations,
+  deleteOneOfDuplicate,
+  forgetNotDuplicate,
+} from '@/hooks/observations-reads';
 import { homeDashboardReadPlan } from '@/ui/home-dashboard';
 import { categoryMonthRoute, currentMonthRoute, remainderRoute } from '@/ui/home-navigation';
 import { categoryPresentation } from '@/ui/home-categories';
@@ -88,7 +94,6 @@ import {
 } from '@/ui/progress-screen';
 import { newId } from '@/ui/id';
 import type { DashboardWidgetId } from '@/dashboard/layout';
-import { ruleTargetLabel } from '@/ui/list-management';
 import { reportFailure } from '@/ui/journal';
 import { currentMonth } from '@/ui/months';
 import { todayIso } from '@/ui/dates';
@@ -98,7 +103,7 @@ import { PICKER_SIZE } from '@/ui/shortlist';
 import { ONLY_UNCATEGORISED } from '@/ui/transaction-search';
 import { onCapturesStored } from '@/ui/notification-drain';
 import { firstRun } from '@/ui/onboarding';
-import { offersTransferMark, recategorise } from '@/ui/retype';
+import { assignSource, offersTransferMark, recategorise } from '@/ui/retype';
 import {
   accountsById,
   feedSubtitle,
@@ -464,6 +469,11 @@ function MainScreen() {
    * filter, the picker would routinely get four real recents and an alphabetical top-up.
    */
   const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE + 1), [stored.latest]);
+  /**
+   * What the «Без джерела» mark offers: every unarchived джерело but «Без джерела» itself — the
+   * editing screen's own list, nothing but джерела — shortlisted from the latest доходи's джерела.
+   */
+  const sourceRows = useMemo(() => sourceChoices(stored.sources), [stored.sources]);
 
   /** The pending чернетки as lines; an empty list is no block at all, not an empty state. */
   const drafts = useMemo(
@@ -514,6 +524,10 @@ function MainScreen() {
           ...(coverage.oldestCompletedMs === undefined
             ? {}
             : { oldestCompletedAtMs: coverage.oldestCompletedMs }),
+          // The no-token row's дата: the oldest among the рахунки that did sync.
+          ...(coverage.oldestSyncedMs === undefined
+            ? {}
+            : { oldestSyncedAtMs: coverage.oldestSyncedMs }),
           syncing,
           ...(stored.attempt ? { attempt: stored.attempt } : {}),
         },
@@ -668,6 +682,30 @@ function MainScreen() {
   // `categoryListOpen` stays true.
   useCloseOnBack(categorising !== undefined && categoryListOpen, closeCategoryList);
 
+  /**
+   * What a правило or the шаблон would give the «Без категорії» line whose picker is open: offered
+   * first among the five and marked, stored only when tapped (main-screen, "The шаблон's категорія
+   * is one tap away"). The tiers are read once per opened picker, not per render, so typing in its
+   * full list reads no storage.
+   */
+  const tiers = useMemo(
+    () => (categorising === undefined ? undefined : categorisationContext()),
+    [categorising],
+  );
+  const suggestedCategory = (t: Transaction) =>
+    tiers === undefined
+      ? undefined
+      : resolveCategory(tiers, {
+          description: t.description ?? '',
+          mcc: 'mcc' in t ? t.mcc : undefined,
+        });
+
+  /** The «Без джерела» дохід whose one-tap джерело picker is open, if any — and its full list. */
+  const [sourcing, setSourcing] = useState<string>();
+  const [sourceListOpen, setSourceListOpen] = useState(false);
+  const closeSourceList = useCallback(() => setSourceListOpen(false), []);
+  useCloseOnBack(sourcing !== undefined && sourceListOpen, closeSourceList);
+
   /** The offer to remember today's tap as a правило — raised only after the категорія is stored. */
   const ruleOffer = useRuleOffer(reportBug);
 
@@ -694,6 +732,29 @@ function MainScreen() {
       }
     },
     [haptics, reload, reportBug, ruleOffer],
+  );
+
+  /**
+   * One tap behind the «Без джерела» mark: the same дохід under the same id, now carrying the pick
+   * — the editing screen's plain save of a дохід, without editing ever opening. A джерело is not a
+   * категорія: no правило is offered for it.
+   */
+  const giveSource = useCallback(
+    (t: Transaction, picked: string) => {
+      try {
+        transactionsRepo.save(assignSource(t, picked), new Date());
+        judgeProgressLater();
+        haptics.play('stored');
+        setSourcing(undefined);
+        setSourceListOpen(false);
+        reload();
+      } catch (error) {
+        Alert.alert(
+          ...failureAlert({ title: 'Не збережено', where: 'transaction-source', error, report: reportBug }),
+        );
+      }
+    },
+    [haptics, reload, reportBug],
   );
 
   const settleDraft = useCallback(
@@ -833,9 +894,9 @@ function MainScreen() {
                         <TransactionRow
                           icon={line.icon}
                           iconTone={line.iconTone}
-                          marked={line.uncategorised}
-                          title={feedTitle(line)}
-                          titleTone={line.overLimit ? 'textDanger' : undefined}
+                          marked={line.uncategorised || line.unsourced}
+                          title={line.transferEnds ?? feedTitle(line)}
+                          overLimit={line.overLimit}
                           titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
                           subtitle={subtitle}
                           description={line.descriptionShown}
@@ -855,6 +916,7 @@ function MainScreen() {
                               onPress={() => {
                                 setCategorising(categorising === line.id ? undefined : line.id);
                                 setCategoryListOpen(false);
+                                setSourcing(undefined);
                               }}
                             />
                             {offersTransferMark(t) ? (
@@ -881,9 +943,41 @@ function MainScreen() {
                               recentIds={recent.categories}
                               selected={undefined}
                               onSelect={(picked: string) => categorise(t, picked)}
+                              suggestedId={suggestedCategory(t)}
                               noun="categories"
                               expanded={categoryListOpen}
                               onExpandedChange={setCategoryListOpen}
+                            />
+                          </Appear>
+                        ) : null}
+
+                        {/* The same one tap for a дохід «Без джерела»: the mark offers only джерела.
+                            One that is really a повернення or a переказ is retyped from editing,
+                            which tapping the line itself still opens. */}
+                        {line.unsourced ? (
+                          <View style={styles.rowActions}>
+                            <RowAction
+                              title={sourcing === line.id ? 'Згорнути' : 'Обрати джерело'}
+                              onPress={() => {
+                                setSourcing(sourcing === line.id ? undefined : line.id);
+                                setSourceListOpen(false);
+                                setCategorising(undefined);
+                              }}
+                            />
+                          </View>
+                        ) : null}
+                        {/* Gated on the mark too, for the reason the категорія picker is. */}
+                        {line.unsourced && sourcing === line.id ? (
+                          <Appear>
+                            <Picker
+                              label="Джерело"
+                              rows={sourceRows}
+                              recentIds={recent.sources}
+                              selected={undefined}
+                              onSelect={(picked: string) => giveSource(t, picked)}
+                              noun="sources"
+                              expanded={sourceListOpen}
+                              onExpandedChange={setSourceListOpen}
                             />
                           </Appear>
                         ) : null}
@@ -921,6 +1015,14 @@ function MainScreen() {
             onOpen={(route) => router.push(route)}
             onNotDuplicate={(pair) => {
               answerNotDuplicate(pair);
+              reload();
+            }}
+            onUndoNotDuplicate={(pair) => {
+              forgetNotDuplicate(pair);
+              reload();
+            }}
+            onDeleteOne={(id) => {
+              deleteOneOfDuplicate(id);
               reload();
             }}
           />
@@ -1143,9 +1245,8 @@ function MainScreen() {
 
       <RuleOfferSheet
         offer={ruleOffer.offer}
-        targetLabel={
-          ruleOffer.offer ? ruleTargetLabel(ruleOffer.offer.target, categoryNames, accountNames) : ''
-        }
+        categoryNames={categoryNames}
+        accountNames={accountNames}
         onAccept={ruleOffer.accept}
         onDecline={ruleOffer.decline}
       />

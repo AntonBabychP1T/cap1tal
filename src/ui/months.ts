@@ -170,6 +170,24 @@ export function monthInLabel(month: Month): string {
 }
 
 /**
+ * «у вересні 2026» — the month and its year as part of a sentence about it: «У вересні 2026 ще 9
+ * записів…». Unlike `monthInLabel` it carries the year, because the month it names is over and
+ * may be any of the past ones.
+ */
+export function monthInYearLabel(month: Month): string {
+  const { year, month: m } = partsOf(month);
+  return `у ${MONTH_NAMES_IN[m - 1]} ${year}`;
+}
+
+/**
+ * «вересень 2026» — the month and its year as the object of a verb: «Закрий вересень 2026». A month
+ * name is inanimate, so its accusative is the nominative, in lower case inside a sentence.
+ */
+export function monthAccusativeYearLabel(month: Month): string {
+  return `${monthAccusativeLabel(month)} ${partsOf(month).year}`;
+}
+
+/**
  * «вересня» — the month as what a thing belongs to: «Підсумок вересня», «AI-аналіз вересня», «за
  * 10 днів жовтня». The genitive list is `dates.ts`'s, the one a day names its month with, so the
  * two can never spell one month two ways.
@@ -184,6 +202,28 @@ export function monthGenitiveLabel(month: Month): string {
  */
 export function monthAccusativeLabel(month: Month): string {
   return MONTH_NAMES[partsOf(month).month - 1]!.toLowerCase();
+}
+
+/**
+ * What a `MonthStepper` offers beside the місяць it holds (app-shell, "A дата or a місяць the owner
+ * sets is set with the app's own control"): the місяць in words — «вересень 2026», lower case, as it
+ * reads inside a range «липень 2026 — вересень 2026» — a step back always, and a step forward only
+ * while it stays at or before the current month. Pure, like `dateStepOffers`, so which steps stand
+ * is proven by `verify`; the control draws them and decides nothing.
+ */
+export interface MonthStepOffers {
+  readonly label: string;
+  readonly back: Month;
+  /** Absent at the current month: no end of a range can be a month after it. */
+  readonly forward?: Month;
+}
+
+export function monthStepOffers(month: Month, now: Date): MonthStepOffers {
+  return {
+    label: monthAccusativeYearLabel(month),
+    back: prevMonth(month),
+    ...(canStepForward(month, now) ? { forward: nextMonth(month) } : {}),
+  };
 }
 
 /**

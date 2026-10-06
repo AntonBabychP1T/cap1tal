@@ -31,14 +31,35 @@ describe('parseAmount', () => {
   });
 
   it('Scenario: A non-positive amount is rejected', () => {
-    expect(() => parseAmount('0', 'UAH')).toThrow();
-    expect(() => parseAmount('0.00', 'UAH')).toThrow();
-    expect(() => parseAmount('-5', 'UAH')).toThrow();
+    // Zero is refused in the same words as a negative сума (main-screen, "A сума the owner left
+    // empty or not positive is refused by what is wrong"), however the zero is typed.
+    for (const typed of ['0', '0.00', '0,00', '000', ',0']) {
+      expect(refusalOf(() => parseAmount(typed, 'UAH')), `"${typed}"`).toBe(
+        'Сума має бути більшою за нуль',
+      );
+    }
+    // A negative сума is named as negative, not as something that is not a number.
+    expect(refusalOf(() => parseAmount('-5', 'UAH'))).toBe('Сума має бути більшою за нуль');
   });
 
   it('What is not a number is not an amount', () => {
-    for (const typed of ['', ' ', 'abc', '12.', '1.2.3', '12,', '.', ',', '1 00', '10 00', '1  000', ' 000']) {
+    // '' and ' ' are not here: an empty сума is asked for, not refused as a non-number.
+    for (const typed of ['abc', '12.', '1.2.3', '12,', '.', ',', '1 00', '10 00', '1  000', ' 000']) {
       expect(() => parseAmount(typed, 'UAH'), `"${typed}" was accepted`).toThrow();
+    }
+  });
+
+  it('Scenario: An empty сума asks for one', () => {
+    for (const typed of ['', ' ']) {
+      expect(refusalOf(() => parseAmount(typed, 'UAH')), `"${typed}"`).toBe('Напишіть суму');
+    }
+  });
+
+  it('Scenario: A negative сума is named as such', () => {
+    for (const typed of ['-50', ' -50', '-abc']) {
+      expect(refusalOf(() => parseAmount(typed, 'UAH')), `"${typed}"`).toBe(
+        'Сума має бути більшою за нуль',
+      );
     }
   });
 
@@ -142,7 +163,8 @@ describe('parseAmount — the refusal is in the owner\'s language', () => {
   it('Scenario: A ліміт that is not positive is refused in Ukrainian', () => {
     // The сума the smoke found: "0" typed as a ліміт used to answer `an amount is positive, got "0"`.
     const refusal = refusalOf(() => parseAmount('0', 'UAH'));
-    expect(refusal).toBe('сума має бути більша за нуль, а не «0»');
+    // The same words the entry form's zero refusal reads — one sentence for every typed сума.
+    expect(refusal).toBe('Сума має бути більшою за нуль');
     expect(withoutCurrencyCodes(refusal)).not.toMatch(/[A-Za-z]/);
   });
 

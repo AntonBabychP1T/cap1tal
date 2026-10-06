@@ -6,9 +6,11 @@ import type { Transaction } from '../domain/transaction';
 import {
   accountMovements,
   MOVEMENTS_PAGE,
+  reconcileHoldsEdits,
   reconcileTyped,
   shownMovements,
 } from './account-movements';
+import { parseActualBalance } from './amount-input';
 
 const wallet = account({
   id: 'wallet',
@@ -253,5 +255,68 @@ describe('shownMovements', () => {
   it('shows a short history whole, with nothing more to ask for', () => {
     expect(shownMovements([expense], 1)).toEqual({ shown: [expense], more: false });
     expect(shownMovements([], 1)).toEqual({ shown: [], more: false });
+  });
+});
+
+/** app-shell, "A form with unsaved edits asks before «назад» discards it" — «Звірити». */
+describe('reconcileHoldsEdits', () => {
+  it('Scenario: An untouched form closes at once — the field opens empty', () => {
+    expect(reconcileHoldsEdits('')).toBe(false);
+  });
+
+  it('Scenario: An edited form asks first — a typed фактичний залишок', () => {
+    expect(reconcileHoldsEdits('450,00')).toBe(true);
+  });
+});
+
+describe('bankBalanceOffer', () => {
+  const platinum = account({
+    id: 'platinum',
+    name: 'platinum ··6628',
+    kind: 'spending',
+    currency: 'UAH',
+  });
+
+  it('Scenario: The bank\'s balance is one tap away', () => {
+    const movements = accountMovements({
+      account: platinum,
+      transactions: [],
+      bankBalance: money(2144505, 'UAH'),
+    });
+
+    // The field opens empty; the offer is a chip under it, naming the баланс банку as the card does.
+    expect(reconcileHoldsEdits('')).toBe(false);
+    expect(movements.bankBalanceOffer?.label).toBe('Як у банку: 21 445,05 UAH');
+    // One tap fills the field with text it reads back as exactly that balance, and the form now
+    // holds an edit as if the owner had typed it.
+    const fill = movements.bankBalanceOffer?.fill ?? '';
+    expect(parseActualBalance(fill, 'UAH')).toEqual(money(2144505, 'UAH'));
+    expect(reconcileHoldsEdits(fill)).toBe(true);
+  });
+
+  it('A negative баланс банку is offered with its sign', () => {
+    const movements = accountMovements({
+      account: platinum,
+      transactions: [],
+      bankBalance: money(-1250, 'UAH'),
+    });
+
+    expect(movements.bankBalanceOffer?.label).toBe('Як у банку: −12,50 UAH');
+    expect(parseActualBalance(movements.bankBalanceOffer?.fill ?? '', 'UAH')).toEqual(
+      money(-1250, 'UAH'),
+    );
+  });
+
+  it('No баланс банку known, no offer', () => {
+    expect(
+      accountMovements({ account: platinum, transactions: [] }).bankBalanceOffer,
+    ).toBeUndefined();
+    expect(
+      accountMovements({
+        account: platinum,
+        transactions: [],
+        bankBalance: money(2144505, 'USD'),
+      }).bankBalanceOffer,
+    ).toBeUndefined();
   });
 });

@@ -44,8 +44,8 @@ describe('the list of розстрочки', () => {
       id: 'i-iphone',
       name: 'iPhone',
       progress: '4 з 10',
-      remaining: '6 000,00 ₴',
-      next: '5 жовт. · 1 000,00 ₴',
+      remaining: '6 000,00 UAH',
+      next: '5 жовтня · 1 000,00 UAH',
     });
   });
 
@@ -65,7 +65,7 @@ describe('the list of розстрочки', () => {
     expect(list.closed.map((row) => row.name)).toEqual(['Навушники']);
     // Closed early sits there too, and says so.
     const closedEarly = installmentList([{ ...iphone, closedOn: '2026-10-01' }], NO_INSTALLMENT_FACTS, NOW);
-    expect(closedEarly.closed[0]).toMatchObject({ name: 'iPhone', closedEarly: true, remaining: '0,00 ₴' });
+    expect(closedEarly.closed[0]).toMatchObject({ name: 'iPhone', closedEarly: true, remaining: '0,00 UAH' });
   });
 
   it('Scenario: An empty screen explains itself', () => {

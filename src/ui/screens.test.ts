@@ -180,6 +180,25 @@ describe('the репорт screens', () => {
     expect(form).not.toContain('useCloseOnBack(');
     expect(form).not.toContain('useRouter(');
     expect(form).not.toContain('useFocusEffect(');
+
+    // app-shell: with two lines typed, the gesture asks «Відкинути зміни?» first, and «Відкинути»
+    // leaves through the very `leave` the header's «←» uses (the hook's `discardConfirm(close)`,
+    // back-gesture.test.ts). The form tells its host whether it holds edits; the host registers it.
+    expect(form).toContain('onEdited?.(formHoldsEdits(next))');
+    expect(screen).toContain('const [edited, setEdited] = useState(false);');
+    expect(screen).toContain('<BugReportForm prompting={prompting} refusal={refusal} onSave={save} onEdited={setEdited} />');
+    expect(screen).toContain('useCloseOnBack(false, leave, edited);');
+    expect(screen).toContain('const leave = useCallback(() => router.back(), [router]);');
+    // The crash fallback hosts the same form with no navigator: it asks through `answerBackPress`,
+    // and «Відкинути» is its own way out.
+    expect(fallback).toContain('onEdited={setEdited}');
+    expect(fallback).toContain('answerBackPress(reporting && edited, goBack, (dialog) => Alert.alert(...dialog))');
+  });
+
+  it('app-shell — Scenario: An untouched form closes at once — the репорт form', () => {
+    // Untouched, `edited` is false and the hook lets the press through to the navigator.
+    expect(read('manage/bug-reports/new.tsx')).toContain('useState(false)');
+    expect(form).toContain('useState<FormFields>(EMPTY_FORM)');
   });
 
   it('Scenario: The whole text is on the screen', () => {
@@ -224,8 +243,11 @@ describe('the crash fallback', () => {
   it('Scenario: Reporting from the fallback saves and returns', () => {
     expect(fallback).toContain('<BugReportForm');
     expect(fallback).toContain('reportingRepo.create(report)');
-    // Saving ends the same way «Повернутися» does.
-    expect(fallback.split('goBack();').length - 1).toBeGreaterThanOrEqual(2);
+    // Saving ends the same way «Повернутися» does — and so does «назад», handed `goBack` itself
+    // (asked «Відкинути зміни?» first while the form holds edits, app-shell).
+    const save = fallback.slice(fallback.indexOf('const save = (fields: FormFields) => {'));
+    expect(save.slice(0, save.indexOf('\n  };\n'))).toMatch(/\n {4}goBack\(\);$/);
+    expect(fallback).toContain('answerBackPress(reporting && edited, goBack,');
   });
 
   it('Scenario: Returning without reporting', () => {
@@ -315,9 +337,15 @@ describe('the screens that file a репорт from the screen the owner is on',
     expect(source).toContain('GESTURE.maxDistanceDp');
     // The ordering is `activate`'s, not the component's.
     expect(source).toContain('activate({');
-    // The back gesture is «Скасувати» — one way out, not two.
+    // The back gesture is «Скасувати» — one way out, not two — after «Відкинути зміни?» when the
+    // owner has typed into the sheet (app-shell). Both the `Modal`'s own back and the `BackHandler`
+    // go through the same `backOut`.
     expect(source).toContain('BackHandler.addEventListener');
-    expect(source).toContain('dismiss()');
+    expect(source).toContain(
+      'answerBackPress(sheetHoldsEdits(fields, stored), dismiss, (dialog) => Alert.alert(...dialog))',
+    );
+    expect(source).toContain('onRequestClose={backOut}');
+    expect(source).toMatch(/hardwareBackPress', \(\) => \{\s+backOut\(\);\s+return true;/);
     // No number and no sentence invented here.
     expect(source).not.toContain('1200');
     expect(source).not.toContain('minDuration(2');
@@ -816,10 +844,13 @@ describe('lists that lead with their rows', () => {
     }
   });
 
-  it('The back gesture closes an open create form or editor before it leaves the section', () => {
+  it('Scenario: The back gesture closes an open create form — after «Відкинути» when it holds edits', () => {
     const source = component('manage-list.tsx');
-    expect(source).toContain('useCloseOnBack(creating, closeCreate)');
-    expect(source).toContain('useCloseOnBack(editing !== undefined, closeEditor)');
+    // The hook asks «Відкинути зміни?» while the form holds edits and closes at once otherwise;
+    // «Відкинути» closes through the same closer «Скасувати» uses (back-gesture.test.ts).
+    expect(source).toContain('useCloseOnBack(creating, closeCreate, createDirty)');
+    expect(source).toContain('useCloseOnBack(editing !== undefined, closeEditor, editDirty)');
+    expect(source).toContain('!sameFields(');
   });
 
   it("commitments-screen — Scenario: The back gesture discards the form", () => {
@@ -829,12 +860,76 @@ describe('lists that lead with their rows', () => {
     expect(screen.split('commitmentsRepo.save(').length - 1).toBe(1);
     expect(screen.indexOf('commitmentsRepo.save(')).toBeGreaterThan(screen.indexOf('const save = useCallback('));
     expect(screen).not.toContain('useEffect');
-    // WHILE the form is open the back gesture closes it — and closing drops the draft.
-    expect(screen).toContain('useCloseOnBack(editor !== undefined, closeForm)');
+    // WHILE the form is open the back gesture closes it — after «Відкинути» when the form holds
+    // edits — and closing drops the draft. An open «Всі рахунки» or «Всі категорії» list closes
+    // first and asks nothing: the form's subscription stands aside while a picker is open.
+    expect(screen).toContain(
+      'useCloseOnBack(editor !== undefined && pickerClosed, closeForm, pickerClosed && dirty)',
+    );
+    expect(screen).toContain('useCloseOnBack(!pickerClosed, closePicker)');
+    expect(screen).toContain(
+      'const dirty = editor !== undefined && !sameFields(editor.draft, editor.opened);',
+    );
     expect(screen).toContain('const closeForm = useCallback(() => setEditor(undefined), [])');
     // The create form does not stand open by default: one «Нове зобов'язання» action opens it.
     expect(screen).toContain('useState<Editor>()');
     expect(screen).toContain('title={NEW_COMMITMENT}');
+  });
+
+  it('installments-screen — Scenario: The back gesture discards the form', () => {
+    const screen = read('manage/installments.tsx');
+    // As the зобов'язання form: one write, inside «Зберегти»'s own `save`, nothing on unmount.
+    expect(screen.split('installmentsRepo.save(').length - 1).toBe(1);
+    expect(screen.indexOf('installmentsRepo.save(')).toBeGreaterThan(screen.indexOf('const save = useCallback('));
+    expect(screen).not.toContain('useEffect');
+    expect(screen).toContain('useCloseOnBack(editor !== undefined, closeForm, dirty)');
+    expect(screen).toContain(
+      'const dirty = editor !== undefined && !sameInstallmentFields(editor.draft, editor.opened);',
+    );
+    expect(screen).toContain('const closeForm = useCallback(() => setEditor(undefined), [])');
+  });
+
+  it('app-shell — Scenario: An edited form asks first — «Нове правило» registers its edits', () => {
+    const screen = read('manage/rules.tsx');
+    expect(screen).toContain('useCloseOnBack(draft !== undefined, closeDraft, dirty)');
+    expect(screen).toContain('!sameFields(draft, opened)');
+    // Both ways in — «Нове правило» and a row — remember what the form opened on.
+    expect(screen).toContain('openDraft({ ...EMPTY_RULE_DRAFT })');
+    expect(screen).toMatch(/openDraft\(\{\s+id: rule\.id,/);
+    expect(screen).not.toMatch(/setDraft\(\{\s*(\.\.\.EMPTY|id:)/);
+  });
+
+  it('app-shell — Scenario: An untouched form closes at once — «Обʼєднати з іншим рахунком» holds nothing typed', () => {
+    // The merge form is a picker and nothing else: it keeps no choice (`selected={undefined}`) and
+    // a pick goes straight to the «Обʼєднати рахунки?» confirmation, so there is never anything for
+    // «назад» to discard — its open list closes first, then the form, and neither asks.
+    const source = read('account/[id].tsx');
+    expect(source).toContain('useCloseOnBack(merging, closeMerge)');
+    const merge = source.slice(source.indexOf('label="У який рахунок"'));
+    expect(merge).toMatch(/selected=\{undefined\}\s+onSelect=\{confirmMerge\}/);
+  });
+
+  it("app-shell — Scenario: An edited form asks first — a продавець's screen", () => {
+    const screen = read('merchant/[id].tsx');
+    expect(screen).toContain('const dirty = merchantHoldsEdits({ name: shownName, added }, merchant);');
+    // Registered after the «Обʼєднати з» picker's, so an open picker still closes first.
+    expect(screen).toContain('useCloseOnBack(false, leave, !merging && dirty);');
+    expect(screen.indexOf('useCloseOnBack(false, leave')).toBeGreaterThan(
+      screen.indexOf('useCloseOnBack(merging, closeMerging)'),
+    );
+  });
+
+  it('app-shell — Scenario: An edited form asks first — the naming form of a продавець', () => {
+    // The naming form is a `Sheet`, whose `Modal` takes «назад» itself; it tells the sheet whether
+    // it holds edits, and the sheet answers through `answerBackPress`.
+    const naming = readFileSync(join(APP, '..', 'components', 'merchant-naming-sheet.tsx'), 'utf8');
+    expect(naming).toContain('isDirty={namingHoldsEdits(form, { name, spelling })}');
+    const sheet = readFileSync(join(APP, '..', 'components', 'sheet.tsx'), 'utf8');
+    expect(sheet).toContain('isDirty = false');
+    expect(sheet).toContain(
+      'const requestClose = () => answerBackPress(isDirty, motion.dismiss, (dialog) => Alert.alert(...dialog));',
+    );
+    expect(sheet).toContain('onRequestClose={requestClose}');
   });
 
   it('The history follows the balance — the фактичний залишок field is drawn only while Звірити is open', () => {
@@ -845,7 +940,9 @@ describe('lists that lead with their rows', () => {
     expect(open).toBeGreaterThan(-1);
     expect(field).toBeGreaterThan(open);
     expect(field).toBeLessThan(closed);
-    expect(source).toContain('useCloseOnBack(reconciling, closeReconcile)');
+    // app-shell: a typed фактичний залишок asks «Відкинути зміни?» first; an empty one closes at once.
+    expect(source).toContain('useCloseOnBack(reconciling, closeReconcile, reconcileDirty)');
+    expect(source).toContain('const reconcileDirty = reconciling && reconcileHoldsEdits(actual);');
     // Closed, the one way in is the «Звірити» action beside «Редагувати».
     expect(source).toContain('onPress={() => setReconciling(true)}');
   });
@@ -869,5 +966,150 @@ describe('every list of транзакції', () => {
       // The old copies each drew their own leading tile; none is left.
       expect(source, file).not.toContain('<IconTile');
     }
+  });
+});
+
+/**
+ * app-shell, "A сума reads with its currency code everywhere": every сума is drawn by
+ * `formatMoney`, so no module that draws — `src/app`, `src/ui`, `src/components` — may hold the
+ * hryvnia sign at all. A parser may: it reads the sign in what a bank or a till wrote, which is the
+ * owner's text and not the app's. Tests are not drawn and are not swept.
+ */
+describe('one way to draw a сума and a дата', () => {
+  const UI = import.meta.dirname;
+
+  function modulesUnder(directory: string): string[] {
+    return readdirSync(directory).flatMap((name) => {
+      const path = join(directory, name);
+      if (statSync(path).isDirectory()) {
+        return modulesUnder(path);
+      }
+      return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) ? [path] : [];
+    });
+  }
+
+  const drawing = () => [...modulesUnder(APP), ...modulesUnder(UI), ...modulesUnder(COMPONENTS)];
+  const isParser = (path: string) => /pars(e|er)[^/\\]*$/.test(path);
+
+  it('Scenario: A зобов\'язання and a витрата on one screen write their сума alike — no «₴» outside a parser', () => {
+    const offenders = drawing()
+      .filter((path) => !isParser(path))
+      .filter((path) => readFileSync(path, 'utf8').includes('₴'))
+      .map((path) => path.split(`${sep}src${sep}`)[1]);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('no module keeps a formatter of its own beside formatMoney and calendarLabel', () => {
+    const offenders = drawing()
+      .filter((path) => /formatHryvnia|formatPlanMoney|shortCalendarLabel/.test(readFileSync(path, 'utf8')))
+      .map((path) => path.split(`${sep}src${sep}`)[1]);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('Scenario: The поточна вартість says when it was recorded in words — on Рахунки and on a ціль', () => {
+    // Both screens write the view model's words, never the stored дата.
+    expect(read('(tabs)/accounts.tsx')).toContain('{row.investment.value.asOfLabel}');
+    expect(read('(tabs)/accounts.tsx')).not.toContain('value.asOf}');
+    expect(read('goal/[id].tsx')).toContain('поточна вартість на {row.valueAsOf}');
+  });
+});
+
+/**
+ * app-shell, "A дата or a місяць the owner sets is set with the app's own control": every дата the
+ * owner sets is the entry form's `DateField`, and every місяць is a `MonthStepper`. No screen keeps
+ * a free-text field of its own with the «РРРР-ММ-ДД» placeholder — `DateField`'s own typed field
+ * is the one place a дата is still typed.
+ */
+describe('one control for a дата and one for a місяць', () => {
+  it('no screen renders a «РРРР-ММ-ДД» field of its own', () => {
+    const offenders = tsxUnder(APP)
+      .filter((path) => readFileSync(path, 'utf8').includes('РРРР-ММ-ДД'))
+      .map((path) => path.split(`${sep}src${sep}`)[1]);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it.each([
+    ['manage/goals.tsx', 1],
+    ['manage/commitments.tsx', 1],
+    ['manage/installments.tsx', 1],
+    ['manage/monobank.tsx', 2],
+  ])('%s sets its дата with DateField', (screen, fields) => {
+    expect(read(screen).match(/<DateField\b/g)?.length ?? 0).toBe(fields);
+  });
+
+  it('Scenario: A custom range is stepped, not typed — AI-аналіз sets both ends with MonthStepper', () => {
+    const screen = read('ai-analysis.tsx');
+    expect(screen.match(/<MonthStepper\b/g)?.length ?? 0).toBe(2);
+    expect(screen).not.toMatch(/<Field\b/);
+  });
+});
+
+describe('Requirement: The status bar is legible in both appearances', () => {
+  it('mounts the status bar once, at the root, following the appearance (design D5)', () => {
+    // «auto» is the app's own theme (`userInterfaceStyle: automatic`); "The clock is readable on a
+    // light screen" itself is proven on the emulator.
+    const layout = read('_layout.tsx');
+    expect(layout).toContain("import { StatusBar } from 'expo-status-bar'");
+    expect(layout).toContain('<StatusBar style="auto" />');
+  });
+});
+
+describe('Requirement: A name in a line breaks between words, never inside one', () => {
+  it('draws a переказ title as two single-line рахунок names, «→» leading the second (design D18)', () => {
+    // "A переказ title at a large text size" itself is proven on the emulator.
+    const row = readFileSync(join(COMPONENTS, 'transaction-row.tsx'), 'utf8');
+    expect(row).toMatch(/numberOfLines=\{1\}\s+ellipsizeMode="tail"[^>]*>\s*\{title\.from\}/);
+    expect(row).toMatch(/numberOfLines=\{1\}\s+ellipsizeMode="tail"[^>]*>\s*\{`→ \$\{title\.to\}`\}/);
+    // Both screens whose feed shows a переказ hand the row its two ends, not the joined «A → B».
+    for (const screen of [join('(tabs)', 'index.tsx'), 'transactions.tsx']) {
+      expect(read(screen)).toContain('line.transferEnds ??');
+    }
+  });
+});
+
+/**
+ * app-shell, "Every switch and every coloured mark has an accessible name" (design D18): the names
+ * are decided in `src/ui`, and these hold the screens to passing them.
+ */
+describe('Requirement: Every switch and every coloured mark has an accessible name', () => {
+  it('every ThemedSwitch passes accessibilityLabel', () => {
+    const unnamed: string[] = [];
+    for (const path of screenFiles()) {
+      const source = readFileSync(path, 'utf8');
+      for (let at = source.indexOf('<ThemedSwitch'); at !== -1; at = source.indexOf('<ThemedSwitch', at + 1)) {
+        const element = source.slice(at, source.indexOf('/>', at));
+        if (!/\baccessibilityLabel=/.test(element)) unnamed.push(`${path}:${element}`);
+      }
+    }
+    expect(unnamed).toEqual([]);
+    // dashboard-layout, "Six switches, six names": each widget's switch is named by its row.
+    expect(read(join('manage', 'home-dashboard.tsx'))).toContain('accessibilityLabel={row.switchLabel}');
+  });
+
+  it('net-worth.tsx passes the card\'s зміна its label', () => {
+    expect(read('net-worth.tsx')).toMatch(
+      /accessibilityLabel=\{model\.card\.changeA11yLabel\}[^>]*>\s*\{model\.card\.changeText\}/,
+    );
+  });
+
+  it('a line of транзакції is named by feedA11yLabel, «понад ліміт» included', () => {
+    const row = readFileSync(join(COMPONENTS, 'transaction-row.tsx'), 'utf8');
+    expect(row).toContain('accessibilityLabel={feedA11yLabel(');
+    // Every screen that colours a line over its ліміт hands the row the same fact.
+    for (const screen of [join('(tabs)', 'index.tsx'), 'transactions.tsx', join('account', '[id].tsx')]) {
+      expect(read(screen), screen).toContain('overLimit={line.overLimit}');
+    }
+  });
+});
+
+/** transactions, "A коригування opened from a list shows what it did": no sentence says it cannot be. */
+describe('a коригування is no longer «поки не редагується»', () => {
+  it('the editing screen says nothing about «звірити» still to come', () => {
+    const editor = read(join('transaction', '[id].tsx'));
+    expect(editor).not.toContain('зʼявиться разом зі «звірити»');
+    expect(editor).not.toContain('Коригування поки не редагується');
   });
 });

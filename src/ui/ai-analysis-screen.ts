@@ -6,7 +6,7 @@ import {
   type DatedRate,
   type PeriodChoice,
 } from '../analysis/package';
-import { isMonth, refusesRange, type AnalysisPeriod } from '../analysis/period';
+import { refusesRange, type AnalysisPeriod } from '../analysis/period';
 import type { Account } from '../domain/account';
 import type { Category, Source } from '../domain/category';
 import type { AccumulationGoal } from '../domain/goals';
@@ -178,12 +178,6 @@ export const SHORT_HISTORY_WARNING = 'Один місяць не показує 
 export const EMPTY_PERIOD_MESSAGE = 'За цей період транзакцій немає — нема чого аналізувати.';
 export const EMPTY_HISTORY_MESSAGE = 'Ще немає жодної транзакції.';
 export const INVALID_RANGE_MESSAGE = 'Кінець діапазону раніше за його початок.';
-/**
- * What a half-typed month says. The «Від» and «До» fields are text, so every keystroke passes
- * through a month that is not one yet — «2026-0» on the way to «2026-08» — and the screen answers
- * with the shape it wants rather than with an exception out of the month arithmetic.
- */
-export const MALFORMED_MONTH_MESSAGE = 'Місяць пишеться як РРРР-ММ, напр. 2026-08.';
 /** What «Завжди включено» says: the aggregates never need a switch. */
 export const ALWAYS_INCLUDED = 'Завжди: місячна картина, категорії, тренди, ліміти, цілі.';
 
@@ -261,16 +255,14 @@ export function aiAnalysisModel(input: {
     return { ...nothing, state: 'empty-history', message: EMPTY_HISTORY_MESSAGE };
   }
 
-  // Both asked before anything is built, so neither a month still being typed nor a range that
-  // ends before it starts can reach the month arithmetic — each is a sentence the owner reads,
-  // and the spec is explicit that the screen never shows an exception.
-  if (input.choices.period === 'custom') {
-    if (!isMonth(input.choices.from) || !isMonth(input.choices.to)) {
-      return { ...nothing, state: 'invalid-range', message: MALFORMED_MONTH_MESSAGE };
-    }
-    if (refusesRange(input.choices.from, input.choices.to)) {
-      return { ...nothing, state: 'invalid-range', message: INVALID_RANGE_MESSAGE };
-    }
+  // Asked before anything is built, so a range that ends before it starts is a sentence the owner
+  // reads and never an exception. Both ends are whole months by construction: they are stepped
+  // (`MonthStepper`, `monthStepOffers`) or seeded by `initialChoices`, never typed.
+  if (
+    input.choices.period === 'custom' &&
+    refusesRange(input.choices.from, input.choices.to)
+  ) {
+    return { ...nothing, state: 'invalid-range', message: INVALID_RANGE_MESSAGE };
   }
 
   const built = buildAnalysisPackage({

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { money } from '../domain/money';
@@ -6,13 +8,17 @@ import type { Observation } from '../observations/observation';
 import { observationsOf } from '../observations/observations';
 import { ledgerBuilder, monthsFrom } from '../observations/test-fixtures';
 import {
+  answeredDuplicate,
   BANNED_WORDS,
+  deleteOneConfirmation,
   noObservationsSentence,
   observationLine,
   observationLines,
+  observationRows,
   observationsWidgetModel,
   ordinalMonth,
   ratioPhrase,
+  type ObservationLine,
   type ObservationNames,
 } from './observations';
 
@@ -126,7 +132,23 @@ describe('how an спостереження states itself', () => {
       expect(line.sentence).not.toMatch(/\.\s/);
     }
     expect(observationLine(equal, NAMES).sentence).toContain('уже стільки ж, скільки за весь вересень');
-    expect(plain(observationLine(less, NAMES).sentence)).toBe('Продукти: 0,00 UAH — на 100 % менше за типові 10 000,00 UAH');
+    expect(plain(observationLine(less, NAMES).sentence)).toBe('Продукти: цього місяця не було, зазвичай 10 000,00 UAH');
+  });
+
+  it('Scenario: A категорія absent this month is stated as all of it less', () => {
+    const absent: Observation = {
+      kind: 'category-vs-typical',
+      month: '2026-09',
+      currency: 'UAH',
+      key: 'travel',
+      categoryId: 'travel',
+      amount: money(0, 'UAH'),
+      typical: money(705658, 'UAH'),
+      changePercent: -100,
+    };
+    const sentence = plain(observationLine(absent, NAMES).sentence);
+    expect(sentence).toBe('Подорожі: цього місяця не було, зазвичай 7 056,58 UAH');
+    expect(sentence).not.toContain('%');
   });
 
   it('writes the ratio with its plural: «4,2 раза», «3 рази», «5 разів»', () => {
@@ -173,7 +195,7 @@ describe('where an спостереження leads', () => {
   }
   const lines = () =>
     observationLines(
-      observationsOf({ month: '2026-09', today: '2026-10-02', transactions: september(), categories: [], answers: [] }),
+      observationsOf({ month: '2026-09', today: '2026-10-02', transactions: september(), categories: [], answers: [], linkedAccountIds: new Set() }),
       NAMES,
     );
 
@@ -227,6 +249,20 @@ describe('the «Спостереження» widget on Головний', () => 
     expect(
       observationsWidgetModel({ observations: [], today: '2026-10-10', activeMonths: ACTIVE, names: NAMES }),
     ).toEqual({ summary: null, lines: [], more: null, empty: 'Цього місяця поки нічого незвичного' });
+
+    // Inside the widget's card: the widget hands the sentence to the list, which draws it inside
+    // the same ListCard its lines are drawn in, and the widget draws it nowhere else.
+    const widget = readFileSync(new URL('../components/observations-widget.tsx', import.meta.url), 'utf8');
+    expect(widget).toContain('empty={model.empty}');
+    expect(widget.match(/model\.empty/g)).toHaveLength(1);
+    const list = readFileSync(new URL('../components/observations-list.tsx', import.meta.url), 'utf8');
+    const drawn = list.match(/\{empty\}/g) ?? [];
+    expect(drawn).toHaveLength(1);
+    const at = list.indexOf('{empty}');
+    const opened = list.lastIndexOf('<ListCard>', at);
+    expect(opened).toBeGreaterThan(-1);
+    expect(list.lastIndexOf('</ListCard>', at)).toBeLessThan(opened);
+    expect(list.indexOf('</ListCard>', at)).toBeGreaterThan(at);
   });
 
   it('Scenario: September’s підсумок in the first week of October', () => {
@@ -263,7 +299,7 @@ describe('the «Спостереження» widget on Головний', () => 
     );
     const widget = (answers: { first: string; second: string }[]) =>
       observationsWidgetModel({
-        observations: observationsOf({ month: '2026-10', today: '2026-10-06', transactions: rows, categories: [], answers }),
+        observations: observationsOf({ month: '2026-10', today: '2026-10-06', transactions: rows, categories: [], answers, linkedAccountIds: new Set() }),
         today: '2026-10-06',
         activeMonths: ACTIVE,
         names: NAMES,
@@ -279,5 +315,90 @@ describe('the «Спостереження» widget on Головний', () => 
     const after = widget([answer]);
     expect(after.lines.map((l) => l.kind)).toEqual(['price-change', 'price-change', 'price-change']);
     expect(after.more?.label).toBe('Усі (4)');
+  });
+});
+
+describe('answering a можливий дубль in place', () => {
+  const ACTIVE = new Set(['2026-09', '2026-10']);
+  const b = ledgerBuilder();
+  const rows: Transaction[] = [
+    b.expense('2026-10-03', 'cafe', 12500, { id: 'bank', description: 'Aroma Kava' }),
+    b.expense('2026-10-04', 'cafe', 12500, { id: 'hand' }),
+  ];
+  const lines = (answers: { first: string; second: string }[]) =>
+    observationsWidgetModel({
+      observations: observationsOf({
+        month: '2026-10',
+        today: '2026-10-06',
+        transactions: rows,
+        categories: [],
+        answers,
+        linkedAccountIds: new Set(),
+      }),
+      today: '2026-10-06',
+      activeMonths: ACTIVE,
+      names: NAMES,
+    }).lines;
+
+  it('Scenario: «Не дубль» given by mistake is undone', () => {
+    const before = lines([]);
+    const answered = answeredDuplicate(before[0]!, 0)!;
+
+    // Stored and re-derived: the pair is gone, and its row says what was given and offers to undo it.
+    const after = observationRows(lines([answered.pair]), [answered]);
+    expect(after).toEqual([
+      {
+        kind: 'answered',
+        key: before[0]!.key,
+        sentence: 'Позначено: не дубль',
+        undoLabel: 'Скасувати',
+        undoAccessibilityLabel: 'Скасувати «Не дубль»',
+        pair: { first: 'bank', second: 'hand' },
+      },
+    ]);
+
+    // «Скасувати» forgets the answer; re-derived, the pair is stated exactly as it was.
+    expect(observationRows(lines([]), [answered])).toEqual(before.map((line) => ({ kind: 'line', key: line.key, line })));
+  });
+
+  it('keeps the answered row where the pair was, the next спостереження beside it', () => {
+    const line = (key: string): ObservationLine => ({ key, kind: 'price-change', sentence: key });
+    const pair = { ...line('pair'), kind: 'possible-duplicate' as const, answer: { first: 'a', second: 'b' } };
+    const answered = answeredDuplicate(pair, 1)!;
+    expect(observationRows([line('one'), line('two'), line('three')], [answered]).map((row) => row.key)).toEqual([
+      'one',
+      'pair',
+      'two',
+      'three',
+    ]);
+    // Only a дубль is answered.
+    expect(answeredDuplicate(line('one'), 0)).toBeUndefined();
+  });
+
+  it('Scenario: One of the two is deleted from the спостереження', () => {
+    const [line] = lines([]);
+    const view = line!.deleteOne!;
+    expect(view.label).toBe('Видалити одну');
+    expect(view.title).toBe('Видалити одну?');
+    expect(view.sentence).toBe('Яку з двох транзакцій видалити? Друга залишиться як є.');
+    expect(view.choices.map((c) => ({ ...c, label: plain(c.label) }))).toEqual([
+      { id: 'bank', label: '3 жовтня · 125,00 UAH · Aroma Kava', accessibilityLabel: expect.stringContaining('Aroma Kava') },
+      { id: 'hand', label: '4 жовтня · 125,00 UAH · без опису', accessibilityLabel: expect.stringContaining('без опису') },
+    ]);
+
+    // The later of the two, confirmed as its editing confirms a delete.
+    const confirmation = deleteOneConfirmation(view.choices[1]);
+    expect(confirmation.title).toBe('Видалити транзакцію?');
+    expect(plain(confirmation.message)).toBe('4 жовтня · 125,00 UAH · без опису. Її не буде ні у стрічці, ні в історії рахунку.');
+    expect([confirmation.cancel, confirmation.confirm]).toEqual(['Скасувати', 'Видалити']);
+    expect(confirmation.id).toBe('hand');
+  });
+
+  it('offers «Видалити одну» and «Не дубль» on a дубль only', () => {
+    for (const o of EVERY_KIND) {
+      const line = observationLine(o, NAMES);
+      expect(line.deleteOne !== undefined).toBe(o.kind === 'possible-duplicate');
+      expect(line.answer !== undefined).toBe(o.kind === 'possible-duplicate');
+    }
   });
 });

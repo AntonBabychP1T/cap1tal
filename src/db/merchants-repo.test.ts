@@ -116,6 +116,17 @@ describe('merchantsRepo', () => {
       expect(repo.list()).toEqual([]);
     });
 
+    it('Scenario: A написання inside a word of the опис is refused', () => {
+      expect(refusalOf(() => name('magazin', 'Magazin', 'magazin', 'ZOOMAGAZIN'))).toBe('Написання має бути частиною опису');
+      expect(repo.list()).toEqual([]);
+    });
+
+    it('Scenario: A написання that starts with punctuation is accepted', () => {
+      name('megogo', 'Megogo', '*megogo', 'WFP*MEGOGO.NET');
+      expect(repo.get('megogo')?.spellings.map((s) => s.spelling)).toEqual(['*megogo']);
+      expect(repo.index().recognise('WFP*MEGOGO.NET')?.merchantId).toBe('megogo');
+    });
+
     it('an опис already recognised is not named again', () => {
       name('atb', 'АТБ', 'атб');
       expect(refusalOf(() => name('x', 'Інший', 'атб 12', 'АТБ 12'))).toContain('АТБ');

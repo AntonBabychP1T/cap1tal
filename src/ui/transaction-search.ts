@@ -117,15 +117,49 @@ export function merchantFromRoute(
 /** The `?only=` value that opens «Транзакції» narrowed to «Без категорії». */
 export const ONLY_UNCATEGORISED = 'uncategorised';
 
+/** The `?only=` value that opens «Транзакції» narrowed to «Без джерела». */
+export const ONLY_UNSOURCED = 'unsourced';
+
 /**
- * Whether «Транзакції» opens narrowed to «Без категорії», read from a `?only=` in the route. It is
- * how «Потребує уваги» lands the owner on the транзакції it counted instead of on the whole history.
- * Exactly that one value narrows; anything else, empty or absent narrows nothing.
- *
- * Like the місяць, an initial value and never a lock: the chip takes it off like any other.
+ * The one «only …» narrowing in force: «Без категорії» or «Без джерела», never both — choosing one
+ * takes the other off (transaction-search, "«Без джерела» and «Без категорії» take turns"). One
+ * value rather than two flags, so the two cannot be on together by construction.
  */
-export function uncategorisedFromRoute(asked: string | undefined): boolean {
-  return asked === ONLY_UNCATEGORISED;
+export type OnlyNarrowing = typeof ONLY_UNCATEGORISED | typeof ONLY_UNSOURCED;
+
+/**
+ * The «only …» row's choices, drawn beside «Всі» — whose value is anything else, read by
+ * `onlyFromRoute` as no narrowing.
+ */
+export const ONLY_CHOICES: readonly { readonly value: OnlyNarrowing; readonly label: string }[] = [
+  { value: ONLY_UNCATEGORISED, label: 'Без категорії' },
+  { value: ONLY_UNSOURCED, label: 'Без джерела' },
+];
+
+/**
+ * The «only …» narrowing a `?only=` in the route asks for, or the one the owner picked on the row:
+ * exactly `ONLY_UNCATEGORISED` or `ONLY_UNSOURCED`; anything else, empty or absent narrows nothing.
+ * Like the місяць, an initial value and never a lock.
+ */
+export function onlyFromRoute(asked: string | undefined): OnlyNarrowing | undefined {
+  return asked === ONLY_UNCATEGORISED || asked === ONLY_UNSOURCED ? asked : undefined;
+}
+
+/**
+ * The route that opens «Транзакції» on `month`, narrowed by `only` when one is given — what
+ * `monthFromRoute` and `onlyFromRoute` read back.
+ */
+export function narrowedMonthRoute(month: Month, only?: OnlyNarrowing): string {
+  return only === undefined ? `/transactions?month=${month}` : `/transactions?month=${month}&only=${only}`;
+}
+
+/** The narrowing as what `transactionsRepo.search` takes: at most one of its two flags. */
+export function onlyNarrowing(
+  only: OnlyNarrowing | undefined,
+): { readonly uncategorised?: true; readonly unsourced?: true } {
+  if (only === ONLY_UNCATEGORISED) return { uncategorised: true };
+  if (only === ONLY_UNSOURCED) return { unsourced: true };
+  return {};
 }
 
 /**
@@ -167,6 +201,12 @@ export function showMore(
   };
 }
 
+/**
+ * The hint inside the search field of «Транзакції». It has to be read whole at the phone's default
+ * text size on a 360 dp phone (transaction-search, "The hint fits"), so it names what is typed most
+ * — the опис, the продавець, the сума — and not everything the search reads.
+ */
+export const SEARCH_HINT = 'опис, продавець або сума';
 
 /**
  * How long typing must pause before the list is searched again (transaction-search, "Typing a

@@ -517,7 +517,8 @@ export function monobankRepo(db: Storage) {
      * a транзакція referencing a category no row has, an item id already remembered — rolls the
      * whole answer back, and the same answer can simply be fetched again.
      *
-     * The транзакції are stored one millisecond apart in the answer's order, for the reason the
+     * The транзакції are stored one millisecond apart in the answer's order — oldest bank time
+     * first, as `mapStatement` hands them over (design D19) — for the reason the
      * Saldo import gives: `created_at` is the tie-break between транзакції of one calendar date,
      * so writing a page under a single instant would leave the bank's own order to the random
      * suffix of an id.

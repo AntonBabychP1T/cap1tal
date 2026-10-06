@@ -10,6 +10,7 @@ import { categories as categoriesRepo, limits as limitsRepo } from '@/db/repos';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { failureAlert } from '@/ui/failure-alert';
+import { sameFields } from '@/ui/same-fields';
 import {
   LIMIT_CURRENCIES,
   LIMIT_IS_A_SPENDING_GOAL,
@@ -53,12 +54,21 @@ export default function LimitsScreen() {
     [stored.categories, stored.limits],
   );
 
-  /** The category whose ліміт is being set, and the draft beside it; `undefined` — no form open. */
-  const [editing, setEditing] = useState<{ categoryId: string; draft: LimitDraft } | undefined>();
+  /**
+   * The category whose ліміт is being set, the draft beside it and what the draft opened on;
+   * `undefined` — no form open.
+   */
+  const [editing, setEditing] = useState<
+    { categoryId: string; draft: LimitDraft; opened: LimitDraft } | undefined
+  >();
 
-  /** The phone's own «назад» closes the open editor first, and only then leaves the section. */
+  /**
+   * The phone's own «назад» closes the open editor first — asking «Відкинути зміни?» when it holds
+   * edits — and only then leaves the section.
+   */
   const closeEditor = useCallback(() => setEditing(undefined), []);
-  useCloseOnBack(editing !== undefined, closeEditor);
+  const dirty = editing !== undefined && !sameFields(editing.draft, editing.opened);
+  useCloseOnBack(editing !== undefined, closeEditor, dirty);
 
   const save = useCallback(() => {
     if (!editing) return;
@@ -107,16 +117,16 @@ export default function LimitsScreen() {
             <Tap
               accessibilityRole="button"
               accessibilityHint={row.limit ? 'Змінити або прибрати ліміт' : 'Встановити ліміт'}
-              onPress={() =>
+              onPress={() => {
+                const draft = limitDraftFor(
+                  stored.limits.find((l) => l.categoryId === row.categoryId),
+                );
                 setEditing(
                   editing?.categoryId === row.categoryId
                     ? undefined
-                    : {
-                        categoryId: row.categoryId,
-                        draft: limitDraftFor(stored.limits.find((l) => l.categoryId === row.categoryId)),
-                      },
-                )
-              }
+                    : { categoryId: row.categoryId, draft, opened: draft },
+                );
+              }}
               style={styles.rowTop}>
               <ThemedText
                 numberOfLines={1}

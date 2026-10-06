@@ -25,7 +25,9 @@ import {
   NO_MERCHANTS_YET,
   deleteOutcome,
   mergeConfirmation,
+  merchantHoldsEdits,
   merchantRows,
+  namingHoldsEdits,
   merchantTransactionsHref,
   namelessGroups,
   namelessMore,
@@ -107,6 +109,20 @@ describe('«Без продавця»', () => {
     // A повернення is who the owner paid, and is listed.
     expect(namelessGroups([spent('ROZETKA повернення', 'refund')], NO_MERCHANTS).groups).toHaveLength(1);
   });
+
+  it('Scenario: A payment to a person is not a nameless продавець', () => {
+    const person = spent('Від: Lebedianska Svitlana');
+    const jar = spent('Поповнення «ліки 93 бригаді»');
+    expect(namelessGroups([person, jar], NO_MERCHANTS)).toEqual({ groups: [], more: 0 });
+    // The editing of either still offers «Назвати продавця».
+    expect(transactionMerchantRow(person.description, NO_MERCHANTS)?.kind).toBe('nameless');
+    expect(transactionMerchantRow(jar.description, NO_MERCHANTS)?.kind).toBe('nameless');
+    // Every one of the four beginnings, in any letter case; a shop that merely mentions a переказ is
+    // still listed.
+    const others = [spent('ПЕРЕКАЗ НА КАРТКУ 5375****1234'), spent('Переказ з картки 4149****0000')];
+    expect(namelessGroups(others, NO_MERCHANTS).groups).toEqual([]);
+    expect(namelessGroups([spent('Сільпо переказ на картку')], NO_MERCHANTS).groups).toHaveLength(1);
+  });
 });
 
 describe('the продавці list', () => {
@@ -160,6 +176,16 @@ describe('the naming form', () => {
   it('Scenario: A написання outside the опис is refused in words', () => {
     const errors = namingErrors({ description: 'ATB MARKET 23', name: 'АТБ Маркет', spelling: 'атб' }, [], 'new');
     expect(errors.spelling).toBe('Написання має бути частиною опису');
+  });
+
+  it('Scenario: A написання inside a word of the опис is refused', () => {
+    const errors = namingErrors({ description: 'ZOOMAGAZIN', name: 'Magazin', spelling: 'magazin' }, [], 'new');
+    expect(errors.spelling).toBe('Написання має бути частиною опису');
+  });
+
+  it('Scenario: A написання that starts with punctuation is accepted', () => {
+    const errors = namingErrors({ description: 'WFP*MEGOGO.NET', name: 'Megogo', spelling: '*megogo' }, [], 'new');
+    expect(errors.spelling).toBeUndefined();
   });
 
   it('refuses a blank назва, a blank написання and a написання another продавець holds', () => {
@@ -328,5 +354,36 @@ describe('the «Продавець» row of transaction editing', () => {
   it('the editor reads the row from the опис as stored', () => {
     const screen = readFileSync(new URL('../app/transaction/[id].tsx', import.meta.url), 'utf8');
     expect(screen).toContain('transactionMerchantRow(original?.description, merchantIndex(stored.merchants))');
+  });
+});
+
+/** app-shell, "A form with unsaved edits asks before «назад» discards it" — the продавець forms. */
+describe('what «назад» asks about on the продавець forms', () => {
+  const atb = merchant({
+    id: 'atb',
+    name: 'АТБ',
+    spellings: [{ id: 's1', spelling: 'atb', addedAt: new Date(0) }],
+    createdAt: new Date(0),
+  });
+
+  it("Scenario: An untouched form closes at once — a продавець's screen as it opened", () => {
+    expect(merchantHoldsEdits({ name: 'АТБ', added: '' }, atb)).toBe(false);
+  });
+
+  it("Scenario: An edited form asks first — a продавець's screen with a назва or a написання typed", () => {
+    expect(merchantHoldsEdits({ name: 'АТБ Маркет', added: '' }, atb)).toBe(true);
+    expect(merchantHoldsEdits({ name: 'АТБ', added: 'atb market' }, atb)).toBe(true);
+  });
+
+  it('Scenario: An untouched form closes at once — the naming form on its proposal', () => {
+    const opened = { description: 'АТБ 1234', name: 'АТБ', spelling: 'атб' };
+    expect(namingHoldsEdits(opened, { name: 'АТБ', spelling: 'атб' })).toBe(false);
+    expect(namingHoldsEdits(undefined, { name: '', spelling: '' })).toBe(false);
+  });
+
+  it('Scenario: An edited form asks first — the naming form with its назва changed', () => {
+    const opened = { description: 'АТБ 1234', name: 'АТБ', spelling: 'атб' };
+    expect(namingHoldsEdits(opened, { name: 'АТБ Маркет', spelling: 'атб' })).toBe(true);
+    expect(namingHoldsEdits(opened, { name: 'АТБ', spelling: 'атб 12' })).toBe(true);
   });
 });

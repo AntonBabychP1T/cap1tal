@@ -8,6 +8,7 @@ import type { Category, Source } from '../domain/category';
 import { money } from '../domain/money';
 import { expenseByDefault, type Transaction } from '../domain/transaction';
 import { inMemoryAnalysisShare } from '../platform/analysis-share';
+import { monthStepOffers } from './months';
 import {
   aiAnalysisModel,
   defaultChoices,
@@ -55,6 +56,8 @@ function stored(transactions: readonly Transaction[]): StoredForAnalysis {
 }
 
 const TODAY = '2026-09-02';
+/** The screen's clock on TODAY — what the month steppers cap at. */
+const NOW = new Date(2026, 8, 2, 12, 0, 0);
 
 const history = [
   spend('2026-07-05', 300000, 'groceries'),
@@ -94,16 +97,19 @@ describe('the choices', () => {
   });
 
   it('Scenario: Opened for one month', () => {
-    const choices = initialChoices(TODAY, '2026-08');
-    expect(choices).toEqual({ ...defaultChoices(TODAY), period: 'custom', from: '2026-08', to: '2026-08' });
+    const choices = initialChoices(TODAY, '2026-09');
+    expect(choices).toEqual({ ...defaultChoices(TODAY), period: 'custom', from: '2026-09', to: '2026-09' });
     expect(choices.descriptions).toBe(false);
     expect(choices.transactions).toBe(false);
+    // The custom range вересень 2026 — вересень 2026, each end read as a місяць in words.
+    expect(monthStepOffers(choices.from, NOW).label).toBe('вересень 2026');
+    expect(monthStepOffers(choices.to, NOW).label).toBe('вересень 2026');
 
     const opened = aiAnalysisModel({ choices, stored: stored(history), today: TODAY });
     // The preview is that one month's пакет, built in memory; the one-month warning is shown.
     expect(opened.state).toBe('preview');
     expect(opened.preview!.monthsWithData).toBe(1);
-    expect(opened.preview!.transactions).toBe(2);
+    expect(opened.preview!.transactions).toBe(1);
     expect(opened.warning).toBe('Один місяць не показує тренду.');
   });
 
@@ -146,36 +152,67 @@ describe('the choices', () => {
     expect(refused.document).toBeNull();
   });
 
-  it('Scenario: A half-typed month is a sentence, not an exception', () => {
-    // The «Від» and «До» fields are text: every keystroke passes through a month that is not one
-    // yet. The emulator found this as a red «Render Error: month must be YYYY-MM, got "2026-0"»
-    // after a single backspace, which the spec forbids in as many words.
-    for (const half of ['2026-0', '2026-', '2026', '', '2026-13', 'серпень']) {
-      const typing = model({ period: 'custom', from: half, to: '2026-09' });
+  it('Scenario: A custom range is stepped, not typed', () => {
+    // «Свій діапазон» opens on the current month at both ends; «Від» is stepped back twice.
+    const opened = { ...defaultChoices(TODAY), period: 'custom' as const };
+    expect(opened.from).toBe('2026-09');
+    const once = monthStepOffers(opened.from, NOW).back;
+    const from = monthStepOffers(once, NOW).back;
 
-      expect(typing.state).toBe('invalid-range');
-      expect(typing.message).toBe('Місяць пишеться як РРРР-ММ, напр. 2026-08.');
-      expect(typing.canShare).toBe(false);
-      expect(typing.package).toBeNull();
-    }
-
-    // And the same on the other end of the range.
-    expect(model({ period: 'custom', from: '2026-07', to: '2026-1' }).message).toBe(
-      'Місяць пишеться як РРРР-ММ, напр. 2026-08.',
+    expect(`${monthStepOffers(from, NOW).label} — ${monthStepOffers(opened.to, NOW).label}`).toBe(
+      'липень 2026 — вересень 2026',
     );
-    // A whole month on both ends is read normally again, with a preview to share.
-    const whole = model({ period: 'custom', from: '2026-07', to: '2026-08' });
-    expect(whole.state).toBe('preview');
-    expect(whole.canShare).toBe(true);
-    expect(whole.message).toBeNull();
+    expect(model({ period: 'custom', from, to: opened.to }).period).toMatchObject({
+      from: '2026-07',
+      to: '2026-09',
+      months: 3,
+    });
   });
 
-  it('never lets a half-typed month reach the month arithmetic', () => {
-    // Building the model must not throw, whatever is in the two fields — the crash was a throw
-    // out of `partsOf`, three calls below the screen.
-    for (const from of ['2026-0', '', '20261', '2026-00']) {
-      expect(() => model({ period: 'custom', from, to: '2026-09' })).not.toThrow();
+  it('Scenario: A half-typed month is a sentence, not an exception', () => {
+    // Stepping replaced typing, so a month can no longer be half-typed: every step of either end
+    // is a whole місяць in words, no sentence about how a month is written appears, nothing
+    // throws, and the preview follows each step.
+    let choices: AiAnalysisChoices = { ...defaultChoices(TODAY), period: 'custom' };
+    const steps: ((c: AiAnalysisChoices) => AiAnalysisChoices)[] = [
+      (c) => ({ ...c, from: monthStepOffers(c.from, NOW).back }),
+      (c) => ({ ...c, from: monthStepOffers(c.from, NOW).back }),
+      (c) => ({ ...c, to: monthStepOffers(c.to, NOW).back }),
+      (c) => ({ ...c, from: monthStepOffers(c.from, NOW).forward ?? c.from }),
+      (c) => ({ ...c, to: monthStepOffers(c.to, NOW).forward ?? c.to }),
+      (c) => ({ ...c, to: monthStepOffers(c.to, NOW).forward ?? c.to }),
+    ];
+    const periods: string[] = [];
+    for (const step of steps) {
+      choices = step(choices);
+      for (const end of [choices.from, choices.to]) {
+        expect(monthStepOffers(end, NOW).label).toMatch(/^[а-яіїєґ]+ \d{4}$/);
+      }
+      let stepped: ReturnType<typeof aiAnalysisModel> | undefined;
+      expect(() => {
+        stepped = aiAnalysisModel({ choices, stored: stored(history), today: TODAY });
+      }).not.toThrow();
+      expect(stepped!.message ?? '').not.toMatch(/пишеться/);
+      expect(stepped!.state).toBe('preview');
+      periods.push(`${stepped!.period!.from}..${stepped!.period!.to}`);
     }
+    // The preview followed every step.
+    expect(periods).toEqual([
+      '2026-08..2026-09',
+      '2026-07..2026-09',
+      '2026-07..2026-08',
+      '2026-08..2026-08',
+      '2026-08..2026-09',
+      '2026-08..2026-09',
+    ]);
+  });
+
+  it('Scenario: A range end cannot step past this month', () => {
+    const october = new Date(2026, 9, 6, 12, 0, 0);
+    const to = '2026-10';
+    expect(monthStepOffers(to, october).label).toBe('жовтень 2026');
+    // No forward step is offered at the current month, so «До» stays where it is.
+    expect(monthStepOffers(to, october).forward).toBeUndefined();
   });
 
   it('Scenario: «Продавці» says the owner\'s назви go too', () => {

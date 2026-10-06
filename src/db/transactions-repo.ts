@@ -17,6 +17,7 @@ import { merchantIndex, type MerchantIndex } from '../domain/merchants';
 import {
   isoDate,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
   type IsoDate,
   type Month,
   type Transaction,
@@ -74,6 +75,16 @@ function withAwaiting(
 const uncategorised = and(
   inArray(transactions.type, ['expense', 'refund']),
   eq(transactions.categoryId, UNCATEGORISED_CATEGORY_ID),
+)!;
+
+/**
+ * «Without a джерело», said once: a дохід carrying «Без джерела» — the «Без джерела» narrowing of
+ * «Транзакції», beside `uncategorised` and built the same way (transaction-search). A витрата, a
+ * повернення, a переказ and a коригування carry no джерело at all, so none of them is in it.
+ */
+const unsourced = and(
+  eq(transactions.type, 'income'),
+  eq(transactions.sourceId, UNSOURCED_SOURCE_ID),
 )!;
 
 /**
@@ -309,6 +320,8 @@ export function transactionsRepo(db: Storage) {
       merchantId?: string;
       /** Only what `countUncategorised` counts — the «Без категорії» narrowing. */
       uncategorised?: boolean;
+      /** Only the доходи «Без джерела» — the «Без джерела» narrowing. */
+      unsourced?: boolean;
       limit: number;
       offset: number;
     }): Transaction[] {
@@ -393,13 +406,14 @@ interface SearchCriteria {
   accountId?: string;
   month?: Month;
   uncategorised?: boolean;
+  unsourced?: boolean;
   merchantId?: string;
 }
 
 /**
- * The SQL half of a search: narrowed by рахунок, by місяць, by «Без категорії», and by the part of
- * the match SQL can answer exactly — rows that could still match only by their опис are let
- * through on `description IS NOT NULL` and judged by `satisfies`.
+ * The SQL half of a search: narrowed by рахунок, by місяць, by «Без категорії» or «Без джерела»,
+ * and by the part of the match SQL can answer exactly — rows that could still match only by their
+ * опис are let through on `description IS NOT NULL` and judged by `satisfies`.
  */
 function narrowing(input: SearchCriteria): SQL | undefined {
   const { match } = input;
@@ -407,6 +421,9 @@ function narrowing(input: SearchCriteria): SQL | undefined {
 
   if (input.uncategorised) {
     filters.push(uncategorised);
+  }
+  if (input.unsourced) {
+    filters.push(unsourced);
   }
   if (input.accountId) {
     filters.push(

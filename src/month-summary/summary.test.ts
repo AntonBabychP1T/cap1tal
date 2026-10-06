@@ -46,6 +46,7 @@ function summaryOf(transactions: readonly Transaction[], over: Partial<MonthSumm
     waitingDrafts: 0,
     figures: new Map(),
     answers: [],
+    linkedAccountIds: new Set(),
     ...over,
   });
 }
@@ -132,6 +133,21 @@ describe('витрачено against the month before and a typical month', () =
       b.expense('2026-09-10', 'food', 1000),
     ];
     expect(summaryOf(rows)!.spent[0]!.typical).toEqual({ status: 'not-positive' });
+  });
+
+  it('Scenario: Коригування inside витрачено are named', () => {
+    const b = ledgerBuilder();
+    const rows = [
+      b.expense('2026-09-03', 'food', 6868249 - 77686),
+      b.correction('2026-09-10', -77686),
+      // A positive коригування is дохід, not part of витрачено.
+      b.correction('2026-09-20', 5000),
+    ];
+    const [uah] = summaryOf(rows)!.spent;
+    expect(uah!.spent).toEqual(money(6868249, 'UAH'));
+    expect(uah!.corrections).toEqual(money(77686, 'UAH'));
+    // Without a negative коригування nothing is named.
+    expect(summaryOf([b.expense('2026-09-03', 'food', 5000)])!.spent[0]!.corrections).toBeUndefined();
   });
 
   it('Scenario: A переказ into a банка is not витрачено', () => {

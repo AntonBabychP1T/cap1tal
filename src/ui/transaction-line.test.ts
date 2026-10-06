@@ -22,6 +22,7 @@ import {
 import {
   accountSideLine,
   accountsById,
+  feedA11yLabel,
   feedSubtitle,
   feedTitle,
   overLimitByMonth,
@@ -62,6 +63,8 @@ describe('transactionLine', () => {
       date: '2026-08-24',
       category: 'Без категорії',
       uncategorised: true,
+      // A витрата has no джерело, so it is never marked «Без джерела».
+      unsourced: false,
       overLimit: false,
     });
   });
@@ -83,6 +86,8 @@ describe('transactionLine', () => {
       type: 'переказ',
       amount: '→ 1 000,00 UAH',
       accounts: 'mono black → банка',
+      // Kept apart too, so the title draws each рахунок on its own row (design D18).
+      transferEnds: { from: 'mono black', to: 'банка' },
     });
     expect(line.category).toBeUndefined();
   });
@@ -216,6 +221,55 @@ describe('«Без категорії» is highlighted and categorised in one ta
       names,
     );
     expect(line).toMatchObject({ type: 'повернення', uncategorised: true });
+  });
+});
+
+describe('A дохід «Без джерела» is given its джерело in one tap — the marking half', () => {
+  const sourceNames = namesById([
+    { id: UNSOURCED_SOURCE_ID, name: 'Без джерела' },
+    { id: 'gifts', name: 'Подарунки' },
+  ]);
+  const kasian: Income = {
+    type: 'income',
+    id: 'i-kasian',
+    date: '2026-09-14',
+    accountId: 'card',
+    amount: money(96000, 'UAH'),
+    sourceId: UNSOURCED_SOURCE_ID,
+    description: "Від: Міхаіл Кас'ян",
+  };
+  const lineOf = (t: Transaction) => transactionLine(t, byId, names, sourceNames);
+
+  it('Scenario: One tap gives a дохід its джерело — the mark goes with the джерело', () => {
+    // What the mark stores is the same дохід under «Подарунки»; the line built from it no longer
+    // carries the mark, which is how the mark disappears.
+    expect(lineOf(kasian)).toMatchObject({ source: 'Без джерела', unsourced: true, uncategorised: false });
+    expect(lineOf({ ...kasian, sourceId: 'gifts' })).toMatchObject({ source: 'Подарунки', unsourced: false });
+  });
+
+  it('Scenario: Nothing else is offered a джерело', () => {
+    const others: Transaction[] = [
+      expenseByDefault({ id: 'e', date: '2026-09-14', accountId: 'card', amount: money(100, 'UAH') }),
+      refund({
+        id: 'r',
+        date: '2026-09-14',
+        accountId: 'card',
+        amount: money(45000, 'UAH'),
+        categoryId: UNCATEGORISED_CATEGORY_ID,
+      }),
+      transfer({
+        id: 't',
+        date: '2026-09-14',
+        fromAccountId: 'card',
+        toAccountId: 'jar',
+        left: money(100000, 'UAH'),
+        arrived: money(100000, 'UAH'),
+      }),
+      { type: 'correction', id: 'c', date: '2026-09-14', accountId: 'card', amount: money(-5000, 'UAH') },
+    ];
+    for (const t of others) {
+      expect(lineOf(t).unsourced).toBe(false);
+    }
   });
 });
 
@@ -443,6 +497,44 @@ describe('the feed marks a category over its ліміт', () => {
 
     expect(line.category).toBe('Groceries');
     expect(line.overLimit).toBe(true);
+  });
+
+  it('Scenario: A line over its ліміт says so', () => {
+    // app-shell, "Every switch and every coloured mark has an accessible name": the red title is
+    // also said, so a screen reader hears what the colour shows.
+    const cafeNames = namesById([{ id: 'cafe', name: 'Кафе' }]);
+    const cafeLimit: CategoryLimit = { categoryId: 'cafe', amount: money(100000, 'UAH') };
+    const coffee = spend('e1', '2026-08-10', 120000, 'UAH', 'cafe');
+    const over = overLimitByMonth({
+      feed: [coffee],
+      limits: [cafeLimit],
+      monthTransactions: () => [coffee],
+    });
+    const line = transactionLine(coffee, byId, cafeNames, new Map(), over);
+    const now = new Date(2026, 7, 25, 12, 0, 0);
+    const label = feedA11yLabel({
+      title: feedTitle(line),
+      subtitle: feedSubtitle(line, now),
+      amount: line.amount,
+      overLimit: line.overLimit,
+    });
+
+    expect(line.overLimit).toBe(true);
+    expect(label).toContain('понад ліміт');
+    expect(label).toContain('Кафе');
+    expect(label).toContain(line.amount);
+
+    // The same line under its ліміт is named without it.
+    const under = transactionLine(coffee, byId, cafeNames, new Map(), new Map());
+    expect(
+      feedA11yLabel({ title: feedTitle(under), subtitle: feedSubtitle(under, now), amount: under.amount, overLimit: under.overLimit }),
+    ).not.toContain('понад ліміт');
+  });
+
+  it('a переказ names both its рахунки, as its title draws them', () => {
+    expect(
+      feedA11yLabel({ title: { from: 'гаманець', to: 'РЕЗЕРВ' }, subtitle: 'переказ · сьогодні', amount: '→ 100,00 UAH' }),
+    ).toBe('гаманець → РЕЗЕРВ, → 100,00 UAH, переказ · сьогодні');
   });
 
   it('Scenario: A line in an under-limit month is not marked', () => {

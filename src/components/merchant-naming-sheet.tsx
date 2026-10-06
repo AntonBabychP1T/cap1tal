@@ -10,6 +10,7 @@ import type { Merchant } from '@/domain/merchants';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
 import {
+  namingHoldsEdits,
   submitNaming,
   type NamingErrors,
   type NamingForm,
@@ -75,7 +76,12 @@ export function MerchantNamingSheet({
   };
 
   return (
-    <Sheet open={form !== undefined} title="Назвати продавця" onClose={onClose}>
+    <Sheet
+      open={form !== undefined}
+      title="Назвати продавця"
+      onClose={onClose}
+      // A назва or a написання changed from the proposal: «назад» asks «Відкинути зміни?» (app-shell).
+      isDirty={namingHoldsEdits(form, { name, spelling })}>
       <View style={styles.body}>
         <ThemedText type="small" themeColor="textSecondary">
           Опис: {form?.description}

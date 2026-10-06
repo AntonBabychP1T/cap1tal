@@ -79,8 +79,8 @@ describe('showing an спостереження', () => {
     const before = structuredClone({ transactions, categories, answers });
 
     const stated = [
-      ...observationsOf({ month: '2026-09', today: '2026-10-02', transactions, categories, answers }),
-      ...observationsOf({ month: '2026-10', today: '2026-10-02', transactions, categories, answers }),
+      ...observationsOf({ month: '2026-09', today: '2026-10-02', transactions, categories, answers, linkedAccountIds: new Set() }),
+      ...observationsOf({ month: '2026-10', today: '2026-10-02', transactions, categories, answers, linkedAccountIds: new Set() }),
     ];
 
     expect(stated.length).toBeGreaterThan(0);

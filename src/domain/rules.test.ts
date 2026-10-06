@@ -75,6 +75,33 @@ describe('matchRule', () => {
     });
   });
 
+  it('Scenario: A merchant pattern inside a word does not match', () => {
+    const rules = [rule({ id: 'r1', merchant: 'коло', categoryId: 'habits' })];
+    // «навколо» holds «коло», inside the word.
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'НАВКОЛО маркет' })).toBeUndefined();
+    // A word that begins further along the опис still matches.
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'НАВКОЛО коло' })).toEqual({
+      kind: 'category',
+      categoryId: 'habits',
+    });
+  });
+
+  it('Scenario: A merchant pattern after punctuation matches', () => {
+    const rules = [rule({ id: 'r1', merchant: 'megogo', categoryId: 'subscriptions' })];
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'WFP*MEGOGO.NET' })).toEqual({
+      kind: 'category',
+      categoryId: 'subscriptions',
+    });
+  });
+
+  it('Scenario: A pattern that starts with punctuation matches wherever it occurs', () => {
+    const rules = [rule({ id: 'r1', merchant: '*megogo', categoryId: 'subscriptions' })];
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'WFP*MEGOGO.NET' })).toEqual({
+      kind: 'category',
+      categoryId: 'subscriptions',
+    });
+  });
+
   it('Scenario: An MCC matches exactly', () => {
     const rules = [rule({ id: 'r1', mcc: 5411, categoryId: 'groceries' })];
     expect(matchRule(rules, NO_MERCHANTS, { description: 'новий магазин', mcc: 5411 })).toEqual({
@@ -865,5 +892,9 @@ describe('a правило naming a продавець', () => {
 
   it('Scenario: Service words are skipped in the proposed pattern', () => {
     expect(proposeMerchantPattern('Оплата послуг АТБ-Маркет 1234 Київ')).toBe('атб');
+  });
+
+  it('Scenario: A transliterated service word is skipped in the proposed pattern', () => {
+    expect(proposeMerchantPattern('Oplata poslug MEGOGO 1234')).toBe('megogo');
   });
 });

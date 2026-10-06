@@ -7,14 +7,18 @@ import { DUPLICATE_DAY_SPAN } from './thresholds';
 import { monthBefore, type Ledger } from './window';
 
 /**
- * Two bank records whose описи fold to the same text are two purchases the bank itself reported:
- * a можливий дубль arrives through two doors, and two doors do not share a text.
+ * Two records whose описи fold to the same text are likely two records the bank itself sent —
+ * two purchases, not one written twice — when either carries an MCC or their рахунок is linked to
+ * monobank (the MCC is stored only on records imported since it was added, so older monobank
+ * records carry none). Equal описи without a bank behind them are most often one витрата written
+ * twice by hand, and are asked about.
  */
-function sameBankText(a: Expense, b: Expense): boolean {
+function sameBankText(a: Expense, b: Expense, linkedAccountIds: ReadonlySet<string>): boolean {
   return (
     a.description !== undefined &&
     b.description !== undefined &&
-    foldMerchant(a.description) === foldMerchant(b.description)
+    foldMerchant(a.description) === foldMerchant(b.description) &&
+    (a.mcc !== undefined || b.mcc !== undefined || linkedAccountIds.has(a.accountId))
   );
 }
 
@@ -22,7 +26,7 @@ function sameBankText(a: Expense, b: Expense): boolean {
  * Every можливий дубль touching `month` (observations, "Two витрати that may be one purchase
  * recorded twice are a можливий дубль"): two витрати on one рахунок with the same сума, dated at
  * most a day apart, at least one of them in the month, that are not two equal bank texts, not a
- * «Комісія», and not answered «Не дубль».
+ * «Комісія», and not answered «Не дубль». `linkedAccountIds` are the рахунки linked to monobank.
  *
  * A stored транзакція does not say which door it came through, so the detector asks rather than
  * guesses: two bank records at two продавці a day apart are stated too, and «Не дубль» answers
@@ -32,6 +36,7 @@ export function possibleDuplicates(
   ledger: Ledger,
   month: Month,
   answered: ReadonlySet<string>,
+  linkedAccountIds: ReadonlySet<string>,
 ): PossibleDuplicate[] {
   // The month itself and one day either side of it: a pair needs one half inside the month.
   const first = `${month}-01`;
@@ -68,7 +73,7 @@ export function possibleDuplicates(
         const y = group[j]!;
         if (daysBetween(x.date, y.date) > DUPLICATE_DAY_SPAN) break;
         if (!x.date.startsWith(`${month}-`) && !y.date.startsWith(`${month}-`)) continue;
-        if (sameBankText(x, y) || answered.has(pairKey(x.id, y.id))) continue;
+        if (sameBankText(x, y, linkedAccountIds) || answered.has(pairKey(x.id, y.id))) continue;
         found.push({
           kind: 'possible-duplicate',
           month,

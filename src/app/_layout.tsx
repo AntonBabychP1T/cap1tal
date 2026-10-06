@@ -7,6 +7,7 @@ import {
   useRouter,
 } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef } from 'react';
 import { AppState, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -577,6 +578,10 @@ export default function RootLayout() {
     // believed. `flex: 1` is not optional — without it the whole app lays out at zero height.
     <GestureHandlerRootView style={styles.root}>
       <ThemeProvider value={colorScheme === 'dark' ? navigationTheme.dark : navigationTheme.light}>
+        {/* Dark marks over the light appearance, light over the dark (app-shell, "The status bar is
+            legible in both appearances"): the app follows the system appearance, so «auto» is its
+            theme. Mounted before anything draws, so even the launch view has a legible bar. */}
+        <StatusBar style="auto" />
         <AnimatedSplashOverlay />
         {error ? (
           <View

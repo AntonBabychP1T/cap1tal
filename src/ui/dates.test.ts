@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { isoDate, monthOf } from '../domain/transaction';
 import { planWindows } from '../monobank/sync';
 import {
+  calendarLabel,
   dateOfEpochMs,
   dateStepOffers,
   dayLabel,
   freshnessLabel,
   momentLabel,
   parseTypedDate,
-  shortCalendarLabel,
   pickedDate,
   pickerInstant,
   shiftIsoDate,
@@ -339,11 +339,19 @@ describe('dateStepOffers', () => {
   });
 });
 
-describe('shortCalendarLabel', () => {
-  it('says a дата in few letters, with the year only when it is not this one', () => {
-    const now = new Date(2026, 9, 1, 12);
-    expect(shortCalendarLabel('2026-10-05', now)).toBe('5 жовт.');
-    expect(shortCalendarLabel('2026-11-05', now)).toBe('5 лист.');
-    expect(shortCalendarLabel('2027-01-31', now)).toBe('31 січ. 2027');
+describe('calendarLabel', () => {
+  const now = new Date(2026, 9, 5, 12);
+
+  it('Scenario: The поточна вартість says when it was recorded in words', () => {
+    expect(calendarLabel('2026-09-21', now)).toBe('21 вересня');
+  });
+
+  it('Scenario: A платіж date is never shortened', () => {
+    expect(calendarLabel('2026-11-05', now)).toBe('5 листопада');
+  });
+
+  it('Scenario: Another year is named', () => {
+    expect(calendarLabel('2025-12-30', now)).toBe('30 грудня 2025');
+    expect(calendarLabel('2027-01-31', now)).toBe('31 січня 2027');
   });
 });

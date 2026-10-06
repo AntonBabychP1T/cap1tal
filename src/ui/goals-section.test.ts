@@ -5,6 +5,7 @@ import type { Category } from '../domain/category';
 import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
 import { money } from '../domain/money';
+import { dateStepOffers, pickedDate } from './dates';
 import {
   accumulationFromDraft,
   deleteGoalConfirmation,
@@ -142,6 +143,32 @@ describe('accumulationFromDraft', () => {
     });
 
     expect(goal.accountIds).toEqual(['jar', 'cash']);
+  });
+});
+
+/**
+ * app-shell, "A дата or a місяць the owner sets is set with the app's own control": «До дати» is
+ * the entry form's `DateField`. The screen half — that `goals.tsx` draws it — is asserted in
+ * `screens.test.ts`; this is the pure half.
+ */
+describe('«До дати» is set with the date control', () => {
+  const at = { id: 'g', accounts: ACCOUNTS };
+  const now = new Date(2026, 9, 6, 12, 0, 0);
+
+  it("Scenario: A ціль's date is chosen from the calendar", () => {
+    // Android's calendar answers with the picked day as a UTC midnight.
+    const picked = pickedDate(new Date(Date.UTC(2027, 5, 30)), 'utc');
+
+    // The picked day is shown in words beside «До дати», and the ціль stores it as it is —
+    // nothing was typed as «РРРР-ММ-ДД».
+    expect(dateStepOffers(picked, now).label).toBe('30 червня 2027');
+    expect(accumulationFromDraft(draft({ deadline: picked }), at).deadline).toBe('2027-06-30');
+  });
+
+  it('Scenario: An impossible typed date is refused', () => {
+    expect(() => accumulationFromDraft(draft({ deadline: '2026-02-30' }), at)).toThrow(
+      'такого дня немає в календарі: «2026-02-30»',
+    );
   });
 });
 

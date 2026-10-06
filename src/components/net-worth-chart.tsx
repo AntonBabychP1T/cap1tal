@@ -5,7 +5,7 @@ import { Circle, Line, Path, Rect, Svg } from 'react-native-svg';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { barGeometry, forecastGeometry, lineRuns, linePath, scaled, valueScale } from '@/ui/dashboard-charts';
-import type { HistoryView, ScreenChart } from '@/ui/net-worth-screen';
+import { FALLBACK_CHART_WIDTH, type HistoryView, type ScreenChart } from '@/ui/net-worth-screen';
 import { Tap } from './motion';
 import { ThemedText } from './themed-text';
 
@@ -18,20 +18,22 @@ import { ThemedText } from './themed-text';
  * `dashboard-charts.ts`'s; this file only draws it.
  */
 
-const FALLBACK_WIDTH = 320;
 const HEIGHT = 160;
 
 export function NetWorthChart({
   chart,
   view,
   onSelect,
+  onWidth,
 }: {
   readonly chart: ScreenChart;
   readonly view: HistoryView;
   readonly onSelect: (index: number) => void;
+  /** The measured width, so the model can name only as many months as fit it. */
+  readonly onWidth?: (width: number) => void;
 }) {
   const theme = useTheme();
-  const [width, setWidth] = useState(FALLBACK_WIDTH);
+  const [width, setWidth] = useState(FALLBACK_CHART_WIDTH);
   const forecast = chart.forecast;
   const slots = chart.values.length + (forecast ? forecast.values.length : 0);
   const slot = width / Math.max(slots, 1);
@@ -57,7 +59,10 @@ export function NetWorthChart({
       accessibilityLabel={chart.accessibilityLabel}
       onLayout={({ nativeEvent }) => {
         const measured = Math.round(nativeEvent.layout.width);
-        if (measured > 0 && measured !== width) setWidth(measured);
+        if (measured > 0 && measured !== width) {
+          setWidth(measured);
+          onWidth?.(measured);
+        }
       }}>
       <View style={{ height: HEIGHT }}>
         <Svg width={width} height={HEIGHT}>

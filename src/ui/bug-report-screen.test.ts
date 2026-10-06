@@ -17,6 +17,7 @@ import {
   SCREENSHOT_CONFIRMATION,
   EMPTY_FORM,
   EMPTY_LIST,
+  formHoldsEdits,
   formState,
   handOver,
   IDLE,
@@ -820,5 +821,17 @@ describe('the скріншот warning cannot be bypassed by forgetting it', () 
 
     expect(state.kind).toBe('handed-over');
     expect(files.handed()).toHaveLength(1);
+  });
+});
+
+/** app-shell, "A form with unsaved edits asks before «назад» discards it" — the репорт form. */
+describe('formHoldsEdits', () => {
+  it('Scenario: An untouched form closes at once', () => {
+    expect(formHoldsEdits(EMPTY_FORM)).toBe(false);
+  });
+
+  it('Scenario: The back gesture discards the form — two typed lines are edits to ask about', () => {
+    expect(formHoldsEdits({ ...EMPTY_FORM, did: 'натиснув Записати', happened: 'нічого' })).toBe(true);
+    expect(formHoldsEdits({ ...EMPTY_FORM, expected: 'запис' })).toBe(true);
   });
 });

@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 
 import { BugReportForm } from '@/components/bug-report-form';
 import { Screen, ScreenHeader } from '@/components/surfaces';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { reporting as reportingRepo } from '@/db/repos';
 import { buildInfo, deviceInfo } from '@/platform/app-build-device';
 import {
@@ -32,16 +33,17 @@ export default function NewBugReportScreen() {
   const prompting = prompt ? journal.byId(prompt) : null;
 
   /**
-   * Leaving the form stores nothing, and there is no hook here to make that true.
+   * Leaving the form stores nothing, and the hook is not what makes that true: the fields were only
+   * ever component state, and the one write in this file is inside `save`.
    *
-   * `useCloseOnBack` exists for a screen with an editor open *over* a list — it closes the editor
-   * and keeps the screen. This form has no such second layer: with `editorOpen` false the hook
-   * hands the press straight back to the navigator, which is exactly what happens without it. So
-   * the back gesture pops the screen, the fields were only ever component state, and the one write
-   * in this file is inside `save`. A call that does nothing would be worse than no call: a later
-   * reader would take it for the thing that makes discarding safe.
+   * What the hook adds is the question. While the form holds anything typed (`edited`, reported by
+   * the form itself), the back gesture asks «Відкинути зміни?» first and «Відкинути» leaves through
+   * `leave`, exactly as the header's «←» does; untouched, the hook hands the press straight back to
+   * the navigator (app-shell; bug-report-screen, "The back gesture discards the form").
    */
   const leave = useCallback(() => router.back(), [router]);
+  const [edited, setEdited] = useState(false);
+  useCloseOnBack(false, leave, edited);
 
   const save = (fields: FormFields) => {
     const id = newId();
@@ -76,7 +78,7 @@ export default function NewBugReportScreen() {
   return (
     <Screen>
       <ScreenHeader title={FORM_TITLE} back={leave} />
-      <BugReportForm prompting={prompting} refusal={refusal} onSave={save} />
+      <BugReportForm prompting={prompting} refusal={refusal} onSave={save} onEdited={setEdited} />
     </Screen>
   );
 }

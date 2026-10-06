@@ -22,6 +22,7 @@ import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
 import { accountChoiceLabel } from '@/ui/labels';
 import {
+  EMPTY_RULE_DRAFT,
   NO_MERCHANT_TO_PICK,
   mccText,
   ruleFromDraft,
@@ -29,6 +30,7 @@ import {
   storeRule,
   type RuleDraft,
 } from '@/ui/list-management';
+import { sameFields } from '@/ui/same-fields';
 
 import { Spacing } from '@/constants/theme';
 
@@ -41,14 +43,6 @@ import { Spacing } from '@/constants/theme';
  * form offers only the unarchived ones — retargeting an archived rule is the owner's decision, not
  * a silent one.
  */
-
-const EMPTY: RuleDraft = {
-  merchant: '',
-  criterion: 'pattern',
-  mcc: '',
-  target: 'category',
-  categoryId: undefined,
-};
 
 /** What a rule matches by: a pattern typed by hand, or a продавець picked (settings-screen). */
 const CRITERION_CHOICES = [
@@ -85,9 +79,19 @@ export default function RulesScreen() {
 
   /** `undefined` — the form is closed; a draft with no id — a new rule; with one — an edit. */
   const [draft, setDraft] = useState<(RuleDraft & { id?: string }) | undefined>();
-  /** The phone's «назад» closes an open rule form before it leaves the section. */
+  /** What the open form opened on — an untouched form is one still equal to it. */
+  const [opened, setOpened] = useState<RuleDraft & { id?: string }>(EMPTY_RULE_DRAFT);
+  const openDraft = useCallback((fields: RuleDraft & { id?: string }) => {
+    setDraft(fields);
+    setOpened(fields);
+  }, []);
+  /**
+   * The phone's «назад» closes an open rule form before it leaves the section — asking «Відкинути
+   * зміни?» first when it holds edits.
+   */
   const closeDraft = useCallback(() => setDraft(undefined), []);
-  useCloseOnBack(draft !== undefined, closeDraft);
+  const dirty = draft !== undefined && !sameFields(draft, opened);
+  useCloseOnBack(draft !== undefined, closeDraft, dirty);
 
   const names = useMemo(() => namesById(stored.categories), [stored.categories]);
   const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
@@ -252,7 +256,7 @@ export default function RulesScreen() {
           title="Нове правило"
           onPress={() => {
             setSweptMessage(undefined);
-            setDraft({ ...EMPTY });
+            openDraft({ ...EMPTY_RULE_DRAFT });
           }}
         />
       )}
@@ -285,7 +289,7 @@ export default function RulesScreen() {
                       accessibilityHint="Змінити або видалити правило"
                       onPress={() => {
                         setSweptMessage(undefined);
-                        setDraft({
+                        openDraft({
                           id: rule.id,
                           merchant: rule.merchant ?? '',
                           criterion: rule.merchantId !== undefined ? 'merchant' : 'pattern',

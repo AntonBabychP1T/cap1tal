@@ -12,6 +12,7 @@ import {
   type ChallengeInput,
 } from './challenges';
 import type { MonthRow, ProgressSummary } from './summary';
+import { monthAccusativeYearLabel, monthInYearLabel, monthLabel } from '../ui/months';
 
 const TODAY: IsoDate = '2026-09-02';
 
@@ -51,7 +52,11 @@ function input(over: Partial<ChallengeInput> = {}): ChallengeInput {
     categoryNames: new Map(),
     norms: new Map(),
     decisions: [],
-    monthLabel: (month) => month,
+    // The real labels, not an identity stub: a виклик is read by the owner, and «Закрий 2026-08»
+    // or «У Серпень 2026» is exactly what a stub would never catch.
+    monthLabel,
+    monthAccusativeYearLabel,
+    monthInYearLabel,
     formatMoney: (amount) => `${amount.amount} ${amount.currency}`,
     ...over,
   };
@@ -72,7 +77,57 @@ describe('what a виклик carries', () => {
 
     // The action names the місяць, so the screen it leads to can open narrowed to it rather than
     // to the whole history.
-    expect(closing.action).toEqual({ kind: 'answer-month', month: '2026-08' });
+    expect(closing.action).toEqual({ kind: 'answer-month', month: '2026-08', left: 'uncategorised' });
+  });
+
+  it('Scenario: The month is named in its case', () => {
+    const closing = offered(
+      input({
+        today: '2026-10-02',
+        summary: summary({
+          months: [monthRow('2026-09', { transactions: 40, unsourced: 9 })],
+          history: { count: 40 },
+        }),
+      }),
+    )[0]!;
+
+    expect(closing.name).toBe('Закрий вересень 2026');
+    expect(closing.reason.startsWith('У вересні 2026 ще 9 записів')).toBe(true);
+    expect(closing.criterion.startsWith('У вересні 2026 не лишилось')).toBe(true);
+    // Never the nominative of a heading inside a sentence.
+    expect(`${closing.name} ${closing.reason} ${closing.criterion}`).not.toContain('Вересень');
+  });
+
+  it('Scenario: Only доходи left opens them', () => {
+    const closing = offered(
+      input({
+        today: '2026-10-02',
+        summary: summary({
+          months: [monthRow('2026-09', { transactions: 40, unsourced: 9 })],
+          history: { count: 40 },
+        }),
+      }),
+    )[0]!;
+
+    expect(closing.action).toEqual({ kind: 'answer-month', month: '2026-09', left: 'unsourced' });
+  });
+
+  it('opens on what is left: «Без категорії» first, then «Без джерела», then the чернетки', () => {
+    const left = (row: Partial<MonthRow>, drafts = 0) =>
+      allChallenges(
+        input({
+          summary: summary({
+            months: [monthRow('2026-08', { transactions: 40, ...row })],
+            drafts: drafts > 0 ? [{ month: '2026-08', waiting: drafts }] : [],
+            history: { count: 40 },
+          }),
+        }),
+      ).find((one) => one.template === 'close-month')!.action;
+
+    expect(left({ uncategorised: 1, unsourced: 4 }, 2)).toMatchObject({ left: 'uncategorised' });
+    expect(left({ unsourced: 4 }, 2)).toMatchObject({ left: 'unsourced' });
+    expect(left({}, 2)).toMatchObject({ left: 'drafts' });
+    expect(left({})).toMatchObject({ left: 'nothing' });
   });
 
   it('Scenario: A proposed виклик carries all four', () => {
@@ -150,6 +205,7 @@ describe('what a виклик carries', () => {
     const list = offered(busy);
 
     expect(list[0]!.key).toBe('close-month:2026-08');
+    expect(list[0]!.name).toBe('Закрий серпень 2026');
     expect(keys(list)).toEqual(
       expect.arrayContaining(['reserve-cushion:UAH', 'invest-habit']),
     );
@@ -527,6 +583,9 @@ describe('choosing which виклики stand', () => {
     });
 
     expect(keys(offered(dismissedJuly))).toContain('close-month:2026-08');
+    expect(offered(dismissedJuly).find((one) => one.key === 'close-month:2026-08')!.name).toBe(
+      'Закрий серпень 2026',
+    );
   });
 
   it('Scenario: The criterion decides, not the acceptance', () => {

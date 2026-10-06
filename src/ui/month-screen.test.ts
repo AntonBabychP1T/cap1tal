@@ -530,6 +530,29 @@ describe('the leading number of a currency group', () => {
     expect(groupOf(model, 'USD').note).toBe('У цьому місяці ще не записано дохід.');
   });
 
+  it('Scenario: A finished month without дохід does not promise one', () => {
+    // вересень 2026 seen on 6 жовтня: it is over, so «ще» would promise a дохід that cannot come.
+    const model = monthViewModel({
+      month: '2026-09',
+      accounts,
+      transactions: [
+        income(5_000_000, 'UAH', '2026-09-05'),
+        expense(10000, 'USD', UNCATEGORISED_CATEGORY_ID, '2026-09-10'),
+      ],
+      rates: [],
+      categoryNames,
+      limits: [],
+      previousTransactions: [],
+      now: new Date(2026, 9, 6, 12, 0, 0),
+    });
+    const usd = groupOf(model, 'USD');
+
+    expect(usd.lead).toBe('spent');
+    expect(usd.note).toBe('Дохід у вересні не записано.');
+    expect(usd.note).not.toMatch(/ще/);
+    expect(groupOf(model, 'UAH').note).toBeNull();
+  });
+
   it('It is the дохід number that decides, whatever recorded it', () => {
     // A positive коригування is дохід in the monthly picture, so the group it lands in leads with
     // залишилось: the rule reads the number, never the transaction types behind it.
@@ -702,7 +725,7 @@ describe('month-screen — Платежі місяця and Вільно післ
     paidBefore: 4,
     recordedAt: 1,
   };
-  /** An очікується платіж of 500,00 ₴ on 20 жовт. */
+  /** An очікується платіж of 500,00 UAH on 20 жовтня. */
   const vacuum: Installment = {
     id: 'i-vacuum',
     name: 'Пилосос',
@@ -771,8 +794,8 @@ describe('month-screen — Платежі місяця and Вільно післ
           key: 'installment:i-iphone#5',
           name: 'iPhone',
           number: 'платіж 5 з 10',
-          date: '5 жовт.',
-          amount: `1${NBSP}000,00${NBSP}₴`,
+          date: '5 жовтня',
+          amount: `1${NBSP}000,00 UAH`,
           state: 'paid',
           stateLabel: 'сплачено',
           href: '/installment/i-iphone',
@@ -781,27 +804,49 @@ describe('month-screen — Платежі місяця and Вільно післ
           key: 'commitment:c-rent#1',
           name: 'Оренда',
           number: null,
-          date: '10 жовт.',
-          amount: `15${NBSP}000,00${NBSP}₴`,
+          date: '10 жовтня',
+          amount: `15${NBSP}000,00 UAH`,
           state: 'expected',
           stateLabel: 'очікується',
           href: '/commitment/c-rent',
         },
       ],
-      totals: [{ currency: 'UAH', total: `16${NBSP}000,00${NBSP}₴`, unpaid: `15${NBSP}000,00${NBSP}₴` }],
+      totals: [{ currency: 'UAH', total: `16${NBSP}000,00 UAH`, unpaid: `15${NBSP}000,00 UAH` }],
     });
     // Витрачено is the month's транзакції alone.
     expect(amountFor(model, 'UAH', 'spent')).toBe(`1${NBSP}000,00 UAH`);
+  });
+
+  it("Scenario: A зобов'язання and a витрата on one screen write their сума alike", () => {
+    const coffee = expense(12_345, 'UAH', 'coffee', '2026-10-03');
+    const subscription: Commitment = { ...rent, id: 'c-sub', name: 'Підписка', amount: 80_000, firstDue: '2026-10-15' };
+    const model = monthViewModel({
+      month: '2026-10',
+      accounts,
+      transactions: [coffee],
+      rates: [],
+      categoryNames: namesById([{ id: 'coffee', name: 'Кава' }]),
+      limits: [],
+      previousTransactions: [],
+      now: october,
+      installments: { installments: [], facts: NO_INSTALLMENT_FACTS },
+      commitments: { commitments: [subscription], facts: NO_COMMITMENT_FACTS },
+    });
+    expect(groupOf(model, 'UAH').breakdown).toEqual([
+      expect.objectContaining({ label: 'Кава', amount: '123,45 UAH' }),
+    ]);
+    expect(model.dues?.rows).toEqual([expect.objectContaining({ name: 'Підписка', amount: '800,00 UAH' })]);
+    expect(JSON.stringify(model)).not.toContain('₴');
   });
 
   it('Scenario: Every currency totals on its own', () => {
     const internet: Commitment = { ...rent, id: 'c-internet', name: 'Інтернет', amount: 30_000, firstDue: '2026-10-05' };
     const model = show({ transactions: [], commitments: [internet, chatgpt], now: new Date(2026, 9, 2, 12) });
     expect(model.dues?.totals).toEqual([
-      { currency: 'UAH', total: `300,00${NBSP}₴`, unpaid: `300,00${NBSP}₴` },
+      { currency: 'UAH', total: `300,00 UAH`, unpaid: `300,00 UAH` },
       { currency: 'USD', total: `20,00 USD`, unpaid: `20,00 USD` },
     ]);
-    expect(model.dues?.rows.map((r) => r.amount)).toEqual([`300,00${NBSP}₴`, '20,00 USD']);
+    expect(model.dues?.rows.map((r) => r.amount)).toEqual([`300,00 UAH`, '20,00 USD']);
   });
 
   it('Scenario: A skipped платіж is listed but not totalled', () => {
@@ -832,7 +877,7 @@ describe('month-screen — Платежі місяця and Вільно післ
     const model = show({ transactions: [], installments: [iphone], facts: NO_INSTALLMENT_FACTS, month: '2026-11', now: november });
     expect(model.emptyMessage).toBe('У цьому місяці ще нічого не записано.');
     expect(model.dues?.rows).toEqual([
-      expect.objectContaining({ name: 'iPhone', date: '5 лист.', state: 'expected' }),
+      expect.objectContaining({ name: 'iPhone', date: '5 листопада', state: 'expected' }),
     ]);
   });
 
@@ -893,7 +938,7 @@ describe('month-screen — Платежі місяця and Вільно післ
     });
     expect(model.groups.map((g) => g.currency)).toEqual(['USD']);
     expect(model.groups.every((g) => g.freeAfterCommitments === undefined)).toBe(true);
-    expect(model.dues?.totals).toEqual([{ currency: 'UAH', total: `500,00${NBSP}₴`, unpaid: `500,00${NBSP}₴` }]);
+    expect(model.dues?.totals).toEqual([{ currency: 'UAH', total: `500,00 UAH`, unpaid: `500,00 UAH` }]);
   });
 
   it('Scenario: No USD group, no USD reading', () => {
@@ -923,7 +968,7 @@ describe('month-screen — Платежі місяця and Вільно післ
       commitmentFacts: { ...NO_COMMITMENT_FACTS, marks: [{ commitmentId: rent.id, number: 1, kind: 'skipped' }] },
     });
     expect(groupOf(model, 'UAH').freeAfterCommitments).toBeUndefined();
-    expect(model.dues?.totals).toEqual([{ currency: 'UAH', total: `1${NBSP}500,00${NBSP}₴`, unpaid: null }]);
+    expect(model.dues?.totals).toEqual([{ currency: 'UAH', total: `1${NBSP}500,00 UAH`, unpaid: null }]);
   });
 });
 
@@ -953,7 +998,7 @@ describe('the підсумок and the спостереження on Місяц�
     { id: 'subscriptions', name: 'Підписки' },
   ]);
 
-  /** April–September at 6 000 000 UAH a month; Кафе 390 000 in September; Netflix 299 ₴ from July. */
+  /** April–September at 6 000 000 UAH a month; Кафе 390 000 in September; Netflix 299 UAH from July. */
   function history(): Transaction[] {
     const b = ledgerBuilder();
     const rows: Transaction[] = [];
@@ -973,7 +1018,7 @@ describe('the підсумок and the спостереження on Місяц�
     return rows;
   }
 
-  function monthOn(month: string, now: Date, rows: Transaction[] = history()) {
+  function monthOn(month: string, now: Date, rows: Transaction[] = history(), observationsExpanded = false) {
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     return monthViewModel({
       month,
@@ -984,7 +1029,8 @@ describe('the підсумок and the спостереження on Місяц�
       limits: [],
       previousTransactions: rows.filter((t) => t.date.startsWith(prevMonth(month))),
       now,
-      observations: observationsOf({ month, today, transactions: rows, categories: [], answers: [] }),
+      observations: observationsOf({ month, today, transactions: rows, categories: [], answers: [], linkedAccountIds: new Set() }),
+      observationsExpanded,
     });
   }
 
@@ -1036,7 +1082,49 @@ describe('the підсумок and the спостереження on Місяц�
     const b = ledgerBuilder();
     const quiet = [b.expense('2026-09-05', 'food', 1000, { accountId: 'card' })];
     const model = monthOn('2026-09', october2, quiet);
-    expect(model.observations).toEqual({ lines: [], empty: 'У вересні нічого незвичного' });
+    expect(model.observations).toEqual({ lines: [], more: null, empty: 'У вересні нічого незвичного' });
+  });
+
+  it('Scenario: Ten facts are five and «Ще 5»', () => {
+    // Ten категорії, each doubled in September against six flat months; no two витрати share a сума.
+    const b = ledgerBuilder();
+    const rows: Transaction[] = [];
+    for (const month of monthsFrom('2026-03', '2026-09')) {
+      for (let i = 0; i < 10; i++) {
+        const usual = 600000 + i * 1000;
+        const day = `${month}-${String(i + 1).padStart(2, '0')}`;
+        rows.push(b.expense(day, `c${i}`, month === '2026-09' ? usual * 2 : usual, { accountId: 'card' }));
+      }
+    }
+    const ordered = observationsOf({
+      month: '2026-09',
+      today: '2026-10-02',
+      transactions: rows,
+      categories: [],
+      answers: [],
+      linkedAccountIds: new Set(),
+    });
+    expect(ordered.map((o) => o.kind)).toEqual(Array.from({ length: 10 }, () => 'category-vs-typical'));
+
+    const folded = monthOn('2026-09', october2, rows).observations!;
+    expect(folded.lines.map((l) => l.key)).toEqual(ordered.slice(0, 5).map((o) => o.key));
+    expect(folded.more).toEqual({ label: 'Ще 5', accessibilityLabel: 'Показати ще 5 спостережень' });
+
+    // «Ще 5» shows the other five in place, without leaving Місяць.
+    const shown = monthOn('2026-09', october2, rows, true).observations!;
+    expect(shown.lines.map((l) => l.key)).toEqual(ordered.map((o) => o.key));
+    expect(shown.more).toBeNull();
+
+    // Five or fewer are never folded.
+    const five = monthOn('2026-09', october2, rows.filter((t) => !['c5', 'c6', 'c7', 'c8', 'c9'].includes((t as { categoryId?: string }).categoryId ?? '')));
+    expect(five.observations!.lines).toHaveLength(5);
+    expect(five.observations!.more).toBeNull();
+  });
+
+  it('the Місяць screen hands «Ще N» to the list and holds the flag per month', () => {
+    const screen = readFileSync(new URL('../app/(tabs)/month.tsx', import.meta.url), 'utf8');
+    expect(screen).toContain('more={model.observations.more}');
+    expect(screen).toContain('observationsExpanded:');
   });
 
   it('changes none of the six numbers', () => {

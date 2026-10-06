@@ -43,16 +43,16 @@ describe('one розстрочка', () => {
     expect(detail.parts[4]).toMatchObject({
       title: 'Платіж 5',
       state: 'сплачено',
-      debit: `списання 5 жовт. · 1${NBSP}000,00${NBSP}₴`,
+      debit: `списання 5 жовтня · 1${NBSP}000,00 UAH`,
       verbs: ['unlink'],
     });
     expect(detail.parts.slice(5).map((p) => p.state)).toEqual(Array(5).fill('очікується'));
-    expect(detail.parts[5]).toMatchObject({ scheduled: `5 лист. · 1${NBSP}000,00${NBSP}₴`, verbs: ['pick', 'mark'] });
+    expect(detail.parts[5]).toMatchObject({ scheduled: `5 листопада · 1${NBSP}000,00 UAH`, verbs: ['pick', 'mark'] });
     expect(detail).toMatchObject({
       name: 'iPhone',
       progress: '5 з 10',
-      remaining: `Залишок 5${NBSP}000,00${NBSP}₴`,
-      part: `1${NBSP}000,00${NBSP}₴ на місяць`,
+      remaining: `Залишок 5${NBSP}000,00 UAH`,
+      part: `1${NBSP}000,00 UAH на місяць`,
       account: 'mono black',
       category: 'Техніка',
       closed: false,
@@ -112,8 +112,8 @@ describe('«Обрати списання»', () => {
 
     const rows = debitChoiceRows(repo.choices(iphone.id, 5), today);
     expect(rows).toEqual([
-      { id: 'near', label: `6 жовт. · 1${NBSP}000,50${NBSP}₴ · MONO ЧАСТИНАМИ` },
-      { id: 'edge', label: `15 жовт. · 70,00${NBSP}₴` },
+      { id: 'near', label: `6 жовтня · 1${NBSP}000,50 UAH · MONO ЧАСТИНАМИ` },
+      { id: 'edge', label: `15 жовтня · 70,00 UAH` },
     ]);
 
     repo.link(iphone.id, 5, rows[0]!.id);

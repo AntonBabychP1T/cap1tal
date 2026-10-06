@@ -2,12 +2,18 @@ import {
   expenseByDefault,
   refund,
   UNCATEGORISED_CATEGORY_ID,
+  type Correction,
   type Expense,
+  type Income,
   type Refund,
   type Transaction,
   type TransactionType,
 } from '../domain/transaction';
 import { Refusal } from '../domain/refusal';
+import { formatMinorUnits, formatMoney } from './amount-input';
+import { calendarLabel } from './dates';
+import { normaliseDescription, type EntryType } from './entry-form';
+import { accountLabel } from './labels';
 
 /**
  * The three decisions a retype needs, all pure so the MODIFIED "A transaction's type can be
@@ -39,8 +45,9 @@ export type RetypeShape = Exclude<TransactionType, 'correction'>;
  * two numbers is the point here — дохід down, the категорія's spent down — and the move cannot
  * be made carelessly: a повернення is not stored until its категорія is picked.
  *
- * A коригування gets an empty list: nothing can record one until «звірити» arrives, so the
- * editing screen shows it rather than editing it and never asks what it could become.
+ * A коригування gets an empty list: it is what «Звірити» wrote, so the editing screen reads its
+ * сума, рахунок and дата out and edits its опис alone (`initialForm`), never asking what it could
+ * become.
  */
 export function shapesFor(t: Transaction): RetypeShape[] {
   switch (t.type) {
@@ -105,8 +112,112 @@ export function offersTransferMark(t: Pick<Transaction, 'type'>): boolean {
  */
 export function initialShape(t: Pick<Transaction, 'type'>, as?: 'transfer'): RetypeShape {
   if (as === 'transfer' && t.type === 'expense') return 'transfer';
-  // A `correction` never reaches this: the screen shows it read-only and builds no form for it.
+  // A `correction` never reaches this: `initialForm` gives it the опис-only form instead.
   return t.type === 'correction' ? 'expense' : t.type;
+}
+
+/** The editing form of every type but a коригування — the strings as typed. */
+export interface TransactionForm {
+  readonly shape: EntryType;
+  readonly fromId: string;
+  readonly toId: string;
+  readonly amount: string;
+  readonly arrived: string;
+  readonly date: string;
+  readonly categoryId?: string;
+  readonly sourceId?: string;
+  /** The опис as typed. Empty means none — `normaliseDescription` turns it back into `undefined`. */
+  readonly description: string;
+}
+
+/**
+ * A коригування's form: its опис and nothing else. Its сума, рахунок, дата and type are what
+ * «Звірити» wrote and are read out, never offered for change (transactions, "A коригування opened
+ * from a list shows what it did").
+ */
+export interface CorrectionForm {
+  readonly shape: 'correction';
+  readonly description: string;
+}
+
+export type EditingForm = TransactionForm | CorrectionForm;
+
+/**
+ * What editing opens on. A переказ opens on the сума that left and the account it left; retyping
+ * it into a витрата therefore keeps exactly those, and drops the arrived leg. A коригування opens
+ * on its опис alone. `as` is «Це переказ»'s own param: reached from the feed mark on a витрата, it
+ * opens already switched to переказ with the source рахунок kept and no destination chosen —
+ * `initialShape` decides whether this витрата honours it at all (design D7). `undefined` only when
+ * there is no транзакція to open.
+ */
+export function initialForm(t: Transaction | undefined, as?: 'transfer'): EditingForm | undefined {
+  if (!t) return undefined;
+  const description = t.description ?? '';
+  if (t.type === 'correction') {
+    return { shape: 'correction', description };
+  }
+  const common = { toId: '', arrived: '', date: t.date, description };
+  if (t.type === 'transfer') {
+    return {
+      ...common,
+      shape: 'transfer',
+      fromId: t.fromAccountId,
+      toId: t.toAccountId,
+      amount: formatMinorUnits(t.left.amount),
+      arrived:
+        t.left.currency === t.arrived.currency && t.left.amount === t.arrived.amount
+          ? ''
+          : formatMinorUnits(t.arrived.amount),
+    };
+  }
+  if (initialShape(t, as) === 'transfer') {
+    // «Це переказ»: opens as переказ, source рахунок kept, no destination — nothing written yet.
+    return { ...common, shape: 'transfer', fromId: t.accountId, amount: formatMinorUnits(t.amount.amount) };
+  }
+  return {
+    ...common,
+    shape: t.type,
+    fromId: t.accountId,
+    amount: formatMinorUnits(t.amount.amount),
+    ...(t.type === 'income' ? { sourceId: t.sourceId } : { categoryId: t.categoryId }),
+  };
+}
+
+/**
+ * What a коригування did, read out: its signed сума («−776,86 UAH»), its рахунок by name and its
+ * дата in words («16 вересня»).
+ */
+export function correctionReadOut(
+  t: Correction,
+  accountNames: ReadonlyMap<string, string>,
+  now: Date,
+): { readonly amount: string; readonly account: string; readonly date: string } {
+  return {
+    amount: formatMoney(t.amount),
+    account: accountLabel(t.accountId, accountNames),
+    date: calendarLabel(t.date, now),
+  };
+}
+
+/**
+ * The same коригування carrying the опис as typed — trimmed, and an emptied field clearing it
+ * rather than storing «». Its id, сума, рахунок and дата are the stored ones by construction.
+ */
+export function withCorrectedDescription(t: Correction, typed: string): Correction {
+  const { description: _stored, ...rest } = t;
+  const description = normaliseDescription(typed);
+  return description === undefined ? rest : { ...rest, description };
+}
+
+/**
+ * What deleting a коригування asks, naming the сума and the рахунок it goes from — the розрахунковий
+ * баланс of that рахунок moves by exactly that сума once it is gone.
+ */
+export function correctionDeleteQuestion(
+  t: Correction,
+  accountNames: ReadonlyMap<string, string>,
+): string {
+  return `Коригування ${formatMoney(t.amount)} на «${accountLabel(t.accountId, accountNames)}» зникне зі стрічки й з історії рахунку.`;
 }
 
 /**
@@ -167,4 +278,23 @@ export function recategorise(t: Transaction, categoryId: string): Expense | Refu
         ...(t.description ? { description: t.description } : {}),
         ...(t.mcc !== undefined ? { mcc: t.mcc } : {}),
       });
+}
+
+/**
+ * The same дохід under a джерело the owner just picked — what the «Без джерела» mark's one tap
+ * stores, on the feed and in «Транзакції» (main-screen, "A дохід «Без джерела» is given its
+ * джерело in one tap"). `recategorise`'s twin: every field but the джерело stays as stored, and the
+ * write is the editing screen's own plain save of a дохід.
+ *
+ * Only a дохід has a джерело: a повернення or a переказ that arrived looking like one is retyped
+ * from its editing, never answered here. An unanswered picker hands back `''`, which is no pick.
+ */
+export function assignSource(t: Transaction, sourceId: string): Income {
+  if (t.type !== 'income') {
+    throw new Refusal('джерело має лише дохід');
+  }
+  if (!sourceId) {
+    throw new Refusal('оберіть джерело');
+  }
+  return { ...t, sourceId };
 }

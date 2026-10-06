@@ -6,10 +6,8 @@ import {
   type CommitmentFacts,
   type Periodicity,
 } from '../domain/commitments';
-import type { Money } from '../domain/money';
 import { formatMoney } from './amount-input';
-import { shortCalendarLabel, todayIso } from './dates';
-import { formatHryvnia } from './receipt-screen';
+import { calendarLabel, todayIso } from './dates';
 
 /**
  * The «Зобов'язання» screen, with none of its JSX (commitments-screen, "Зобов'язання opens on the
@@ -39,27 +37,19 @@ export const PERIODICITY_LABELS: Readonly<Record<Periodicity, string>> = {
   yearly: 'щороку',
 };
 
-/**
- * A plan's сума as the plan screens and «Платежі місяця» show it: гривні with «₴» like the
- * розстрочки always did, any other currency with its code — «20,00 USD» — and nothing converted.
- */
-export function formatPlanMoney(m: Money): string {
-  return m.currency === 'UAH' ? formatHryvnia(m) : formatMoney(m);
-}
-
 /** One зобов'язання as its row reads. */
 export interface CommitmentRow {
   readonly id: string;
   readonly name: string;
-  /** «15 000,00 ₴», «20,00 USD». */
+  /** «15 000,00 UAH», «20,00 USD». */
   readonly amount: string;
   /** «щомісяця». */
   readonly periodicity: string;
-  /** «10 жовт.» — the дата of the найближчий платіж; absent on a stopped one with none owed. */
+  /** «10 жовтня» — the дата of the найближчий платіж; absent on a stopped one with none owed. */
   readonly next?: string;
   /** Said on the row when a платіж of it is списання не знайдено. */
   readonly missed?: string;
-  /** «припинено 2 жовт.», on a stopped one. */
+  /** «припинено 2 жовтня», on a stopped one. */
   readonly stopped?: string;
 }
 
@@ -100,12 +90,12 @@ export function commitmentList(
   const rowOf = ({ commitment, dues, nearest }: (typeof read)[number]): CommitmentRow => ({
     id: commitment.id,
     name: commitment.name,
-    amount: formatPlanMoney({ amount: commitment.amount, currency: commitment.currency }),
+    amount: formatMoney({ amount: commitment.amount, currency: commitment.currency }),
     periodicity: PERIODICITY_LABELS[commitment.periodicity],
-    ...(nearest ? { next: shortCalendarLabel(nearest.due, now) } : {}),
+    ...(nearest ? { next: calendarLabel(nearest.due, now) } : {}),
     ...(dues.some((due) => due.state === 'notFound') ? { missed: MISSED_COMMITMENT_DEBIT } : {}),
     ...(commitment.stoppedOn !== undefined
-      ? { stopped: `припинено ${shortCalendarLabel(commitment.stoppedOn, now)}` }
+      ? { stopped: `припинено ${calendarLabel(commitment.stoppedOn, now)}` }
       : {}),
   });
   const active = read

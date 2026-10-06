@@ -47,6 +47,7 @@ export default function BugReportsScreen() {
         <View style={styles.switchRow}>
           <ThemedText type="small">{GESTURE_SWITCH_LABEL}</ThemedText>
           <ThemedSwitch
+            accessibilityLabel={GESTURE_SWITCH_LABEL}
             value={capture.gestureEnabled}
             onValueChange={(gestureEnabled) => set({ ...capture, gestureEnabled })}
           />
@@ -58,6 +59,7 @@ export default function BugReportsScreen() {
         <View style={styles.switchRow}>
           <ThemedText type="small">{HANDLE_SWITCH_LABEL}</ThemedText>
           <ThemedSwitch
+            accessibilityLabel={HANDLE_SWITCH_LABEL}
             value={capture.handleEnabled}
             onValueChange={(handleEnabled) => set({ ...capture, handleEnabled })}
           />

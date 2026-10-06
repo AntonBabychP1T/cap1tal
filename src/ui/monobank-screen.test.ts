@@ -106,7 +106,7 @@ describe('monobankAccountRows', () => {
     expect(rows.find((row) => row.monobankAccountId === 'mono-black')).toMatchObject({
       linked: true,
       accountName: 'mono black',
-      syncStartDate: '2026-08-01',
+      syncStartLabel: '1 серпня',
     });
     // …and the other card and the банка are visibly unlinked, with no рахунок named.
     for (const id of ['mono-white', 'mono-jar']) {
@@ -114,6 +114,21 @@ describe('monobankAccountRows', () => {
       expect(row?.linked).toBe(false);
       expect(row).not.toHaveProperty('accountName');
     }
+  });
+
+  it('Scenario: Another year is named', () => {
+    const rows = monobankAccountRows({
+      monobankAccounts: [blackCard],
+      links: [{ ...linkedBlack, syncStartDate: '2025-12-30' }],
+      accounts: [card],
+      now: new Date(2026, 9, 5, 12),
+    });
+
+    expect(rows[0]?.syncStartLabel).toBe('30 грудня 2025');
+    // The screen writes it after «з», and writes nothing of its own to the дата.
+    const screen = readFileSync(new URL('../app/manage/monobank.tsx', import.meta.url), 'utf8');
+    expect(screen).toContain('`, з ${row.syncStartLabel}`');
+    expect(screen).not.toContain('row.syncStartDate');
   });
 
   it('Scenario: Each balance keeps its own currency', () => {
@@ -298,12 +313,18 @@ describe('when a sync last completed', () => {
       linked: 2,
       synced: 0,
     });
-    // Some but not all: no moment at all, because none is true of the whole picture.
-    expect(syncCoverage([synced, never])).toEqual({ linked: 2, synced: 1 });
+    // Some but not all: no whole-bank moment, because none is true of the whole picture — only
+    // the oldest of those that synced, which the no-token row names.
+    expect(syncCoverage([synced, never])).toEqual({
+      linked: 2,
+      synced: 1,
+      oldestSyncedMs: synced.lastSyncedAtMs,
+    });
     expect(syncCoverage([synced, earlier])).toEqual({
       linked: 2,
       synced: 2,
       oldestCompletedMs: earlier.lastSyncedAtMs,
+      oldestSyncedMs: earlier.lastSyncedAtMs,
     });
   });
 
@@ -629,13 +650,15 @@ describe('notConfiguredStatus', () => {
     expect(screen).not.toContain('Оновити з monobank');
   });
 
-  it('«Оновити список рахунків» without a token says what «Синхронізувати» says', () => {
-    // QA: the button used to answer a tap with nothing at all while its neighbour said the
-    // sentence below. Asked for, the refresh owes the owner the same reason in the same words.
-    expect(notConfiguredStatus({ asked: true })).toBe('Спершу введіть токен monobank');
-    expect(notConfiguredStatus({ asked: true })).toBe(
-      syncSummary({ kind: 'not-configured' }, new Map()).headline,
-    );
+  it('Scenario: Without a token there is nothing to refresh', () => {
+    // No token, no list to re-read: the action is shown unavailable — and a disabled action's tap
+    // does nothing — rather than answering with a sentence the entering-a-token block above it
+    // already says. `configured` is unknown until the screen has read it, which counts as none.
+    const at = screen.indexOf('title={busy ? \'Оновлюємо…\' : REFRESH_LIST_LABEL}');
+    expect(at).toBeGreaterThan(-1);
+    const action = screen.slice(at, screen.indexOf('/>', at));
+    expect(action).toContain('disabled={busy || configured !== true}');
+    expect(screen).toContain('const [configured, setConfigured] = useState<boolean>();');
   });
 
   it('Opening the screen without a token stays quiet — the overline already says so', () => {
@@ -1084,7 +1107,12 @@ describe('bankCoverage — the whole bank, minus what the token no longer shows'
       [link('mono-a', at(12).getTime()), link('mono-b', at(11).getTime()), link('mono-closed', at(1).getTime() - 86_400_000)],
       answer,
     );
-    expect(coverage).toEqual({ linked: 2, synced: 2, oldestCompletedMs: at(11).getTime() });
+    expect(coverage).toEqual({
+      linked: 2,
+      synced: 2,
+      oldestCompletedMs: at(11).getTime(),
+      oldestSyncedMs: at(11).getTime(),
+    });
   });
 
   it('Scenario: A token that shows nothing linked still reads stale', () => {
@@ -1093,7 +1121,12 @@ describe('bankCoverage — the whole bank, minus what the token no longer shows'
       [link('mono-a', twoDaysAgo), link('mono-b', twoDaysAgo)],
       [{ id: 'mono-other', obtainedAt: at(12) }],
     );
-    expect(coverage).toEqual({ linked: 2, synced: 2, oldestCompletedMs: twoDaysAgo });
+    expect(coverage).toEqual({
+      linked: 2,
+      synced: 2,
+      oldestCompletedMs: twoDaysAgo,
+      oldestSyncedMs: twoDaysAgo,
+    });
   });
 });
 

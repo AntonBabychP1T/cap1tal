@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { account } from '../domain/account';
+import { NO_MERCHANTS } from '../domain/merchants';
 import { money } from '../domain/money';
 import {
   expenseByDefault,
@@ -13,7 +14,9 @@ import {
   type Income,
   type Transaction,
 } from '../domain/transaction';
+import type { StatementItem } from '../monobank/api';
 import { suggestKind } from '../monobank/link';
+import { mapStatement } from '../monobank/sync';
 import { accountsRepo } from './accounts-repo';
 import { monobankRepo, type FetchedMonobankAccount, type MonobankRepo } from './monobank-repo';
 import { netWorthRepo } from './net-worth-repo';
@@ -698,6 +701,44 @@ describe('monobankRepo — one statement answer', () => {
     // And the page itself stored, cursor and all — the balance is the only thing held back.
     expect(txs.listAll()).toHaveLength(1);
     expect(repo.linkOf('mono-card')?.cursorMs).toBe(boundaryMs + 1000);
+  });
+
+  it('stores a statement\'s items in bank-time order, so the newest of a day is listed first', () => {
+    // The API answers newest first. Two items of one day: the 18:30 coffee before the 09:15 bread.
+    const item = (id: string, at: string, description: string): StatementItem => ({
+      id,
+      timeMs: Date.parse(at),
+      date: '2026-08-27',
+      description,
+      mcc: 5411,
+      amount: money(-5000, 'UAH'),
+      hold: false,
+    });
+    const items = [item('late', '2026-08-27T15:30:00.000Z', 'Кава'), item('early', '2026-08-27T06:15:00.000Z', 'Хліб')];
+    const mapped = mapStatement(items, {
+      accountId: 'card',
+      currency: 'UAH',
+      rules: [],
+      merchants: NO_MERCHANTS,
+      seenIds: new Set(),
+      newId: (() => {
+        let n = 0;
+        return () => `m${++n}`;
+      })(),
+    });
+
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: mapped.transactions,
+      newlySeenIds: [...mapped.seenNow],
+      bankBalance: money(4_900_00, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt,
+    });
+
+    // Storage recency equals bank time: the later purchase is the more recently stored one.
+    expect(txs.listLatest(10).map((t) => t.description)).toEqual(['Кава', 'Хліб']);
   });
 
   it('A committed page still moves the moment forward', () => {

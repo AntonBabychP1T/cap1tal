@@ -44,3 +44,33 @@ describe('dashboardLayoutEditorRows', () => {
     expect(rows.find((r) => r.id === 'net-worth')!.visible).toBe(true);
   });
 });
+
+/**
+ * app-shell, "Every switch and every coloured mark has an accessible name", and dashboard-layout,
+ * "Each widget's switch names its widget": the switch's name is decided here, and
+ * `screens.test.ts` holds the screen to passing it. Whether it is shown is the switch's own state,
+ * which a screen reader reads with the name.
+ */
+describe('the switch of each widget', () => {
+  it('Scenario: A widget switch says which widget', () => {
+    const rows = dashboardLayoutEditorRows(defaultDashboardLayout());
+    const netWorth = rows.find((r) => r.id === 'net-worth')!;
+    expect(netWorth.switchLabel).toBe('Статок');
+    expect(netWorth.visible).toBe(true);
+  });
+
+  it('Scenario: Six switches, six names', () => {
+    const items = setWidgetVisibility(defaultDashboardLayout(), 'top-categories', false);
+    const rows = dashboardLayoutEditorRows(items);
+    expect(rows.map((r) => r.switchLabel)).toEqual([
+      'Витрачено цього місяця',
+      'Останні 5 транзакцій',
+      'Спостереження',
+      'Топ категорій',
+      'Статок',
+      'Прогрес',
+    ]);
+    // Each name stands with its own state: a hidden widget's switch is off, a shown one's on.
+    expect(rows.map((r) => r.visible)).toEqual([true, true, true, false, true, false]);
+  });
+});

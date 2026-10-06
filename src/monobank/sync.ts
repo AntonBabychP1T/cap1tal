@@ -369,6 +369,10 @@ export interface MappedStatement {
  *
  * A hold maps exactly like a settled operation — a hold is just a transaction — and an item of
  * zero maps to nothing while still being remembered, so it is not re-examined forever.
+ *
+ * The транзакції come out oldest bank time first, whatever order the API answered in (it answers
+ * newest first): the commit stores them one millisecond apart in this order, so storage recency
+ * equals bank time and the newest item of a day is listed first (design D19).
  */
 export function mapStatement(
   items: readonly StatementItem[],
@@ -376,8 +380,10 @@ export function mapStatement(
 ): MappedStatement {
   const seenNow = new Set(ctx.seenIds);
   const transactions: Transaction[] = [];
+  // Stable, so items of one moment keep the order the bank gave them.
+  const byBankTime = [...items].sort((a, b) => a.timeMs - b.timeMs);
 
-  for (const item of items) {
+  for (const item of byBankTime) {
     if (item.amount.currency !== ctx.currency) {
       // The parser was handed one currency and the mapper another: relabelling money silently is
       // the one thing worse than stopping, so this wiring mistake is loud.

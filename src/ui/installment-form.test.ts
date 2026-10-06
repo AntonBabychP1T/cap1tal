@@ -10,6 +10,7 @@ import {
   installmentFromDraft,
   lastPartOf,
   newInstallmentDraft,
+  sameInstallmentFields,
   type InstallmentDraft,
 } from './installment-form';
 
@@ -132,5 +133,21 @@ describe('the розстрочка form', () => {
       now: new Date(),
     });
     expect(edited).toEqual({ ...stored, name: 'iPhone 16' });
+  });
+});
+
+describe('installments-screen — what «назад» asks about', () => {
+  it('Scenario: An untouched form closes at once', () => {
+    expect(sameInstallmentFields(fresh(), fresh())).toBe(true);
+  });
+
+  it('Scenario: An edited form asks first', () => {
+    expect(sameInstallmentFields(typed(fresh(), { name: 'Ноутбук' }), fresh())).toBe(false);
+  });
+
+  it('a щомісячний платіж typed and erased again is no change, though the form now keeps it as typed', () => {
+    const erased = typed(fresh(), { part: '500' }, { part: '' });
+    expect(erased.partTyped).toBe(true);
+    expect(sameInstallmentFields(erased, fresh())).toBe(true);
   });
 });

@@ -1,3 +1,4 @@
+import { capitalised } from '../domain/fold';
 import { CORRECTION_CATEGORY_ID, type IsoDate, type Month } from '../domain/transaction';
 import type { CurrencyCode, Money } from '../domain/money';
 import {
@@ -13,13 +14,15 @@ import { categoryLabel } from './labels';
 import { monthAccusativeLabel, monthGenitiveLabel, monthInLabel, monthLabel, prevMonth } from './months';
 import {
   categoryRoute,
+  foldedObservationLines,
   noObservationsSentence,
   observationLines,
   type ObservationLine,
   type ObservationNames,
+  type ObservationsMore,
 } from './observations';
 import { percentText } from './net-worth';
-import { ONLY_UNCATEGORISED } from './transaction-search';
+import { narrowedMonthRoute, ONLY_UNCATEGORISED, ONLY_UNSOURCED } from './transaction-search';
 
 /**
  * The pushed «Підсумок <місяця>» screen, as strings (month-summary-screen): which month it is for,
@@ -42,10 +45,6 @@ export type MonthSummaryRoute =
 /** «Підсумок вересня 2026». */
 export function summaryTitle(month: Month): string {
   return `Підсумок ${monthGenitiveLabel(month)} ${month.slice(0, 4)}`;
-}
-
-function capitalised(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /**
@@ -119,6 +118,8 @@ export interface SummarySection {
   readonly groups: readonly SummaryGroup[];
   /** The observations section's own lines, with «Не дубль» where it applies. */
   readonly observations?: readonly ObservationLine[];
+  /** The observations section's «Ще N» past the first five (design D11); `null` when all are shown. */
+  readonly observationsMore?: ObservationsMore | null;
   /** The one sentence a section with nothing to state says instead of disappearing. */
   readonly empty: string | null;
 }
@@ -169,6 +170,8 @@ export function monthSummaryScreen(
   summary: MonthSummary,
   names: ObservationNames,
   today: IsoDate,
+  /** `observationsExpanded`: the owner chose «Ще N», and every спостереження is listed. */
+  options: { readonly observationsExpanded?: boolean } = {},
 ): MonthSummaryScreen {
   const { month } = summary;
   const previous = prevMonth(month);
@@ -184,7 +187,12 @@ export function monthSummaryScreen(
       key: reading.currency,
       currency: reading.currency,
       rows: [
-        row({ key: 'spent', label: 'Витрачено', value: formatMoney(reading.spent) }),
+        row({
+          key: 'spent',
+          label: 'Витрачено',
+          value: formatMoney(reading.spent),
+          ...(reading.corrections ? { detail: `з них коригування ${formatMoney(reading.corrections)}` } : {}),
+        }),
         row({
           key: 'previous',
           label: `Проти ${before}`,
@@ -247,13 +255,17 @@ export function monthSummaryScreen(
     }),
   };
 
-  const lines = observationLines(summary.observations, names);
+  const folded = foldedObservationLines(
+    observationLines(summary.observations, names),
+    options.observationsExpanded ?? false,
+  );
   const observations: SummarySection = {
     key: 'observations',
     title: 'Спостереження',
     groups: [],
-    observations: lines,
-    empty: lines.length === 0 ? noObservationsSentence(month, today) : null,
+    observations: folded.lines,
+    observationsMore: folded.more,
+    empty: summary.observations.length === 0 ? noObservationsSentence(month, today) : null,
   };
 
   const picture: SummarySection = {
@@ -357,10 +369,11 @@ export function monthSummaryScreen(
   };
 
   const u = summary.unanswered;
-  const unansweredRoute =
-    u.uncategorised.count > 0
-      ? `/transactions?month=${month}&only=${ONLY_UNCATEGORISED}`
-      : `/transactions?month=${month}`;
+  // Each count leads to where it is answered: its own narrowing of the month's транзакції, and
+  // the waiting чернетки to Головний, where чернетки are confirmed or dismissed.
+  const uncategorisedRoute = narrowedMonthRoute(month, ONLY_UNCATEGORISED);
+  const unsourcedRoute = narrowedMonthRoute(month, ONLY_UNSOURCED);
+  const cleanRoute = narrowedMonthRoute(month);
   const sums = (list: readonly Money[]) => list.map((m) => formatMoney(m)).join(' · ');
   const unanswered: SummarySection = {
     key: 'unanswered',
@@ -371,13 +384,13 @@ export function monthSummaryScreen(
         key: 'unanswered',
         rows: [
           ...(u.clean
-            ? [row({ key: 'clean', label: `${capitalised(monthAccusativeLabel(month))} — чистий місяць`, route: unansweredRoute })]
+            ? [row({ key: 'clean', label: `${capitalised(monthAccusativeLabel(month))} — чистий місяць`, route: cleanRoute })]
             : [
                 ...(u.uncategorised.count > 0
-                  ? [row({ key: 'uncategorised', label: '«Без категорії»', value: `${u.uncategorised.count} · ${sums(u.uncategorised.sums)}`, route: unansweredRoute })]
+                  ? [row({ key: 'uncategorised', label: '«Без категорії»', value: `${u.uncategorised.count} · ${sums(u.uncategorised.sums)}`, route: uncategorisedRoute })]
                   : []),
                 ...(u.unsourced.count > 0
-                  ? [row({ key: 'unsourced', label: '«Без джерела»', value: `${u.unsourced.count} · ${sums(u.unsourced.sums)}`, route: unansweredRoute })]
+                  ? [row({ key: 'unsourced', label: '«Без джерела»', value: `${u.unsourced.count} · ${sums(u.unsourced.sums)}`, route: unsourcedRoute })]
                   : []),
               ]),
           ...(u.waitingDrafts > 0
@@ -386,6 +399,7 @@ export function monthSummaryScreen(
                   key: 'drafts',
                   label: `${u.waitingDrafts} ${plural(u.waitingDrafts, 'чернетка чекає', 'чернетки чекають', 'чернеток чекають')}`,
                   detail: 'окремо від чистого місяця',
+                  route: '/',
                 }),
               ]
             : []),

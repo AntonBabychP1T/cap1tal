@@ -43,7 +43,7 @@ const read = (
   month: string,
   today: string,
   answers: readonly AnsweredPair[] = [],
-) => observationsOf({ month, today, transactions, categories: CATEGORIES, answers });
+) => observationsOf({ month, today, transactions, categories: CATEGORIES, answers, linkedAccountIds: new Set() });
 
 describe('the спостереження of a month', () => {
   it('Scenario: The same state yields the same спостереження', () => {

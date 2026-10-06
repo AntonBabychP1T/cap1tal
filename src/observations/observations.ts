@@ -32,6 +32,8 @@ export interface ObservationsInput {
   readonly month: Month;
   readonly categories: readonly Category[];
   readonly answers: readonly AnsweredPair[];
+  /** The рахунки linked to monobank: equal описи on one of them read as the bank's own records. */
+  readonly linkedAccountIds: ReadonlySet<string>;
   /**
    * The glossary's продавець, bound in one place (design D11): the folded опис today; whichever of
    * this change and `merchant-normalization` lands second swaps the binding here, not the detectors.
@@ -52,7 +54,7 @@ export function observationsIn(ledger: Ledger, input: ObservationsInput): Observ
   const merchantKeyOf = input.merchantKeyOf ?? merchantOfDescription;
   const answered = new Set(input.answers.map((a) => pairKey(a.first, a.second)));
   const found: Observation[] = [
-    ...possibleDuplicates(ledger, month, answered),
+    ...possibleDuplicates(ledger, month, answered, input.linkedAccountIds),
     ...priceChanges(ledger, month, merchantKeyOf),
     ...merchantOutliers(ledger, month, merchantKeyOf),
   ];

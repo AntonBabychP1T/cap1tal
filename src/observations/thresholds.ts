@@ -72,6 +72,12 @@ export const DUPLICATE_DAY_SPAN = 1;
 export const HOME_LIMIT = 3;
 
 /**
+ * Місяць and the підсумок місяця list the first five спостереження of the month; the rest wait
+ * behind «Ще N», shown in place. Five fit a screen beside the numbers they explain.
+ */
+export const LIST_LIMIT = 5;
+
+/**
  * For the first seven days of a month Головний also leads to the previous month's підсумок — the
  * week in which the owner is still finishing that month in their head.
  */

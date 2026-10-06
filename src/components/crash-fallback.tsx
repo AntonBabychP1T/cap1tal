@@ -1,6 +1,6 @@
 import { router, usePathname } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { BackHandler, ScrollView, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { Alert, BackHandler, ScrollView, StyleSheet, Text, useColorScheme, View } from 'react-native';
 
 import { BugReportForm } from './bug-report-form';
 
@@ -8,6 +8,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { reporting as reportingRepo } from '@/db/repos';
 import type { JournalEntry } from '@/reporting/journal';
 import { buildInfo, deviceInfo } from '@/platform/app-build-device';
+import { answerBackPress } from '@/ui/back-gesture';
 import { submitForm, type FormFields, type ReportContext } from '@/ui/bug-report-screen';
 import { newId } from '@/ui/id';
 import { journal } from '@/ui/journal';
@@ -41,6 +42,8 @@ export function CrashFallback({
   const pathname = usePathname();
   const [reporting, setReporting] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
+  /** Whether the репорт form holds anything typed — what «назад» asks about before leaving. */
+  const [edited, setEdited] = useState(false);
   const [prompting, setPrompting] = useState<JournalEntry | null>(null);
 
   /**
@@ -88,15 +91,20 @@ export function CrashFallback({
     }, 0);
   };
 
-  /** The device's own «назад» is the same as «Повернутися» — never a second dead end. */
+  /**
+   * The device's own «назад» is the same as «Повернутися» — never a second dead end. With the
+   * репорт form open and typed into, it asks «Відкинути зміни?» first and «Відкинути» is that same
+   * way out (app-shell); there is no navigator here for `useCloseOnBack`, so it asks
+   * `answerBackPress`, the same rule.
+   */
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      goBack();
+      answerBackPress(reporting && edited, goBack, (dialog) => Alert.alert(...dialog));
       return true;
     });
     return () => subscription.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `goBack` closes over `retry` only
-  }, [retry]);
+  }, [retry, reporting, edited]);
 
   const save = (fields: FormFields) => {
     const id = newId();
@@ -137,7 +145,7 @@ export function CrashFallback({
         </Text>
 
         {reporting ? (
-          <BugReportForm prompting={prompting} refusal={refusal} onSave={save} />
+          <BugReportForm prompting={prompting} refusal={refusal} onSave={save} onEdited={setEdited} />
         ) : (
           <View style={styles.actions}>
             <Text

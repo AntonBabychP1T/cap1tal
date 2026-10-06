@@ -39,10 +39,12 @@ import {
   SAVE_AND_HAND_OVER_LABEL,
   SAVE_LABEL,
   SHEET_TITLE,
+  sheetHoldsEdits,
   submitHere,
   type SheetCapture,
   type SheetFields,
 } from '@/ui/bug-report-here';
+import { answerBackPress } from '@/ui/back-gesture';
 import { handOver, IDLE, SCREENSHOT_CONFIRMATION } from '@/ui/bug-report-screen';
 import { newId } from '@/ui/id';
 import { journal } from '@/ui/journal';
@@ -142,17 +144,27 @@ export function BugReportHere({ settings }: { settings: CaptureSettings }) {
     }
   }, [capture]);
 
-  /** The device's back gesture is «Скасувати» and nothing else — one way out, not two. */
+  /**
+   * The device's back gesture is «Скасувати» and nothing else — one way out, not two. With a line
+   * typed and no репорт stored yet, it asks «Відкинути зміни?» first and «Відкинути» is that same
+   * `dismiss` (app-shell; bug-report-here, "Changing one's mind leaves nothing behind"). The
+   * `Modal`'s own back and the `BackHandler` both come here.
+   */
+  const backOut = useCallback(
+    () =>
+      answerBackPress(sheetHoldsEdits(fields, stored), dismiss, (dialog) => Alert.alert(...dialog)),
+    [dismiss, fields, stored],
+  );
   useEffect(() => {
     if (!open) {
       return;
     }
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      dismiss();
+      backOut();
       return true;
     });
     return () => subscription.remove();
-  }, [open, dismiss]);
+  }, [open, backOut]);
 
   const save = useCallback(
     async (thenHandOver: boolean) => {
@@ -287,7 +299,7 @@ export function BugReportHere({ settings }: { settings: CaptureSettings }) {
         </View>
       </GestureDetector>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={dismiss}>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={backOut}>
         <View style={[styles.backdrop, { backgroundColor: '#0008' }]}>
           <View style={[styles.sheet, { backgroundColor: theme.background }]}>
             <ScrollView keyboardShouldPersistTaps="handled">

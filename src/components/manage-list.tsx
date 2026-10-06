@@ -12,8 +12,12 @@ import { Spacing } from '@/constants/theme';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { failureAlert } from '@/ui/failure-alert';
+import { sameFields } from '@/ui/same-fields';
 import type { ManagedRow } from '@/ui/list-management';
 import { suggestCategoryIcon, type CategoryIconKey } from '@/domain/category-icon';
+
+/** The іконка a new категорія starts on, until a назва suggests another or the owner picks one. */
+const FRESH_ICON: CategoryIconKey = 'tag';
 
 /**
  * The «Категорії» and «Джерела» sections of Налаштування: one list, the same four verbs, twice.
@@ -61,23 +65,37 @@ export function ManageListScreen({
     [router],
   );
   const [fresh, setFresh] = useState('');
-  const [freshIcon, setFreshIcon] = useState<CategoryIconKey>('tag');
+  const [freshIcon, setFreshIcon] = useState<CategoryIconKey>(FRESH_ICON);
   const [freshIconPicked, setFreshIconPicked] = useState(false);
-  /** The row being renamed, and the name as it is being typed; nothing else is editable at once. */
-  const [editing, setEditing] = useState<{ id: string; name: string; iconKey?: CategoryIconKey }>();
+  /**
+   * The row being renamed, the name as it is being typed, and what the row opened with; nothing
+   * else is editable at once.
+   */
+  const [editing, setEditing] = useState<{
+    id: string;
+    name: string;
+    iconKey?: CategoryIconKey;
+    opened: { name: string; iconKey?: CategoryIconKey };
+  }>();
   /** Whether the create form is open. Closed by default: the list is what the section is for. */
   const [creating, setCreating] = useState(false);
   const closeCreate = useCallback(() => {
     setCreating(false);
     setFresh('');
-    setFreshIcon('tag');
+    setFreshIcon(FRESH_ICON);
     setFreshIconPicked(false);
   }, []);
   const closeEditor = useCallback(() => setEditing(undefined), []);
   // The phone's «назад» closes what the owner opened last before it leaves the section, and what
-  // was typed into it is discarded — the same rule «Ліміти» already keeps.
-  useCloseOnBack(creating, closeCreate);
-  useCloseOnBack(editing !== undefined, closeEditor);
+  // was typed into it is discarded — after «Відкинути зміни?» when it holds edits — the same rule
+  // «Ліміти» already keeps. The create form opens empty on the default іконка.
+  const createDirty =
+    creating && !sameFields({ name: fresh, iconKey: freshIcon }, { name: '', iconKey: FRESH_ICON });
+  const editDirty =
+    editing !== undefined &&
+    !sameFields({ name: editing.name, iconKey: editing.iconKey }, editing.opened);
+  useCloseOnBack(creating, closeCreate, createDirty);
+  useCloseOnBack(editing !== undefined, closeEditor, editDirty);
 
   // Every write goes through here: the repositories reject an empty or duplicate name by
   // throwing, and the owner reads that sentence rather than watching nothing happen.
@@ -196,7 +214,8 @@ export function ManageListScreen({
                   accessibilityHint={row.reserved ? undefined : 'Змінити або перенести в архів'}
                   onPress={() => {
                     setCreating(false);
-                    setEditing({ id: row.id, name: row.name, iconKey: row.iconKey as CategoryIconKey | undefined });
+                    const opened = { name: row.name, iconKey: row.iconKey as CategoryIconKey | undefined };
+                    setEditing({ id: row.id, ...opened, opened });
                   }}
                   style={styles.rowTap}>
                   <View style={styles.rowTop}>

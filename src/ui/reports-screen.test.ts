@@ -24,6 +24,7 @@ import {
   categoryBars,
   columnBarKey,
   columnMorph,
+  earlierMonthsCue,
   historyBars,
   reportsHistory,
   reportsSelection,
@@ -559,10 +560,11 @@ describe('every chart states its scale', () => {
       spend('e2', '2026-08-10', 4500000),
     ]);
 
-    expect(model.historyAxis).toEqual({ top: '45 000,00 UAH', zero: '0,00 UAH', bottom: null });
-    // The top of the scale is what a full-height bar stands for, so the two agree by construction.
+    expect(model.historyAxis).toEqual({ top: '45 000 UAH', zero: '0 UAH', bottom: null });
+    // The top of the scale is what a full-height bar stands for — the bar to the копійка, the
+    // scale in whole units of the currency.
     const tallest = model.history.flatMap((c) => c.bars).find((b) => b.size === 1)!;
-    expect(tallest.amount).toBe(model.historyAxis!.top);
+    expect(tallest.amount).toBe('45 000,00 UAH');
   });
 
   it('Scenario: A chart with no negative month states no bottom', () => {
@@ -586,9 +588,9 @@ describe('every chart states its scale', () => {
 
     expect(model.historyHasNegative).toBe(true);
     expect(model.historyAxis).toEqual({
-      top: '45 000,00 UAH',
-      zero: '0,00 UAH',
-      bottom: '−45 000,00 UAH',
+      top: '45 000 UAH',
+      zero: '0 UAH',
+      bottom: '−45 000 UAH',
     });
   });
 
@@ -598,12 +600,12 @@ describe('every chart states its scale', () => {
       spend('e2', '2026-08-11', 5000, 'groceries', 'USD'),
     ];
 
-    expect(view(transactions).historyAxis!.top).toBe('1 000,00 UAH');
-    expect(view(transactions, { shownCurrency: 'USD' }).historyAxis!.top).toBe('50,00 USD');
+    expect(view(transactions).historyAxis!.top).toBe('1 000 UAH');
+    expect(view(transactions, { shownCurrency: 'USD' }).historyAxis!.top).toBe('50 USD');
     // And the category chart is scaled in the same currency, never in the other one.
     expect(
       view(transactions, { shownCurrency: 'USD', chosenCategoryId: 'groceries' }).categoryAxis!.top,
-    ).toBe('50,00 USD');
+    ).toBe('50 USD');
   });
 
   it('Scenario: An all-zero chart states a scale of zero', () => {
@@ -614,7 +616,28 @@ describe('every chart states its scale', () => {
     );
 
     expect(model.categoryChart.every((c) => c.amount === '0,00 UAH')).toBe(true);
-    expect(model.categoryAxis).toEqual({ top: '0,00 UAH', zero: '0,00 UAH', bottom: null });
+    expect(model.categoryAxis).toEqual({ top: '0 UAH', zero: '0 UAH', bottom: null });
+  });
+
+  it('Scenario: Seven months on a narrow phone', () => {
+    // Seven months of UAH history; the tallest is 160 263,13 UAH.
+    const model = view([
+      spend('e1', '2026-02-10', 100000),
+      spend('e2', '2026-03-10', 200000),
+      spend('e3', '2026-04-10', 300000),
+      spend('e4', '2026-05-10', 16026313),
+      spend('e5', '2026-06-10', 400000),
+      spend('e6', '2026-07-10', 500000),
+      spend('e7', '2026-08-10', 600000),
+    ]);
+
+    expect(model.history).toHaveLength(7);
+    // Short enough that the bars, not the scale, take most of the width.
+    expect(model.historyAxis!.top).toBe('160 263 UAH');
+    expect(model.history.flatMap((c) => c.bars).find((b) => b.size === 1)!.amount).toBe('160 263,13 UAH');
+    // Earlier months are said to lie to the left only once the strip is scrolled off its first.
+    expect(earlierMonthsCue(0)).toBe(false);
+    expect(earlierMonthsCue(48)).toBe(true);
   });
 
   it('There is no axis where there is no chart', () => {
@@ -817,6 +840,12 @@ describe('the Звіти tab draws what this model decided', () => {
     expect(screen).toContain('setChosenMonth(column.month)');
     expect(screen).toMatch(/chosenMonth,/);
     expect(screen).toContain('selected={column.selected}');
+  });
+
+  it('Scenario: Seven months on a narrow phone — the strip opens on the latest month and says there are more', () => {
+    expect(screen).toContain('latest={model.history.at(-1)?.month}');
+    expect(screen).toContain('earlierMonthsCue(nativeEvent.contentOffset.x)');
+    expect(screen).toContain('EARLIER_MONTHS_MARK');
   });
 
   it('No сума is formatted on the screen — every one of them comes from here', () => {

@@ -11,6 +11,7 @@ import {
   EMPTY_FORM,
   FIELD_HINTS,
   FIELD_LABELS,
+  formHoldsEdits,
   formState,
   PROMPTING_HEADING,
   SAVE_LABEL,
@@ -32,14 +33,26 @@ export function BugReportForm({
   prompting,
   refusal,
   onSave,
+  onEdited,
 }: {
   prompting: JournalEntry | null;
   /** What the last refused save said, held by the host so it survives this component's state. */
   refusal: string | null;
   onSave: (fields: FormFields) => void;
+  /**
+   * Whether the form now holds anything typed, after every keystroke — so the host can have the
+   * back gesture ask «Відкинути зміни?» first (app-shell). The host answers the gesture; this only
+   * says what there is to lose.
+   */
+  onEdited?: (edited: boolean) => void;
 }) {
   const [fields, setFields] = useState<FormFields>(EMPTY_FORM);
   const model = formState({ fields, prompting, refusal });
+  const change = (patch: Partial<FormFields>) => {
+    const next = { ...fields, ...patch };
+    setFields(next);
+    onEdited?.(formHoldsEdits(next));
+  };
 
   return (
     <View style={styles.form}>
@@ -58,21 +71,21 @@ export function BugReportForm({
         label={FIELD_LABELS.did}
         hint={FIELD_HINTS.did}
         value={fields.did}
-        onChangeText={(did) => setFields((current) => ({ ...current, did }))}
+        onChangeText={(did) => change({ did })}
         multiline
       />
       <Field
         label={FIELD_LABELS.happened}
         hint={FIELD_HINTS.happened}
         value={fields.happened}
-        onChangeText={(happened) => setFields((current) => ({ ...current, happened }))}
+        onChangeText={(happened) => change({ happened })}
         multiline
       />
       <Field
         label={FIELD_LABELS.expected}
         hint={FIELD_HINTS.expected}
         value={fields.expected}
-        onChangeText={(expected) => setFields((current) => ({ ...current, expected }))}
+        onChangeText={(expected) => change({ expected })}
         multiline
       />
 

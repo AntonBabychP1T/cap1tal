@@ -6,7 +6,7 @@ import {
   type HistoryPeriod,
   type MonthFigure,
 } from '../domain/net-worth';
-import type { IsoDate, Month } from '../domain/transaction';
+import { monthOf, type IsoDate, type Month } from '../domain/transaction';
 import { MAX_PLOTTED_POINTS, monthTickLabels } from './dashboard-charts';
 import { calendarLabel } from './dates';
 import {
@@ -91,6 +91,12 @@ export interface MonthCard {
   readonly futureLine?: string;
   readonly changeText: string;
   readonly changeDirection?: ChangeDirection;
+  /**
+   * What a screen reader says for `changeText`: «зміна мінус 56 000 гривень, спад, від 30 червня»,
+   * the direction in words because the card draws a fall only in the danger colour (app-shell,
+   * "Every switch and every coloured mark has an accessible name"). Without a зміна, its sentence.
+   */
+  readonly changeA11yLabel: string;
   readonly breakdown: readonly BreakdownLine[];
   /** The розбивка as one line, «дохід +60 000 · витрати −110 000 · коригування −6 000». */
   readonly breakdownText: string;
@@ -218,8 +224,55 @@ function spokenMonth(reading: HistoryReading, figure: MonthFigure, now: Date): s
   return parts.join(', ');
 }
 
+/**
+ * The card's зміна as TalkBack says it — built as the widget (`src/ui/net-worth.ts`) and
+ * `spokenMonth` build theirs, with the same «від» and «нові рахунки» the drawn line carries.
+ */
+function changeA11yLabel(
+  reading: HistoryReading,
+  figure: MonthFigure,
+  since: IsoDate | undefined,
+  drawn: string,
+  now: Date,
+): string {
+  if (figure.change.status !== 'available') return drawn;
+  const parts = [
+    `зміна ${spokenAmount(reading, figure.change.absolute, true)}`,
+    DIRECTION_WORD[directionOf(figure.change.absolute)],
+  ];
+  if (since !== undefined) parts.push(`від ${calendarLabel(since, now)}`);
+  if (figure.entered !== 0) parts.push(`нові рахунки ${spokenAmount(reading, figure.entered, true)}`);
+  return parts.join(', ');
+}
+
 /** Labels at most this many months on a 360 dp screen. */
 export const MAX_MONTH_LABELS = 12;
+
+/**
+ * The room one month name needs under the chart: a three-letter name in the 11 sp caption is about
+ * 18 dp, and the rest keeps two names from touching.
+ */
+export const MIN_LABEL_DP = 24;
+
+/** The chart's width before it has been measured — `NetWorthChart`'s own first guess. */
+export const FALLBACK_CHART_WIDTH = 320;
+
+/**
+ * The months named under a chart of `count` slots whose `current` month may be followed by
+ * «Прогноз» (net-worth-screen, "Every month is named and its direction readable without colour"):
+ * at most as many as `chartWidth` has room for, and when even those crowd one another, fewer, until
+ * no two names are closer than `MIN_LABEL_DP`.
+ */
+function namedMonths(count: number, current: number, chartWidth: number): number[] {
+  const slot = chartWidth / Math.max(count, 1);
+  const roomy = (indexes: readonly number[]) =>
+    indexes.every((index, i) => i === 0 || (index - indexes[i - 1]!) * slot >= MIN_LABEL_DP);
+  for (let cap = Math.min(MAX_MONTH_LABELS, Math.floor(chartWidth / MIN_LABEL_DP)); cap >= 2; cap -= 1) {
+    const indexes = monthTickLabels(count, cap, current);
+    if (roomy(indexes)) return indexes;
+  }
+  return current === 0 ? [0] : [0, current];
+}
 
 /** The «Статок» screen's model (net-worth-screen spec). */
 export function netWorthScreenModel(input: {
@@ -229,6 +282,8 @@ export function netWorthScreenModel(input: {
   readonly choices: ScreenChoices;
   readonly now: Date;
   readonly today: IsoDate;
+  /** The chart's measured width in dp; `FALLBACK_CHART_WIDTH` until it is known. */
+  readonly chartWidth?: number;
 }): NetWorthScreenModel {
   const { series, choices, now, today } = input;
   const periods = PERIOD_LABELS.map((p) => ({
@@ -297,6 +352,7 @@ export function netWorthScreenModel(input: {
     ...(isCurrent && series.hasFutureRecords ? { futureLine: FUTURE_RECORDS_LINE } : {}),
     changeText: change.text,
     ...(change.direction ? { changeDirection: change.direction } : {}),
+    changeA11yLabel: changeA11yLabel(reading, selected, previousOf(selected)?.date, change.text, now),
     breakdown,
     breakdownText: breakdown.map((line) => `${line.label} ${line.text}`).join(' · '),
   };
@@ -307,11 +363,6 @@ export function netWorthScreenModel(input: {
   const values = plotted.map((m) =>
     kind === 'level' ? m.end : m.change.status === 'available' ? m.change.absolute : undefined,
   );
-  const ticks = monthTickLabels(plotted.length, MAX_MONTH_LABELS).map((index) => ({
-    index,
-    text: shortMonthName(plotted[index]!.month),
-    current: plotted[index] === current,
-  }));
   const periodLabel = PERIOD_LABELS.find((p) => p.id === choices.period)!.spoken;
   const scale = reading.approximate ? 'гривнях, наближено' : reading.currency;
   const readingName = reading.approximate ? 'усе наближено в гривнях' : reading.currency;
@@ -340,6 +391,23 @@ export function netWorthScreenModel(input: {
           : `Прогноз недоступний: ${OVERFLOW_REASON}.`;
     }
   }
+
+  // The months named under the chart: «Прогноз»'s months count among them (design D16).
+  const slotMonths = [
+    ...plotted.map((m) => m.month),
+    ...(forecastDrawing && prognosis?.status === 'ready' ? prognosis.points.map((p) => monthOf(p.date)) : []),
+  ];
+  // «Прогноз»'s first slot is the current month's own end, after today's bar: a month already named
+  // under its recorded bar is not named a second time.
+  const named = new Set<Month>();
+  const ticks = namedMonths(slotMonths.length, plotted.length - 1, input.chartWidth ?? FALLBACK_CHART_WIDTH).flatMap(
+    (index) => {
+      const month = slotMonths[index]!;
+      if (named.has(month)) return [];
+      named.add(month);
+      return [{ index, text: shortMonthName(month), current: plotted[index] === current }];
+    },
+  );
 
   const chart: ScreenChart = {
     kind,

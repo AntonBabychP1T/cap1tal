@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { NO_MERCHANTS } from '../domain/merchants';
+import { resolveCategory, templateRules } from '../domain/rules';
 import {
   allOffer,
   COLLAPSE_LABEL,
@@ -262,7 +264,9 @@ describe('the picker itself is wired to the rule', () => {
   it('Scenario: A picker shows at most a few choices and names what is behind the rest', () => {
     // The collapsed branch draws `shortlist` and gates the offer on `allOffer` — it may not
     // count, slice or filter on its own.
-    expect(picker).toContain('shortlist(rows, { recentIds, chosenIds, selectedId: selected })');
+    expect(picker).toContain(
+      'shortlist(rows, { recentIds, chosenIds, selectedId: selected, suggestedId })',
+    );
     expect(picker).toContain('allOffer(rows, noun)');
     expect(picker).toContain('{offer ? (');
   });
@@ -426,5 +430,84 @@ describe('shortlist — a choice the form made, not the owner', () => {
       'c0', 'c1', 'c2', 'c3', 'c4',
     ]);
     expect(shortlist(rows, { recentIds: [], chosenIds: ['c7'], selectedId: 'c7' })).toHaveLength(6);
+  });
+});
+
+describe('shortlist — what a правило or the шаблон would give, offered first', () => {
+  /** Twelve категорії after «Без категорії» is filtered out, «Підписки» far down the list. */
+  const rows = [
+    ...Array.from({ length: 11 }, (_, i) => ({ id: `c${i}`, name: `Категорія ${i}` })),
+    { id: 'pidpysky', name: 'Підписки' },
+  ];
+  /** The owner mapped the шаблон's «Цифрове» onto their «Підписки». */
+  const tiers = {
+    rules: [],
+    templateRules: templateRules(new Map([['digital', 'pidpysky']])),
+    merchants: NO_MERCHANTS,
+  };
+
+  it("Scenario: The шаблон's категорія is one tap away", () => {
+    const suggestedId = resolveCategory(tiers, { description: 'Oplata poslug MEGOGO KYIV' });
+    expect(suggestedId).toBe('pidpysky');
+
+    // Recents and the head of the list would fill all five without it.
+    const shown = shortlist(rows, { recentIds: ['c3', 'c1', 'c7', 'c0', 'c5'], suggestedId });
+    expect(shown.map((r) => r.name)[0]).toBe('Підписки');
+    expect(shown.map((r) => r.id)).toEqual(['pidpysky', 'c3', 'c1', 'c7', 'c0']);
+    expect(shown).toHaveLength(PICKER_SIZE);
+  });
+
+  it('A suggestion that is already a recent is drawn once, first', () => {
+    const shown = shortlist(rows, { recentIds: ['c3', 'pidpysky'], suggestedId: 'pidpysky' });
+    expect(shown.map((r) => r.id)).toEqual(['pidpysky', 'c3', 'c0', 'c1', 'c2']);
+  });
+
+  it('A suggestion the picker does not offer adds nothing, and no suggestion changes nothing', () => {
+    const plain = shortlist(rows, { recentIds: ['c3'] });
+    expect(shortlist(rows, { recentIds: ['c3'], suggestedId: 'archived' })).toEqual(plain);
+    expect(shortlist(rows, { recentIds: ['c3'], suggestedId: undefined })).toEqual(plain);
+  });
+
+  it('The suggestion is marked, and nothing is stored until it is picked', () => {
+    const form = readFileSync(new URL('../components/form.tsx', import.meta.url), 'utf8');
+    const picker = form.slice(form.indexOf('export function Picker('), form.length);
+    // Shortlisted first by the rule above; marked only on the collapsed row, and never selected —
+    // only `choose`, the owner's tap, reaches `onSelect`.
+    expect(picker).toContain('suggestedId?: string;');
+    expect(picker).toContain('shortlist(rows, { recentIds, chosenIds, selectedId: selected, suggestedId })');
+    expect(picker).toContain('suggested: row.id === suggestedId && row.id !== selected');
+    expect(form).toContain('suggested={choice.suggested}');
+
+    // Both screens hand the quick категорія picker what `resolveCategory` gives the line's опис and
+    // MCC, and keep `selected` empty; the джерело picker of «Обрати джерело» is left as it was.
+    for (const path of ['../app/(tabs)/index.tsx', '../app/transactions.tsx']) {
+      const screen = readFileSync(new URL(path, import.meta.url), 'utf8');
+      const category = screen.slice(screen.indexOf('{line.uncategorised && categorising === line.id ? ('));
+      const categoryBlock = category.slice(0, category.indexOf(') : null}'));
+      expect(categoryBlock, path).toContain('suggestedId={suggestedCategory(t)}');
+      expect(categoryBlock, path).toContain('selected={undefined}');
+      const suggest = screen.slice(screen.indexOf('const suggestedCategory = (t: Transaction)'));
+      const suggestBody = suggest.slice(0, suggest.indexOf(';'));
+      expect(suggestBody, path).toContain('resolveCategory(tiers, {');
+      expect(suggestBody, path).toContain("description: t.description ?? ''");
+      expect(suggestBody, path).toContain("mcc: 'mcc' in t ? t.mcc : undefined");
+      const source = screen.slice(screen.indexOf('{line.unsourced && sourcing === line.id ? ('));
+      const sourceBlock = source.slice(0, source.indexOf(') : null}'));
+      expect(sourceBlock, path).toContain('noun="sources"');
+      expect(sourceBlock, path).not.toContain('suggestedId');
+    }
+  });
+});
+
+describe('the full list of a picker', () => {
+  it('Scenario: The full list is read before it is searched', () => {
+    const form = readFileSync(new URL('../components/form.tsx', import.meta.url), 'utf8');
+    const picker = form.slice(form.indexOf('export function Picker('), form.length);
+    const expanded = picker.slice(picker.indexOf('const narrowed = narrow(rows, query);'));
+    const field = expanded.slice(expanded.indexOf('<Field'), expanded.indexOf('/>'));
+    // The search field is drawn with the list, but the keyboard waits for the owner's tap on it.
+    expect(field).toContain('placeholder="почніть вводити назву"');
+    expect(field).not.toContain('autoFocus');
+    expect(picker).not.toContain('autoFocus');
   });
 });

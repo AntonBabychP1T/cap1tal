@@ -4,7 +4,7 @@ import type { CurrentValue } from '../domain/investments';
 import type { Money } from '../domain/money';
 import type { IsoDate, Transaction } from '../domain/transaction';
 import { formatMoney } from './amount-input';
-import { todayIso } from './dates';
+import { calendarLabel, todayIso } from './dates';
 import {
   accumulationReadout,
   goalProgress,
@@ -48,10 +48,11 @@ export interface GoalAccountRow {
   /** The рахунок is archived. It is listed, marked, and still counted. */
   readonly archived: boolean;
   /**
-   * «поточна вартість на 2026-08-28» — set only where the внесок **is** an інвестиційний рахунок's
-   * поточна вартість, so the owner can see the розрахунковий баланс was not what was counted.
+   * «28 серпня», read as «поточна вартість на 28 серпня» — set only where the внесок **is** an
+   * інвестиційний рахунок's поточна вартість, so the owner can see the розрахунковий баланс was not
+   * what was counted. The year is named only when it is not this one.
    */
-  readonly valueAsOf: IsoDate | null;
+  readonly valueAsOf: string | null;
 }
 
 export type GoalScreenModel =
@@ -114,7 +115,7 @@ export function goalScreenModel(input: {
         part.converted && part.inGoalCurrency ? `≈ ${formatMoney(part.inGoalCurrency)}` : null,
       rateUnknown: part.inGoalCurrency === null,
       archived: account.archived,
-      valueAsOf: value ? value.asOf : null,
+      valueAsOf: value ? calendarLabel(value.asOf, input.now) : null,
     };
   });
 

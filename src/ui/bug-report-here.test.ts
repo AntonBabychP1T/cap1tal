@@ -17,6 +17,7 @@ import {
   isActivating,
   keepCapture,
   sheetCaptureOf,
+  sheetHoldsEdits,
   submitHere,
   sweepCaptures,
   type SheetCapture,
@@ -563,5 +564,20 @@ describe('a hand-over that cannot happen still leaves the репорт stored', 
 
   it('the two sentences are different, so the owner can tell the two cases apart', () => {
     expect(HAND_OVER_UNAVAILABLE).not.toBe(handOverFailed('щось'));
+  });
+});
+
+/** app-shell, "A form with unsaved edits asks before «назад» discards it" — the репорт sheet. */
+describe('sheetHoldsEdits', () => {
+  it('Scenario: The back gesture is the same as cancelling — an untouched sheet closes at once', () => {
+    expect(sheetHoldsEdits(EMPTY_SHEET, false)).toBe(false);
+  });
+
+  it('Scenario: An edited form asks first — a typed line', () => {
+    expect(sheetHoldsEdits({ ...EMPTY_SHEET, happened: 'кнопка не тиснеться' }, false)).toBe(true);
+  });
+
+  it('a sheet whose репорт is already stored has nothing left to discard', () => {
+    expect(sheetHoldsEdits({ ...EMPTY_SHEET, happened: 'кнопка не тиснеться' }, true)).toBe(false);
   });
 });

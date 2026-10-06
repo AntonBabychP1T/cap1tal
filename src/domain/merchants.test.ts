@@ -74,6 +74,23 @@ describe('merchantIndex', () => {
     });
   });
 
+  it('Scenario: A написання inside another word recognises nothing', () => {
+    const index = merchantIndex([named('kolo', 'Коло', ['коло'])]);
+    // «навколо» holds «коло», inside the word.
+    expect(index.recognise('НАВКОЛО маркет')).toBeUndefined();
+    expect(index.recognise('НАВКОЛО коло')?.name).toBe('Коло');
+  });
+
+  it('Scenario: A написання after punctuation begins a word', () => {
+    const index = merchantIndex([named('megogo', 'Megogo', ['megogo'])]);
+    expect(index.recognise('WFP*MEGOGO.NET')?.name).toBe('Megogo');
+  });
+
+  it('Scenario: A написання that starts with punctuation is recognised wherever it occurs', () => {
+    const index = merchantIndex([named('megogo', 'Megogo', ['*megogo'])]);
+    expect(index.recognise('WFP*MEGOGO.NET')?.name).toBe('Megogo');
+  });
+
   it('Scenario: Both scripts are recognised when both are written', () => {
     const index = merchantIndex([named('atb', 'АТБ', ['атб', 'atb'])]);
     expect(index.recognise('АТБ 12')?.merchantId).toBe('atb');
@@ -150,6 +167,42 @@ describe('proposeMerchant', () => {
     expect(proposeMerchant('PAYMENT UKLON')).toEqual({ name: 'Uklon', spelling: 'uklon' });
   });
 
+  it('Scenario: A transliterated service word is skipped', () => {
+    expect(proposeMerchant('Oplata poslug MEGOGO 1234')).toEqual({ name: 'Megogo', spelling: 'megogo' });
+  });
+
+  it("Scenario: A payment processor's prefix is skipped", () => {
+    expect(proposeMerchant('LIQPAY*Blahodiyna Orha')).toEqual({
+      name: 'Blahodiyna Orha',
+      spelling: 'blahodiyna orha',
+    });
+  });
+
+  it('Scenario: A processor prefix written with a space before the star is skipped', () => {
+    expect(proposeMerchant('GOOGLE *YouTube Premium')).toEqual({
+      name: 'YouTube Premium',
+      spelling: 'youtube premium',
+    });
+  });
+
+  it("Scenario: Spaces after a processor's star are skipped too", () => {
+    expect(proposeMerchant('GOOGLE * YouTube Premium')).toEqual({
+      name: 'YouTube Premium',
+      spelling: 'youtube premium',
+    });
+  });
+
+  it('A SumUp prefix is a processor prefix too', () => {
+    expect(proposeMerchant('SUMUP *Kavarnia Lviv')).toEqual({
+      name: 'Kavarnia Lviv',
+      spelling: 'kavarnia lviv',
+    });
+  });
+
+  it('Scenario: A star after a name that is not a processor is not a prefix', () => {
+    expect(proposeMerchant('Uklon *trip')).toEqual({ name: 'Uklon', spelling: 'uklon' });
+  });
+
   it('Scenario: An опис that starts with no letter proposes the whole of itself', () => {
     expect(proposeMerchant('7-Eleven Kyiv')).toEqual({ name: '7-Eleven Kyiv', spelling: '7-eleven kyiv' });
   });
@@ -160,6 +213,16 @@ describe('proposeMerchant', () => {
 
   it('Scenario: A longer service word alone is not cut down to a shorter one', () => {
     expect(proposeMerchant('Оплата послуг')).toEqual({ name: 'Оплата послуг', spelling: 'оплата послуг' });
+  });
+
+  it('Scenario: A transliterated service word alone proposes itself too', () => {
+    expect(proposeMerchant('Oplata poslug')).toEqual({ name: 'Oplata poslug', spelling: 'oplata poslug' });
+  });
+
+  it('A processor prefix is skipped after a service word, and kept when nothing follows its star', () => {
+    expect(proposeMerchant('Oplata WFP*MEGOGO.NET')?.spelling).toBe('megogo');
+    expect(proposeMerchant('LIQPAY*')?.spelling).toBe('liqpay');
+    expect(proposeMerchant('Spysannya: Pokupka')?.spelling).toBe('pokupka');
   });
 
   it('Scenario: The spacing the bank wrote is kept', () => {
@@ -189,7 +252,21 @@ describe('proposeMerchant', () => {
     const alphabet = fc.constantFrom(
       ...'абвгґдеєжзиіїйклмнопрстуфхцчшщьюяАБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯabcxyzABCXYZ0123456789 -*.,\'"«»/'.split(''),
     );
-    const prefix = fc.constantFrom('', 'Оплата послуг ', 'ОПЛАТА ', 'PAYMENT ', 'Покупка: ', 'pos*');
+    const prefix = fc.constantFrom(
+      '',
+      'Оплата послуг ',
+      'ОПЛАТА ',
+      'PAYMENT ',
+      'Покупка: ',
+      'pos*',
+      'Oplata poslug ',
+      'SPYSANNYA ',
+      'LIQPAY*',
+      'GOOGLE *',
+      'GOOGLE * ',
+      'Oplata WFP*',
+      'SUMUP *',
+    );
     fc.assert(
       fc.property(prefix, fc.array(alphabet, { maxLength: 40 }), (lead, chars) => {
         const description = lead + chars.join('');

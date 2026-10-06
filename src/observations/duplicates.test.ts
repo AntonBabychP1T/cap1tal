@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { money } from '../domain/money';
-import { FEES_CATEGORY_ID, type Transaction } from '../domain/transaction';
+import { FEES_CATEGORY_ID, type Expense, type Transaction } from '../domain/transaction';
 import { possibleDuplicates } from './duplicates';
 import { pairKey } from './observation';
 import { ledgerBuilder } from './test-fixtures';
@@ -12,10 +12,17 @@ const b = ledgerBuilder();
 const coffee = (id: string, date: string, description?: string, accountId = 'black') =>
   b.expense(date, 'coffee', 12500, { id, accountId, ...(description ? { description } : {}) });
 
-const of = (rows: Transaction[], month = '2026-10', answered: ReadonlySet<string> = new Set()) =>
-  possibleDuplicates(ledgerOf(rows, TODAY), month, answered);
-const pairs = (rows: Transaction[], month?: string, answered?: ReadonlySet<string>) =>
-  of(rows, month, answered).map((o) => [o.first.id, o.second.id]);
+const withMcc = (t: Expense, mcc: number): Expense => ({ ...t, mcc });
+
+const of = (
+  rows: Transaction[],
+  month = '2026-10',
+  answered: ReadonlySet<string> = new Set(),
+  linked: ReadonlySet<string> = new Set(),
+) => possibleDuplicates(ledgerOf(rows, TODAY), month, answered, linked);
+const pairs = (rows: Transaction[], month?: string, answered?: ReadonlySet<string>, linked?: ReadonlySet<string>) =>
+  of(rows, month, answered, linked).map((o) => [o.first.id, o.second.id]);
+const LINKED = new Set(['black']);
 
 describe('a можливий дубль', () => {
   it('Scenario: A транзакція recorded by hand and a bank record of the same coffee', () => {
@@ -48,7 +55,42 @@ describe('a можливий дубль', () => {
   });
 
   it('Scenario: Two identical bank records are two purchases', () => {
-    expect(pairs([coffee('a', '2026-10-03', 'Aroma Kava'), coffee('b', '2026-10-03', 'AROMA  kava ')])).toEqual([]);
+    const rows = [withMcc(coffee('a', '2026-10-03', 'Aroma Kava'), 5814), withMcc(coffee('b', '2026-10-03', 'AROMA  kava '), 5814)];
+    expect(pairs(rows, '2026-10', new Set(), LINKED)).toEqual([]);
+    // Either test alone already reads them as the bank's own records.
+    expect(pairs(rows)).toEqual([]);
+  });
+
+  it('Scenario: The same опис entered twice by hand is a дубль', () => {
+    const rows = [
+      b.expense('2026-10-05', 'groceries', 25000, { id: 'one', accountId: 'wallet', description: 'Silpo' }),
+      b.expense('2026-10-05', 'groceries', 25000, { id: 'two', accountId: 'wallet', description: 'Silpo' }),
+    ];
+    expect(pairs(rows, '2026-10', new Set(), LINKED)).toEqual([['one', 'two']]);
+  });
+
+  it('Scenario: Two equal сповіщення on an unlinked рахунок are asked about', () => {
+    const rows = [
+      b.expense('2026-10-03', 'coffee', 7500, { id: 'first', accountId: 'privat', description: 'Aroma Kava' }),
+      b.expense('2026-10-03', 'coffee', 7500, { id: 'second', accountId: 'privat', description: 'Aroma Kava' }),
+    ];
+    expect(pairs(rows, '2026-10', new Set(), LINKED)).toEqual([['first', 'second']]);
+    // «Не дубль» removes it for good.
+    expect(pairs(rows, '2026-10', new Set([pairKey('second', 'first')]), LINKED)).toEqual([]);
+  });
+
+  it('Scenario: Equal описи on a linked рахунок are not asked about', () => {
+    expect(pairs([coffee('a', '2026-10-03', 'кава'), coffee('b', '2026-10-03', 'кава')], '2026-10', new Set(), LINKED)).toEqual(
+      [],
+    );
+  });
+
+  it("Scenario: A hand record and the bank's record of one purchase with one опис are not asked about", () => {
+    const rows = [
+      b.expense('2026-10-05', 'groceries', 25000, { id: 'hand', description: 'Сільпо' }),
+      withMcc(b.expense('2026-10-05', 'groceries', 25000, { id: 'bank', description: 'Сільпо' }), 5411),
+    ];
+    expect(pairs(rows, '2026-10', new Set(), LINKED)).toEqual([]);
   });
 
   it('Scenario: Two days apart is not a дубль', () => {

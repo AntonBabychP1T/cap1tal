@@ -17,6 +17,7 @@ import {
 import { formatMoney, parseAmount } from './amount-input';
 import { calendarLabel, parseTypedDate, todayIso } from './dates';
 import { categoryLabel, sourceLabel, transactionTypeLabel } from './labels';
+import { sameFields } from './same-fields';
 import { accountNameOf } from './transaction-line';
 import { Refusal } from '../domain/refusal';
 
@@ -83,6 +84,21 @@ export interface EntryDraft {
    * is — never typed: the form has no field for it, so a транзакція recorded by hand carries none.
    */
   readonly mcc?: number;
+}
+
+/**
+ * Whether the entry form or the editing of a транзакція holds anything the owner changed since it
+ * opened — what «назад» asks «Відкинути зміни?» about (app-shell, "A form with unsaved edits asks
+ * before «назад» discards it"). Each screen passes its own field object as it stands and as it
+ * opened, the strings as typed: a сума typed and erased again is no change. A коригування opens no
+ * form at all (`undefined`), and there is nothing to discard.
+ */
+export function entryHoldsEdits<T extends object>(
+  current: T | undefined,
+  opened: T | undefined,
+): boolean {
+  if (current === undefined || opened === undefined) return false;
+  return !sameFields(current, opened);
 }
 
 /**

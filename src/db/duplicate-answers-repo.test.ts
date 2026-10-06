@@ -89,6 +89,7 @@ describe('duplicate-answers-repo', () => {
         transactions: transactions.listAll(),
         categories: [],
         answers: answers.list(),
+        linkedAccountIds: new Set(),
       }).flatMap((o) => (o.kind === 'possible-duplicate' ? [`${o.first.id}+${o.second.id}`] : []));
     answers.answer('a', 'b', answeredAt);
     expect(stated()).toEqual(['b+c', 'a+c']);
@@ -101,6 +102,34 @@ describe('duplicate-answers-repo', () => {
     expect(stated()).toEqual(['a+c']);
     expect(transactions.get('a')).toEqual(coffee('a', '2026-10-03', 'Aroma Kava'));
     expect(transactions.get('c')).toEqual(coffee('c', '2026-10-04'));
+  });
+
+  it('Scenario: «Не дубль» given by mistake is undone', () => {
+    const answers = duplicateAnswersRepo(storage.db);
+    const transactions = transactionsRepo(storage.db);
+    const stated = () =>
+      observationsOf({
+        month: '2026-10',
+        today: '2026-10-10',
+        transactions: transactions.listAll(),
+        categories: [],
+        answers: answers.list(),
+        linkedAccountIds: new Set(),
+      }).flatMap((o) => (o.kind === 'possible-duplicate' ? [`${o.first.id}+${o.second.id}`] : []));
+    const before = stated();
+    answers.answer('b', 'a', answeredAt);
+    answers.answer('a', 'c', answeredAt);
+
+    // Undone from either side of the pair, as it was answered.
+    answers.forget('b', 'a');
+
+    expect(answers.answered('a', 'b')).toBeUndefined();
+    expect(answers.list()).toEqual([{ first: 'a', second: 'c', answeredAt }]);
+    expect(stated()).toEqual(before.filter((pair) => pair !== 'a+c'));
+    expect(stated()).toContain('a+b');
+    // Forgetting a pair never answered changes nothing.
+    answers.forget('b', 'c');
+    expect(answers.list()).toEqual([{ first: 'a', second: 'c', answeredAt }]);
   });
 
   it('A транзакція is not answered as a дубль of itself', () => {

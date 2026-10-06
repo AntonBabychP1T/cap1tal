@@ -6,7 +6,7 @@ import { needsOwner, type OwnerSituation, type SyncAttempt } from '../monobank/a
 import type { MonobankRate } from '../monobank/currency';
 import { accountTotals, approximateTotals, totalsLine, wholeMoney } from './account-totals';
 import { byCurrency } from './amount-input';
-import { freshnessLabel } from './dates';
+import { calendarLabel, dateOfEpochMs, freshnessLabel } from './dates';
 import { plural, transactionCount } from './labels';
 import { syncedCountLine } from './monobank-screen';
 import { monthInLabel } from './months';
@@ -78,7 +78,8 @@ export interface HomeAlerts {
   /**
    * The actionable monobank row, when monobank needs the owner: what happened, and that it opens
    * the monobank screen. `null` the rest of the time, which is nearly always — a failed run over
-   * fresh data puts nothing here (`needsOwner`).
+   * fresh data puts nothing here (`needsOwner`). With рахунки linked and no token it is the
+   * `bank-unheard` item instead (`bankUnheardRow`): not a failed run but no run at all.
    */
   readonly failureRow: string | null;
 }
@@ -96,6 +97,21 @@ const ATTENTION_WORDS: Readonly<Record<OwnerSituation, string>> = {
   'token-rejected': 'monobank відхилив токен — оновіть його',
   'not-refreshed': 'Дані monobank не оновлюються',
 };
+
+/**
+ * The `bank-unheard` attention item (main-screen, "A linked bank without a token is stated under
+ * the header"): рахунки are linked, no token is kept, so nothing is read — said with how many and
+ * since when. The дата is the oldest completed sync among the linked рахунки that ever synced
+ * (`syncCoverage`'s `oldestSyncedMs`), so one that never synced does not hide the others'; with none
+ * synced there is no дата to name. «дані 2 рахунків» — the genitive, which «дані» takes for every
+ * number: «1 рахунку», «21 рахунку», «9 рахунків».
+ */
+function bankUnheardRow(linked: number, oldestSyncedAtMs: number | undefined, now: Date): string {
+  const whose = `дані ${linked} ${plural(linked, 'рахунку', 'рахунків', 'рахунків')}`;
+  return oldestSyncedAtMs === undefined
+    ? `Немає токена monobank — ${whose} ще не синхронізовано`
+    : `Немає токена monobank — ${whose} не оновлюються з ${calendarLabel(dateOfEpochMs(oldestSyncedAtMs), now)}`;
+}
 
 /** The monobank line on Головний: how fresh the bank data is, and nothing else. */
 export interface HomeMonobank {
@@ -192,6 +208,11 @@ export function homeViewModel(input: {
     readonly synced: number;
     /** The oldest of those moments — present only when every linked рахунок has one. */
     readonly oldestCompletedAtMs?: number;
+    /**
+     * The oldest of those moments among the рахунки that have one — `syncCoverage`'s
+     * `oldestSyncedMs`, present whenever any has synced. Read only by the no-token row.
+     */
+    readonly oldestSyncedAtMs?: number;
     readonly syncing: boolean;
     readonly attempt?: SyncAttempt;
   };
@@ -228,7 +249,14 @@ export function homeViewModel(input: {
   const monobank: HomeMonobank | null = connected
     ? { freshness: freshnessOf(bank, input.now) }
     : null;
-  const failureRow = situation === undefined ? null : ATTENTION_WORDS[situation];
+  // Linked and no token: not a failed run but no run at all, so `needsOwner` is not asked (and the
+  // background task does not notify about it). The row says so; no freshness line is drawn.
+  const unheard = bank !== undefined && !bank.configured && bank.linked > 0;
+  const failureRow = unheard
+    ? bankUnheardRow(bank.linked, bank.oldestSyncedAtMs, input.now)
+    : situation === undefined
+      ? null
+      : ATTENTION_WORDS[situation];
 
   return {
     month: input.month,

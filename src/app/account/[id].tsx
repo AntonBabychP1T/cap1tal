@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { ChangingFigure } from '@/components/motion';
-import { Action, Choices, DateField, Field, Picker } from '@/components/form';
+import { Action, Chip, Choices, DateField, Field, Picker } from '@/components/form';
 import {
   Card,
   Fab,
@@ -43,7 +43,12 @@ import {
   type AccountDraft,
 } from '@/ui/account-form';
 import { mergeConfirmation, mergeTargets } from '@/ui/account-merge';
-import { accountMovements, reconcileTyped, shownMovements } from '@/ui/account-movements';
+import {
+  accountMovements,
+  reconcileHoldsEdits,
+  reconcileTyped,
+  shownMovements,
+} from '@/ui/account-movements';
 import { todayIso } from '@/ui/dates';
 import { failureAlert, refusalAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
@@ -153,17 +158,23 @@ export default function AccountMovementsScreen() {
   const [draft, setDraft] = useState<AccountDraft | undefined>();
   /** What the owner counted, as typed. Only ever read by «Звірити». */
   const [actual, setActual] = useState('');
-  /** Whether the «Звірити» form is open. The phone's «назад» closes it before leaving. */
+  /**
+   * Whether the «Звірити» form is open. The phone's «назад» closes it before leaving — after
+   * «Відкинути зміни?» when a фактичний залишок is typed (app-shell).
+   */
   const [reconciling, setReconciling] = useState(false);
   const closeReconcile = useCallback(() => {
     setActual('');
     setReconciling(false);
   }, []);
-  useCloseOnBack(reconciling, closeReconcile);
+  const reconcileDirty = reconciling && reconcileHoldsEdits(actual);
+  useCloseOnBack(reconciling, closeReconcile, reconcileDirty);
 
   /**
    * «Обʼєднати з іншим рахунком»: whether the picker of рахунки to fold this one into is shown, and
-   * whether its full list is open — «назад» closes the list first, then the picker.
+   * whether its full list is open — «назад» closes the list first, then the picker. It never asks
+   * «Відкинути зміни?»: the picker keeps no choice (a pick goes straight to the confirmation), so
+   * there is nothing typed for «назад» to discard (app-shell).
    */
   const [merging, setMerging] = useState(false);
   const [mergeListOpen, setMergeListOpen] = useState(false);
@@ -366,7 +377,7 @@ export default function AccountMovementsScreen() {
           iconTone={line.iconTone}
           marked={line.uncategorised}
           title={side.title}
-          titleTone={line.overLimit ? 'textDanger' : undefined}
+          overLimit={line.overLimit}
           subtitle={side.subtitle}
           description={line.descriptionShown}
           amount={side.amount}
@@ -450,6 +461,18 @@ export default function AccountMovementsScreen() {
                 hint={`${a.currency} — скільки насправді на рахунку`}
                 autoFocus
               />
+              {/* «Як у банку: …» — the баланс банку one tap away; the tap fills the field exactly
+                  as typing would, so the form holds an edit afterwards (accounts-screen, "The
+                  bank's balance is one tap away"). */}
+              {movements.bankBalanceOffer ? (
+                <View style={styles.offer}>
+                  <Chip
+                    label={movements.bankBalanceOffer.label}
+                    picked={false}
+                    onPress={() => setActual(movements.bankBalanceOffer?.fill ?? '')}
+                  />
+                </View>
+              ) : null}
               <Action title="Звірити" onPress={confirmReconcile} />
               <Action
                 variant="secondary"
@@ -595,6 +618,8 @@ const styles = StyleSheet.create({
   form: { gap: Spacing.three },
   actions: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.one },
   action: { flex: 1 },
+  // A row, so the chip is as wide as its words rather than the card.
+  offer: { flexDirection: 'row' },
   line: {
     flexDirection: 'row',
     justifyContent: 'space-between',

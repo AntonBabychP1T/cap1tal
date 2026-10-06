@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { foldCase } from './fold';
+import { NO_MERCHANTS } from './merchants';
 import { TEMPLATE_GROUPS, TEMPLATE_VERSION, templateTargetOf } from './rule-template';
+import { resolveCategory, templateRules } from './rules';
 import {
   CORRECTION_CATEGORY_ID,
   FEES_CATEGORY_ID,
@@ -108,6 +110,17 @@ describe('the шаблон категоризації', () => {
     expect(transport.merchants).toContain('bolt');
     expect(delivery.merchants).toContain('bolt food');
     expect('bolt food'.length).toBeGreaterThan('bolt'.length);
+  });
+
+  it('Scenario: A шаблон fragment inside a word still matches', () => {
+    const coffee = TEMPLATE_GROUPS.find((g) => g.id === 'coffee')!;
+    expect(coffee.merchants).toContain('kava');
+    expect(coffee.defaultCategoryId).toBe('coffee');
+    const rules = templateRules(new Map(TEMPLATE_GROUPS.map((g) => [g.id, g.defaultCategoryId])));
+    expect(rules.every((r) => r.match === 'substring')).toBe(true);
+    expect(resolveCategory({ rules: [], templateRules: rules, merchants: NO_MERCHANTS }, { description: 'AROMAKAVA 12' })).toBe(
+      'coffee',
+    );
   });
 
   it('Both spellings of one merchant are covered — «uklon» and «уклон» are both Транспорт', () => {

@@ -3,11 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { account } from '../domain/account';
 import type { Commitment } from '../domain/commitments';
 import { isRefusal } from '../domain/refusal';
+import { CORRECTION_CATEGORY_ID, FEES_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import {
   COMMITMENT_FIELD_LABELS,
   FIRST_DUE_HINT,
   PERIODICITY_CHOICES,
   commitmentAccountChoices,
+  commitmentAccountRows,
+  commitmentCategoryRows,
   commitmentDraftOf,
   commitmentDraftProblems,
   commitmentFromDraft,
@@ -16,6 +19,7 @@ import {
   newCommitmentDraft,
   type CommitmentDraft,
 } from './commitment-form';
+import { allOffer, narrow, shortlist } from './shortlist';
 
 const TODAY = '2026-10-02';
 const black = account({ id: 'black', name: 'mono black', kind: 'spending', currency: 'UAH' });
@@ -43,6 +47,52 @@ describe('commitments-screen — the form', () => {
 
   it('offers every unarchived рахунок, of any currency', () => {
     expect(commitmentAccountChoices(accounts).map((a) => a.id)).toEqual(['black', 'usd']);
+    // Each wears its currency, as in the entry form, so a search for «USD» finds the USD one.
+    expect(commitmentAccountRows(accounts)).toEqual([
+      { id: 'black', name: 'mono black · UAH' },
+      { id: 'usd', name: 'mono USD · USD' },
+    ]);
+    expect(narrow(commitmentAccountRows(accounts), 'usd').map((r) => r.id)).toEqual(['usd']);
+  });
+
+  it('Scenario: The pickers offer five and the rest behind one offer', () => {
+    const nine = Array.from({ length: 9 }, (_, i) =>
+      account({ id: `a${i}`, name: `Рахунок ${i + 1}`, kind: 'spending', currency: i === 0 ? 'USD' : 'UAH' }),
+    );
+    const own = Array.from({ length: 27 }, (_, i) => ({ id: `c${i}`, name: `Категорія ${i + 1}`, archived: false }));
+    const categories = [
+      ...own,
+      { id: UNCATEGORISED_CATEGORY_ID, name: 'Без категорії', archived: false },
+      { id: FEES_CATEGORY_ID, name: 'Комісія', archived: false },
+      { id: CORRECTION_CATEGORY_ID, name: 'Коригування', archived: false },
+      { id: 'gone', name: 'Стара категорія', archived: true },
+    ];
+    const draft = newCommitmentDraft(TODAY, commitmentAccountChoices([...nine, old]));
+
+    const accountRows = commitmentAccountRows([...nine, old]);
+    const shownAccounts = shortlist(accountRows, { recentIds: [], selectedId: draft.debitAccountId });
+    expect(shownAccounts).toHaveLength(5);
+    expect(allOffer(accountRows, 'accounts')).toBe('Всі рахунки (9)');
+    expect(narrow(accountRows, '')).toHaveLength(9);
+    expect(narrow(accountRows, 'рахунок 9').map((r) => r.id)).toEqual(['a8']);
+
+    const categoryRows = commitmentCategoryRows(categories);
+    const shownCategories = shortlist(categoryRows, { recentIds: [], selectedId: draft.categoryId });
+    expect(shownCategories).toHaveLength(5);
+    expect(allOffer(categoryRows, 'categories')).toBe('Всі категорії (28)');
+    // «Без категорії» once — as having none — and never «Комісія» or «Коригування».
+    const names = (rows: readonly { name: string }[]) => rows.map((r) => r.name);
+    for (const list of [shownCategories, narrow(categoryRows, '')]) {
+      expect(names(list).filter((name) => name === 'Без категорії')).toHaveLength(1);
+      expect(names(list)).not.toContain('Комісія');
+      expect(names(list)).not.toContain('Коригування');
+    }
+    expect(categoryRows.find((r) => r.name === 'Без категорії')?.id).toBe('');
+    expect(categoryRows.map((r) => r.id)).not.toContain(UNCATEGORISED_CATEGORY_ID);
+    expect(narrow(categoryRows, 'коміс')).toEqual([]);
+    // The last reached for come first; the short list stays five.
+    const recent = shortlist(categoryRows, { recentIds: ['c26', FEES_CATEGORY_ID], selectedId: '' });
+    expect(recent.map((r) => r.id)).toEqual(['c26', '', 'c0', 'c9', 'c10']);
   });
 
   it('Scenario: A USD card makes a USD сума', () => {

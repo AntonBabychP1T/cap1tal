@@ -322,18 +322,21 @@ export function barGeometry(values: readonly (number | undefined)[], scale?: Val
 /**
  * Which months are named under a chart of `count` months (net-worth-screen, "Every month is named
  * and its direction readable without colour"): every one up to `maxLabels`, beyond that a regular
- * interval that always includes the first and the last — the current — month.
+ * interval that always includes the first and the `current` month — the last one, unless
+ * «Прогноз» months follow it, which the interval then carries on into.
  */
-export function monthTickLabels(count: number, maxLabels: number): number[] {
+export function monthTickLabels(count: number, maxLabels: number, current = count - 1): number[] {
   if (count <= maxLabels) {
     return Array.from({ length: count }, (_, i) => i);
   }
-  const step = Math.ceil((count - 1) / (maxLabels - 1));
+  const step = Math.ceil((count - 1) / (Math.max(maxLabels, 2) - 1));
   const indexes: number[] = [];
-  for (let i = 0; i < count - 1; i += step) indexes.push(i);
-  // The current month always; a regular label right before it gives way rather than crowd it.
-  if (count - 1 - indexes.at(-1)! < Math.ceil(step / 2)) indexes.pop();
-  indexes.push(count - 1);
+  for (let i = 0; i < current; i += step) indexes.push(i);
+  // The current month always; a regular label right before it gives way rather than crowd it —
+  // never the first month, though.
+  if (indexes.length > 1 && current - indexes.at(-1)! < Math.ceil(step / 2)) indexes.pop();
+  indexes.push(current);
+  for (let i = current + step; i < count; i += step) indexes.push(i);
   return indexes;
 }
 

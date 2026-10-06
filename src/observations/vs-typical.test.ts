@@ -57,8 +57,10 @@ describe('a категорія of a finished month against its типова су
   });
 
   it('Scenario: A категорія absent this month is stated as all of it less', () => {
+    // The fact is stated: no Оренда in September against its типова сума. That it is said as an
+    // absence, with no percentage, is the sentence's work (src/ui/observations.test.ts).
     const [stated] = about('rent', history({ rent: 1500000 }, { food: 100000 }));
-    expect(stated).toMatchObject({ amount: money(0, 'UAH'), typical: money(1500000, 'UAH'), changePercent: -100 });
+    expect(stated).toMatchObject({ kind: 'category-vs-typical', amount: money(0, 'UAH'), typical: money(1500000, 'UAH') });
   });
 
   it('Scenario: A large percentage of a small сума is not noticeable', () => {

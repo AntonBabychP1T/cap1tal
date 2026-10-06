@@ -6,8 +6,8 @@ import {
 } from '../domain/installments';
 import { money } from '../domain/money';
 import type { IsoDate } from '../domain/transaction';
-import { shortCalendarLabel, todayIso } from './dates';
-import { formatHryvnia } from './receipt-screen';
+import { formatMoney } from './amount-input';
+import { calendarLabel, todayIso } from './dates';
 
 /**
  * One розстрочка's screen, with none of its JSX (installments-screen, "One розстрочка shows its
@@ -29,11 +29,11 @@ export interface PartRow {
   readonly number: number;
   /** «Платіж 5». */
   readonly title: string;
-  /** «5 жовт. · 1 000,00 ₴». */
+  /** «5 жовтня · 1 000,00 UAH». */
   readonly scheduled: string;
   /** «сплачено раніше», «очікується», «списання не знайдено», … */
   readonly state: string;
-  /** For a linked платіж, its списання: «списання 5 жовт. · 1 000,00 ₴». */
+  /** For a linked платіж, its списання: «списання 5 жовтня · 1 000,00 UAH». */
   readonly debit?: string;
   readonly verbs: readonly PartVerb[];
   /** Whether the row is a warning — списання не знайдено. */
@@ -49,21 +49,21 @@ export interface LinkedDebit {
 
 export interface InstallmentDetail {
   readonly name: string;
-  /** «Повна сума 10 000,00 ₴». */
+  /** «Повна сума 10 000,00 UAH». */
   readonly total: string;
-  /** «1 000,00 ₴ на місяць», with «останній 550,00 ₴» when the last differs. */
+  /** «1 000,00 UAH на місяць», with «останній 550,00 UAH» when the last differs. */
   readonly part: string;
   readonly account: string;
   readonly category?: string;
   /** «4 з 10». */
   readonly progress: string;
-  /** «Залишок 6 000,00 ₴». */
+  /** «Залишок 6 000,00 UAH». */
   readonly remaining: string;
   readonly closed: boolean;
   readonly parts: readonly PartRow[];
 }
 
-const uah = (amount: number) => formatHryvnia(money(amount, 'UAH'));
+const uah = (amount: number) => formatMoney(money(amount, 'UAH'));
 
 function stateOf(part: InstallmentPart): string {
   switch (part.state) {
@@ -118,9 +118,9 @@ export function installmentDetail(input: {
       return {
         number: part.number,
         title: `Платіж ${part.number}`,
-        scheduled: `${shortCalendarLabel(part.due, now)} · ${uah(part.amount)}`,
+        scheduled: `${calendarLabel(part.due, now)} · ${uah(part.amount)}`,
         state: stateOf(part),
-        ...(debit ? { debit: `списання ${shortCalendarLabel(debit.date, now)} · ${uah(debit.amount)}` } : {}),
+        ...(debit ? { debit: `списання ${calendarLabel(debit.date, now)} · ${uah(debit.amount)}` } : {}),
         verbs: verbsOf(part),
         missed: part.state === 'notFound',
       };
@@ -144,7 +144,7 @@ export function deleteInstallmentConfirmation(name: string): { readonly title: s
 /** A candidate «Обрати списання» lists. */
 export interface DebitChoiceRow {
   readonly id: string;
-  /** «6 жовт. · 1 000,50 ₴ · СІЛЬПО». */
+  /** «6 жовтня · 1 000,50 UAH · СІЛЬПО». */
   readonly label: string;
 }
 
@@ -154,7 +154,7 @@ export function debitChoiceRows(
 ): DebitChoiceRow[] {
   return choices.map((choice) => ({
     id: choice.id,
-    label: [shortCalendarLabel(choice.date, now), uah(choice.amount), choice.description]
+    label: [calendarLabel(choice.date, now), uah(choice.amount), choice.description]
       .filter((part) => part !== undefined && part !== '')
       .join(' · '),
   }));

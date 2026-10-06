@@ -21,8 +21,6 @@ import {
 } from './commitment-detail';
 import { commitmentList } from './commitments-screen';
 
-const NBSP = ' ';
-
 const internet: Commitment = {
   id: 'c-internet',
   name: 'Інтернет',
@@ -62,12 +60,12 @@ describe('commitments-screen — one зобов\'язання', () => {
       marks: [{ commitmentId: internet.id, number: 2, kind: 'paid' }],
     };
     const model = detailOf(internet, facts, new Date(2026, 11, 8, 12), new Map([['t-oct', { date: '2026-10-05', amount: 30_000 }]]));
-    expect(model.amount).toBe(`300,00${NBSP}₴ щомісяця`);
+    expect(model.amount).toBe(`300,00 UAH щомісяця`);
     expect(model.dues.map((d) => [d.date, d.amount, d.state, d.debit])).toEqual([
-      ['5 січ. 2027', `300,00${NBSP}₴`, 'очікується', undefined],
-      ['5 груд.', `300,00${NBSP}₴`, 'очікується', undefined],
-      ['5 лист.', `300,00${NBSP}₴`, 'позначено сплаченим', undefined],
-      ['5 жовт.', `300,00${NBSP}₴`, 'сплачено', `списання 5 жовт. · 300,00${NBSP}₴`],
+      ['5 січня 2027', `300,00 UAH`, 'очікується', undefined],
+      ['5 грудня', `300,00 UAH`, 'очікується', undefined],
+      ['5 листопада', `300,00 UAH`, 'позначено сплаченим', undefined],
+      ['5 жовтня', `300,00 UAH`, 'сплачено', `списання 5 жовтня · 300,00 UAH`],
     ]);
     expect(model.dues.map((d) => d.verbs)).toEqual([
       ['pick', 'mark', 'skip'],
@@ -95,7 +93,7 @@ describe('commitments-screen — one зобов\'язання', () => {
     const model = detailOf(stopped, NO_COMMITMENT_FACTS, now);
     expect(stoppingVerb(model.stopped)).toBe('Відновити');
     expect(stoppingVerb(false)).toBe('Припинити');
-    expect(model.dues.map((d) => d.date)).toEqual(['15 жовт.']);
+    expect(model.dues.map((d) => d.date)).toEqual(['15 жовтня']);
     const list = commitmentList([stopped, internet], NO_COMMITMENT_FACTS, now);
     expect(list.active.map((r) => r.name)).toEqual(['Інтернет']);
     expect(list.stopped.map((r) => r.name)).toEqual(['Netflix']);
@@ -120,7 +118,7 @@ describe('commitments-screen — one зобов\'язання', () => {
     };
     const model = detailOf(netflix, facts, new Date(2026, 9, 20, 12), new Map([['t-oct', { date: '2026-10-15', amount: 34_900 }]]));
     expect(model.newAmount).toEqual({
-      message: `Останнє списання — 349,00${NBSP}₴, а сума зобовʼязання — 299,00${NBSP}₴.`,
+      message: `Останнє списання — 349,00 UAH, а сума зобовʼязання — 299,00 UAH.`,
       amount: 34_900,
     });
     expect(UPDATE_AMOUNT).toBe('Оновити суму');
@@ -183,8 +181,8 @@ describe('commitments-screen — «Обрати списання» and «Оно�
 
     const rows = commitmentChoiceRows(repo.choices(internet.id, 1), 'UAH', now);
     expect(rows).toEqual([
-      { id: 'near', label: `12 жовт. · 320,00${NBSP}₴ · Укртелеком` },
-      { id: 'edge', label: `15 жовт. · 70,00${NBSP}₴` },
+      { id: 'near', label: `12 жовтня · 320,00 UAH · Укртелеком` },
+      { id: 'edge', label: `15 жовтня · 70,00 UAH` },
     ]);
     repo.link(internet.id, 1, rows[0]!.id);
     expect(shownDues(internet, repo.facts(), '2026-10-13')[0]).toMatchObject({ state: 'paid', transactionId: 'near' });

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MotionView, useSheetMotion } from './motion';
@@ -8,6 +8,7 @@ import { ThemedView } from './themed-view';
 
 import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { answerBackPress } from '@/ui/back-gesture';
 
 /**
  * The bottom sheet: something asked over the screen the owner is on, rather than a screen pushed
@@ -31,6 +32,7 @@ export function Sheet({
   onExited,
   children,
   footer,
+  isDirty = false,
 }: {
   open: boolean;
   /** Every sheet names itself. A panel that slid up unlabelled is a panel that has to be guessed. */
@@ -45,9 +47,16 @@ export function Sheet({
   children: React.ReactNode;
   /** Pinned under the body — «Зберегти», «Обрати». Outside the scroll, so it is always reachable. */
   footer?: React.ReactNode;
+  /**
+   * The form inside holds edits: the phone's back gesture asks «Відкинути зміни?» before it
+   * dismisses (app-shell). The `Modal` takes that press itself, so `useCloseOnBack` never hears it
+   * and the sheet asks the same `backGesture` through `answerBackPress`. The backdrop is untouched.
+   */
+  isDirty?: boolean;
 }) {
   const theme = useTheme();
   const motion = useSheetMotion({ open, onDismiss: onClose, onExited });
+  const requestClose = () => answerBackPress(isDirty, motion.dismiss, (dialog) => Alert.alert(...dialog));
   // What the sheet showed while open, kept for the way out — adjusted during render, since it is
   // derived from props and not a subscription.
   const [kept, setKept] = useState({ title, children, footer });
@@ -61,7 +70,7 @@ export function Sheet({
       visible={motion.visible}
       transparent
       animationType="none"
-      onRequestClose={motion.dismiss}>
+      onRequestClose={requestClose}>
       {/* The backdrop dismisses. It is a `Pressable` rather than a tap on the sheet's parent so
           a tap that lands on the sheet itself never closes it by falling through. Its feedback is
           the sheet closing. */}

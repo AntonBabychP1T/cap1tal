@@ -1,6 +1,6 @@
 import type { Href } from 'expo-router';
 
-import { foldCase } from '../domain/fold';
+import { foldCase, occursAtWordStart } from '../domain/fold';
 import {
   foldSpelling,
   merchantNameKey,
@@ -13,6 +13,7 @@ import type { Transaction } from '../domain/transaction';
 import type { SweepCounts } from '../db/rules-repo';
 import { byName, plural, transactionCount } from './labels';
 import { sweepSaid, sweepStep } from './list-management';
+import { sameFields } from './same-fields';
 
 /**
  * What the «Продавці» section of Налаштування shows and decides (merchants-screen capability,
@@ -33,10 +34,23 @@ export interface NamelessGroup {
 }
 
 /**
+ * How an опис that names a person or a банка rather than a shop begins, folded (merchants-screen,
+ * "«Без продавця» leads with the описи that matter most"; design D8). **[PROPOSED]** list.
+ */
+export const PERSON_PREFIXES: readonly string[] = ['від:', 'переказ на картку', 'переказ з картки', 'поповнення «'];
+
+/** Whether an опис names a person or a банка: it is not offered as a продавець waiting for a name. */
+function namesAPerson(description: string): boolean {
+  const folded = foldCase(description.trim());
+  return PERSON_PREFIXES.some((prefix) => folded.startsWith(prefix));
+}
+
+/**
  * The витрати and повернення whose опис no продавець recognises, grouped by the написання the
  * proposal gives that опис: «АТБ-Маркет 1234» and «АТБ-Маркет 5678» are one row for «атб». Most
  * транзакції first; a tie goes to the group whose latest транзакція is the most recent. A дохід, a
- * переказ and a коригування are not listed: the list is about who the owner paid.
+ * переказ and a коригування are not listed: the list is about who the owner paid. Nor is an опис
+ * that names a person or a банка (`PERSON_PREFIXES`); its own editing still offers naming.
  *
  * `transactions` come newest first — `storedHistory`'s order, the latest listing's (date, then
  * recording moment, then id) — so the first транзакція of a group seen is its latest, and its
@@ -49,7 +63,7 @@ export function namelessGroups(
   const groups = new Map<string, { description: string; count: number; latest: number }>();
   transactions.forEach((t, position) => {
     if (t.type !== 'expense' && t.type !== 'refund') return;
-    if (!t.description || index.recognise(t.description) !== undefined) return;
+    if (!t.description || namesAPerson(t.description) || index.recognise(t.description) !== undefined) return;
     const spelling = proposeMerchant(t.description)?.spelling;
     if (spelling === undefined) return;
     const group = groups.get(spelling);
@@ -129,6 +143,31 @@ export function namingFormFor(
   return { description, name: proposed.name, spelling: proposed.spelling };
 }
 
+/**
+ * Whether the naming form holds anything the owner changed from what it opened on — its назва or
+ * its написання (app-shell, "A form with unsaved edits asks before «назад» discards it"). The опис
+ * is not the owner's to change. A closed form (`undefined`) holds nothing.
+ */
+export function namingHoldsEdits(
+  opened: NamingForm | undefined,
+  typed: { readonly name: string; readonly spelling: string },
+): boolean {
+  if (opened === undefined) return false;
+  return !sameFields(typed, { name: opened.name, spelling: opened.spelling });
+}
+
+/**
+ * Whether a продавець's screen holds an edit not yet stored: a назва changed and not renamed to, or
+ * a написання typed and not added. Measured against the продавець as stored, so a rename that went
+ * through is no longer an edit.
+ */
+export function merchantHoldsEdits(
+  typed: { readonly name: string; readonly added: string },
+  merchant: Merchant,
+): boolean {
+  return !sameFields(typed, { name: merchant.name, added: '' });
+}
+
 /** The refusals the form shows, each beside the field it concerns. */
 export interface NamingErrors {
   readonly name?: string;
@@ -167,7 +206,7 @@ export function namingErrors(
     const holder = merchants.find((m) => m.spellings.some((s) => s.spelling === spelling));
     if (holder) {
       errors.spelling = `Це написання вже має «${holder.name}»`;
-    } else if (!foldCase(form.description).includes(spelling)) {
+    } else if (!occursAtWordStart(foldCase(form.description), spelling)) {
       errors.spelling = 'Написання має бути частиною опису';
     }
   }
