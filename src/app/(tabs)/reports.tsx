@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Defs, LinearGradient, Rect, Stop, Svg } from 'react-native-svg';
 
 import { FillColumn, Swap, TabFade, Tap } from '@/components/motion';
@@ -36,6 +36,7 @@ import {
   reportsHistory,
   reportsSelection,
   type ReportsViewModel,
+  stripLabel,
 } from '@/ui/reports-screen';
 
 import { Spacing, type ThemeColor } from '@/constants/theme';
@@ -386,6 +387,7 @@ function Column({
 }) {
   const theme = useTheme();
   const measure = useContext(MeasureColumn);
+  const { fontScale } = useWindowDimensions();
   return (
     <Tap
       onPress={onPick}
@@ -411,7 +413,7 @@ function Column({
           styles.columnLabel,
           selected ? { backgroundColor: theme.accentSurface } : null,
         ]}>
-        {label}
+        {stripLabel(label, fontScale)}
       </ThemedText>
     </Tap>
   );
@@ -877,6 +879,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.half,
     borderRadius: Spacing.half,
     overflow: 'hidden',
+    textAlign: 'center',
   },
   columnBars: { flexDirection: 'row', alignItems: 'stretch', gap: Spacing.half },
   baseline: { position: 'absolute', left: 0, right: 0, borderTopWidth: StyleSheet.hairlineWidth },

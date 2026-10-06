@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { ThemedSwitch } from '@/components/form';
 import { Appear, ChangingFigure, Tap } from '@/components/motion';
@@ -34,6 +34,8 @@ export default function NetWorthScreen() {
   const [selectedMonth, setSelectedMonth] = useState<Month>();
   const [chartWidth, setChartWidth] = useState<number>();
   const [explanationOpen, setExplanationOpen] = useState(false);
+  // Month names under the chart widen with the system text size (net-worth-screen).
+  const { fontScale } = useWindowDimensions();
 
   const [stored] = useReloadOnFocus(
     useCallback(() => {
@@ -81,8 +83,9 @@ export default function NetWorthScreen() {
         now: new Date(),
         today: stored.today,
         ...(chartWidth ? { chartWidth } : {}),
+        fontScale,
       }),
-    [chartWidth, forecastOn, selectedMonth, selection.period, selection.view, series, stored.accounts, stored.rates, stored.today],
+    [chartWidth, fontScale, forecastOn, selectedMonth, selection.period, selection.view, series, stored.accounts, stored.rates, stored.today],
   );
 
   const colorOf = (direction: ChangeDirection | undefined) =>

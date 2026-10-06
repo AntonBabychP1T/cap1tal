@@ -9,7 +9,7 @@ import { money } from '../domain/money';
 import type { HistoryPeriod } from '../domain/net-worth';
 import { expenseByDefault, type Correction, type Income, type Transaction } from '../domain/transaction';
 import { OVERFLOW_REASON, TOTAL_HISTORY, netWorthSeries } from './net-worth';
-import { MIN_LABEL_DP, netWorthScreenModel, type HistoryView, type ScreenChoices } from './net-worth-screen';
+import { MIN_LABEL_DP, netWorthScreenModel, tickBoxes, type HistoryView, type ScreenChoices } from './net-worth-screen';
 import { netWorthInputFrom } from './net-worth-test-fixtures';
 
 /** The thousands separator every amount uses (U+00A0). */
@@ -58,6 +58,7 @@ function screen(
     requestedHistory?: string;
     currentValues?: ReadonlyMap<string, CurrentValue>;
     chartWidth?: number;
+    fontScale?: number;
   },
   choices: Partial<ScreenChoices> = {},
 ) {
@@ -72,6 +73,7 @@ function screen(
     now,
     today,
     ...(input.chartWidth === undefined ? {} : { chartWidth: input.chartWidth }),
+    ...(input.fontScale === undefined ? {} : { fontScale: input.fontScale }),
   });
 }
 
@@ -136,6 +138,52 @@ describe('Every month is named and its direction readable without colour', () =>
     // No two of them overlap.
     const gaps = indexes.slice(1).map((index, i) => (index - indexes[i]!) * slot);
     expect(Math.min(...gaps)).toBeGreaterThanOrEqual(MIN_LABEL_DP);
+  });
+
+  it('Scenario: The forecast does not crowd the names — at 200 % text', () => {
+    // The same «1 рік» with «Прогноз» on a 360 dp phone, with the system text size at 200 %: every
+    // name is twice as wide, so the drawn names stand at least twice `MIN_LABEL_DP` apart, and the
+    // first and the last stay inside the chart.
+    const width = 288;
+    const fontScale = 2;
+    const model = screen(
+      {
+        accounts: [uah('card', 1000000, '2025-11-01')],
+        transactions: monthly('2025-11', [10000, 12000, 14000, 16000, 18000, 20000, 15000, 15000, 9000, 11000, 13000, 0]),
+        chartWidth: width,
+        fontScale,
+      },
+      { period: 12 as HistoryPeriod, view: 'bars', forecast: true },
+    );
+    const chart = model.chart!;
+    const slots = chart.values.length + chart.forecast!.values.length;
+    const room = MIN_LABEL_DP * fontScale;
+    expect(chart.fontScale).toBe(fontScale);
+    const indexes = chart.ticks.map((t) => t.index);
+    expect(indexes[0]).toBe(0);
+    expect(indexes).toContain(11);
+    expect(chart.ticks.filter((t) => t.current).map((t) => t.index)).toEqual([11]);
+    const boxes = tickBoxes(indexes, slots, width, fontScale);
+    // Each name owns `room` around its drawn centre, inside the chart, and no two of those meet.
+    for (const box of boxes) {
+      expect(box.center - room / 2).toBeGreaterThanOrEqual(0);
+      expect(box.center + room / 2).toBeLessThanOrEqual(width);
+      expect(box.left).toBeGreaterThanOrEqual(0);
+      expect(box.left + box.width).toBeLessThanOrEqual(width);
+      expect(box.width).toBeGreaterThanOrEqual(room);
+    }
+    const gaps = boxes.slice(1).map((box, i) => box.center - boxes[i]!.center);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(room);
+  });
+
+  it('Scenario: The forecast does not crowd the names — the edge names stay inside the chart', () => {
+    // At 100 % the first and the last name lean inward instead of hanging over the chart's edges.
+    const width = 288;
+    const boxes = tickBoxes([0, 3, 6, 9, 11, 14, 17], 18, width, 1);
+    expect(boxes[0]).toMatchObject({ left: 0, align: 'left' });
+    expect(boxes.at(-1)).toMatchObject({ align: 'right' });
+    expect(boxes.at(-1)!.left + boxes.at(-1)!.width).toBe(width);
+    expect(boxes[2]).toMatchObject({ align: 'center', center: 6.5 * 16 });
   });
 
   it('Scenario: The forecast does not crowd the names — the current month is named once', () => {

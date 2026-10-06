@@ -4,6 +4,7 @@ import {
   ScrollView,
   StyleSheet,
   Switch,
+  Text,
   TextInput,
   View,
   type KeyboardTypeOptions,
@@ -403,18 +404,35 @@ export function SearchBar({
         },
       ]}>
       <Icon name="search" size={18} color={focused ? 'accent' : 'textMuted'} />
-      <TextInput
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor={theme.textMuted}
-        autoFocus={autoFocus}
-        autoCorrect={false}
-        returnKeyType="search"
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        style={[styles.searchInput, { color: theme.text }]}
-      />
+      {/* The hint is drawn by a text of its own under the empty field, not as the field's
+          placeholder: a placeholder stays on the field's one line and is cut at its edge at a
+          large text size, while this wraps and the field grows with it (transaction-search,
+          "The hint fits"). The field keeps its place in the tree, so typing never remounts it. */}
+      <View style={styles.searchBox}>
+        {value.length === 0 ? (
+          <Text
+            style={[styles.searchText, { color: theme.textMuted }]}
+            importantForAccessibility="no"
+            accessibilityElementsHidden>
+            {placeholder}
+          </Text>
+        ) : null}
+        <TextInput
+          value={value}
+          onChangeText={onChange}
+          accessibilityLabel={placeholder}
+          autoFocus={autoFocus}
+          autoCorrect={false}
+          returnKeyType="search"
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          style={[
+            styles.searchText,
+            { color: theme.text },
+            value.length === 0 ? styles.searchOverHint : null,
+          ]}
+        />
+      </View>
       {value.length > 0 ? (
         <Tap
           accessibilityRole="button"
@@ -856,7 +874,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     minHeight: TouchTarget,
   },
-  searchInput: { flex: 1, minWidth: 0, fontSize: 17, paddingVertical: Spacing.two },
+  searchBox: { flex: 1, minWidth: 0 },
+  // The field and its hint share one box, so the caret sits on the hint's first line.
+  searchText: { fontSize: 17, paddingVertical: Spacing.two, paddingHorizontal: 0 },
+  searchOverHint: { ...StyleSheet.absoluteFill, textAlignVertical: 'top' },
   searchClear: { lineHeight: 24 },
   action: {
     paddingHorizontal: Spacing.four,

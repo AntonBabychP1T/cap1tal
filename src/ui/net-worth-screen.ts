@@ -115,6 +115,8 @@ export interface ScreenChart {
   /** The level (or the зміна, for «Зміна») per month; `undefined` where it is unknown or none. */
   readonly values: readonly (number | undefined)[];
   readonly ticks: readonly MonthTick[];
+  /** The system text size the names were spaced for; `tickBoxes` draws them with it. */
+  readonly fontScale: number;
   readonly selectedIndex: number;
   /** The months a рахунок entered in, by index: each carries a «нові рахунки» mark. */
   readonly entryIndexes: readonly number[];
@@ -257,17 +259,63 @@ export const MIN_LABEL_DP = 24;
 /** The chart's width before it has been measured — `NetWorthChart`'s own first guess. */
 export const FALLBACK_CHART_WIDTH = 320;
 
+/** The box one month name is drawn in at 100 % text; wide enough that no name is ever shortened. */
+export const LABEL_BOX_DP = 40;
+
+/** Where one month name is drawn under the chart, in dp from the chart's left edge. */
+export interface TickBox {
+  /** The middle of the `MIN_LABEL_DP × fontScale` the name owns; the spacing rule is on these. */
+  readonly center: number;
+  readonly left: number;
+  readonly width: number;
+  /** An edge name leans inward rather than hang over the chart's edge. */
+  readonly align: 'left' | 'center' | 'right';
+  /** The space between the box's aligned side and the name, for a name that leans inward. */
+  readonly inset: number;
+}
+
+/**
+ * The boxes the names at `indexes` are drawn in (net-worth-screen, "Every month is named and its
+ * direction readable without colour"): each name owns `MIN_LABEL_DP × fontScale` around its centre,
+ * which is its month's column unless that would put the name past the chart's edge; there it leans
+ * inward, so the first and the last name are never clipped.
+ */
+export function tickBoxes(
+  indexes: readonly number[],
+  slots: number,
+  chartWidth: number,
+  fontScale: number,
+): TickBox[] {
+  const scale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  const slot = chartWidth / Math.max(slots, 1);
+  const room = Math.min(MIN_LABEL_DP * scale, chartWidth);
+  const box = Math.min(LABEL_BOX_DP * scale, chartWidth);
+  return indexes.map((index) => {
+    const x = (index + 0.5) * slot;
+    const center = Math.min(Math.max(x, room / 2), chartWidth - room / 2);
+    if (x - box / 2 < 0) {
+      return { center, left: 0, width: box, align: 'left', inset: center - room / 2 };
+    }
+    if (x + box / 2 > chartWidth) {
+      return { center, left: chartWidth - box, width: box, align: 'right', inset: chartWidth - center - room / 2 };
+    }
+    return { center, left: x - box / 2, width: box, align: 'center', inset: 0 };
+  });
+}
+
 /**
  * The months named under a chart of `count` slots whose `current` month may be followed by
  * «Прогноз» (net-worth-screen, "Every month is named and its direction readable without colour"):
- * at most as many as `chartWidth` has room for, and when even those crowd one another, fewer, until
- * no two names are closer than `MIN_LABEL_DP`.
+ * at most as many as `chartWidth` has room for at the text size `fontScale`, and when even those
+ * crowd one another, fewer, until no two drawn names are closer than `MIN_LABEL_DP × fontScale`.
  */
-function namedMonths(count: number, current: number, chartWidth: number): number[] {
-  const slot = chartWidth / Math.max(count, 1);
-  const roomy = (indexes: readonly number[]) =>
-    indexes.every((index, i) => i === 0 || (index - indexes[i - 1]!) * slot >= MIN_LABEL_DP);
-  for (let cap = Math.min(MAX_MONTH_LABELS, Math.floor(chartWidth / MIN_LABEL_DP)); cap >= 2; cap -= 1) {
+function namedMonths(count: number, current: number, chartWidth: number, fontScale: number): number[] {
+  const room = MIN_LABEL_DP * fontScale;
+  const roomy = (indexes: readonly number[]) => {
+    const centers = tickBoxes(indexes, count, chartWidth, fontScale).map((box) => box.center);
+    return centers.every((center, i) => i === 0 || center - centers[i - 1]! >= room);
+  };
+  for (let cap = Math.min(MAX_MONTH_LABELS, Math.floor(chartWidth / room)); cap >= 2; cap -= 1) {
     const indexes = monthTickLabels(count, cap, current);
     if (roomy(indexes)) return indexes;
   }
@@ -284,6 +332,8 @@ export function netWorthScreenModel(input: {
   readonly today: IsoDate;
   /** The chart's measured width in dp; `FALLBACK_CHART_WIDTH` until it is known. */
   readonly chartWidth?: number;
+  /** The system text size, 1 at 100 %: month names widen with it. */
+  readonly fontScale?: number;
 }): NetWorthScreenModel {
   const { series, choices, now, today } = input;
   const periods = PERIOD_LABELS.map((p) => ({
@@ -400,7 +450,8 @@ export function netWorthScreenModel(input: {
   // «Прогноз»'s first slot is the current month's own end, after today's bar: a month already named
   // under its recorded bar is not named a second time.
   const named = new Set<Month>();
-  const ticks = namedMonths(slotMonths.length, plotted.length - 1, input.chartWidth ?? FALLBACK_CHART_WIDTH).flatMap(
+  const fontScale = input.fontScale !== undefined && Number.isFinite(input.fontScale) && input.fontScale > 0 ? input.fontScale : 1;
+  const ticks = namedMonths(slotMonths.length, plotted.length - 1, input.chartWidth ?? FALLBACK_CHART_WIDTH, fontScale).flatMap(
     (index) => {
       const month = slotMonths[index]!;
       if (named.has(month)) return [];
@@ -414,6 +465,7 @@ export function netWorthScreenModel(input: {
     months: plotted.map((m) => m.month),
     values,
     ticks,
+    fontScale,
     selectedIndex: plotted.indexOf(selected),
     entryIndexes: plotted.flatMap((m, i) => (m.entered !== 0 ? [i] : [])),
     accessibilityLabel:

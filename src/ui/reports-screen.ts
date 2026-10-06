@@ -310,6 +310,19 @@ export function earlierMonthsCue(offsetX: number): boolean {
   return offsetX > 0;
 }
 
+/** The text size above which a strip's month name stands over its year. */
+export const TWO_LINE_LABEL_SCALE = 1.3;
+
+/**
+ * A column's month as the strip draws it (reports-screen, "Seven months on a narrow phone"): one
+ * line at the default text size; above `TWO_LINE_LABEL_SCALE` the name over its year, so a column
+ * stays narrow enough that the latest month and the marked one are both drawn whole on a 360 dp
+ * phone. Only the drawing changes; TalkBack reads `label` as it is.
+ */
+export function stripLabel(label: string, fontScale: number): string {
+  return Number.isFinite(fontScale) && fontScale > TWO_LINE_LABEL_SCALE ? label.replace(' ', '\n') : label;
+}
+
 /**
  * Which month is spelled out: the one the owner picked, or — until they pick — the newest month of
  * the span that holds a сума of its own in the shown currency. The newest month of the span is the

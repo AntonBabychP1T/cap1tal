@@ -5,7 +5,7 @@ import { Circle, Line, Path, Rect, Svg } from 'react-native-svg';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { barGeometry, forecastGeometry, lineRuns, linePath, scaled, valueScale } from '@/ui/dashboard-charts';
-import { FALLBACK_CHART_WIDTH, type HistoryView, type ScreenChart } from '@/ui/net-worth-screen';
+import { FALLBACK_CHART_WIDTH, tickBoxes, type HistoryView, type ScreenChart } from '@/ui/net-worth-screen';
 import { Tap } from './motion';
 import { ThemedText } from './themed-text';
 
@@ -19,6 +19,8 @@ import { ThemedText } from './themed-text';
  */
 
 const HEIGHT = 160;
+/** The row of month names at 100 % text; it grows with the text size. */
+const TICK_ROW_HEIGHT = 18;
 
 export function NetWorthChart({
   chart,
@@ -52,6 +54,12 @@ export function NetWorthChart({
   const zeroY = y(drawing.geometry.zero);
   const barWidth = Math.max(2, slot * 0.6);
   const xOf = (index: number) => (index + 0.5) * slot;
+  const boxes = tickBoxes(
+    chart.ticks.map((tick) => tick.index),
+    slots,
+    width,
+    chart.fontScale,
+  );
 
   return (
     <View
@@ -176,17 +184,31 @@ export function NetWorthChart({
           ))}
         </View>
       </View>
-      <View style={styles.ticks} importantForAccessibility="no-hide-descendants">
-        {chart.ticks.map((tick) => (
-          <ThemedText
-            key={tick.index}
-            type="caption"
-            themeColor={tick.index === chart.selectedIndex || tick.current ? 'accent' : 'textMuted'}
-            numberOfLines={1}
-            style={[styles.tick, { left: xOf(tick.index) - 20 }]}>
-            {tick.text}
-          </ThemedText>
-        ))}
+      <View
+        style={[styles.ticks, { height: Math.ceil(TICK_ROW_HEIGHT * chart.fontScale) }]}
+        importantForAccessibility="no-hide-descendants">
+        {chart.ticks.map((tick, i) => {
+          const box = boxes[i]!;
+          return (
+            <ThemedText
+              key={tick.index}
+              type="caption"
+              themeColor={tick.index === chart.selectedIndex || tick.current ? 'accent' : 'textMuted'}
+              numberOfLines={1}
+              style={[
+                styles.tick,
+                {
+                  left: box.left,
+                  width: box.width,
+                  textAlign: box.align,
+                  ...(box.align === 'left' ? { paddingLeft: box.inset } : {}),
+                  ...(box.align === 'right' ? { paddingRight: box.inset } : {}),
+                },
+              ]}>
+              {tick.text}
+            </ThemedText>
+          );
+        })}
       </View>
       {chart.entryIndexes.length > 0 || forecast ? (
         <View style={styles.legend} importantForAccessibility="no-hide-descendants">
@@ -237,7 +259,7 @@ function forecastLine(
 
 const styles = StyleSheet.create({
   targets: { flexDirection: 'row' },
-  ticks: { height: 18, marginTop: Spacing.half },
-  tick: { position: 'absolute', width: 40, textAlign: 'center' },
+  ticks: { marginTop: Spacing.half },
+  tick: { position: 'absolute' },
   legend: { flexDirection: 'row', gap: Spacing.two },
 });

@@ -29,6 +29,7 @@ import {
   reportsHistory,
   reportsSelection,
   reportsViewModel,
+  stripLabel,
 } from './reports-screen';
 
 // Pass-through spies on the history derivations, so a test can count how often they run.
@@ -638,6 +639,18 @@ describe('every chart states its scale', () => {
     // Earlier months are said to lie to the left only once the strip is scrolled off its first.
     expect(earlierMonthsCue(0)).toBe(false);
     expect(earlierMonthsCue(48)).toBe(true);
+  });
+
+  it('Scenario: Seven months on a narrow phone — at 200 % text', () => {
+    // At 200 % a one-line «Жов 2026» is wider than half the strip a 360 dp phone leaves beside the
+    // scale, so the marked month and the latest one could not both be whole and the strip opened
+    // with «Жов 2» cut at its edge (QA 2026-10). Above 130 % the name stands over its year, which
+    // halves the column; at the default size it stays on one line.
+    expect(stripLabel('Жов 2026', 2)).toBe('Жов\n2026');
+    expect(stripLabel('Жов 2026', 1.5)).toBe('Жов\n2026');
+    expect(stripLabel('Жов 2026', 1.3)).toBe('Жов 2026');
+    expect(stripLabel('Жов 2026', 1)).toBe('Жов 2026');
+    expect(stripLabel('Жов 2026', Number.NaN)).toBe('Жов 2026');
   });
 
   it('There is no axis where there is no chart', () => {
