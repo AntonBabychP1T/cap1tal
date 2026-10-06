@@ -320,7 +320,9 @@ export default function AnswersScreen() {
             iconTone={line.iconTone}
             marked
             title={line.transferEnds ?? feedTitle(line)}
-            titleLines={line.category === undefined && line.source === undefined ? 2 : 1}
+            // Two lines always: the title is «Без категорії» or «дохід · Без джерела», the very gap the
+            // entry is in the queue for, and at 200 % text one line cut it to «Без кате…».
+            titleLines={2}
             subtitle={queueSubtitle(line, new Date())}
             description={line.descriptionShown}
             amount={line.amount}

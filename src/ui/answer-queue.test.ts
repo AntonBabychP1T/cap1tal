@@ -506,3 +506,11 @@ describe('defects found on the emulator (answer-queue smoke, 2026-10-06)', () =>
     expect(queueSubtitle(labelled, new Date('2026-10-06T12:00:00Z'))).toBe('гаманець · 2 жовтня');
   });
 });
+
+describe('defects found on the emulator (answer-queue smoke round 2, 2026-10-06)', () => {
+  it('at 200 % text a queue row keeps the label that names its gap — the title may wrap to two lines', () => {
+    const screen = readFileSync(new URL('../app/answers.tsx', import.meta.url), 'utf8');
+    const row = screen.slice(screen.indexOf('<TransactionRow'));
+    expect(row.slice(0, row.indexOf('/>'))).toContain('titleLines={2}');
+  });
+});
