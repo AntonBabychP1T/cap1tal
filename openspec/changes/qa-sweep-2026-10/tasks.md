@@ -262,7 +262,7 @@ green on the tree that holds it. Scenario names below are quoted from this chang
 
 ## 12. Emulator (after §13 and the commit — CLAUDE.md step 6)
 
-- [ ] 12.1 Run the `smoke-runner` subagent at 100 % and 200 % text, light appearance, on the owner's
+- [x] 12.1 Run the `smoke-runner` subagent at 100 % and 200 % text, light appearance, on the owner's
       restored data with a DB backup taken first: status bar on Головний; the no-token row; a
       переказ title at 200 %; «Обрати джерело» from the feed; «Всі категорії» without the keyboard;
       «Відкинути зміни?» on the rule form, the ціль form and the зобов'язання form; «Статок» with
@@ -271,3 +271,24 @@ green on the tree that holds it. Scenario names below are quoted from this chang
       stepper. Also check main-screen's «The entry form opens on the рахунок last recorded on by
       hand» after a cold start, which the QA pass could not confirm, and watch «Місяць»'s first open
       for QA 2.25. Record verdicts and screenshots here.
+
+      **Recorded 2026-10-06** (Pixel_10_Pro, light, owner's data, DB backed up first and left
+      unchanged; screenshots in `.cache/android/smoke/qa-sweep-2026-10/`, not committed):
+      - 100 %: PASS — status bar on Головний; the no-token row («… 9 рахунків не оновлюються з 21
+        вересня»); «Обрати джерело» from the feed; the suggested «Підписки» chip and «Всі
+        категорії» without the keyboard; «Відкинути зміни?» on the rule, ціль and зобов'язання
+        forms (untouched forms close at once); the зобов'язання pickers (5 + «Всі … (N)», no
+        «Коригування»/«Комісія», «Без категорії» once); the AI-аналіз month stepper; the
+        коригування screen and its delete question; «Не дубль» → «Скасувати» (серпень 2026);
+        «Закрий вересень 2026» → Транзакції narrowed to вересень and «Без джерела»; the підсумок's
+        «з них коригування» and its narrowed «Без джерела» row; «Ще 5» on Місяць; the entry form on
+        the last hand рахунок after a cold start; Місяць not blank after a cold start (QA 2.25 not
+        seen). «До дати» is the shared date control (typed field + Вчора/Сьогодні/Календар).
+      - 200 %: PASS — переказ title («platinum ·…» / «→ РЕЗЕРВ»); «Як у банку: 7,22 EUR» under
+        «Звірити»; the no-token row's date; the AI-аналіз stepper; Місяць after a cold start.
+      - Defects found and fixed on main, each re-checked on the emulator: the no-token row cut its
+        date and the keyboard covered the quick picker's chips while searching (fa23b0e); at 200 %
+        «Статок» month names touched and clipped, the «Звіти» strip cut its newest label, and the
+        search hint lost «сума» (9ae1104).
+      - Not run: the quick категорія picker's search on a «Без категорії» витрата after fa23b0e (no
+        such витрата on the device; the same Picker was checked through «Обрати джерело»).
