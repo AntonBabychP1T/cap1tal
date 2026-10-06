@@ -137,9 +137,34 @@ install() {
   adb install -r -d "$APK"
 }
 
+# Which tree the dev server on $METRO_PORT is serving — its working directory, which for
+# `expo start` is the project root. Empty when nothing is listening or lsof cannot say.
+metro_root() {
+  local pid
+  pid=$(lsof -ti "tcp:$METRO_PORT" -sTCP:LISTEN 2>/dev/null | head -1)
+  [ -n "$pid" ] || return 0
+  lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
+}
+
 metro() {
   if curl -s "http://localhost:$METRO_PORT/status" 2>/dev/null | grep -q packager; then
-    say "Metro already running on $METRO_PORT"
+    # Whose Metro it is decides which JavaScript the device runs, and the APK says nothing
+    # about it: a debug build fetches its bundle from the port, whatever tree is behind it.
+    # `auto-work` keeps up to three worktree lanes plus the main tree, all pointed at one
+    # emulator, so the first lane to claim 8081 owns it — and every later `up` used to attach
+    # in silence, install its own APK and then run the other lane's code. That is not a subtle
+    # failure to sit through: the app crashes on a native module this lane never added, or
+    # behaves like a change this lane cannot see, and a smoke test reads it as a defect here.
+    # Both sides resolved, because lsof answers with the physical path and $ROOT need not be one.
+    local root; root=$(metro_root)
+    if [ -n "$root" ] && [ "$(cd "$root" 2>/dev/null && pwd -P)" = "$(pwd -P)" ]; then
+      say "Metro already running on $METRO_PORT"
+    else
+      die "port $METRO_PORT is served by ${root:-another process}, not this tree ($ROOT).
+    The device would run that tree's JavaScript over this tree's APK. Stop it there
+    (scripts/android.sh stop), or give this lane a port of its own:
+    RCT_METRO_PORT=$((METRO_PORT + 1)) scripts/android.sh up"
+    fi
   else
     say "starting Metro (log: $RUN_DIR/metro.log)"
     npx expo start --port "$METRO_PORT" >"$RUN_DIR/metro.log" 2>&1 &
@@ -151,7 +176,9 @@ metro() {
       [ "$waited" -lt 90 ] || { tail -20 "$RUN_DIR/metro.log"; die "Metro did not come up in ${waited}s"; }
     done
   fi
-  # The debug build fetches its bundle from localhost on the device.
+  # The debug build fetches its bundle from localhost on the device. Re-asserted on every `up`,
+  # because this is the mapping another lane's `expo start` redirects when it lands on a
+  # different host port and reverses 8081 onto its own.
   adb reverse "tcp:$METRO_PORT" "tcp:$METRO_PORT" >/dev/null
 }
 

@@ -77,6 +77,17 @@ come straight off the previous screenshot, no ratio to convert.
 
 - The AVD is `Pixel_10_Pro` by default; override with `CAP1TAL_AVD=<name>`. `emulator -list-avds`
   lists what exists. Creating an AVD is the owner's job (Android Studio → Device Manager).
+- **One emulator, several lanes.** A debug APK fetches its bundle from Metro, so whichever tree
+  owns port 8081 decides which JavaScript runs — the installed APK says nothing about it. With
+  `auto-work`'s worktrees plus the main tree all driving one device, `up` used to attach to
+  whatever was already on 8081 and then run *that* tree's code over this tree's APK; the app
+  crashes on a native module this lane never added, or behaves like a change this lane cannot
+  see, and a smoke test reads it as a defect in the code under test. `up` now refuses a dev
+  server rooted in another tree and names it. Give a second lane its own port
+  (`RCT_METRO_PORT=8082 scripts/android.sh up`) rather than sharing one.
+- Drive nothing until the bundle has painted. After `up`, `launch` or `reset` the app shows a
+  black screen while Metro builds and sends the bundle; taps and key events land in it and are
+  lost, which looks exactly like a screen that ignores input. Screenshot until there is a screen.
 - The build is a **debug** APK, so the JS comes from Metro over `adb reverse tcp:8081`: JS edits
   reload without a rebuild. A native/config change cannot arrive that way, and `up` no longer
   trusts the APK on disk — it rebuilds when `package.json`, `app.json`, `app.config.js`,
