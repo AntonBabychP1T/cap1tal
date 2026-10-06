@@ -1213,4 +1213,15 @@ describe('a linked bank without a token', () => {
     // Read where the links are, and passed in whole: the date is the oldest of those that synced.
     expect(main).toContain('oldestSyncedAtMs: coverage.oldestSyncedMs');
   });
+
+  it('Scenario: Twelve days without a token are said — the дата is never cut off', () => {
+    // The emulator (Pixel 10 Pro, 100 % text) cut the row at two lines: «… не оновлюються з 21 …»,
+    // the дата the requirement exists to name never showed. The row wraps as far as its words go.
+    const main = readFileSync(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
+    const at = main.indexOf('{model.alerts.failureRow ? (');
+    const row = main.slice(at, main.indexOf('{model.alerts.failureRow}', at));
+    const label = row.slice(row.lastIndexOf('<ThemedText'));
+    expect(label).toContain('style={styles.attentionLabel}');
+    expect(label).not.toContain('numberOfLines');
+  });
 });

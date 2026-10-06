@@ -510,4 +510,27 @@ describe('the full list of a picker', () => {
     expect(field).not.toContain('autoFocus');
     expect(picker).not.toContain('autoFocus');
   });
+
+  it('Scenario: The full list is read before it is searched — and stays in sight while typed into', () => {
+    // The emulator: with the search field above the chips, the keyboard the field raises covered
+    // every chip and only the field stayed in sight. The quick pickers of the стрічка draw the
+    // chips above the field, so the field sits on the keyboard and what it narrows sits above it.
+    const form = readFileSync(new URL('../components/form.tsx', import.meta.url), 'utf8');
+    const picker = form.slice(form.indexOf('export function Picker('), form.length);
+    expect(picker).toContain('searchBelow?: boolean;');
+    const expanded = picker.slice(picker.indexOf('const narrowed = narrow(rows, query);'));
+    expect(expanded).toContain('{searchBelow ? list : search}');
+    expect(expanded).toContain('{searchBelow ? search : list}');
+    for (const path of ['../app/(tabs)/index.tsx', '../app/transactions.tsx']) {
+      const screen = readFileSync(new URL(path, import.meta.url), 'utf8');
+      for (const gate of [
+        '{line.uncategorised && categorising === line.id ? (',
+        '{line.unsourced && sourcing === line.id ? (',
+      ]) {
+        const from = screen.slice(screen.indexOf(gate));
+        const block = from.slice(0, from.indexOf(') : null}'));
+        expect(block, `${path} ${gate}`).toContain('searchBelow');
+      }
+    }
+  });
 });

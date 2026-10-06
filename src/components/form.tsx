@@ -706,6 +706,7 @@ export function Picker({
   expanded,
   onExpandedChange,
   suggestedId,
+  searchBelow = false,
 }: {
   label: string;
   /** The whole offered list, in the order it already has. What may be picked is decided upstream. */
@@ -721,6 +722,13 @@ export function Picker({
    * «Без категорії» line passes it. Shortlisted first and marked; stored only when tapped.
    */
   suggestedId?: string;
+  /**
+   * Draw the full list's search field under the chips instead of over them. For a picker inline in
+   * a стрічка: the keyboard the field raises sits right under it, so with the chips below they were
+   * all covered and only the field stayed in sight (emulator, qa-sweep-2026-10). Below, the field
+   * rests on the keyboard and what it narrows stays above it while the owner types.
+   */
+  searchBelow?: boolean;
 }) {
   const [query, setQuery] = useState('');
   /**
@@ -767,33 +775,38 @@ export function Picker({
   }
 
   const narrowed = narrow(rows, query);
+  const search = (
+    <Field
+      label={label}
+      value={query}
+      onChangeText={setQuery}
+      autoCapitalize="none"
+      placeholder="почніть вводити назву"
+    />
+  );
+  const list =
+    narrowed.length === 0 ? (
+      <ThemedText type="small" themeColor="textSecondary">
+        {NOTHING_FOUND}
+      </ThemedText>
+    ) : (
+      // The full list opens by fading in, and what is under it moves down with it (motion,
+      // "What opens, closes or leaves moves its neighbours smoothly").
+      <Appear style={styles.choices}>
+        {asChoices(narrowed).map((choice) => (
+          <Chip
+            key={choice.value}
+            label={choice.label}
+            picked={choice.value === selected}
+            onPress={() => choose(choice.value)}
+          />
+        ))}
+      </Appear>
+    );
   return (
     <View style={styles.field}>
-      <Field
-        label={label}
-        value={query}
-        onChangeText={setQuery}
-        autoCapitalize="none"
-        placeholder="почніть вводити назву"
-      />
-      {narrowed.length === 0 ? (
-        <ThemedText type="small" themeColor="textSecondary">
-          {NOTHING_FOUND}
-        </ThemedText>
-      ) : (
-        // The full list opens by fading in, and what is under it moves down with it (motion,
-        // "What opens, closes or leaves moves its neighbours smoothly").
-        <Appear style={styles.choices}>
-          {asChoices(narrowed).map((choice) => (
-            <Chip
-              key={choice.value}
-              label={choice.label}
-              picked={choice.value === selected}
-              onPress={() => choose(choice.value)}
-            />
-          ))}
-        </Appear>
-      )}
+      {searchBelow ? list : search}
+      {searchBelow ? search : list}
       <View style={styles.offer}>
         <RowAction title={COLLAPSE_LABEL} onPress={collapse} tone="quiet" />
       </View>

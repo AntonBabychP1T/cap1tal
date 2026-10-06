@@ -441,6 +441,7 @@ export default function TransactionsScreen() {
             noun="categories"
             expanded={categoryListOpen}
             onExpandedChange={setCategoryListOpen}
+            searchBelow
           />
         ) : null}
 
@@ -470,6 +471,7 @@ export default function TransactionsScreen() {
             noun="sources"
             expanded={sourceListOpen}
             onExpandedChange={setSourceListOpen}
+            searchBelow
           />
         ) : null}
       </ListRow>

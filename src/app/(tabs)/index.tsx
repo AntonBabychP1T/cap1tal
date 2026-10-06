@@ -947,6 +947,7 @@ function MainScreen() {
                               noun="categories"
                               expanded={categoryListOpen}
                               onExpandedChange={setCategoryListOpen}
+                              searchBelow
                             />
                           </Appear>
                         ) : null}
@@ -978,6 +979,7 @@ function MainScreen() {
                               noun="sources"
                               expanded={sourceListOpen}
                               onExpandedChange={setSourceListOpen}
+                              searchBelow
                             />
                           </Appear>
                         ) : null}
@@ -1184,7 +1186,9 @@ function MainScreen() {
                   onPress={() => router.push('/manage/monobank')}
                   accessibilityRole="button"
                   style={styles.attentionRow}>
-                  <ThemedText numberOfLines={2} style={styles.attentionLabel}>
+                  {/* No line cap: the no-token row ends on its дата, which a two-line cap cut at
+                      100 % text on a Pixel 10 Pro («… не оновлюються з 21 …»). */}
+                  <ThemedText style={styles.attentionLabel}>
                     {model.alerts.failureRow}
                   </ThemedText>
                   <ThemedText type="link" themeColor="accent">
