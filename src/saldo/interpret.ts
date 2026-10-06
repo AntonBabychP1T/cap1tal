@@ -449,6 +449,12 @@ export function interpret(input: {
       continue;
     }
     const ids = [departure.transaction.id, arrival.transaction.id];
+    // The departure's, not the arrival's: the departure is the row that names where the money
+    // went, and the arrival in a Saldo export is the anonymous other half — which is exactly why
+    // it is asked only when the departure says nothing. Resolved once and given to both the
+    // переказ and its «Комісія», so the fee follows the переказ rather than its own blank cell.
+    // The departure is spread last, so it wins whenever it has an опис at all.
+    const опис = { ...описOf(arrival.transaction), ...описOf(departure.transaction) };
     const переказ = built([departure.transaction, arrival.transaction], () =>
       transfer({
         id: `saldo:${ids.join('+')}`,
@@ -459,9 +465,7 @@ export function interpret(input: {
         // still loses exactly what its real leg says.
         left: departure.inTransit.amount,
         arrived: arrival.real.amount,
-        // The departure's, not the arrival's: the departure is the row that names where the money
-        // went, and the arrival in a Saldo export is the anonymous other half.
-        ...описOf(departure.transaction),
+        ...опис,
       }),
     );
     if (!переказ) {
@@ -477,7 +481,7 @@ export function interpret(input: {
         categoryId: FEES_CATEGORY_ID,
         // The same movement, so the same опис: a «Комісія» with none is the one row of an import
         // the owner cannot place afterwards.
-        ...описOf(departure.transaction),
+        ...опис,
       });
       add(комісія, [departure.transaction.id], departure.transaction, 1);
     }

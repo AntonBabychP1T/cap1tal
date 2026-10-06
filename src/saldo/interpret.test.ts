@@ -868,6 +868,41 @@ describe('interpret — the опис Saldo wrote', () => {
     ]);
   });
 
+  it('Scenario: A blank departure takes its arrival’s опис', () => {
+    const described = (rows: FixtureRow[], description: string): FixtureRow[] =>
+      rows.map((row) => ({ ...row, Description: description }));
+    const plan = planFrom([
+      ...described(
+        departure({
+          id: '1',
+          datetime: '2024-10-27T10:00:00.000',
+          source: 'mono black',
+          destination: 'гаманець',
+          amount: '100.00',
+          inTransit: '95.00',
+          fee: '5.00',
+        }),
+        '   ',
+      ),
+      ...described(
+        arrival({
+          id: '2',
+          datetime: '2024-10-27T11:00:00.000',
+          source: 'mono black',
+          destination: 'гаманець',
+          amount: '95.00',
+        }),
+        ' Зарахування ',
+      ),
+    ]);
+    // The комісія follows the переказ, not the departure's own blank cell: otherwise it would be
+    // the one line of the pair with nothing saying which переказ it belongs to.
+    expect(moves(plan)).toMatchObject([
+      { type: 'transfer', description: 'Зарахування' },
+      { type: 'expense', categoryId: FEES_CATEGORY_ID, description: 'Зарахування' },
+    ]);
+  });
+
   it('Scenario: An empty description leaves no опис', () => {
     const plan = planFrom(
       pair({
