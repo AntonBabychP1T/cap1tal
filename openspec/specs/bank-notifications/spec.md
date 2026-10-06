@@ -194,8 +194,10 @@ the чернетка's date, carrying the чернетка's text as the тра�
 the чернетка so it awaits nothing further. A витрата-чернетка SHALL be categorised by the
 owner's правила — and, when no правило matches, by the шаблон категоризації — applied at the
 moment of confirmation to the чернетка's text with no MCC, and SHALL fall back to «Без категорії»
-when neither matches. A дохід-чернетка SHALL create its
-дохід with the джерело «Без джерела». A raw чернетка SHALL NOT confirm without a сума the
+when neither matches. A дохід-чернетка SHALL create its дохід with the джерело the best of the
+owner's правила-джерела gives the чернетка's text at the moment of confirmation, matched with no
+MCC, and with the джерело «Без джерела» when none matches; the шаблон категоризації gives no
+джерело. A raw чернетка SHALL NOT confirm without a сума the
 owner supplies; with one supplied it SHALL confirm as a витрата of that сума in the
 рахунок's currency, categorised the same way, and a raw чернетка holding an original-currency
 reference SHALL pass it to that витрата as its original-currency amount — kept as
@@ -217,9 +219,22 @@ Dismissing a чернетка SHALL create nothing and SHALL settle it the same 
 
 #### Scenario: Confirming a дохід-чернетка keeps «Без джерела»
 
-- **WHEN** a дохід-чернетка of 50000 minor units UAH is confirmed
+- **WHEN** a дохід-чернетка of 50000 minor units UAH whose text no правило-джерело matches is
+  confirmed
 - **THEN** a дохід of 50000 minor units UAH with the джерело «Без джерела» exists, retypeable
   by the owner as ever
+
+#### Scenario: A правило-джерело gives a confirmed дохід its джерело
+
+- **WHEN** the правило-джерело "зарплата → Зарплата" exists and a дохід-чернетка of 3000000 minor
+  units UAH with text "Зарахування: Зарплата ТОВ Ромашка" is confirmed
+- **THEN** a дохід of 3000000 minor units UAH with the джерело «Зарплата» exists
+
+#### Scenario: A правило naming a категорія gives a дохід-чернетка nothing
+
+- **WHEN** only the правило "зарплата → Groceries" exists and a дохід-чернетка with text
+  "Зарплата" is confirmed
+- **THEN** the дохід carries «Без джерела» and no категорія
 
 #### Scenario: A raw чернетка needs the owner's сума
 
@@ -281,9 +296,10 @@ one has no expense category to gain, the other has no сума to trust.
 ### Requirement: Notifications never invent the owner's distinctions
 
 A чернетка SHALL propose, and its confirmation SHALL create, only the default types — витрата
-or дохід «Без джерела» — and the system SHALL NOT infer a переказ, інвестиція, повернення,
-коригування, комісія or дохід «Відсотки» from notification text; the owner retypes the
-created транзакція exactly as with every other imported source.
+or дохід — a дохід carrying «Без джерела» unless one of the owner's own правила-джерела names its
+джерело — and the system SHALL NOT infer a переказ, інвестиція, повернення, коригування, комісія
+or a джерело from notification text on its own; the owner retypes the created транзакція exactly
+as with every other imported source.
 
 #### Scenario: An ATM withdrawal is a витрата until retyped
 
@@ -297,6 +313,12 @@ created транзакція exactly as with every other imported source.
 - **WHEN** a notification whose text carries «повернення» parses
 - **THEN** the movement is money in, the чернетка proposes a дохід «Без джерела», and only
   the owner's retype makes it the повернення the glossary defines
+
+#### Scenario: «Відсотки» only by the owner's правило
+
+- **WHEN** no правило-джерело exists and a дохід-чернетка with text "Нараховані відсотки 12.34" of
+  1234 minor units UAH is confirmed
+- **THEN** the дохід carries «Без джерела», not «Відсотки»
 
 ### Requirement: Captured content stays on the device
 

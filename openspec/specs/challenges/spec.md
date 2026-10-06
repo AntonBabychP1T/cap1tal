@@ -33,8 +33,8 @@ A виклик SHALL never block, warn or scold, and SHALL never be worded as a 
 
 #### Scenario: Закрий місяць counts down from what is there now
 
-- **WHEN** «Закрий 2026-08» is proposed while 2026-08 holds three витрати «Без категорії», and the
-  owner categorises one of them
+- **WHEN** «Закрий серпень 2026» is proposed while серпень 2026 holds three витрати «Без
+  категорії», and the owner categorises one of them
 - **THEN** the progress reads two items remaining, computed from the stored транзакції, and no
   earlier total of three is stored or shown as a denominator
 
@@ -131,13 +131,14 @@ finished where the owner can see it.
 
 #### Scenario: The criterion decides, not the acceptance
 
-- **WHEN** the owner never accepts «Закрий 2026-07» but categorises every «Без категорії» of 2026-07
-  and settles its чернетки
+- **WHEN** the owner never accepts «Закрий липень 2026» but categorises every «Без категорії» of
+  липень 2026 and settles its чернетки
 - **THEN** the виклик is finished and no longer proposed
 
 #### Scenario: Finishing earns only the underlying fact
 
-- **WHEN** an accepted «Закрий 2026-07» is finished and 2026-07 thereby becomes a чистий місяць
+- **WHEN** an accepted «Закрий липень 2026» is finished and липень 2026 thereby becomes a чистий
+  місяць
 - **THEN** «Чистий місяць» is earned for the місяць, and no досягнення is earned for having accepted
   or completed a виклик
 
@@ -179,10 +180,11 @@ The catalogue SHALL hold exactly these виклики, in this order of priority
 
 Each **action** SHALL open the work its виклик names, already shaped: «recording a переказ onto a
 рахунок of вид `savings`» SHALL open the entry form as a **переказ** with a рахунок of that вид
-already chosen where one exists, and «the place where those items are answered» SHALL open already
-narrowed to the місяць in question and to what is left in it — «Без категорії» while any витрата
-or повернення carries it, else «Без джерела» while any дохід carries it; when only чернетки dated in it
-are left, Головний, where чернетки are confirmed or dismissed. An action that merely opens a screen on its own defaults is not
+already chosen where one exists, and «the place where those items are answered» SHALL open the
+queue «Що потребує відповіді» already narrowed to the місяць in question, where every витрата or
+повернення «Без категорії», every дохід «Без джерела» and every чернетка dated in it is answered in
+place; once nothing is left in that місяць, it SHALL open «Транзакції» narrowed to it. An action
+that merely opens a screen on its own defaults is not
 the work the criterion measures.
 
 No виклик SHALL ask the owner to spend, to spend less in a way the app cannot measure, to open the
@@ -203,7 +205,19 @@ app, or to do anything the app cannot verify from the транзакції.
 
 - **WHEN** its action is begun while вересень 2026 holds no витрата «Без категорії» and nine доходи
   «Без джерела»
-- **THEN** «Транзакції» opens narrowed to вересень 2026 and «Без джерела»
+- **THEN** the queue opens narrowed to вересень 2026, holding «Без джерела» with those nine
+
+#### Scenario: Nothing left opens the month's транзакції
+
+- **WHEN** its action is begun after вересень 2026 holds nothing «Без категорії» or «Без джерела»
+  and no чернетка
+- **THEN** «Транзакції» opens narrowed to вересень 2026
+
+#### Scenario: Only чернетки left opens them in the queue
+
+- **WHEN** its action is begun while вересень 2026 holds nothing «Без категорії» or «Без джерела»
+  and one чернетка dated 2026-09-28 of 25000 minor units UAH still waits
+- **THEN** the queue opens narrowed to вересень 2026, holding «Чернетки» with that one
 
 #### Scenario: The action opens the переказ, not a витрата form
 
@@ -252,3 +266,41 @@ device with nothing is told what to do, and a виклик SHALL NOT repeat it.
 - **WHEN** the app is opened on a device holding no транзакція
 - **THEN** no виклик is proposed, and the progress screen states plainly that there is nothing yet
   rather than showing an empty list of виклики
+
+### Requirement: Every виклик sentence names its місяць in its grammatical case
+
+Every sentence a виклик shows — its name, its reason and its criterion — that names a місяць SHALL
+name it as Ukrainian grammar asks at that place, never by pasting in the label the місяць carries as
+a heading («Липень 2026»):
+
+- after «у»/«в», where the sentence says what happened in the місяць, in the locative — «у липні
+  2026»;
+- after a preposition that asks for another case — «у», «в», «до», «з», «від», «після» — never in
+  the heading's form, capitalised or not: «у Липень 2026», «у липень 2026» and «до Липень 2026» are
+  all wrong;
+- in the middle of a sentence, in lower case — «Закрий вересень 2026»;
+- with a capital letter only where the місяць opens its sentence — «Вересень 2026 закрито», «У
+  липні 2026 ліміт…».
+
+This binds every виклик of the catalogue, not one template: a виклик added later SHALL follow it
+without the rule being restated for it.
+
+#### Scenario: The ліміт виклик names the місяць that went over in its case
+
+- **WHEN** «Втримай ліміт “Продукти”» is offered and липень 2026 is the most recent завершений
+  місяць whose витрати in «Продукти» went over its ліміт
+- **THEN** its reason begins «У липні 2026 ліміт «Продукти» перевищено востаннє», and it does not
+  contain «у Липень 2026»
+
+#### Scenario: A місяць that opens its sentence keeps its capital
+
+- **WHEN** «Закрий вересень 2026» is shown after nothing is left without an answer in вересень 2026
+- **THEN** its reason begins «Вересень 2026 закрито»
+
+#### Scenario: No виклик puts a heading's місяць inside a sentence
+
+- **WHEN** every виклик of the catalogue that names a місяць is offered, «Закрий <місяць>» both with
+  something left and with nothing left
+- **THEN** none of their names, reasons or criteria carries a місяць in the heading's form after
+  «у», «в», «до», «з», «від» or «після», and none carries a capitalised місяць anywhere but at
+  the start of a sentence

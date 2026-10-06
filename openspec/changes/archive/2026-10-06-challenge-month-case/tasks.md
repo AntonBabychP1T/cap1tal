@@ -1,7 +1,8 @@
 ## 0. Order
 
-- [ ] 0.1 Before `/opsx:archive`, confirm `qa-sweep-2026-10` is archived first: this change is
+- [x] 0.1 Before `/opsx:archive`, confirm `qa-sweep-2026-10` is archived first: this change is
   branched from it and its code uses the `monthInYearLabel` port that change adds.
+  Confirmed 2026-10-06: archived as `archive/2026-10-06-qa-sweep-2026-10`.
 
 ## 1. The ліміт виклик in its case
 
@@ -21,3 +22,8 @@
 
 - [x] 2.1 Run `npm run verify` and paste the final lines
 - [x] 2.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+
+## 3. Emulator
+
+Not run: the change is a domain sentence covered by `challenges.test.ts`; archived on the owner's
+request (2026-10-06) with the smoke explicitly recorded as not run.

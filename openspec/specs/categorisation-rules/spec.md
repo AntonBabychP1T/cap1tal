@@ -13,11 +13,18 @@ entry form alike. Storing a rule, newly created or edited, also sweeps the store
 
 A rule SHALL hold a merchant criterion, or an MCC (an integer), or both, and exactly one target:
 either one expense category that exists, or one destination рахунок that exists — a
-правило-переказ. A merchant criterion SHALL be exactly one of a merchant pattern (non-empty text)
+правило-переказ — or one джерело that exists — a правило-джерело. A merchant criterion SHALL be
+exactly one of a merchant pattern (non-empty text)
 or a продавець that exists; a rule naming both a pattern and a продавець SHALL be rejected, and so
-SHALL a rule naming a продавець that does not exist. A rule holding both a category and a
-destination рахунок, or neither, SHALL be rejected. A rule with neither criterion SHALL be
-rejected; a rule targeting a category or a рахунок that does not exist SHALL be rejected; an MCC
+SHALL a rule naming a продавець that does not exist. A rule holding more than one of a category, a
+destination рахунок and a джерело, or none of them, SHALL be rejected. A rule with neither
+criterion SHALL be
+rejected; a rule targeting a category, a рахунок or a джерело that does not exist SHALL be
+rejected; «Без джерела» SHALL NOT be a правило-джерело's target, for the reason «Без категорії»
+is not a category rule's: it is the absence of a джерело, the very gap the правило exists to fill.
+A правило-джерело whose джерело is or becomes archived SHALL keep working, as a category rule
+does. A джерело is archived, never deleted — the categories capability offers no deletion — so a
+правило-джерело can never be left naming a джерело that is gone. An MCC
 that is not a whole number SHALL be rejected, since matching compares it for equality against the
 integer the bank sends and anything else is a rule that can never fire. «Коригування» SHALL NOT be
 a rule's target:
@@ -104,15 +111,44 @@ reason.
 - **WHEN** a rule is created targeting «Без категорії»
 - **THEN** creation is rejected and nothing is stored
 
+#### Scenario: A правило-джерело is stored
+
+- **WHEN** the owner creates the rule "зарахування зарплати → Зарплата" naming the джерело «Зарплата»
+- **THEN** the rule exists with merchant pattern "зарахування зарплати", the джерело «Зарплата»,
+  and no category and no destination рахунок
+
+#### Scenario: A rule naming a category and a джерело is rejected
+
+- **WHEN** a rule is created targeting Groceries and the джерело «Зарплата» at once
+- **THEN** creation is rejected and nothing is stored
+
+#### Scenario: «Без джерела» is rejected as a rule's target
+
+- **WHEN** a rule is created naming the джерело «Без джерела»
+- **THEN** creation is rejected and nothing is stored
+
+#### Scenario: A правило-джерело keeps matching into an archived джерело
+
+- **WHEN** the правило-джерело "відсотки → Відсотки" exists and the джерело «Відсотки» is archived
+- **THEN** matching money arriving with the description "Відсотки 12.50 UAH" still returns «Відсотки»
+
+#### Scenario: A правило-джерело to an unknown джерело is rejected
+
+- **WHEN** a rule is created whose джерело id does not exist
+- **THEN** creation is rejected and nothing is stored
+
 ### Requirement: Rules can be created, edited and deleted
 
 The owner SHALL be able to create a rule, change its merchant criterion — a merchant pattern or a
-продавець, either switched for the other — its MCC or its target — a category or a destination
-рахунок, either switched for the other — and delete it. Creating or editing one
+продавець, either switched for the other — its MCC or its target — a category, a destination
+рахунок or a джерело, any switched for another — and delete it. Creating or editing one
 SHALL recategorise the stored витрати in «Без категорії» that the правила now match, as "A stored
-правило recategorises the «Без категорії» витрати it matches" requires; deleting one SHALL NOT
+правило recategorises the «Без категорії» витрати it matches" requires, and SHALL give the stored
+доходи «Без джерела» that the правила-джерела now match their джерело, as "A stored правило-джерело
+gives the доходи «Без джерела» it matches their джерело" requires; deleting one SHALL NOT
 change any stored транзакція, and a витрата a deleted rule had categorised SHALL keep the категорія
-it was given, as a переказ it made SHALL stay a переказ.
+it was given, as a переказ it made SHALL stay a переказ and a дохід it gave a джерело SHALL keep
+that джерело.
 
 #### Scenario: An edited rule carries its new target
 
@@ -136,11 +172,23 @@ it was given, as a переказ it made SHALL stay a переказ.
 - **WHEN** a rule that earlier categorised an imported витрата into Groceries is deleted
 - **THEN** the rule no longer exists and that витрата still carries Groceries
 
+#### Scenario: A rule switched from a category to a джерело
+
+- **WHEN** the owner changes the rule "відсотки → Groceries" to name the джерело «Відсотки» while a дохід
+  «Без джерела» of 1250 minor units UAH carrying "Відсотки за вересень" is stored
+- **THEN** the same rule names «Відсотки» and no category, and that дохід carries «Відсотки»
+
+#### Scenario: A deleted правило-джерело leaves its доходи as they are
+
+- **WHEN** the правило-джерело "відсотки → Відсотки" gave a дохід «Відсотки» and is then deleted
+- **THEN** the rule no longer exists and that дохід still carries «Відсотки»
+
 ### Requirement: Matching is deterministic and most-specific-first
 
-Given a transaction's merchant description, when present its MCC, and the рахунок the money left,
-the system SHALL return the target of the best-matching rule — a category, or a переказ to a
-destination рахунок — or nothing when no rule matches. A merchant
+Given a transaction's merchant description, when present its MCC, whether the money leaves or
+arrives, and the рахунок the money left or arrived at,
+the system SHALL return the target of the best-matching rule — a category, a переказ to a
+destination рахунок, or a джерело — or nothing when no rule matches. A merchant
 pattern matches WHEN it occurs in the description, case-insensitively, **beginning where a word
 begins** — at the start of the description or right after a character that is neither a letter nor
 a digit — wherever in the description that is; a pattern that occurs only inside a word SHALL NOT
@@ -168,6 +216,14 @@ A правило-переказ SHALL NOT match money leaving its own destinatio
 рахунок in another currency than its destination: the first would be a переказ from a рахунок to
 itself, and the second a переказ whose arrived сума nothing states. Such a правило SHALL take no
 part in that match at all, so the best of the remaining rules decides.
+
+Matching SHALL know which way the money moves. For money leaving a рахунок, only the rules naming a
+category and the правила-перекази take part, and a правило-джерело SHALL take no part at all. For
+money arriving — a дохід whose джерело is being decided — only the правила-джерела take part,
+ranked among themselves on this same ladder, and a rule naming a category or a правило-переказ
+SHALL take no part at all; the шаблон категоризації is never consulted for money arriving. A
+правило-джерело therefore never competes with a rule of another kind, and adding one changes no
+match for money leaving.
 
 #### Scenario: A merchant pattern matches case-insensitively inside the description
 
@@ -261,6 +317,24 @@ part in that match at all, so the best of the remaining rules decides.
 - **WHEN** no rule matches a transaction's description and MCC
 - **THEN** matching returns nothing
 
+#### Scenario: Arriving money is matched by правила-джерела alone
+
+- **WHEN** the rules "відсотки → Groceries" and "відсотки → джерело Відсотки" exist, and money arrives with
+  the description "Відсотки за вересень"
+- **THEN** matching returns the джерело «Відсотки»
+
+#### Scenario: Leaving money ignores правила-джерела
+
+- **WHEN** the rules "відсотки → Groceries" and, created later and longer, "відсотки за → джерело Відсотки"
+  exist, and money leaves a card with the description "Відсотки за підписку"
+- **THEN** matching returns Groceries
+
+#### Scenario: The longest правило-джерело wins
+
+- **WHEN** the rules "зарплата → джерело Зарплата" and "зарплата аванс → джерело Аванс" exist and
+  money arrives with the description "Зарплата аванс жовтень"
+- **THEN** matching returns the джерело «Аванс»
+
 ### Requirement: Правила decide the категорія of a витрата recorded by hand
 
 A витрата being recorded by hand SHALL be offered the категорія the owner's правила give its
@@ -325,12 +399,14 @@ an expense категорія, a дохід carries a джерело instead, a 
 When a категорія is set on a stored витрата or повернення that carries an опис, the system SHALL
 offer to remember the decision as a правило whose target is the категорія just set. When a stored
 витрата that carries an опис is retyped into a переказ, the system SHALL likewise offer to remember
-it as a правило-переказ whose destination is the рахунок the money was just said to arrive at. The
+it as a правило-переказ whose destination is the рахунок the money was just said to arrive at.
+When a джерело is set on a stored дохід that carries an опис, the system SHALL likewise offer to
+remember it as a правило-джерело whose target is the джерело just set. The
 offer SHALL arrive with a merchant criterion already proposed from that опис, SHALL let the owner
 change it before it is stored, and SHALL store nothing unless the owner accepts it.
-Declining SHALL leave no правило. The offer SHALL be made only when a категорія is actually set or
-a витрата actually becomes a переказ, so merely opening a транзакція again — or editing any other
-field of it, or editing a переказ that was already one — SHALL offer nothing.
+Declining SHALL leave no правило. The offer SHALL be made only when a категорія or a джерело is
+actually set or a витрата actually becomes a переказ, so merely opening a транзакція again — or
+editing any other field of it, or editing a переказ that was already one — SHALL offer nothing.
 
 When the опис is recognised as a продавець, the proposed criterion SHALL be that продавець, and
 the owner SHALL be able to replace it by the pattern proposed from the опис, editable, before
@@ -353,7 +429,14 @@ same destination — the правило that would be written already exists, un
 carries. Nor SHALL it be made when the категорія being set is «Без категорії»: that is not a
 категорія a правило may target, so the only thing the offer could end in is a refusal. Nor SHALL
 a правило-переказ be offered for a переказ between рахунки in different currencies: such a
-правило would never match it.
+правило would never match it. For a джерело, the offer SHALL NOT be made when the owner's
+правила-джерела already give that опис the джерело being set, nor when the джерело being set is
+«Без джерела».
+
+A дохід whose folded опис begins with «від:» is a payment from a person, and the leading name the
+merchants capability proposes would name every person who ever paid. For such a дохід the proposed
+pattern SHALL be the whole опис, folded and trimmed, so the правило-джерело offered names that one
+sender; the owner may still edit it before accepting.
 
 #### Scenario: Categorising an imported витрата offers the правило
 
@@ -438,10 +521,36 @@ a правило-переказ be offered for a переказ between раху
   matches that опис
 - **THEN** a правило is offered with the merchant pattern "сільпо" and the target Groceries
 
+#### Scenario: Setting a джерело on a дохід offers the правило-джерело
+
+- **WHEN** a дохід of 5000000 minor units UAH carrying the опис "Зарахування зарплати", recognised
+  as no продавець, is given the джерело «Зарплата» and no правило-джерело matches that опис
+- **THEN** a правило-джерело is offered with the merchant pattern the merchants capability proposes
+  from that опис and the джерело «Зарплата», and no категорія
+
 #### Scenario: Setting a джерело on a дохід offers nothing
 
-- **WHEN** the джерело of a дохід carrying the опис "СІЛЬПО 123 Київ" is changed
+- **WHEN** the правило-джерело "від: міхаіл кас'ян → Подарунки" exists and the джерело of a дохід
+  carrying the опис "Від: Міхаіл Кас'ян" is changed to «Подарунки»
+- **THEN** no правило is offered — the правило that would be written already exists
+
+#### Scenario: A payment from a person proposes that person alone
+
+- **WHEN** a дохід of 96000 minor units UAH carrying the опис "Від: Міхаіл Кас'ян" is given the
+  джерело «Подарунки» and no правило-джерело matches it
+- **THEN** a правило-джерело is offered with the merchant pattern "від: міхаіл кас'ян" and the
+  джерело «Подарунки»
+
+#### Scenario: A джерело an existing правило-джерело already gives offers nothing
+
+- **WHEN** the правило-джерело "відсотки → Відсотки" exists and a дохід carrying the опис "Відсотки за
+  вересень" is given «Відсотки»
 - **THEN** no правило is offered
+
+#### Scenario: A дохід put back into «Без джерела» offers nothing
+
+- **WHEN** a дохід carrying the опис "Відсотки за вересень" is put back into «Без джерела»
+- **THEN** no правило is offered and no refusal is shown
 
 #### Scenario: Editing a переказ offers nothing
 
@@ -513,7 +622,9 @@ carrying neither an опис nor an MCC SHALL match nothing and SHALL stay where
 It SHALL touch nothing else. A витрата in any other категорія SHALL be left exactly as it is, a
 повернення SHALL be left as it is whatever its категорія, and a переказ and a коригування SHALL be
 untouched — «Коригування», «Комісія» and every категорія the owner chose are decisions, not gaps. A
-дохід SHALL be untouched except the зустрічний дохід a new переказ absorbs. Every field of a moved
+дохід SHALL be untouched except the зустрічний дохід a new переказ absorbs and a дохід «Без
+джерела» that the same pass gives its джерело, as "A stored правило-джерело gives the доходи «Без
+джерела» it matches their джерело" requires. Every field of a moved
 витрата other than its категорія SHALL be unchanged, its опис and its MCC included.
 
 The категорія or переказ a swept витрата lands on SHALL be the one the whole set of правила — and,
@@ -524,12 +635,14 @@ nothing: a витрата already carrying a категорія is no longer a g
 категорії» would throw away a classification the owner is reading.
 
 Each pass SHALL be recorded in the журнал as one operation carrying how many витрати it examined,
-how many it moved onto a категорія, how many it turned into перекази and how many зустрічні доходи
-those absorbed, and nothing else — the журнал holds no опис, no сума, no назва and no MCC. The count
-examined SHALL be the «Без категорії» витрати the pass considered, not every транзакція stored.
+how many it moved onto a категорія, how many it turned into перекази, how many зустрічні доходи
+those absorbed, how many доходи «Без джерела» it examined and how many of them it gave a джерело,
+and nothing else — the журнал holds no опис, no сума, no назва and no MCC. The counts examined
+SHALL be the «Без категорії» витрати and the «Без джерела» доходи the pass considered, not every
+транзакція stored.
 
 A pass that moved anything SHALL say so where it was triggered, naming how many витрати it
-recategorised and how many it turned into перекази. The owner chose that this happens without being
+recategorised, how many it turned into перекази and how many доходи it gave a джерело. The owner chose that this happens without being
 asked; being told afterwards is what keeps a правило written too broadly findable — the витрати it
 moved no longer carry the «Без категорії» mark, and the журнал holds counts and nothing that could
 lead back to them. A pass that moved nothing SHALL say nothing.
@@ -637,6 +750,13 @@ lead back to them. A pass that moved nothing SHALL say nothing.
 - **THEN** the screen that stored it says eight витрати were recategorised and three became
   перекази
 
+#### Scenario: The owner is told how many доходи were given a джерело
+
+- **WHEN** storing the правило-джерело "відсотки → Відсотки" gives five stored доходи «Без джерела» the
+  джерело «Відсотки» and moves no витрата
+- **THEN** the screen that stored it says five доходи were given a джерело and says nothing of
+  витрати
+
 #### Scenario: A pass that moved nothing says nothing
 
 - **WHEN** storing a правило moves no витрата
@@ -645,9 +765,10 @@ lead back to them. A pass that moved nothing SHALL say nothing.
 #### Scenario: The pass is in the журнал as counts alone
 
 - **WHEN** a правило is stored and moves two of forty stored «Без категорії» витрати onto a
-  категорія and turns one into a переказ that absorbs one дохід
-- **THEN** the журнал holds one operation for that pass carrying the counts forty, two, one and one,
-  and no опис, сума, назва or MCC
+  категорія and turns one into a переказ that absorbs one дохід, while nine доходи «Без джерела»
+  are stored and no правило-джерело matches any of them
+- **THEN** the журнал holds one operation for that pass carrying the counts forty, two, one, one,
+  nine and zero, and no опис, сума, назва or MCC
 
 ### Requirement: The app ships a шаблон of базові категорії
 
@@ -936,7 +1057,8 @@ SHALL match the owner's правила without that recognition.
 
 The offer to remember a правило SHALL describe the target it would store: for a категорія, that
 such an опис will go to that категорія; for a правило-переказ, that such an опис will become a
-переказ to that рахунок. It SHALL NOT speak of a категорія when it offers a переказ.
+переказ to that рахунок; for a правило-джерело, that money arriving with such an опис will get that
+джерело. It SHALL NOT speak of a категорія when it offers a переказ or a джерело.
 
 #### Scenario: A правило-переказ is offered as a переказ
 
@@ -950,3 +1072,119 @@ such an опис will go to that категорія; for a правило-пер
 - **WHEN** the owner categorises a витрата carrying the опис "Megogo" as «Підписки» and the app
   offers to remember it
 - **THEN** the offer says such an опис will go to «Підписки»
+
+#### Scenario: A правило-джерело is offered as a джерело
+
+- **WHEN** the owner gives a дохід carrying the опис "Відсотки 12.50 UAH" the джерело «Відсотки» and the
+  app offers to remember it
+- **THEN** the offer says money arriving with such an опис will get the джерело «Відсотки», and says
+  nothing about a категорія
+
+### Requirement: A правило-джерело gives a джерело only to arriving money that has none
+
+At the moment a дохід is recorded or imported, a правило-джерело SHALL be applied only where an
+import would otherwise store it with «Без джерела»: to a monobank statement item that becomes a
+дохід, as the monobank-sync capability defines, and to a дохід-чернетка at its confirmation, as the
+bank-notifications capability defines. Afterwards, every розбір SHALL reach every stored дохід
+carrying «Без джерела», whatever put it there — an import, a confirmed чернетка, a retype, a Saldo
+row or a restored бекап — exactly as the розбір of «Без категорії» reaches every stored витрата
+whatever its source: no транзакція records which door it came through, and the gap is the same
+gap. It SHALL be matched
+on the опис, or a чернетка's text, recognised against the продавці as they are stored at that
+moment, and on the MCC when one is carried, exactly as the matching requirement ranks правила-джерела
+among themselves.
+
+At the moment of recording it SHALL NOT be applied to a дохід recorded by hand or to a дохід the
+Saldo import stores — each arrives with the джерело its source named — and it SHALL never be applied
+to a дохід whose джерело is anything but «Без джерела», or to a витрата, a повернення, a переказ or
+a коригування. It SHALL give a джерело and nothing else: it never retypes a дохід into a повернення
+or a переказ, and a дохід it gave a джерело is a дохід with a джерело the owner chose, through the
+правило they wrote — so it is no longer a зустрічний дохід a later переказ may absorb.
+
+#### Scenario: A дохід recorded by hand is not touched
+
+- **WHEN** the правило-джерело "зарплата → Зарплата" exists and the owner records by hand a дохід of
+  3000000 minor units UAH with the джерело «Фриланс» and the опис "зарплата за проєкт"
+- **THEN** the дохід carries «Фриланс»
+
+#### Scenario: The розбір reaches a дохід «Без джерела» whatever stored it
+
+- **WHEN** a дохід «Без джерела» of 1250 minor units UAH carrying "Відсотки 12.50 UAH" was confirmed
+  from a чернетка before any правило-джерело existed, another of 800 carrying "Відсотки 8.00 UAH" came
+  with a restored бекап, and the правило-джерело "відсотки → Відсотки" is created
+- **THEN** both доходи carry «Відсотки»
+
+#### Scenario: An MCC-only правило-джерело sources a statement item that carries the MCC
+
+- **WHEN** the only правило-джерело is "MCC 4829 → Перекази від людей" and a statement item of amount
+  +20000 with description "Від: Олена П." and MCC 4829 is mapped
+- **THEN** the result is a дохід of 20000 minor units with the джерело «Перекази від людей»
+
+#### Scenario: A джерело the owner chose is never replaced
+
+- **WHEN** a дохід carrying the опис "Відсотки 12.50 UAH" carries «Подарунки» and the правило-джерело
+  "відсотки → Відсотки" is created
+- **THEN** that дохід still carries «Подарунки»
+
+#### Scenario: A правило-джерело naming a продавець follows recognition
+
+- **WHEN** «Monobank» holds the написання "monobank", the правило-джерело "Monobank → Відсотки"
+  names it, and a statement item of amount +1234 with description "Monobank відсотки на залишок"
+  is mapped
+- **THEN** the result is a дохід of 1234 minor units with the джерело «Відсотки»
+
+#### Scenario: A sourced дохід is not absorbed later
+
+- **WHEN** a дохід of 616 minor units UAH on РЕЗЕРВ dated 2026-09-12 was given «Подарунки» by a
+  правило-джерело, and the owner then retypes a витрата of 616 minor units UAH on platinum of the
+  same date into a переказ onto РЕЗЕРВ
+- **THEN** the дохід stays a дохід «Подарунки» and the переказ awaits its зустрічний дохід
+
+### Requirement: A stored правило-джерело gives the доходи «Без джерела» it matches their джерело
+
+Every розбір — storing a правило of any kind, newly created or edited, and every other trigger the
+розбір of «Без категорії» витрати has — SHALL also give every stored дохід carrying «Без джерела»
+that the правила-джерела now match the джерело of the best matching one, at once and without
+asking. It SHALL be complete: after it, no дохід «Без джерела» is matched by a правило-джерело. It
+SHALL change nothing of such a дохід but its джерело — its сума, currency, дата, рахунок, опис and
+MCC stay — and SHALL touch no дохід carrying any other джерело. Within one pass the витрати are
+swept first, so every зустрічний дохід a new переказ absorbs is absorbed before any дохід is
+sourced, and a дохід that pass absorbed is never given a джерело. The джерело given SHALL be the one
+the whole set of правила-джерела gives, not the target of the правило just written. Deleting a
+правило-джерело SHALL change no дохід.
+
+#### Scenario: A new правило-джерело answers the доходи already waiting
+
+- **WHEN** three доходи «Без джерела» carrying "Відсотки 12.50 UAH", "Відсотки 8.00 UAH" and "Від:
+  Міхаіл Кас'ян" are stored and the правило-джерело "відсотки → Відсотки" is created
+- **THEN** the two відсотки доходи carry «Відсотки», the third still carries «Без джерела», and the
+  сума, дата, рахунок and опис of all three are unchanged
+
+#### Scenario: A more specific правило-джерело keeps the last word
+
+- **WHEN** the правило-джерело "зарплата аванс → Аванс" exists, a дохід «Без джерела» carrying
+  "Зарплата аванс жовтень" is stored, and the правило-джерело "зарплата → Зарплата" is created
+- **THEN** that дохід carries «Аванс»
+
+#### Scenario: A naming of a продавець reaches the доходи too
+
+- **WHEN** the правило-джерело "Monobank → Відсотки" names «Monobank», a дохід «Без джерела»
+  carrying "MONO BANK відсотки" is stored, and the owner adds the написання "mono bank" to «Monobank»
+- **THEN** that дохід carries «Відсотки»
+
+#### Scenario: Absorption comes before sourcing in one pass
+
+- **WHEN** the продавець «Резерв» holds only the написання "резерв скарбничка", the правило-переказ
+  "Резерв → переказ на РЕЗЕРВ" and the правило-джерело "Резерв → Подарунки" both name it, a витрата
+  of 479 minor units UAH on platinum carrying "Округлення балансу «Резерв»" dated 2026-09-13 sits in
+  «Без категорії», a дохід «Без джерела» of 479 minor units UAH on РЕЗЕРВ carrying "Поповнення
+  «Резерв»" of the same date is stored, and the owner adds the написання "резерв" to «Резерв» — so
+  one розбір finds both matches at once
+- **THEN** the витрата is a переказ onto РЕЗЕРВ that absorbed the дохід, and no дохід «Подарунки»
+  exists
+
+#### Scenario: A category правило moves no дохід
+
+- **WHEN** a дохід «Без джерела» carrying "АТБ повернення коштів" is stored and the правило "атб →
+  Groceries" is created
+- **THEN** that дохід still carries «Без джерела» and no категорія
