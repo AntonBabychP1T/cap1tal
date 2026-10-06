@@ -99,7 +99,11 @@ the tree that holds it.
 
 ## 6. Emulator and closing
 
-- [ ] 6.1 Run `npm run verify` and paste the final lines
+- [x] 6.1 Run `npm run verify` and paste the final lines
+      ```
+      Test Files  245 passed (245) · Tests  5112 passed (5112)
+      ✔ verify passed (3a13438b82aaa2931c78f7a185ff76df36e6f5d3)
+      ```
 - [ ] 6.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
 - [ ] 6.3 Smoke on the emulator with the owner's бекап (smoke-runner, `.claude/rules/android.md`):
       розстрочка, зобов'язання, правило, базова категорія, ціль витрат, watch and monobank link
