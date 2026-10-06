@@ -22,6 +22,7 @@ import {
 import {
   accountSideLine,
   accountsById,
+  categorisingStillOpen,
   feedA11yLabel,
   feedSubtitle,
   feedTitle,
@@ -221,6 +222,40 @@ describe('«Без категорії» is highlighted and categorised in one ta
       names,
     );
     expect(line).toMatchObject({ type: 'повернення', uncategorised: true });
+  });
+});
+
+describe('«Без категорії» is highlighted and categorised in one tap — the picker half', () => {
+  const uncategorised = expenseByDefault({
+    id: 'e1',
+    date: '2026-08-24',
+    accountId: 'card',
+    amount: money(12550, 'UAH'),
+    categoryId: UNCATEGORISED_CATEGORY_ID,
+  });
+
+  it('Scenario: A picker left open closes when its transaction is retyped away from editing', () => {
+    const retyped = transfer({
+      id: 'e1',
+      date: '2026-08-24',
+      fromAccountId: 'card',
+      toAccountId: 'jar',
+      left: money(12550, 'UAH'),
+      arrived: money(12550, 'UAH'),
+    });
+    expect(categorisingStillOpen('e1', [retyped])).toBe(false);
+  });
+
+  it('An untouched «Без категорії» row stays open', () => {
+    expect(categorisingStillOpen('e1', [uncategorised])).toBe(true);
+  });
+
+  it('A row the pick already categorised stays closed', () => {
+    expect(categorisingStillOpen('e1', [{ ...uncategorised, categoryId: 'groceries' }])).toBe(false);
+  });
+
+  it('A transaction no longer in the feed stays closed', () => {
+    expect(categorisingStillOpen('e1', [])).toBe(false);
   });
 });
 

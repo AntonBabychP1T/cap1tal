@@ -641,6 +641,11 @@ many категорії it offers in all, the five being those the owner reached
 head of the full list. "Без категорії" itself SHALL NOT be among them — it is what the transaction
 is being moved away from.
 
+The mark's picker SHALL close together with the mark: it SHALL NOT still show expanded under a
+transaction that no longer carries "Без категорії", whether that is because a category was just
+stored on it or because it was retyped into something else from editing and the feed has since
+reloaded.
+
 Beside the категорії, the mark on a витрата SHALL offer «Це переказ»: a переказ is a type, not a категорія, and
 the owner looking at a «Без категорії» витрата that is really money moved between their own рахунки
 reaches for this mark first. Choosing it SHALL open editing of that витрата with the type already
@@ -671,6 +676,13 @@ owner saves there, and leaving editing without saving SHALL leave the витра
   to see all категорії
 - **THEN** the same transaction now carries Pets, the editing screen never opened, and the mark is
   gone
+
+#### Scenario: A picker left open closes when its transaction is retyped away from editing
+
+- **WHEN** the owner opens the mark's picker on a "Без категорії" витрата, then from that same
+  transaction retypes it into a переказ from editing and returns to Головний
+- **THEN** the feed shows the transaction as a переказ with no mark and no category picker under
+  it, expanded or otherwise
 
 #### Scenario: «Це переказ» opens editing as a переказ
 

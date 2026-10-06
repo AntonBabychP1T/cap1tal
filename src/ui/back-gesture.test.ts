@@ -177,7 +177,7 @@ describe('the screens ask the rule rather than deciding themselves', () => {
     asksTheRule(editScreen, 'open !== undefined', 'closePicker');
     // Головний is the tab where an unanswered back press exits the app, so its condition is both
     // halves: a line is categorising *and* its full list is open.
-    asksTheRule(home, 'categorising !== undefined && categoryListOpen', 'closeCategoryList');
+    asksTheRule(home, 'activeCategorising !== undefined && categoryListOpen', 'closeCategoryList');
   });
 
   it('app-shell — Scenario: An edited form asks first — the entry form and the editing of a транзакція', () => {

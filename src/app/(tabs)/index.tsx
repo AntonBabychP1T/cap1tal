@@ -93,6 +93,7 @@ import { firstRun } from '@/ui/onboarding';
 import { assignSource, offersTransferMark, recategorise } from '@/ui/retype';
 import {
   accountsById,
+  categorisingStillOpen,
   feedSubtitle,
   feedTitle,
   overLimitByMonth,
@@ -662,6 +663,16 @@ function MainScreen() {
   /** The «Без категорії» line whose one-tap picker is open, if any. */
   const [categorising, setCategorising] = useState<string>();
   /**
+   * `categorising` once its row is checked against the loaded feed — `undefined` if that row no
+   * longer carries «Без категорії», most often because it was retyped into something else from
+   * editing since the picker was opened (main-screen: "A picker left open closes when its
+   * transaction is retyped away from editing"). Derived at render, never synced by an effect.
+   */
+  const activeCategorising =
+    categorising !== undefined && categorisingStillOpen(categorising, stored.feed)
+      ? categorising
+      : undefined;
+  /**
    * Whether that picker has its full list open. One boolean, because only one line categorises at
    * a time — and it is held here so the phone's «назад» closes the list before leaving Головний.
    */
@@ -669,8 +680,8 @@ function MainScreen() {
   const closeCategoryList = useCallback(() => setCategoryListOpen(false), []);
   // Both halves, because Головний is the tab where «назад» exits the app: the flag has to mean
   // "a full list is on the screen right now", and `categorising` can go stale over a reload while
-  // `categoryListOpen` stays true.
-  useCloseOnBack(categorising !== undefined && categoryListOpen, closeCategoryList);
+  // `categoryListOpen` stays true — hence the checked `activeCategorising`, not the raw state.
+  useCloseOnBack(activeCategorising !== undefined && categoryListOpen, closeCategoryList);
 
   /**
    * What a правило or the шаблон would give the «Без категорії» line whose picker is open: offered
