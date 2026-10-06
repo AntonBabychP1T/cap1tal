@@ -11,7 +11,7 @@ plus whatever is currently chosen when it is not among them; one offer naming ho
 are in all, shown only when there are more than five; the full list in Ukrainian order behind it,
 with a search by name; and the phone's «назад» closing the full list before the screen. Beyond the
 recording path, which main-screen governs, this SHALL hold for: «Рахунок списання» and «Категорія»
-of a розстрочка and of a зобов'язання; «Категорія» and «Переказ на» of a правило; the категорія a
+of a розстрочка and of a зобов'язання; «Категорія», «Переказ на» and «Джерело» of a правило; the категорія a
 базова категорія of the шаблон is sent to; the «Категорія» of a ціль витрат; the рахунок of a
 watched bank app; and the existing рахунок a monobank card is linked to. A row of choices that
 narrows a list rather than storing an answer (a filter holding «Всі»), a choice of several рахунки
