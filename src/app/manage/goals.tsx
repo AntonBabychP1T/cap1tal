@@ -294,6 +294,7 @@ export default function GoalsScreen() {
             value={draft.fields.deadline}
             onChange={(deadline) => setDraft({ ...draft, fields: { ...draft.fields, deadline } })}
             now={new Date()}
+            looksAhead
           />
 
           <View style={styles.field}>

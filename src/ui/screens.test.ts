@@ -1049,6 +1049,17 @@ describe('one control for a дата and one for a місяць', () => {
     expect(read(screen).match(/<DateField\b/g)?.length ?? 0).toBe(fields);
   });
 
+  it('only a дата that looks ahead steps past today', () => {
+    // «До дати» of a ціль and «Дата першого платежу» of a розстрочка or a зобов'язання; the дата
+    // of a транзакція, «станом на» and the monobank start stop at today.
+    const ahead = tsxUnder(APP).flatMap((path) =>
+      [...readFileSync(path, 'utf8').matchAll(/<DateField\b([\s\S]*?)\/>/g)]
+        .filter((match) => /\blooksAhead\b/.test(match[1]!))
+        .map(() => path.split(`${sep}src${sep}app${sep}`)[1]!.split(sep).join('/')),
+    );
+    expect(ahead.sort()).toEqual(['manage/commitments.tsx', 'manage/goals.tsx', 'manage/installments.tsx']);
+  });
+
   it('Scenario: A custom range is stepped, not typed — AI-аналіз sets both ends with MonthStepper', () => {
     const screen = read('ai-analysis.tsx');
     expect(screen.match(/<MonthStepper\b/g)?.length ?? 0).toBe(2);

@@ -91,7 +91,7 @@ the tree that holds it.
 
 ## 5. Date control (app-shell "A дата or a місяць the owner sets…")
 
-- [ ] 5.1 `dateStepOffers(typed, now, { looksAhead })` in `src/ui/dates.ts` and a `looksAhead` prop on
+- [x] 5.1 `dateStepOffers(typed, now, { looksAhead })` in `src/ui/dates.ts` and a `looksAhead` prop on
       `DateField`, passed by «До дати» (`manage/goals.tsx`) and «Дата першого платежу»
       (`manage/commitments.tsx`, `manage/installments.tsx`) (design D6). Prove "A first платіж steps
       past today" and "A транзакція still stops at today" in `src/ui/dates.test.ts`, and a source

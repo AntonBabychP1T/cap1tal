@@ -94,7 +94,8 @@ export function shiftIsoDate(date: IsoDate, days: number): IsoDate {
 /**
  * What the дата field of the entry form offers beside itself (main-screen, "The дата of a
  * транзакція is set without typing a date code"): «Сьогодні» and «Вчора» always; a day back and a
- * day forward from the typed дата only when it is one, the forward step never past today; and the
+ * day forward from the typed дата only when it is one, the forward step never past today unless the
+ * дата looks ahead; and the
  * typed дата named as a day when it parses. Pure, so which offers stand is proven by `verify`.
  */
 export interface DateStepOffers {
@@ -106,7 +107,16 @@ export interface DateStepOffers {
   readonly label?: string;
 }
 
-export function dateStepOffers(typed: string, now: Date): DateStepOffers {
+export function dateStepOffers(
+  typed: string,
+  now: Date,
+  /**
+   * A дата that looks ahead — «До дати» of a ціль, «Дата першого платежу» — steps a day forward
+   * whatever it is; one that records what already happened stops at today (app-shell, "A дата or
+   * a місяць the owner sets is set with the app's own control").
+   */
+  { looksAhead = false }: { readonly looksAhead?: boolean } = {},
+): DateStepOffers {
   const today = todayIso(now);
   const yesterday = shiftIsoDate(today, -1);
   let current: IsoDate;
@@ -119,7 +129,7 @@ export function dateStepOffers(typed: string, now: Date): DateStepOffers {
     today,
     yesterday,
     back: shiftIsoDate(current, -1),
-    ...(current < today ? { forward: shiftIsoDate(current, 1) } : {}),
+    ...(looksAhead || current < today ? { forward: shiftIsoDate(current, 1) } : {}),
     label: dayLabel(current, now),
   };
 }

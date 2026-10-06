@@ -278,6 +278,7 @@ export default function InstallmentsScreen() {
             value={editor.draft.firstDue}
             onChange={(firstDue) => change({ firstDue })}
             now={new Date()}
+            looksAhead
             hint={problemOf('firstDue')}
           />
           <Picker

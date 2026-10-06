@@ -244,6 +244,7 @@ export default function CommitmentsScreen() {
             value={editor.draft.firstDue}
             onChange={(firstDue) => change({ firstDue })}
             now={new Date()}
+            looksAhead
             hint={problemOf('firstDue') ?? FIRST_DUE_HINT}
           />
           <Picker
