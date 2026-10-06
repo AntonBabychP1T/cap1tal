@@ -101,7 +101,7 @@ the tree that holds it.
 
 - [x] 6.1 Run `npm run verify` and paste the final lines
       ```
-      Test Files  245 passed (245) · Tests  5112 passed (5112)
+      Test Files  241 passed (241) · Tests  5112 passed (5112)
       ✔ verify passed (3a13438b82aaa2931c78f7a185ff76df36e6f5d3)
       ```
 - [ ] 6.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
