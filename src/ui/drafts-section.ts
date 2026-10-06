@@ -9,6 +9,7 @@ import {
 } from '../domain/transaction';
 import { confirmDraft, dismissDraft, type Draft } from '../notifications/draft';
 import { formatMoney, parseAmount } from './amount-input';
+import { dayLabel } from './dates';
 import { sourceLabel, transactionTypeLabel } from './labels';
 import { accountNameOf } from './transaction-line';
 
@@ -31,6 +32,8 @@ export interface DraftLine {
   /** The рахунок it awaits on — its name, archived or not. */
   readonly accountName: string;
   readonly date: IsoDate;
+  /** The дата as a line of транзакції says it — «вчора», «21 серпня» (app-shell, "A транзакція's дата reads as a day"). */
+  readonly dayLabel: string;
   /** The notification's own text, verbatim. */
   readonly text: string;
   /** What it proposes, in the glossary's words: «витрата», «дохід «Без джерела»», or neither. */
@@ -56,6 +59,8 @@ export function draftLines(input: {
   readonly accounts: readonly Account[];
   /** The owner's джерела by id, so «Без джерела» is read under whatever they renamed it to. */
   readonly sourceNames: ReadonlyMap<string, string>;
+  /** Decides which day is «сьогодні» and «вчора», and which year needs no naming. */
+  readonly now: Date;
 }): DraftLine[] {
   const byId = new Map(input.accounts.map((a) => [a.id, a]));
   return input.drafts.map((draft) => {
@@ -64,6 +69,7 @@ export function draftLines(input: {
       id: draft.id,
       accountName: accountNameOf(draft.accountId, byId),
       date: draft.date,
+      dayLabel: dayLabel(draft.date, input.now),
       text: draft.text,
       currency: draft.currency,
       needsAmount: proposal.kind === 'raw',

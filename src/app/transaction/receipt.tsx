@@ -64,7 +64,7 @@ export default function ReceiptScreen() {
     );
   }
 
-  const header = receiptHeader({ stored: loaded.stored, transaction: loaded.transaction });
+  const header = receiptHeader({ stored: loaded.stored, transaction: loaded.transaction, now: new Date() });
   const rows = receiptItemRows(loaded.stored.items);
 
   return (

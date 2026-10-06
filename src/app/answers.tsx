@@ -460,6 +460,7 @@ export default function AnswersScreen() {
                     drafts: page.visible as typeof group.entries,
                     accounts: stored.accounts,
                     sourceNames,
+                    now: new Date(),
                   }).map((line, index) => (
                     <ListItem key={line.id} reflow>
                       <DraftRow

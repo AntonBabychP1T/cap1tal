@@ -167,6 +167,57 @@ describe('commitments-screen — the form', () => {
     });
   });
 
+  describe('«Рахунок списання» is never a person', () => {
+    const chorna = account({ id: 'chorna', name: 'mono чорна', kind: 'spending', currency: 'UAH' });
+    const ibkr = account({ id: 'ibkr', name: 'IBKR', kind: 'investment', currency: 'USD' });
+    const yaroslav = account({ id: 'yaroslav', name: 'Ярослав', kind: 'debt', currency: 'UAH' });
+    const olya = account({ id: 'olya', name: 'Оля', kind: 'debt', currency: 'UAH' });
+
+    it('Scenario: A зобов\'язання is not paid from a person', () => {
+      const rows = commitmentAccountRows([chorna, ibkr, yaroslav]);
+      expect(rows.map((r) => r.id)).toEqual(['ibkr', 'chorna']);
+      expect(allOffer(rows, 'accounts')).toBeUndefined();
+    });
+
+    it('Scenario: A stored зобов\'язання on a рахунок-борг still shows it', () => {
+      const existing: Commitment = {
+        id: 'c-loan',
+        name: 'Позика',
+        amount: 29_900,
+        currency: 'UAH',
+        periodicity: 'monthly',
+        firstDue: '2026-10-10',
+        debitAccountId: 'yaroslav',
+        recordedAt: 7,
+      };
+      const all = [chorna, ibkr, yaroslav];
+      const rows = commitmentAccountRows(all, existing.debitAccountId);
+      expect(rows.map((r) => r.id)).toEqual(['ibkr', 'chorna', 'yaroslav']);
+      const draft = commitmentDraftOf(existing);
+      expect(shortlist(rows, { recentIds: [], selectedId: draft.debitAccountId }).map((r) => r.id)).toContain(
+        'yaroslav',
+      );
+      const ctx = { accounts: all, categories: [subscriptions], existing };
+      expect(commitmentFromDraft(draft, { ...ctx, id: existing.id, now: new Date(99) })).toEqual(existing);
+    });
+
+    it('Scenario: Only рахунки-борги leave nothing to pay from', () => {
+      const all = [yaroslav, olya];
+      expect(commitmentAccountRows(all)).toEqual([]);
+      const draft = typed(
+        newCommitmentDraft(TODAY, commitmentAccountChoices(all)),
+        { name: 'Оренда' },
+        { amount: '15000' },
+      );
+      expect(draft.debitAccountId).toBe('');
+      const { problems } = commitmentDraftProblems(draft, { accounts: all, categories: [] });
+      expect(problems.debitAccount).toBeDefined();
+      expect(() =>
+        commitmentFromDraft(draft, { accounts: all, categories: [], id: 'c', now: new Date(1) }),
+      ).toThrow(problems.debitAccount);
+    });
+  });
+
   it('stores a trimmed ознака, and none for blank', () => {
     const draft = typed(fresh(), { name: 'Netflix' }, { amount: '299' }, { debitAccountId: 'black' });
     expect(commitmentFromDraft({ ...draft, marker: '  NETFLIX ' }, { ...context, id: 'c', now: new Date(1) }).marker).toBe(

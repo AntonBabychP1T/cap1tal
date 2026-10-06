@@ -346,6 +346,7 @@ describe('the Звіти цілі', () => {
         name: 'Авто',
         target: '200 000,00 UAH',
         deadline: '2026-12-31',
+        deadlineLabel: '31 грудня',
         progress: '50 000,00 UAH',
         percentage: 25,
         leftToAccumulate: '150 000,00 UAH',
@@ -526,6 +527,12 @@ describe('the Звіти цілі', () => {
     );
   });
 
+  it("Scenario: A ціль's deadline is a day in words wherever it is read — «Звіти»", () => {
+    const trip: AccumulationGoal = { ...car, name: 'Відпустка', target: money(5000000, 'UAH') };
+    const row = view([], { goals: [trip], now: new Date(2026, 9, 6, 12) }).goals.accumulation[0]!;
+    expect(row.deadlineLabel).toBe('31 грудня');
+  });
+
   it('A ціль without a дата is shown without one and is never overdue', () => {
     const undated: AccumulationGoal = {
       id: 'g-reserve',
@@ -536,6 +543,7 @@ describe('the Звіти цілі', () => {
 
     const row = view([], { goals: [undated] }).goals.accumulation[0]!;
     expect(row.deadline).toBeNull();
+    expect(row.deadlineLabel).toBeNull();
     expect(row.overdue).toBe(false);
   });
 

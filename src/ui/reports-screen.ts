@@ -21,7 +21,7 @@ import type { MonobankRate } from '../monobank/currency';
 import type { Candidate } from '../progress/catalogue';
 import type { EarnedAchievement } from '../progress/earned';
 import { formatMinorUnitsGrouped, formatMoney } from './amount-input';
-import { todayIso } from './dates';
+import { calendarLabel, todayIso } from './dates';
 import {
   accumulationReadout,
   goalProgress,
@@ -146,6 +146,8 @@ export interface ReportsAccumulationGoalRow {
   readonly target: string;
   /** The дата, or `null` where the ціль has none. */
   readonly deadline: IsoDate | null;
+  /** The дата in words — «31 грудня» — as the line draws it after «до». */
+  readonly deadlineLabel: string | null;
   /** «487 300,00 UAH»; `null` when the progress cannot be counted. */
   readonly progress: string | null;
   readonly percentage: number | null;
@@ -457,6 +459,7 @@ export function reportsHistory(input: ReportsStored): ReportsHistory {
       name: goal.name,
       target: readout.target,
       deadline: goal.deadline ?? null,
+      deadlineLabel: goal.deadline === undefined ? null : calendarLabel(goal.deadline, input.now),
       progress: readout.progress,
       percentage: readout.percentage,
       leftToAccumulate: readout.leftToAccumulate,

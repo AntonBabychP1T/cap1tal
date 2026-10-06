@@ -44,6 +44,15 @@ export function withCurrent<Row extends { readonly id: string }>(
   return current ? [...offered, current] : offered;
 }
 
+/**
+ * A рахунок-борг is a person, not a place money is paid from: a платіж of a зобов'язання or a
+ * розстрочка is never debited from one, and a bank's сповіщення never lands on one (glossary,
+ * «Рахунок списання»). Every other вид — an інвестиційний рахунок included — can pay.
+ */
+export function isPerson(account: Pick<Account, 'kind'>): boolean {
+  return account.kind === 'debt';
+}
+
 /** The account each leg of a stored transaction sits on; `undefined` where it has no such leg. */
 export function legsOf(t: Transaction): { source?: string; destination?: string } {
   return t.type === 'transfer'

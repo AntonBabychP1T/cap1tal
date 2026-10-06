@@ -81,8 +81,8 @@ export default function GoalScreen() {
       <ScreenHeader
         title={model.name}
         subtitle={
-          model.deadline
-            ? `до ${model.deadline}${model.overdue ? ' · прострочена' : ''}`
+          model.deadlineLabel
+            ? `до ${model.deadlineLabel}${model.overdue ? ' · прострочена' : ''}`
             : 'без дати'
         }
         back={() => router.back()}

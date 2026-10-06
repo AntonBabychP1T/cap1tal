@@ -103,8 +103,10 @@ describe('the «Сповіщення банків» section reads the device, ne
   });
 
   it('Scenario: An archived рахунок is not offered', () => {
-    // The one picker rule, from `account-choices.ts` — not a fourth copy of "the unarchived ones".
-    expect(section).toContain('accountChoicesFor(stored.accounts, undefined)');
+    // The one picker rule, through `watchAccountRows` (the unarchived ones of `account-choices.ts`,
+    // without a рахунок-борг) — not a fourth copy of "the unarchived ones".
+    expect(section).toContain('watchAccountRows(stored.accounts)');
+    expect(section).toMatch(/<Picker\s+label="Рахунок"/);
   });
 
   it('Every watch mutation goes through the capture port, never straight to storage', () => {

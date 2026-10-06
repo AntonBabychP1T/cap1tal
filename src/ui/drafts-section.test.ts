@@ -72,10 +72,12 @@ const groceries: Rule = {
 };
 
 const storedAt = new Date('2026-08-27T09:00:00.000Z');
+/** Today on the device while these чернетки wait: the day after the витрата's 2026-08-26. */
+const TODAY = new Date(2026, 7, 27, 12, 0, 0);
 
 describe('the «Чернетки» group of the queue «Що потребує відповіді»', () => {
   const lines = (drafts: readonly Draft[], accounts = [card, closed]) =>
-    draftLines({ drafts, accounts, sourceNames });
+    draftLines({ drafts, accounts, sourceNames, now: TODAY });
 
   it('Scenario: A drafted витрата shows its proposal', () => {
     const [line] = lines([expenseDraft]);
@@ -84,12 +86,21 @@ describe('the «Чернетки» group of the queue «Що потребує в
       id: 'd-expense',
       accountName: 'Приват',
       date: '2026-08-26',
+      dayLabel: 'вчора',
       text: 'Оплата 250.00UAH. Сільпо',
       proposal: 'витрата',
       amount: '250,00 UAH',
       needsAmount: false,
       currency: 'UAH',
     });
+  });
+
+  it("Scenario: A чернетка's line names its day", () => {
+    const [line] = lines([expenseDraft]);
+    // The screen draws «рахунок · day»; no date code is drawn.
+    expect(`${line!.accountName} · ${line!.dayLabel}`).toBe('Приват · вчора');
+    const [older] = lines([{ ...expenseDraft, date: '2026-08-21' }]);
+    expect(older!.dayLabel).toBe('21 серпня');
   });
 
   it('A drafted дохід keeps «Без джерела» in what it proposes', () => {
@@ -220,7 +231,7 @@ describe('answering a чернетка', () => {
 
   it('Scenario: Dismissing asks first and stores nothing', () => {
     const draft = pending(incomeDraft);
-    const [line] = draftLines({ drafts: [draft], accounts: [card], sourceNames });
+    const [line] = draftLines({ drafts: [draft], accounts: [card], sourceNames, now: TODAY });
     // The question the screen asks before anything happens.
     expect(dismissConfirmation(line!)).toContain('Транзакція не створиться');
 
@@ -243,7 +254,7 @@ describe('answering a чернетка', () => {
     );
 
     expect(
-      draftLines({ drafts: repo.pendingDrafts(), accounts: [card], sourceNames }).map((l) => l.id),
+      draftLines({ drafts: repo.pendingDrafts(), accounts: [card], sourceNames, now: TODAY }).map((l) => l.id),
     ).toEqual(['d-today', 'd-yesterday']);
   });
 
@@ -348,7 +359,7 @@ describe('answering a чернетка', () => {
     // No транзакція, so no розрахунковий баланс and no monthly number moved.
     expect(transactions.listAll()).toEqual([]);
     expect(repo.pendingDrafts()).toEqual([]);
-    expect(dismissConfirmation(draftLines({ drafts: [draft], accounts: [card], sourceNames })[0]!))
+    expect(dismissConfirmation(draftLines({ drafts: [draft], accounts: [card], sourceNames, now: TODAY })[0]!))
       .toContain('не створиться');
   });
 

@@ -139,11 +139,14 @@ export function DateField({
   now,
   label = 'Дата',
   hint,
+  looksAhead = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   /** The screen's clock — what «сьогодні» is. */
   now: Date;
+  /** A дата in the future is the usual answer («До дати», «Дата першого платежу»): «день ›» never stops at today. */
+  looksAhead?: boolean;
   /** «Дата» for a транзакція; «Станом на» beside a рахунок's початковий залишок. */
   label?: string;
   /** Under the field: why what is typed cannot be saved, when it cannot. */
@@ -151,7 +154,7 @@ export function DateField({
 }) {
   const theme = useTheme();
   const [picking, setPicking] = useState(false);
-  const offers = dateStepOffers(value, now);
+  const offers = dateStepOffers(value, now, { looksAhead });
   const set = (next: string) => {
     if (next !== value.trim()) onChange(next);
   };

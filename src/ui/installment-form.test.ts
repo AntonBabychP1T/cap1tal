@@ -5,6 +5,8 @@ import { isRefusal } from '../domain/refusal';
 import {
   debitAccountChoices,
   editInstallmentDraft,
+  installmentAccountRows,
+  installmentCategoryRows,
   installmentDraftOf,
   installmentDraftProblems,
   installmentFromDraft,
@@ -13,6 +15,7 @@ import {
   sameInstallmentFields,
   type InstallmentDraft,
 } from './installment-form';
+import { allOffer, narrow, shortlist } from './shortlist';
 
 const TODAY = '2026-10-01';
 const black = account({ id: 'black', name: 'mono black', kind: 'spending', currency: 'UAH' });
@@ -136,6 +139,40 @@ describe('the розстрочка form', () => {
   });
 });
 
+describe('installments-screen — «Рахунок списання» is never a person', () => {
+  const chorna = account({ id: 'chorna', name: 'mono чорна', kind: 'spending', currency: 'UAH' });
+  const bonds = account({ id: 'bonds', name: 'військові облігації', kind: 'investment', currency: 'UAH' });
+  const olya = account({ id: 'olya', name: 'Оля', kind: 'debt', currency: 'UAH' });
+
+  it('Scenario: A розстрочка is paid from bonds but not from a person', () => {
+    expect(debitAccountChoices([chorna, bonds, olya]).map((a) => a.id)).toEqual(['bonds', 'chorna']);
+  });
+
+  it('Scenario: A stored розстрочка on a рахунок-борг still shows it', () => {
+    const stored = {
+      id: 'i-olya',
+      name: 'Ноутбук',
+      total: 1_000_000,
+      partsCount: 10,
+      part: 100_000,
+      firstDue: '2026-06-05',
+      debitAccountId: 'olya',
+      paidBefore: 4,
+      recordedAt: 5,
+    };
+    const all = [chorna, bonds, olya];
+    expect(debitAccountChoices(all, stored.debitAccountId).map((a) => a.id)).toEqual(['bonds', 'chorna', 'olya']);
+    const saved = installmentFromDraft(installmentDraftOf(stored), {
+      accounts: all,
+      categories: [],
+      existing: stored,
+      id: stored.id,
+      now: new Date(),
+    });
+    expect(saved).toEqual(stored);
+  });
+});
+
 describe('installments-screen — what «назад» asks about', () => {
   it('Scenario: An untouched form closes at once', () => {
     expect(sameInstallmentFields(fresh(), fresh())).toBe(true);
@@ -149,5 +186,35 @@ describe('installments-screen — what «назад» asks about', () => {
     const erased = typed(fresh(), { part: '500' }, { part: '' });
     expect(erased.partTyped).toBe(true);
     expect(sameInstallmentFields(erased, fresh())).toBe(true);
+  });
+});
+
+describe('app-shell — the розстрочка form uses the entry form\'s picker', () => {
+  it('Scenario: The розстрочка form no longer scrolls through every категорія', () => {
+    const names = Array.from({ length: 27 }, (_, i) => `Категорія ${String(i + 1).padStart(2, '0')}`);
+    const categories = [
+      ...names.map((name, i) => ({ id: `c${i}`, name, archived: false })),
+      { id: 'food', name: 'Продукти', archived: false },
+      { id: 'cafe', name: 'Кафе', archived: false },
+    ].slice(2);
+    expect(categories.filter((c) => !c.archived)).toHaveLength(27);
+    const rows = installmentCategoryRows(categories);
+    // «Без категорії» once and first.
+    expect(rows[0]).toEqual({ id: '', name: 'Без категорії' });
+    expect(rows.filter((r) => r.name === 'Без категорії')).toHaveLength(1);
+    const shown = shortlist(rows, { recentIds: ['food', 'cafe'], selectedId: '' });
+    expect(shown).toHaveLength(5);
+    expect(shown.map((r) => r.id).slice(0, 2)).toEqual(['food', 'cafe']);
+    expect(allOffer(rows, 'categories')).toBe(`Всі категорії (${rows.length})`);
+  });
+
+  it('names each рахунок with its currency, so the search finds it', () => {
+    const bonds = account({ id: 'bonds', name: 'військові облігації', kind: 'investment', currency: 'UAH' });
+    const rows = installmentAccountRows([black, usd, old, bonds]);
+    expect(rows).toEqual([
+      { id: 'bonds', name: 'військові облігації · UAH' },
+      { id: 'black', name: 'mono black · UAH' },
+    ]);
+    expect(narrow(rows, 'облігац').map((r) => r.id)).toEqual(['bonds']);
   });
 });

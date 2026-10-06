@@ -34,6 +34,7 @@ import {
   noTargetsMessage,
   planLine,
   planSummary,
+  previousImportWarning,
   receivesLine,
   redirectAccount,
   redirectName,
@@ -305,7 +306,7 @@ export default function SaldoImportScreen() {
 
       {flow.previouslyCommittedAt ? (
         <Warning>
-          {`Імпорт уже виконано ${flow.previouslyCommittedAt.toLocaleString('uk-UA')}. Ще один подвоїть усю історію.`}
+          {previousImportWarning(flow.previouslyCommittedAt, new Date())}
         </Warning>
       ) : null}
 

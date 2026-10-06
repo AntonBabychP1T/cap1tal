@@ -320,6 +320,22 @@ describe('dateStepOffers', () => {
     expect(dateStepOffers('2026-09-22', now).forward).toBe('2026-09-23');
   });
 
+  it('Scenario: A first платіж steps past today', () => {
+    const today = new Date(2026, 9, 6, 12, 0, 0);
+    let shown = '2026-10-06';
+    for (let tap = 0; tap < 2; tap++) {
+      shown = dateStepOffers(shown, today, { looksAhead: true }).forward!;
+    }
+    expect(shown).toBe('2026-10-08');
+    expect(dateStepOffers(shown, today, { looksAhead: true }).forward).toBe('2026-10-09');
+  });
+
+  it('Scenario: A транзакція still stops at today', () => {
+    const today = new Date(2026, 9, 6, 12, 0, 0);
+    expect(dateStepOffers('2026-10-06', today).forward).toBeUndefined();
+    expect(dateStepOffers('2026-10-06', today, { looksAhead: false }).forward).toBeUndefined();
+  });
+
   it('A half-typed дата offers only the two quick choices', () => {
     for (const typed of ['', '2026-09', '31.12', '2026-02-30']) {
       const offers = dateStepOffers(typed, now);

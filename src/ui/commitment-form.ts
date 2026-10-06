@@ -18,6 +18,7 @@ import {
   type IsoDate,
 } from '../domain/transaction';
 import { formatMinorUnits, parseAmount } from './amount-input';
+import { isPerson, withCurrent } from './account-choices';
 import { parseTypedDate } from './dates';
 import { accountChoiceLabel, byName } from './labels';
 import type { Named } from './shortlist';
@@ -25,7 +26,7 @@ import type { Named } from './shortlist';
 /**
  * The create/edit form of a зобов'язання, with none of its JSX (commitments-screen, "The
  * зобов'язання form starts monthly and refuses in Ukrainian"). It starts monthly on today, offers
- * only unarchived рахунки of any currency, types the сума in the chosen рахунок's currency, and says
+ * only unarchived рахунки of any currency that are not a рахунок-борг, types the сума in the chosen рахунок's currency, and says
  * every refusal beside the field it concerns. The сума is typed in major units, the way a сума is
  * typed when recording.
  */
@@ -97,9 +98,14 @@ export function commitmentDraftOf(commitment: Commitment): CommitmentDraft {
   };
 }
 
-/** The рахунки a зобов'язання can be debited from: every unarchived one, of any currency, by name. */
-export function commitmentAccountChoices(accounts: readonly Account[]): Account[] {
-  return accounts.filter((a) => !a.archived).sort(byName);
+/**
+ * The рахунки a зобов'язання can be debited from: every unarchived one of any currency that is not
+ * a рахунок-борг, by name — plus the one a stored зобов'язання already sits on (`currentId`), so
+ * editing one recorded on a рахунок-борг never silently moves it off.
+ */
+export function commitmentAccountChoices(accounts: readonly Account[], currentId?: string): Account[] {
+  const unarchived = accounts.filter((a) => !a.archived);
+  return withCurrent(unarchived.filter((a) => !isPerson(a)).sort(byName), unarchived, currentId);
 }
 
 /** The categories the form never offers among its категорії (see `commitmentCategoryChoices`). */
@@ -121,8 +127,8 @@ export const NO_CATEGORY: Named = { id: '', name: 'Без категорії' };
  * «Рахунок списання» as the picker draws it — the entry form's short list (`shortlist`,
  * `allOffer`) — each рахунок wearing its currency, so a search for «USD» finds the USD ones.
  */
-export function commitmentAccountRows(accounts: readonly Account[]): Named[] {
-  return commitmentAccountChoices(accounts).map((a) => ({ id: a.id, name: accountChoiceLabel(a) }));
+export function commitmentAccountRows(accounts: readonly Account[], currentId?: string): Named[] {
+  return commitmentAccountChoices(accounts, currentId).map((a) => ({ id: a.id, name: accountChoiceLabel(a) }));
 }
 
 /** «Категорія» as the picker draws it: «Без категорії» once and first, as in the entry form. */

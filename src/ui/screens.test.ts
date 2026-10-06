@@ -882,7 +882,14 @@ describe('lists that lead with their rows', () => {
     expect(screen.split('installmentsRepo.save(').length - 1).toBe(1);
     expect(screen.indexOf('installmentsRepo.save(')).toBeGreaterThan(screen.indexOf('const save = useCallback('));
     expect(screen).not.toContain('useEffect');
-    expect(screen).toContain('useCloseOnBack(editor !== undefined, closeForm, dirty)');
+    // app-shell — Scenario: «Назад» closes the full list of a plan form first. An open «Всі
+    // рахунки» or «Всі категорії» list closes first and asks nothing; the form, its назва and every
+    // other field stay, because the form's own subscription stands aside while a picker is open.
+    expect(screen).toContain(
+      'useCloseOnBack(editor !== undefined && pickerClosed, closeForm, pickerClosed && dirty)',
+    );
+    expect(screen).toContain('useCloseOnBack(!pickerClosed, closePicker)');
+    expect(screen).toContain('const closePicker = useCallback(() => setOpenPicker(undefined), [])');
     expect(screen).toContain(
       'const dirty = editor !== undefined && !sameInstallmentFields(editor.draft, editor.opened);',
     );
@@ -891,7 +898,9 @@ describe('lists that lead with their rows', () => {
 
   it('app-shell — Scenario: An edited form asks first — «Нове правило» registers its edits', () => {
     const screen = read('manage/rules.tsx');
-    expect(screen).toContain('useCloseOnBack(draft !== undefined, closeDraft, dirty)');
+    expect(screen).toContain('useCloseOnBack(draft !== undefined && pickerClosed, closeDraft, pickerClosed && dirty)');
+    // An open «Всі …» list of any of its pickers closes first and asks nothing.
+    expect(screen).toContain('useCloseOnBack(!pickerClosed, closePicker)');
     expect(screen).toContain('!sameFields(draft, opened)');
     // Both ways in — «Нове правило» and a row — remember what the form opened on.
     expect(screen).toContain('openDraft({ ...EMPTY_RULE_DRAFT })');
@@ -1040,6 +1049,17 @@ describe('one control for a дата and one for a місяць', () => {
     expect(read(screen).match(/<DateField\b/g)?.length ?? 0).toBe(fields);
   });
 
+  it('only a дата that looks ahead steps past today', () => {
+    // «До дати» of a ціль and «Дата першого платежу» of a розстрочка or a зобов'язання; the дата
+    // of a транзакція, «станом на» and the monobank start stop at today.
+    const ahead = tsxUnder(APP).flatMap((path) =>
+      [...readFileSync(path, 'utf8').matchAll(/<DateField\b([\s\S]*?)\/>/g)]
+        .filter((match) => /\blooksAhead\b/.test(match[1]!))
+        .map(() => path.split(`${sep}src${sep}app${sep}`)[1]!.split(sep).join('/')),
+    );
+    expect(ahead.sort()).toEqual(['manage/commitments.tsx', 'manage/goals.tsx', 'manage/installments.tsx']);
+  });
+
   it('Scenario: A custom range is stepped, not typed — AI-аналіз sets both ends with MonthStepper', () => {
     const screen = read('ai-analysis.tsx');
     expect(screen.match(/<MonthStepper\b/g)?.length ?? 0).toBe(2);
@@ -1111,5 +1131,126 @@ describe('a коригування is no longer «поки не редагуєт
     const editor = read(join('transaction', '[id].tsx'));
     expect(editor).not.toContain('зʼявиться разом зі «звірити»');
     expect(editor).not.toContain('Коригування поки не редагується');
+  });
+});
+
+/**
+ * app-shell, "Every picker of one рахунок, категорія or джерело is the entry form's picker". A chip
+ * row (`Choices`) that names a рахунок, a категорія or a джерело is allowed only where it is not
+ * such a picker: a filter that narrows a list and holds «Всі», or a field that only shows what a
+ * stored row already is. Everything else picks through `Picker` — the inventory of uniform-fields
+ * design §Context, so a seventh bare wall of chips fails here rather than on the phone.
+ */
+describe('one picker for one рахунок, категорія or джерело', () => {
+  const PICKS = /рахун|категор|джерел|переказ на|звідки|куди/i;
+  /** `file › label` of every chip row that names one and is not a picker, with why. */
+  const NOT_PICKERS = new Set([
+    'transactions.tsx › Рахунок', // the рахунок narrowing of «Транзакції», holding «Всі»
+    'transactions.tsx › Категорія', // the категорія narrowing of «Транзакції», holding «Всі»
+    '(tabs)/reports.tsx › Категорія', // the категорія narrowing of «Звіти»
+    'manage/goals.tsx › Категорія', // an existing ціль витрат's категорія: its identity, disabled
+  ]);
+
+  const chipRows = tsxUnder(APP).flatMap((path) => {
+    const source = readFileSync(path, 'utf8');
+    const file = path.split(`${sep}src${sep}app${sep}`)[1]!.split(sep).join('/');
+    return [...source.matchAll(/<Choices\b([\s\S]*?)\/>/g)].map((match) => {
+      const label = /label=(?:"([^"]*)"|\{([^}]*)\})/.exec(match[1]!);
+      return { file, label: label?.[1] ?? label?.[2] ?? '', element: match[1]! };
+    });
+  });
+
+  it('no screen picks a рахунок, категорія or джерело from a bare chip row', () => {
+    const offenders = chipRows
+      .filter((row) => PICKS.test(row.label))
+      .map((row) => `${row.file} › ${row.label}`)
+      .filter((key) => !NOT_PICKERS.has(key));
+    expect(offenders).toEqual([]);
+    // And the exceptions are real rows, not stale entries that would hide a new one.
+    const found = new Set(chipRows.map((row) => `${row.file} › ${row.label}`));
+    expect([...NOT_PICKERS].filter((key) => !found.has(key))).toEqual([]);
+  });
+
+  it.each([
+    ['manage/installments.tsx', 2],
+    ['manage/commitments.tsx', 2],
+    ['manage/rules.tsx', 4], // продавець, «Переказ на», «Категорія», «Джерело»
+    ['manage/rule-template.tsx', 1],
+    ['manage/goals.tsx', 1],
+    ['manage/notifications.tsx', 1],
+    ['manage/monobank.tsx', 1],
+  ])('%s picks through Picker', (screen, pickers) => {
+    expect(read(screen).match(/<Picker\b/g)?.length ?? 0).toBe(pickers);
+  });
+
+  it('Scenario: A filter row is not turned into a picker', () => {
+    const narrowing = chipRows.find((row) => row.file === 'transactions.tsx' && row.label === 'Рахунок');
+    expect(narrowing?.element).toMatch(/\bscroll\b/);
+    expect(read('transactions.tsx')).not.toMatch(/<Picker\b[^>]*label="Рахунок"/);
+  });
+
+  it('the existing ціль витрат shows its категорія without offering another', () => {
+    const identity = chipRows.find((row) => row.file === 'manage/goals.tsx' && row.label === 'Категорія');
+    expect(identity?.element).toMatch(/\bdisabled\b/);
+  });
+});
+
+/**
+ * app-shell, "A full list is read before it is searched". Opening a picker's full list raises no
+ * keyboard — its search field carries no `autoFocus` — and every form a picker sits in is drawn in
+ * `Screen`, whose column scrolls inside the keyboard avoidance and lets a tap through an open
+ * keyboard. "Typing keeps the matches in sight" is what the emulator proves (tasks 6.3).
+ */
+describe('a full list is read before it is searched', () => {
+  const form = readFileSync(join(COMPONENTS, 'form.tsx'), 'utf8');
+  const surfaces = readFileSync(join(COMPONENTS, 'surfaces.tsx'), 'utf8');
+
+  it('Scenario: The full list of рахунки opens unobstructed', () => {
+    const picker = form.slice(form.indexOf('export function Picker('));
+    const search = picker.slice(picker.indexOf('const search = ('), picker.indexOf('const list ='));
+    expect(search).toContain('<Field');
+    expect(search).not.toContain('autoFocus');
+
+    const screen = surfaces.slice(surfaces.indexOf('export function Screen('));
+    const column = screen.slice(screen.indexOf('<KeyboardAvoidingView'), screen.indexOf('</KeyboardAvoidingView>'));
+    expect(column).toContain('<ScrollView');
+    expect(column).toContain('keyboardShouldPersistTaps="handled"');
+  });
+
+  it.each([
+    'manage/installments.tsx',
+    'manage/commitments.tsx',
+    'manage/rules.tsx',
+    'manage/rule-template.tsx',
+    'manage/goals.tsx',
+    'manage/notifications.tsx',
+    'manage/monobank.tsx',
+  ])('%s draws its pickers in Screen', (screen) => {
+    const source = read(screen);
+    expect(source).toMatch(/<Screen\b/);
+    expect(source).not.toMatch(/<ScrollView\b|<FlatList\b/);
+  });
+});
+
+/**
+ * app-shell, "A дата in running text is a day and a month in words". The engine's own locale
+ * formatting is what drew «06.10.2026, 14:03:00»: Hermes and Node disagree about it, and it never
+ * says «вчора». Every дата and instant goes through `src/ui/dates.ts` instead.
+ */
+describe('no дата is formatted by the engine', () => {
+  const UI = import.meta.dirname;
+  const modules = [
+    ...tsxUnder(APP),
+    ...readdirSync(UI)
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+      .map((name) => join(UI, name)),
+  ];
+
+  it('no module in src/app or src/ui calls toLocaleString or toLocaleDateString', () => {
+    const offenders = modules
+      .filter((path) => /\.toLocale(?:Date|Time)?String\(/.test(readFileSync(path, 'utf8')))
+      .map((path) => path.split(`${sep}src${sep}`)[1]);
+    expect(modules.length).toBeGreaterThan(100);
+    expect(offenders).toEqual([]);
   });
 });
