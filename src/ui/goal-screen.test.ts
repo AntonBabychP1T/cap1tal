@@ -90,6 +90,8 @@ describe('goalScreenModel', () => {
     expect(shown.readout.percentage).toBe(69);
     expect(shown.readout.leftToAccumulate).toBe('212 700,00 UAH');
     expect(shown.deadline).toBe('2027-06-30');
+    // app-shell — Scenario: A ціль's deadline is a day in words wherever it is read.
+    expect(shown.deadlineLabel).toBe('30 червня 2027');
     expect(shown.overdue).toBe(false);
   });
 
@@ -246,6 +248,7 @@ describe('goalScreenModel', () => {
     if (shown.kind !== 'goal') throw new Error('expected a ціль');
 
     expect(shown.deadline).toBeNull();
+    expect(shown.deadlineLabel).toBeNull();
     expect(shown.overdue).toBe(false);
   });
 

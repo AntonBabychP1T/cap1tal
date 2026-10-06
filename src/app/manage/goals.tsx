@@ -102,7 +102,7 @@ export default function GoalsScreen() {
   );
 
   const accumulationRows = useMemo(
-    () => goalRows(stored.goals, stored.accounts),
+    () => goalRows(stored.goals, stored.accounts, new Date()),
     [stored.accounts, stored.goals],
   );
   const spendingRows = useMemo(
@@ -422,7 +422,7 @@ export default function GoalsScreen() {
                   </ThemedText>
                 </View>
                 <ThemedText type="small" themeColor="textSecondary">
-                  {row.deadline ? `до ${row.deadline} · ` : ''}
+                  {row.deadlineLabel ? `до ${row.deadlineLabel} · ` : ''}
                   {row.accountSummary ?? row.accountNames.join(', ')}
                   {row.hasArchivedAccount ? ' (є архівний)' : ''}
                 </ThemedText>

@@ -726,7 +726,7 @@ function ReportsScreen() {
                     {goal.uncountable ??
                       [
                         goal.percentage === null ? null : `${goal.approximate ? '≈ ' : ''}${goal.percentage} %`,
-                        goal.deadline === null ? null : `до ${goal.deadline}`,
+                        goal.deadlineLabel === null ? null : `до ${goal.deadlineLabel}`,
                         goal.accountCount,
                       ]
                         .filter((part) => part !== null)

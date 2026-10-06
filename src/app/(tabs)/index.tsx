@@ -482,6 +482,7 @@ function MainScreen() {
         drafts: stored.drafts,
         accounts: stored.accounts,
         sourceNames,
+        now: new Date(),
       }),
     [sourceNames, stored.accounts, stored.drafts],
   );
@@ -1282,7 +1283,7 @@ function DraftRow({
         <View style={styles.rowLabel}>
           <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            {`${line.accountName} · ${line.date}`}
+            {`${line.accountName} · ${line.dayLabel}`}
           </ThemedText>
           <ThemedText type="small" themeColor="textMuted">
             {line.text}

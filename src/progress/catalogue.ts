@@ -1,3 +1,4 @@
+import { dayInWords } from '../domain/day-words';
 import { isReached, type AccumulationGoal } from '../domain/goals';
 import type { CurrencyCode, Money } from '../domain/money';
 import { monthOf, type IsoDate } from '../domain/transaction';
@@ -411,7 +412,7 @@ const goalReachedInTime: Template = {
         template: 'goal.reached-in-time',
         group: 'goal' as const,
         name: `Ціль «${goal.name}» досягнута вчасно`,
-        condition: `Ціль «${goal.name}» досягнута не пізніше за ${goal.deadline}.`,
+        condition: `Ціль «${goal.name}» досягнута не пізніше за ${dayInWords(goal.deadline!, input.today)}.`,
         earned: isReached(goal, progress) && input.today <= goal.deadline!,
         dating: 'recorded' as const,
         evidence: goalEvidence(goal),

@@ -4,13 +4,14 @@ import {
   type ReceiptComparison,
   type ReceiptItem,
 } from '../domain/fiscal-receipt';
-import type { Transaction } from '../domain/transaction';
+import type { IsoDate, Transaction } from '../domain/transaction';
 import type { LookupOutcome } from '../fiscal/lookup';
 import { attachable, parseFiscalDocument, type ParsedReceipt } from '../fiscal/parse';
 import { readReceiptQr, type MissingRequisite, type ReceiptLookup } from '../fiscal/qr';
 import type { QrImagePickOutcome } from '../platform/qr-image';
 import type { CameraPermission } from '../platform/qr-scan';
 import { formatMoney } from './amount-input';
+import { calendarLabel } from './dates';
 import { plural } from './labels';
 
 /**
@@ -144,9 +145,20 @@ export interface ReceiptHeader {
   readonly differsFrom?: string;
 }
 
+/**
+ * When a чек was issued, as running text says an instant (app-shell, "A дата in running text is a
+ * day and a month in words"): «21 вересня о 14:03» — the чек's own wall-clock time, without its
+ * seconds, never «2026-09-21 14:03:00».
+ */
+function issuedLabel(date: IsoDate, time: string, now: Date): string {
+  return `${calendarLabel(date, now)} о ${time.slice(0, 5)}`;
+}
+
 export function receiptHeader(input: {
   readonly stored: StoredReceipt;
   readonly transaction: Transaction;
+  /** Decides which year needs no naming in the issue day. */
+  readonly now: Date;
 }): ReceiptHeader {
   const { stored, transaction } = input;
   const comparison = compareReceiptToTransaction({
@@ -156,7 +168,7 @@ export function receiptHeader(input: {
   return {
     total: formatMoney(stored.receipt.total),
     ...(stored.receipt.sellerName === undefined ? {} : { seller: stored.receipt.sellerName }),
-    issued: `${stored.receipt.issuedDate} ${stored.receipt.issuedTime}`,
+    issued: issuedLabel(stored.receipt.issuedDate, stored.receipt.issuedTime, input.now),
     // A переказ has no single сума to differ from — `compareReceiptToTransaction` falls back to
     // the чек's own total for it, and printing that twice under «не збігається» would be the
     // screen inventing a disagreement. A retyped переказ shows its чек and claims nothing.
@@ -579,12 +591,12 @@ export const ATTACH_ANYWAY_LABEL = 'Прикріпити все одно';
  * The preview a `preview` state shows. The позиції come from the parsed чек — never from the
  * snapshot, which no screen reads.
  */
-export function previewView(state: Extract<FlowState, { kind: 'preview' }>): PreviewView {
+export function previewView(state: Extract<FlowState, { kind: 'preview' }>, now: Date): PreviewView {
   const { parsed, comparison } = state;
   const notes: string[] = [];
   if (comparison.dateDiffersBy !== undefined) {
     notes.push(
-      `Чек виписано ${parsed.issuedDate}, а транзакція за іншу дату (різниця — ${comparison.dateDiffersBy} ${plural(comparison.dateDiffersBy, 'день', 'дні', 'днів')}).`,
+      `Чек виписано ${calendarLabel(parsed.issuedDate, now)}, а транзакція за іншу дату (різниця — ${comparison.dateDiffersBy} ${plural(comparison.dateDiffersBy, 'день', 'дні', 'днів')}).`,
     );
   }
   if (comparison.sellerHint !== undefined) {
@@ -606,7 +618,7 @@ export function previewView(state: Extract<FlowState, { kind: 'preview' }>): Pre
       parsed.items.map((item) => ({ ...item, id: `line-${item.line}`, receiptId: '' })),
     ),
     ...(parsed.sellerName === undefined ? {} : { seller: parsed.sellerName }),
-    issued: `${parsed.issuedDate} ${parsed.issuedTime}`,
+    issued: issuedLabel(parsed.issuedDate, parsed.issuedTime, now),
     ...(comparison.amounts === 'match'
       ? {}
       : {

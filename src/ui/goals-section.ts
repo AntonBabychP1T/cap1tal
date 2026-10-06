@@ -11,7 +11,7 @@ import type { CurrencyCode } from '../domain/money';
 import type { IsoDate } from '../domain/transaction';
 import { withCurrent } from './account-choices';
 import { formatMoney, parseAmount } from './amount-input';
-import { parseTypedDate } from './dates';
+import { calendarLabel, parseTypedDate } from './dates';
 import { byName, categoryLabel, OFFERED_CURRENCIES } from './labels';
 import { limitFromDraft } from './limits-section';
 import type { Named } from './shortlist';
@@ -48,6 +48,8 @@ export interface AccumulationGoalRow {
   readonly target: string;
   /** The дата, or `null` where the ціль has none. */
   readonly deadline: IsoDate | null;
+  /** The дата in words — «31 грудня», «1 березня 2027» — as the row draws it after «до». */
+  readonly deadlineLabel: string | null;
   /** The рахунки of the склад by назва while they are few enough to name. */
   readonly accountNames: readonly string[];
   /** «4 рахунки» — what is shown instead when they are too many to name. */
@@ -87,6 +89,7 @@ export function accountCountLabel(n: number): string {
 export function goalRows(
   goals: readonly AccumulationGoal[],
   accounts: readonly Account[],
+  now: Date,
 ): AccumulationGoalRow[] {
   const byId = new Map(accounts.map((a) => [a.id, a]));
   return goals.map((goal) => {
@@ -97,6 +100,7 @@ export function goalRows(
       name: goal.name,
       target: formatMoney(goal.target),
       deadline: goal.deadline ?? null,
+      deadlineLabel: goal.deadline === undefined ? null : calendarLabel(goal.deadline, now),
       accountNames:
         goal.accountIds.length <= NAMEABLE
           ? // The id where the row is gone, so a ціль never shows an empty gap.

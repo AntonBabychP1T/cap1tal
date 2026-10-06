@@ -13,7 +13,7 @@ import {
 import { interpret } from '../saldo/interpret';
 import { verify, type Explanation, type Report } from '../saldo/verify';
 import { formatMoney } from './amount-input';
-import { calendarLabel } from './dates';
+import { calendarLabel, momentLabel } from './dates';
 import { journal } from './journal';
 import { monthLabel } from './months';
 import type { AccountKind } from '../domain/account';
@@ -212,6 +212,14 @@ export function dismissHint(state: FlowState, key: string): FlowState {
 }
 
 /** The extra confirmation a second import needs before it may be committed. */
+/**
+ * The warning a second import stands under: when the first one was committed, as running text says
+ * an instant (app-shell) — «вчора о 14:03», never «06.10.2026, 14:03:00».
+ */
+export function previousImportWarning(committedAt: Date, now: Date): string {
+  return `Імпорт уже виконано ${momentLabel(committedAt.getTime(), now)}. Ще один подвоїть усю історію.`;
+}
+
 export function confirmSecondImport(state: FlowState): FlowState {
   return { ...state, secondImportConfirmed: true };
 }

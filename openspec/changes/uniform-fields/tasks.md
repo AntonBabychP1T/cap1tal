@@ -44,13 +44,13 @@ the tree that holds it.
       `src/app/manage/goals.tsx`. Prove "A ціль витрат's категорія comes from the same picker" in
       `src/ui/goals-section.test.ts`, and in `src/ui/rule-template-screen.test.ts` that the opened
       базова категорія's current target is among the shown five.
-- [ ] 2.4 Watch and monobank link: `Picker` for the watch's «Рахунок» in
+- [x] 2.4 Watch and monobank link: `Picker` for the watch's «Рахунок» in
       `src/app/manage/notifications.tsx` and for «Наявний рахунок у …» in
       `src/app/manage/monobank.tsx` (tap confirms and links, design D3), rows from
       `watchAccountChoices` / `linkChoices`. Prove "A short list is drawn whole" in
       `src/ui/notification-settings.test.ts` (four рахунки, `allOffer` undefined) and add a
       `linkChoices` → rows case in `src/ui/monobank-screen.test.ts`.
-- [ ] 2.5 Guard the inventory: a source assertion in `src/ui/screens.test.ts` that no screen under
+- [x] 2.5 Guard the inventory: a source assertion in `src/ui/screens.test.ts` that no screen under
       `src/app` passes a рахунок, категорія or джерело list to `Choices` (the six screens of design
       §Context are on `Picker`), and that `src/app/transactions.tsx` still draws its рахунок
       narrowing with `Choices … scroll` — proving "A filter row is not turned into a picker". The
@@ -59,7 +59,7 @@ the tree that holds it.
 
 ## 3. Full lists without the keyboard (app-shell "A full list is read before it is searched")
 
-- [ ] 3.1 Assert in `src/ui/screens.test.ts` that `Picker`'s search field in
+- [x] 3.1 Assert in `src/ui/screens.test.ts` that `Picker`'s search field in
       `src/components/form.tsx` carries no `autoFocus` and that every `Picker` placed inside a form
       that scrolls sits in a `keyboardShouldPersistTaps` scroller with the app-shell keyboard
       avoidance. Prove "The full list of рахунки opens unobstructed" by that assertion; "Typing keeps
@@ -68,20 +68,20 @@ the tree that holds it.
 
 ## 4. Date texts (app-shell "A дата in running text…", "A транзакція's дата reads as a day")
 
-- [ ] 4.1 Ціль deadline: a `deadlineLabel` field on `GoalRow` (`src/ui/goals-section.ts`), on the
+- [x] 4.1 Ціль deadline: a `deadlineLabel` field on `GoalRow` (`src/ui/goals-section.ts`), on the
       goal-screen model (`src/ui/goal-screen.ts`) and on the reports goal row
       (`src/ui/reports-screen.ts`), each `calendarLabel`; the three `.tsx` interpolate it. Prove "A
       ціль's deadline is a day in words wherever it is read" in `src/ui/goals-section.test.ts`,
       `src/ui/goal-screen.test.ts` and `src/ui/reports-screen.test.ts`.
-- [ ] 4.2 Чернетка line: `DraftLine` gains `dayLabel` of its дата (`src/ui/drafts-section.ts`);
+- [x] 4.2 Чернетка line: `DraftLine` gains `dayLabel` of its дата (`src/ui/drafts-section.ts`);
       `src/app/(tabs)/index.tsx` draws it. Prove "A чернетка's line names its day" in
       `src/ui/drafts-section.test.ts`.
-- [ ] 4.3 Monobank and чек: `boundaryConfirmation` and its several-рахунки twin take `now` and write
+- [x] 4.3 Monobank and чек: `boundaryConfirmation` and its several-рахунки twin take `now` and write
       `calendarLabel` (`src/ui/monobank-screen.ts`); `receipt-screen.ts` writes the issue day with
       `calendarLabel` in the line and the date warning. Prove "The monobank link confirmation names
       its day" in `src/ui/monobank-screen.test.ts` and "A чек's issue day differs in words" in
       `src/ui/receipt-screen.test.ts`.
-- [ ] 4.4 Досягнення and Saldo: move `calendarLabel`'s wording to `src/domain/day-words.ts`
+- [x] 4.4 Досягнення and Saldo: move `calendarLabel`'s wording to `src/domain/day-words.ts`
       (re-exported by `src/ui/dates.ts`, design D7) and use it in the catalogue's deadline condition
       (`src/progress/catalogue.ts`, no import from `src/ui`); the Saldo «Імпорт уже виконано» sentence moves into
       `src/ui/saldo-import.ts` built with `momentLabel`. Prove "A досягнення's condition names its

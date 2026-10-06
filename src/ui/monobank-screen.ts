@@ -7,6 +7,7 @@ import { suggestKind, type LinkProposal, type MonobankLink } from '../monobank/l
 import { shownLinks } from '../monobank/sync';
 import type { BackgroundRestriction } from '../platform/background-sync';
 import { formatMoney } from './amount-input';
+import type { Named } from './shortlist';
 import { calendarLabel, momentLabel, parseTypedDate, startOfLocalDayMs } from './dates';
 import {
   accountChoiceLabel,
@@ -309,6 +310,14 @@ export function linkChoiceLabel(a: Account): string {
   return accountChoiceLabel(a);
 }
 
+/**
+ * The same рахунки as the link picker draws them (the entry form's short list), each named the way
+ * every other picker names a рахунок. A tap confirms and links, from the shown few or the full list.
+ */
+export function linkRows(input: Parameters<typeof linkChoices>[0]): Named[] {
+  return linkChoices(input).map((a) => ({ id: a.id, name: linkChoiceLabel(a) }));
+}
+
 /** A рахунок about to be created for a monobank account, before the owner has touched it. */
 export interface NewAccountDraft {
   readonly name: string;
@@ -339,8 +348,8 @@ export function newAccountDraft(monobankAccount: MonobankAccountView): NewAccoun
  * транзакція the Saldo import already brought in, so an overlapping boundary produces duplicates
  * the owner then edits by hand. Saying so before the import is the only honest order.
  */
-export function boundaryConfirmation(date: IsoDate, accountName: string): string {
-  return `Синхронізувати «${accountName}» з ${date} включно. Записи до цієї дати не імпортуються, а те, що вже є з Saldo, не звіряється — збіги доведеться прибрати вручну.`;
+export function boundaryConfirmation(date: IsoDate, accountName: string, now: Date): string {
+  return `Синхронізувати «${accountName}» з ${calendarLabel(date, now)} включно. Записи до цієї дати не імпортуються, а те, що вже є з Saldo, не звіряється — збіги доведеться прибрати вручну.`;
 }
 
 /** The boundary a link is stored with: the date the owner typed, and where the cursor starts. */
@@ -755,6 +764,6 @@ export function proposalRows(input: {
  * imported, and nothing here is reconciled against what the Saldo import already brought in —
  * because accepting five links at once is exactly when that promise is easiest to miss.
  */
-export function linkSetConfirmation(count: number, date: IsoDate): string {
-  return `Приєднати ${accountCount(count)} з ${date} включно. Записи до цієї дати не імпортуються, а те, що вже є з Saldo, не звіряється — збіги доведеться прибрати вручну.`;
+export function linkSetConfirmation(count: number, date: IsoDate, now: Date): string {
+  return `Приєднати ${accountCount(count)} з ${calendarLabel(date, now)} включно. Записи до цієї дати не імпортуються, а те, що вже є з Saldo, не звіряється — збіги доведеться прибрати вручну.`;
 }

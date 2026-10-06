@@ -1,4 +1,5 @@
 import { isoDate, type IsoDate } from '../domain/transaction';
+import { dayInWords, GENITIVE_MONTHS, genitiveMonthName } from '../domain/day-words';
 import { Refusal } from '../domain/refusal';
 
 /**
@@ -41,26 +42,6 @@ export function startOfLocalDayMs(date: IsoDate): number {
 }
 
 /**
- * The twelve months in the genitive, as a day names its month: «30 серпня». The nominative list
- * in `./months` names a month on its own — «Серпень 2026» — and the two are different words, so
- * neither can be derived from the other.
- */
-const GENITIVE_MONTHS: readonly string[] = [
-  'січня',
-  'лютого',
-  'березня',
-  'квітня',
-  'травня',
-  'червня',
-  'липня',
-  'серпня',
-  'вересня',
-  'жовтня',
-  'листопада',
-  'грудня',
-];
-
-/**
  * «09», not «9». Deliberately not `formatTimeOfDay` from `src/reminders/time.ts`, which pads the
  * same two numbers: that one takes a `TimeOfDay` — a wall-clock hour the owner chose, which its
  * own module says is "deliberately not an instant" — and this one reads the local parts of one.
@@ -72,9 +53,7 @@ function twoDigits(value: number): string {
 }
 
 /** The month numbered 1–12 in the genitive — «вересня» — for `src/ui/months.ts` to name a month by. */
-export function genitiveMonthName(month: number): string {
-  return GENITIVE_MONTHS[month - 1]!;
-}
+export { genitiveMonthName };
 
 /**
  * A calendar дата in the owner's words: «30 серпня», and «30 серпня 2025» once the year is no
@@ -84,9 +63,7 @@ export function genitiveMonthName(month: number): string {
  * and a test can say what year it is.
  */
 export function calendarLabel(date: IsoDate, now: Date): string {
-  const [year, month, day] = isoDate(date).split('-');
-  const named = `${Number(day)} ${GENITIVE_MONTHS[Number(month) - 1]}`;
-  return Number(year) === now.getFullYear() ? named : `${named} ${year}`;
+  return dayInWords(date, todayIso(now));
 }
 
 /**
