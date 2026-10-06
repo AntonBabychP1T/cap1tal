@@ -24,9 +24,16 @@ import {
  * say so honestly rather than crash on a phone whose listener is missing.
  */
 
-/** The five calls the Kotlin module exposes (`NotificationCaptureModule.kt`). */
+/** The seven calls the Kotlin module exposes (`NotificationCaptureModule.kt`). */
 interface NativeNotificationCapture {
   isAccessGranted(): boolean;
+  /**
+   * Whether the listener is bound right now — the fact `isAccessGranted` cannot carry, because
+   * Android's list of enabled listeners answers about the switch and not about the binding.
+   */
+  isListening(): boolean;
+  /** Asks the system to bind the listener again. Returns before the binding happens. */
+  requestRebind(): void;
   setWatchedPackages(packages: string[]): void;
   collect(): CapturedNotification[];
   acknowledge(count: number): void;

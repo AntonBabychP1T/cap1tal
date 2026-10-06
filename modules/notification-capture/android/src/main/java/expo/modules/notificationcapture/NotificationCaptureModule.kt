@@ -1,16 +1,18 @@
 package expo.modules.notificationcapture
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.service.notification.NotificationListenerService
 import androidx.core.app.NotificationManagerCompat
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
 /**
- * The five calls the app makes into the phone's own hearing (design D5): is the listener switched
- * on, what is watched now, what is waiting, what may be forgotten — and which of the bank apps the
- * app knows about this phone actually has.
+ * The seven calls the app makes into the phone's own hearing (design D5): is the listener switched
+ * on, is it actually bound, bind it again, what is watched now, what is waiting, what may be
+ * forgotten — and which of the bank apps the app knows about this phone actually has.
  *
  * Deliberately thin. Every rule that could be a pure function is one — the monobank refusal in
  * `src/platform/notification-capture.ts`, the parsing in `src/notifications/` — and everything
@@ -31,9 +33,39 @@ class NotificationCaptureModule : Module() {
      * Whether the owner has switched this app on at Android's «Доступ до сповіщень». The OS's own
      * list is the only truth here: a build that carries the listener but was never granted, and a
      * grant later revoked, both answer honestly without the app remembering anything.
+     *
+     * It is not, on its own, whether сповіщення are being read — that is `isListening` below.
+     * This answers about the switch, and the switch can be on while nothing is bound to it.
      */
     Function("isAccessGranted") {
       NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    }
+
+    /**
+     * Whether the listener is bound right now, which is the fact `isAccessGranted` cannot carry.
+     * An app update, a reinstall or a «Force stop» leaves the switch on and the service unbound:
+     * enabled, deaf, and — before this — reported as granted. `CaptureStore` holds it for the life
+     * of the process, which is exactly as long as a binding can last.
+     */
+    Function("isListening") {
+      CaptureStore.isListening()
+    }
+
+    /**
+     * Asks the system to bind the listener again — the repair for exactly the state above, and
+     * the reason the app does not have to send the owner to toggle «Доступ до сповіщень» off and
+     * on for the ordinary case.
+     *
+     * It returns immediately and the binding lands later, on the main thread: the caller asks,
+     * gives it a moment, and asks `isListening` again (`notification-access-device.ts`). API 24,
+     * and this module's `minSdkVersion` is 24, so there is no version to guard against. When the
+     * app is not switched on at all this does nothing, which is the honest outcome — there is no
+     * grant to bind.
+     */
+    Function("requestRebind") {
+      NotificationListenerService.requestRebind(
+        ComponentName(context, CaptureListenerService::class.java),
+      )
     }
 
     /** The whole watched set, replacing whatever was stored. Monobank is dropped on write (D6). */

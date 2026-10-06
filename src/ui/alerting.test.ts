@@ -223,6 +223,33 @@ describe('what one pass of the drain announces', () => {
     expect(repo.outstandingKinds()).toEqual(['collection']);
   });
 
+  it('Scenario: A capture layer that stopped receiving is announced', async () => {
+    // The switch is on and nothing is bound to it — сповіщення are not arriving, and the drain
+    // that just ran found only what was captured before the silence. From where the owner stands
+    // that is a collection that stopped, so it is the same сповіщення to the same screen.
+    //
+    // Nothing in `alerting.ts` mentions this state: it reads «granted or not», and the fourth
+    // answer falls on the correct side of that on purpose (design D2, D7). Pinned here because
+    // that correctness is invisible in a diff.
+    await reportCollection({ access: 'not-listening', watched: true, failed: false }, ports);
+
+    expect(phone.posted()).toEqual(['alert:collection']);
+    expect(repo.outstandingKinds()).toEqual(['collection']);
+
+    // And a second collection in the same state adds no second one: one failed action is one
+    // сповіщення, however many foreground transitions the owner makes.
+    await reportCollection({ access: 'not-listening', watched: true, failed: false }, ports);
+    expect(phone.posted()).toEqual(['alert:collection']);
+  });
+
+  it('says nothing about a silent capture layer when nothing is watched', async () => {
+    // No відстежуваний застосунок means nothing was expected to arrive, so nothing stopped.
+    await reportCollection({ access: 'not-listening', watched: false, failed: false }, ports);
+
+    expect(phone.posted()).toEqual([]);
+    expect(repo.outstanding()).toEqual([]);
+  });
+
   it('Scenario: A collection failure carries no bank text', async () => {
     // The real path a captured сповіщення's failure travels: `drainCaptures` answers with a value,
     // the root layout passes `failed: true` — a boolean — and nothing but the kind reaches the

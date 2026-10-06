@@ -54,6 +54,28 @@ describe('the device half of the журнал', () => {
       ]);
     });
 
+    it('records a switched-on listener that hears nothing as a state of its own', () => {
+      // The fourth answer (notification-listener-rebind): granted in Android's settings, unbound
+      // in fact. It is the device's own enumerated answer like the other three, so it is an entry
+      // in its own name — and «granted» → «not-listening» → «granted» is the silence, timed.
+      journalPermission(NOTIFICATION_ACCESS, 'granted');
+      journalPermission(NOTIFICATION_ACCESS, 'not-listening');
+      journalPermission(NOTIFICATION_ACCESS, 'not-listening');
+      journalPermission(NOTIFICATION_ACCESS, 'granted');
+
+      expect(journalOf().map((e) => [e.name, e.detail])).toEqual([
+        [NOTIFICATION_ACCESS, 'granted'],
+        [NOTIFICATION_ACCESS, 'not-listening'],
+        [NOTIFICATION_ACCESS, 'granted'],
+      ]);
+    });
+
+    it('journals only the settled answer, after any rebind has had its chance', () => {
+      // A rebind that succeeds inside the grace is one `granted`, never a `not-listening` about a
+      // silence that lasted 600 ms. The adapter awaits the whole read before it journals.
+      expect(accessDevice).toContain('return journalled(await read());');
+    });
+
     it("Scenario: The listener's connection is an entry", () => {
       journalPermission(NOTIFICATION_LISTENER, 'disconnected');
 
