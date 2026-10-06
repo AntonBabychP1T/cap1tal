@@ -347,7 +347,7 @@ function limitHold(input: ChallengeInput): Challenge | undefined {
     name: `Втримай ліміт «${name}»`,
     // The місяць first and in the locative, as «Закрий <місяць>» says it: «у Липень 2026» is a
     // heading's label inside a sentence, and «…перевищено у липні» would ask for «в» after a vowel.
-    reason: `${sentenceStart(input.monthInYearLabel(last))} ліміт «${name}» перевищено востаннє; відтоді під ним ${held} з ${LIMIT_RUN} завершених місяців.`,
+    reason: `${capitalised(input.monthInYearLabel(last))} ліміт «${name}» перевищено востаннє; відтоді під ним ${held} з ${LIMIT_RUN} завершених місяців.`,
     progress: { kind: 'against', reached: held, target: LIMIT_RUN },
     criterion: `Три завершені місяці поспіль витрати категорії «${name}» не перевищують ліміт.`,
     action: { kind: 'open-category-month', categoryId: limit.categoryId, month: last },
