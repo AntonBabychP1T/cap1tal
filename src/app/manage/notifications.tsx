@@ -2,7 +2,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, Field, RowAction } from '@/components/form';
+import { Action, Choices, Field, Picker, RowAction } from '@/components/form';
 import {
   Banner,
   Card,
@@ -13,16 +13,20 @@ import {
   SectionLabel,
 } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import { accounts as accountsRepo, notifications as notificationsRepo } from '@/db/repos';
+import {
+  accounts as accountsRepo,
+  notifications as notificationsRepo,
+  transactions as transactionsRepo,
+} from '@/db/repos';
 import { useClearAlertOnOpen } from '@/hooks/use-alerting';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useOnForeground } from '@/hooks/use-on-foreground';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { failureAlert } from '@/ui/failure-alert';
 import { notificationAccess } from '@/platform/notification-access-device';
 import { notificationCapture } from '@/platform/notification-capture-device';
 import type { NotificationAccess } from '@/platform/notification-access';
-import { accountChoiceLabel } from '@/ui/labels';
-import { accountChoicesFor } from '@/ui/account-choices';
+import { recentlyUsed } from '@/ui/category-choices';
 import {
   accessSection,
   ADD_APP_ACTION,
@@ -32,9 +36,11 @@ import {
   NOTIFICATIONS_EXPLANATION,
   removeConfirmation,
   removeWatchedApp,
+  watchAccountRows,
   watchRows,
   type WatchChange,
 } from '@/ui/notification-settings';
+import { PICKER_SIZE } from '@/ui/shortlist';
 
 import { Spacing } from '@/constants/theme';
 
@@ -47,6 +53,9 @@ import { Spacing } from '@/constants/theme';
  * order a watch is written in — the capture layer first, the row only on `ok`. This file is the
  * wiring, plus the one thing that cannot be tested off a device: asking the device.
  */
+
+/** How far back the рахунок picker looks for what the owner reached for last — the entry form's window. */
+const RECENT_WINDOW = 50;
 
 export default function NotificationsScreen() {
   const router = useRouter();
@@ -64,6 +73,8 @@ export default function NotificationsScreen() {
         // Archived ones too: a watch mapped to a рахунок since archived still shows its name.
         accounts: accountsRepo.list(),
         watches: notificationsRepo.watches(),
+        // What the owner reached for last, read off the latest транзакції, as the entry form does.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
       }),
       [],
     ),
@@ -79,6 +90,10 @@ export default function NotificationsScreen() {
   const [adding, setAdding] = useState(false);
   const [packageName, setPackageName] = useState('');
   const [accountId, setAccountId] = useState<string>();
+  // The рахунок picker's full list: «назад» closes it before anything else.
+  const [accountsOpen, setAccountsOpen] = useState(false);
+  const closeAccounts = useCallback(() => setAccountsOpen(false), []);
+  useCloseOnBack(accountsOpen, closeAccounts);
   const [answer, setAnswer] = useState<string>();
 
   /** The device's own answer, never a remembered one: a permission revoked outside the app. */
@@ -125,16 +140,15 @@ export default function NotificationsScreen() {
     () => appChoices({ watches: stored.watches, installed }),
     [installed, stored.watches],
   );
-  // The same picker rule every other screen has: the unarchived рахунки, `account-choices.ts`.
-  const offered = useMemo(
-    () => accountChoicesFor(stored.accounts, undefined),
-    [stored.accounts],
-  );
+  // The unarchived рахунки that are not a person, drawn by the entry form's picker.
+  const accountRows = useMemo(() => watchAccountRows(stored.accounts), [stored.accounts]);
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE), [stored.latest]);
 
   const settle = useCallback(
     (change: WatchChange) => {
       if (change.kind === 'stored') {
         setAdding(false);
+        setAccountsOpen(false);
         setPackageName('');
         setAccountId(undefined);
       }
@@ -255,11 +269,15 @@ export default function NotificationsScreen() {
 
           {adding ? (
             <Card style={styles.card}>
-              <Choices
+              <Picker
                 label="Рахунок"
-                choices={offered.map((a) => ({ value: a.id, label: accountChoiceLabel(a) }))}
+                rows={accountRows}
+                recentIds={recent.accounts}
                 selected={accountId}
                 onSelect={setAccountId}
+                noun="accounts"
+                expanded={accountsOpen}
+                onExpandedChange={setAccountsOpen}
               />
               {apps.length > 0 ? (
                 <Choices
@@ -284,7 +302,14 @@ export default function NotificationsScreen() {
                   void add(packageName);
                 }}
               />
-              <Action title="Скасувати" variant="secondary" onPress={() => setAdding(false)} />
+              <Action
+                title="Скасувати"
+                variant="secondary"
+                onPress={() => {
+                  setAdding(false);
+                  setAccountsOpen(false);
+                }}
+              />
             </Card>
           ) : (
             <Action title={ADD_APP_ACTION} onPress={() => setAdding(true)} />

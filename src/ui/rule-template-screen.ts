@@ -2,8 +2,10 @@ import { activeCategories, isReservedCategory, type Category } from '../domain/c
 import { TEMPLATE_GROUPS, templateTargetOf } from '../domain/rule-template';
 import type { SweepCounts } from '../db/categorisation';
 import type { TemplateChoice } from '../db/rule-template-repo';
+import { withCurrent } from './account-choices';
 import { byName } from './labels';
 import { sweepSaid, sweepStep } from './list-management';
+import type { Named } from './shortlist';
 
 /**
  * What «Базові категорії» shows and does (settings-screen, "The «Базові категорії» section maps the
@@ -81,6 +83,17 @@ export function templateTargetChoices(categories: readonly Category[]): readonly
   return activeCategories(categories)
     .filter((c) => !isReservedCategory(c.id))
     .sort(byName);
+}
+
+/**
+ * The same targets as the picker draws them, plus whatever the opened базова категорія already
+ * sends its продавці to (`currentId`), so the chosen chip always stands among the shown few.
+ */
+export function templateTargetRows(categories: readonly Category[], currentId: string | undefined): Named[] {
+  return withCurrent([...templateTargetChoices(categories)], categories, currentId).map((c) => ({
+    id: c.id,
+    name: c.name,
+  }));
 }
 
 /** Said above the list, so nobody mistakes the шаблон for the last word. */

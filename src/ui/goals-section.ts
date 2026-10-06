@@ -14,6 +14,7 @@ import { formatMoney, parseAmount } from './amount-input';
 import { parseTypedDate } from './dates';
 import { byName, categoryLabel, OFFERED_CURRENCIES } from './labels';
 import { limitFromDraft } from './limits-section';
+import type { Named } from './shortlist';
 import { Refusal } from '../domain/refusal';
 
 /**
@@ -310,6 +311,14 @@ export function spendingGoalCategoryChoices(input: {
 }): Category[] {
   const taken = new Set(input.limits.map((limit) => limit.categoryId));
   return input.categories.filter((c) => !c.archived && !taken.has(c.id)).sort(byName);
+}
+
+/** The same категорії as the picker of a new ціль витрат draws them. */
+export function spendingGoalCategoryRows(input: {
+  readonly categories: readonly Category[];
+  readonly limits: readonly CategoryLimit[];
+}): Named[] {
+  return spendingGoalCategoryChoices(input).map((c) => ({ id: c.id, name: c.name }));
 }
 
 /**

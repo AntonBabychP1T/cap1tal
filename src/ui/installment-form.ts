@@ -13,9 +13,11 @@ import {
 import { Refusal, isRefusal } from '../domain/refusal';
 import type { IsoDate } from '../domain/transaction';
 import { formatMinorUnits, parseAmount } from './amount-input';
+import { isPerson, withCurrent } from './account-choices';
 import { parseTypedDate } from './dates';
-import { byName } from './labels';
+import { accountChoiceLabel, byName } from './labels';
 import { sameFields } from './same-fields';
+import type { Named } from './shortlist';
 
 /**
  * The create/edit form of a розстрочка, with none of its JSX (installments-screen, "The form fills
@@ -97,14 +99,35 @@ export function installmentDraftOf(installment: Installment): InstallmentDraft {
   };
 }
 
-/** The рахунки a розстрочка can be debited from: unarchived and in гривнях, by name. */
-export function debitAccountChoices(accounts: readonly Account[]): Account[] {
-  return accounts.filter((a) => !a.archived && a.currency === INSTALLMENT_CURRENCY).sort(byName);
+/**
+ * The рахунки a розстрочка can be debited from: unarchived, in гривнях and not a рахунок-борг, by
+ * name — an інвестиційний one included (military bonds pay a розстрочка) — plus the one a stored
+ * розстрочка already sits on (`currentId`), so editing it never silently moves it off.
+ */
+export function debitAccountChoices(accounts: readonly Account[], currentId?: string): Account[] {
+  const payable = accounts.filter((a) => !a.archived && a.currency === INSTALLMENT_CURRENCY);
+  return withCurrent(payable.filter((a) => !isPerson(a)).sort(byName), payable, currentId);
 }
 
 /** The категорії offered: unarchived ones, by name. */
 export function installmentCategoryChoices(categories: readonly Category[]): Category[] {
   return categories.filter((c) => !c.archived).sort(byName);
+}
+
+/**
+ * «Рахунок списання» as the picker draws it — the entry form's short list (`shortlist`,
+ * `allOffer`) — each рахунок wearing its currency, as on the зобов'язання form.
+ */
+export function installmentAccountRows(accounts: readonly Account[], currentId?: string): Named[] {
+  return debitAccountChoices(accounts, currentId).map((a) => ({ id: a.id, name: accountChoiceLabel(a) }));
+}
+
+/** The form's one offer of no категорія; its value is the draft's empty `categoryId`. */
+const NO_CATEGORY: Named = { id: '', name: 'Без категорії' };
+
+/** «Категорія» as the picker draws it: «Без категорії» once and first, as in the entry form. */
+export function installmentCategoryRows(categories: readonly Category[]): Named[] {
+  return [NO_CATEGORY, ...installmentCategoryChoices(categories).map((c) => ({ id: c.id, name: c.name }))];
 }
 
 function amountOf(typed: string): number | undefined {

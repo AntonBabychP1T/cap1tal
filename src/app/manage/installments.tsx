@@ -2,7 +2,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, DateField, Field, RowAction, ThemedSwitch } from '@/components/form';
+import { Action, DateField, Field, Picker, RowAction, ThemedSwitch } from '@/components/form';
 import { Tap } from '@/components/motion';
 import { Card, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
@@ -10,6 +10,7 @@ import {
   accounts as accountsRepo,
   categories as categoriesRepo,
   installments as installmentsRepo,
+  transactions as transactionsRepo,
 } from '@/db/repos';
 import type { InstallmentField } from '@/domain/installments';
 import {
@@ -21,6 +22,7 @@ import { useOnForeground } from '@/hooks/use-on-foreground';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import type { LocalNotificationPermission } from '@/platform/local-notifications';
 import { localNotifications } from '@/platform/local-notifications-device';
+import { recentlyUsed } from '@/ui/category-choices';
 import { todayIso } from '@/ui/dates';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
@@ -29,7 +31,8 @@ import {
   INSTALLMENT_FIELD_LABELS,
   debitAccountChoices,
   editInstallmentDraft,
-  installmentCategoryChoices,
+  installmentAccountRows,
+  installmentCategoryRows,
   installmentDraftOf,
   installmentDraftProblems,
   installmentFromDraft,
@@ -46,6 +49,7 @@ import {
   setRemindersOn,
   type InstallmentRow,
 } from '@/ui/installments-screen';
+import { PICKER_SIZE } from '@/ui/shortlist';
 
 import { Spacing } from '@/constants/theme';
 
@@ -60,6 +64,12 @@ import { Spacing } from '@/constants/theme';
  */
 
 const SWITCH_PORTS = { notifications: localNotifications, storage: installmentsRepo };
+
+/** How far back the pickers look for what the owner reached for last — the entry form's window. */
+const RECENT_WINDOW = 50;
+
+/** Which picker has its full list open, if any — the one thing «назад» closes before the form. */
+type OpenPicker = 'debitAccount' | 'category';
 
 /** An open form: a new розстрочка, or the one being edited. */
 type Editor = {
@@ -91,6 +101,8 @@ export default function InstallmentsScreen() {
         // Every рахунок and категорія: the pickers filter, a stored one keeps its name.
         accounts: accountsRepo.list(),
         categories: categoriesRepo.list(),
+        // What the owner reached for last, read off the latest транзакції, as the entry form does.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
       };
     }, []),
   );
@@ -109,13 +121,31 @@ export default function InstallmentsScreen() {
   useOnForeground(readPermission);
 
   const [editor, setEditor] = useState<Editor>();
+  // Which picker has its full list open: «назад» closes it first, and asks nothing.
+  const [openPicker, setOpenPicker] = useState<OpenPicker>();
+  const closePicker = useCallback(() => setOpenPicker(undefined), []);
+  const opening = (picker: OpenPicker) => (isOpen: boolean) => setOpenPicker(isOpen ? picker : undefined);
   const closeForm = useCallback(() => setEditor(undefined), []);
   // WHILE the form is open the phone's back gesture closes it, storing nothing — after «Відкинути
-  // зміни?» when the form holds edits.
+  // зміни?» when the form holds edits. Only while no picker is open, so an open list closes first.
   const dirty = editor !== undefined && !sameInstallmentFields(editor.draft, editor.opened);
-  useCloseOnBack(editor !== undefined, closeForm, dirty);
+  const pickerClosed = openPicker === undefined;
+  useCloseOnBack(editor !== undefined && pickerClosed, closeForm, pickerClosed && dirty);
+  useCloseOnBack(!pickerClosed, closePicker);
 
   const debitAccounts = useMemo(() => debitAccountChoices(stored.accounts), [stored.accounts]);
+  // The рахунок a stored розстрочка already sits on stays offered while it is edited, even when it
+  // is a рахунок-борг that a new one would not be offered.
+  const storedDebitId = editor?.id
+    ? stored.installments.find((i) => i.id === editor.id)?.debitAccountId
+    : undefined;
+  // The pickers: five — the last reached for, topped up by name — and «Всі … (N)» with a search.
+  const accountRows = useMemo(
+    () => installmentAccountRows(stored.accounts, storedDebitId),
+    [stored.accounts, storedDebitId],
+  );
+  const categoryRows = useMemo(() => installmentCategoryRows(stored.categories), [stored.categories]);
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE), [stored.latest]);
 
   // «Редагувати» on one розстрочка lands here with its id: the form opens on it, once — on the
   // first render whose read holds that розстрочка, not merely the first render.
@@ -124,11 +154,13 @@ export default function InstallmentsScreen() {
   if (toEdit) {
     setOpenedEdit(toEdit.id);
     const draft = installmentDraftOf(toEdit);
+    setOpenPicker(undefined);
     setEditor({ id: toEdit.id, draft, opened: draft, tried: false });
   }
 
   const startNew = useCallback(() => {
     const draft = newInstallmentDraft(todayIso(new Date()), debitAccounts);
+    setOpenPicker(undefined);
     setEditor({ draft, opened: draft, tried: false });
   }, [debitAccounts]);
 
@@ -193,14 +225,6 @@ export default function InstallmentsScreen() {
 
   const line = permission ? reminderLine(stored.reminder.enabled, permission) : undefined;
 
-  const categoryChoices = useMemo(
-    () => [
-      { value: '', label: 'Без категорії' },
-      ...installmentCategoryChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
-    ],
-    [stored.categories],
-  );
-
   const open = (row: InstallmentRow) =>
     router.push({ pathname: '/installment/[id]', params: { id: row.id } });
 
@@ -256,11 +280,15 @@ export default function InstallmentsScreen() {
             now={new Date()}
             hint={problemOf('firstDue')}
           />
-          <Choices
+          <Picker
             label={INSTALLMENT_FIELD_LABELS.debitAccount}
-            choices={debitAccounts.map((a) => ({ value: a.id, label: a.name }))}
+            rows={accountRows}
+            recentIds={recent.accounts}
             selected={editor.draft.debitAccountId || undefined}
             onSelect={(debitAccountId) => change({ debitAccountId })}
+            noun="accounts"
+            expanded={openPicker === 'debitAccount'}
+            onExpandedChange={opening('debitAccount')}
           />
           {problemOf('debitAccount') ? (
             <ThemedText type="small" themeColor="textDanger">
@@ -274,12 +302,15 @@ export default function InstallmentsScreen() {
             keyboardType="number-pad"
             hint={problemOf('paidBefore')}
           />
-          <Choices
+          <Picker
             label={`${INSTALLMENT_FIELD_LABELS.category} (необовʼязково)`}
-            choices={categoryChoices}
+            rows={categoryRows}
+            recentIds={recent.categories}
             selected={editor.draft.categoryId}
             onSelect={(categoryId) => change({ categoryId })}
-            scroll
+            noun="categories"
+            expanded={openPicker === 'category'}
+            onExpandedChange={opening('category')}
           />
           {problemOf('category') ? (
             <ThemedText type="small" themeColor="textDanger">

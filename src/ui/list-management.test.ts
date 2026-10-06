@@ -17,6 +17,8 @@ import {
   manageCategories,
   manageSources,
   mccText,
+  ruleAccountRows,
+  ruleCategoryRows,
   ruleFromDraft,
   ruleLine,
   ruleDraftFromOffer,
@@ -25,6 +27,8 @@ import {
   storeRule,
   type ManagedRow,
 } from './list-management';
+import { account } from '../domain/account';
+import { allOffer, narrow, shortlist } from './shortlist';
 
 const category = (id: string, name: string, archived = false): Category => ({ id, name, archived });
 const source = (id: string, name: string, archived = false): Source => ({ id, name, archived });
@@ -850,5 +854,46 @@ describe('the offer to remember a правило says what that правило w
     expect(sheet).toContain('{view?.targetLabel}');
     expect(sheet).not.toContain('Наступного разу');
     expect(sheet).not.toContain('категорію');
+  });
+});
+
+describe('app-shell — the правило form uses the entry form\'s picker', () => {
+  it('Scenario: A правило-переказ finds its рахунок through the search', () => {
+    const names = [
+      'Банка на відпустку',
+      'банка на ремонт',
+      ...Array.from({ length: 27 }, (_, i) => `Рахунок ${String(i + 1).padStart(2, '0')}`),
+    ];
+    const accounts = names.map((name, i) =>
+      account({ id: `a${i}`, name, kind: i < 2 ? 'savings' : 'spending', currency: 'UAH' }),
+    );
+    const rows = ruleAccountRows(accounts, undefined);
+    expect(rows).toHaveLength(29);
+    expect(allOffer(rows, 'accounts')).toBe('Всі рахунки (29)');
+    // Any letter case: «банка» finds «Банка на відпустку» too.
+    const found = narrow(rows, 'банка');
+    expect(found.map((r) => r.name)).toEqual(['Банка на відпустку · UAH', 'банка на ремонт · UAH']);
+    const picked = found[0]!.id;
+    // Chosen through the full list, it stands among the shown few…
+    expect(shortlist(rows, { recentIds: [], chosenIds: [picked], selectedId: picked }).map((r) => r.id)).toContain(
+      picked,
+    );
+    // …and the saved правило sends that опис as a переказ to it.
+    const rule = ruleFromDraft(
+      { merchant: 'відкладаю', mcc: '', target: 'transfer', toAccountId: picked },
+      { id: 'r-bank', createdAt: new Date(1) },
+    );
+    expect(rule.target).toEqual({ kind: 'transfer', toAccountId: 'a0' });
+  });
+
+  it('«Категорія» offers what a витрата is offered, and keeps a stored archived one', () => {
+    const rows = ruleCategoryRows(
+      [...RESERVED, category('food', 'Продукти'), category('old', 'Стара', true)],
+      'old',
+    );
+    expect(rows.map((r) => r.id)).toEqual([UNCATEGORISED_CATEGORY_ID, FEES_CATEGORY_ID, 'food', 'old']);
+    expect(ruleCategoryRows([...RESERVED, category('old', 'Стара', true)], undefined).map((r) => r.id)).not.toContain(
+      'old',
+    );
   });
 });

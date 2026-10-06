@@ -11,26 +11,28 @@ import {
   categories as categoriesRepo,
   merchants as merchantsRepo,
   rules as rulesRepo,
+  transactions as transactionsRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
 import type { Rule } from '@/domain/rules';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
-import { accountChoicesFor } from '@/ui/account-choices';
-import { expenseCategoryChoices } from '@/ui/category-choices';
+import { recentlyUsed } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import { newId } from '@/ui/id';
-import { accountChoiceLabel } from '@/ui/labels';
 import {
   EMPTY_RULE_DRAFT,
   NO_MERCHANT_TO_PICK,
   mccText,
+  ruleAccountRows,
+  ruleCategoryRows,
   ruleFromDraft,
   ruleLine,
   storeRule,
   type RuleDraft,
 } from '@/ui/list-management';
 import { sameFields } from '@/ui/same-fields';
+import { PICKER_SIZE } from '@/ui/shortlist';
 
 import { Spacing } from '@/constants/theme';
 
@@ -45,6 +47,12 @@ import { Spacing } from '@/constants/theme';
  */
 
 /** What a rule matches by: a pattern typed by hand, or a продавець picked (settings-screen). */
+/** How far back the pickers look for what the owner reached for last — the entry form's window. */
+const RECENT_WINDOW = 50;
+
+/** Which picker has its full list open, if any — the one thing «назад» closes before the form. */
+type OpenPicker = 'merchant' | 'account' | 'category';
+
 const CRITERION_CHOICES = [
   { value: 'pattern' as const, label: 'Текст опису' },
   { value: 'merchant' as const, label: 'Продавець' },
@@ -72,6 +80,8 @@ export default function RulesScreen() {
         categories: categoriesRepo.list(),
         accounts: accountsRepo.list(),
         merchants: merchantsRepo.list(),
+        // What the owner reached for last, read off the latest транзакції, as the entry form does.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
       }),
       [],
     ),
@@ -81,7 +91,13 @@ export default function RulesScreen() {
   const [draft, setDraft] = useState<(RuleDraft & { id?: string }) | undefined>();
   /** What the open form opened on — an untouched form is one still equal to it. */
   const [opened, setOpened] = useState<RuleDraft & { id?: string }>(EMPTY_RULE_DRAFT);
+  /**
+   * Which picker has its full list open — one at a time. «Назад» closes it first and asks nothing;
+   * the form's own subscription stands aside meanwhile.
+   */
+  const [openPicker, setOpenPicker] = useState<OpenPicker>();
   const openDraft = useCallback((fields: RuleDraft & { id?: string }) => {
+    setOpenPicker(undefined);
     setDraft(fields);
     setOpened(fields);
   }, []);
@@ -91,26 +107,26 @@ export default function RulesScreen() {
    */
   const closeDraft = useCallback(() => setDraft(undefined), []);
   const dirty = draft !== undefined && !sameFields(draft, opened);
-  useCloseOnBack(draft !== undefined, closeDraft, dirty);
+  const closePicker = useCallback(() => setOpenPicker(undefined), []);
+  const opening = (picker: OpenPicker) => (isOpen: boolean) => setOpenPicker(isOpen ? picker : undefined);
+  const pickerClosed = openPicker === undefined;
+  useCloseOnBack(draft !== undefined && pickerClosed, closeDraft, pickerClosed && dirty);
+  useCloseOnBack(!pickerClosed, closePicker);
 
   const names = useMemo(() => namesById(stored.categories), [stored.categories]);
   const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
   const merchantNames = useMemo(() => namesById(stored.merchants), [stored.merchants]);
-  /** Whether the продавець picker has its full list open. */
-  const [merchantListOpen, setMerchantListOpen] = useState(false);
-  const choices = useMemo(
-    () =>
-      expenseCategoryChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
-    [stored.categories],
+  // The pickers: five — the last reached for, topped up in order — and «Всі … (N)» with a search.
+  // The target an edited правило already names stays offered, archived or not.
+  const categoryRows = useMemo(
+    () => ruleCategoryRows(stored.categories, opened.categoryId),
+    [opened.categoryId, stored.categories],
   );
-  const accountChoices = useMemo(
-    () =>
-      accountChoicesFor(stored.accounts, draft?.toAccountId).map((a) => ({
-        value: a.id,
-        label: accountChoiceLabel(a),
-      })),
-    [draft?.toAccountId, stored.accounts],
+  const accountRows = useMemo(
+    () => ruleAccountRows(stored.accounts, opened.toAccountId),
+    [opened.toAccountId, stored.accounts],
   );
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE), [stored.latest]);
 
   /** What the last save's розбір moved, in the owner's words — nothing when it moved nothing. */
   const [sweptMessage, setSweptMessage] = useState<string>();
@@ -182,8 +198,8 @@ export default function RulesScreen() {
             selected={editing.merchantId}
             onSelect={(merchantId: string) => setDraft({ ...editing, merchantId })}
             noun="merchants"
-            expanded={merchantListOpen}
-            onExpandedChange={setMerchantListOpen}
+            expanded={openPicker === 'merchant'}
+            onExpandedChange={opening('merchant')}
           />
         ) : (
           <ThemedText type="small" themeColor="textSecondary">
@@ -215,18 +231,26 @@ export default function RulesScreen() {
         onSelect={(target) => setDraft({ ...editing, target })}
       />
       {editing.target === 'transfer' ? (
-        <Choices
+        <Picker
           label="Переказ на"
-          choices={accountChoices}
+          rows={accountRows}
+          recentIds={recent.accounts}
           selected={editing.toAccountId}
           onSelect={(toAccountId: string) => setDraft({ ...editing, toAccountId })}
+          noun="accounts"
+          expanded={openPicker === 'account'}
+          onExpandedChange={opening('account')}
         />
       ) : (
-        <Choices
+        <Picker
           label="Категорія"
-          choices={choices}
+          rows={categoryRows}
+          recentIds={recent.categories}
           selected={editing.categoryId}
           onSelect={(categoryId: string) => setDraft({ ...editing, categoryId })}
+          noun="categories"
+          expanded={openPicker === 'category'}
+          onExpandedChange={opening('category')}
         />
       )}
       <Action title="Зберегти" onPress={save} />

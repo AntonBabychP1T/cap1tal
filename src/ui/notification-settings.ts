@@ -2,6 +2,9 @@ import type { Account } from '../domain/account';
 import { addWatch, type Watch, type WatchableAccount } from '../notifications/draft';
 import type { NotificationAccess } from '../platform/notification-access';
 import type { NotificationCapturePort, WatchedSetOutcome } from '../platform/notification-capture';
+import { accountChoicesFor, isPerson } from './account-choices';
+import { accountChoiceLabel } from './labels';
+import type { Named } from './shortlist';
 import { accountNameOf } from './transaction-line';
 
 /**
@@ -307,4 +310,18 @@ function refusalOf(answer: WatchedSetOutcome): WatchChange | undefined {
     };
   }
   return undefined;
+}
+
+/**
+ * The рахунки a new watch can be mapped to: the unarchived ones, by the one picker rule of
+ * `account-choices.ts`, without a рахунок-борг — a bank's сповіщення never lands on a person. A
+ * watch is added, never edited, so no stored choice needs carrying back.
+ */
+export function watchAccountChoices(accounts: readonly Account[]): Account[] {
+  return accountChoicesFor(accounts, undefined).filter((a) => !isPerson(a));
+}
+
+/** The same рахунки as the picker draws them, each wearing its currency. */
+export function watchAccountRows(accounts: readonly Account[]): Named[] {
+  return watchAccountChoices(accounts).map((a) => ({ id: a.id, name: accountChoiceLabel(a) }));
 }

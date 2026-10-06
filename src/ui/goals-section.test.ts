@@ -6,6 +6,7 @@ import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
 import { money } from '../domain/money';
 import { dateStepOffers, pickedDate } from './dates';
+import { allOffer, shortlist } from './shortlist';
 import {
   accumulationFromDraft,
   deleteGoalConfirmation,
@@ -13,6 +14,7 @@ import {
   goalRows,
   spendingFromDraft,
   spendingGoalCategoryChoices,
+  spendingGoalCategoryRows,
   spendingGoalRows,
   targetAfterCurrencyChange,
   tickedLabel,
@@ -365,5 +367,23 @@ describe('the ціль витрат half of the section', () => {
     expect(() =>
       spendingFromDraft({ categoryId: 'restaurants', amount: '0', currency: 'UAH' }),
     ).toThrow();
+  });
+});
+
+describe('app-shell — a ціль витрат\'s категорія uses the entry form\'s picker', () => {
+  it("Scenario: A ціль витрат's категорія comes from the same picker", () => {
+    const categories: Category[] = Array.from({ length: 22 }, (_, i) => ({
+      id: `c${i}`,
+      name: `Категорія ${String(i + 1).padStart(2, '0')}`,
+      archived: false,
+    }));
+    const limits: CategoryLimit[] = [
+      { categoryId: 'c0', amount: money(100_000, 'UAH') },
+      { categoryId: 'c1', amount: money(100_000, 'UAH') },
+    ];
+    const rows = spendingGoalCategoryRows({ categories, limits });
+    expect(rows).toHaveLength(20);
+    expect(shortlist(rows, { recentIds: [] })).toHaveLength(5);
+    expect(allOffer(rows, 'categories')).toBe('Всі категорії (20)');
   });
 });

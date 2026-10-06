@@ -11,8 +11,11 @@ import type { MerchantIndex } from '../domain/merchants';
 import { matchRule, proposeMerchantPattern, type Rule, type RuleTarget } from '../domain/rules';
 import { UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import type { SweepCounts } from '../db/rules-repo';
+import { accountChoicesFor } from './account-choices';
+import { categoryChoicesFor } from './category-choices';
 import { journal } from './journal';
-import { accountLabel, byName, categoryLabel, expenseCount } from './labels';
+import { accountChoiceLabel, accountLabel, byName, categoryLabel, expenseCount } from './labels';
+import type { Named } from './shortlist';
 import { categoryIconDefinition } from './category-icons';
 import type { IconName } from './icons';
 import { Refusal } from '../domain/refusal';
@@ -114,6 +117,19 @@ export const EMPTY_RULE_DRAFT: RuleDraft = {
   target: 'category',
   categoryId: undefined,
 };
+
+/**
+ * «Категорія» of a правило as the picker draws it: what a витрата's категорія picker offers, plus
+ * the one an edited правило already names, so it is not silently retargeted.
+ */
+export function ruleCategoryRows(categories: readonly Category[], currentId: string | undefined): Named[] {
+  return categoryChoicesFor(categories, currentId).map((c) => ({ id: c.id, name: c.name }));
+}
+
+/** «Переказ на» of a правило as the picker draws it: every вид, each рахунок wearing its currency. */
+export function ruleAccountRows(accounts: readonly Account[], currentId: string | undefined): Named[] {
+  return accountChoicesFor(accounts, currentId).map((a) => ({ id: a.id, name: accountChoiceLabel(a) }));
+}
 
 /**
  * The rule form's one decision: either the draft is a rule, or it is refused in the owner's own

@@ -882,7 +882,14 @@ describe('lists that lead with their rows', () => {
     expect(screen.split('installmentsRepo.save(').length - 1).toBe(1);
     expect(screen.indexOf('installmentsRepo.save(')).toBeGreaterThan(screen.indexOf('const save = useCallback('));
     expect(screen).not.toContain('useEffect');
-    expect(screen).toContain('useCloseOnBack(editor !== undefined, closeForm, dirty)');
+    // app-shell — Scenario: «Назад» closes the full list of a plan form first. An open «Всі
+    // рахунки» or «Всі категорії» list closes first and asks nothing; the form, its назва and every
+    // other field stay, because the form's own subscription stands aside while a picker is open.
+    expect(screen).toContain(
+      'useCloseOnBack(editor !== undefined && pickerClosed, closeForm, pickerClosed && dirty)',
+    );
+    expect(screen).toContain('useCloseOnBack(!pickerClosed, closePicker)');
+    expect(screen).toContain('const closePicker = useCallback(() => setOpenPicker(undefined), [])');
     expect(screen).toContain(
       'const dirty = editor !== undefined && !sameInstallmentFields(editor.draft, editor.opened);',
     );
@@ -891,7 +898,9 @@ describe('lists that lead with their rows', () => {
 
   it('app-shell — Scenario: An edited form asks first — «Нове правило» registers its edits', () => {
     const screen = read('manage/rules.tsx');
-    expect(screen).toContain('useCloseOnBack(draft !== undefined, closeDraft, dirty)');
+    expect(screen).toContain('useCloseOnBack(draft !== undefined && pickerClosed, closeDraft, pickerClosed && dirty)');
+    // An open «Всі …» list of any of its pickers closes first and asks nothing.
+    expect(screen).toContain('useCloseOnBack(!pickerClosed, closePicker)');
     expect(screen).toContain('!sameFields(draft, opened)');
     // Both ways in — «Нове правило» and a row — remember what the form opened on.
     expect(screen).toContain('openDraft({ ...EMPTY_RULE_DRAFT })');

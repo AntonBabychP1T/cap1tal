@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, DateField, Field, RowAction } from '@/components/form';
+import { Action, Choices, DateField, Field, Picker, RowAction } from '@/components/form';
 import { Card, ListCard, ListRow, Screen, ScreenHeader, SectionLabel } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -10,12 +10,14 @@ import {
   categories as categoriesRepo,
   goals as goalsRepo,
   limits as limitsRepo,
+  transactions as transactionsRepo,
 } from '@/db/repos';
 import type { CurrencyCode } from '@/domain/money';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { judgeProgressLater } from '@/hooks/progress-ports';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { formatMinorUnits } from '@/ui/amount-input';
+import { recentlyUsed } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import {
   accumulationFromDraft,
@@ -27,7 +29,7 @@ import {
   GOAL_CURRENCIES,
   GOAL_KIND_CHOICES,
   spendingFromDraft,
-  spendingGoalCategoryChoices,
+  spendingGoalCategoryRows,
   spendingGoalRows,
   targetAfterCurrencyChange,
   tickedLabel,
@@ -40,6 +42,7 @@ import {
 import { newId } from '@/ui/id';
 import { sameFields } from '@/ui/same-fields';
 import { accountChoiceLabel } from '@/ui/labels';
+import { PICKER_SIZE } from '@/ui/shortlist';
 
 import { Spacing } from '@/constants/theme';
 
@@ -53,6 +56,9 @@ import { Spacing } from '@/constants/theme';
  * way for two ceilings to disagree. No progress is entered here and none is stored — «Звіти» and
  * the ціль's own screen read it.
  */
+
+/** How far back the категорія picker looks for what the owner reached for last — the entry form's window. */
+const RECENT_WINDOW = 50;
 
 /** `opened` — what the form opened on, so «назад» knows whether it would discard anything. */
 type Draft =
@@ -88,6 +94,8 @@ export default function GoalsScreen() {
         accounts: accountsRepo.list(),
         limits: limitsRepo.list(),
         categories: categoriesRepo.list(),
+        // What the owner reached for last, read off the latest транзакції, as the entry form does.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
       }),
       [],
     ),
@@ -111,7 +119,11 @@ export default function GoalsScreen() {
    */
   const closeForm = useCallback(() => setDraft(undefined), []);
   const dirty = typeof draft === 'object' && !sameFields(draft.fields, draft.opened);
-  useCloseOnBack(draft !== undefined, closeForm, dirty);
+  /** Whether «Всі категорії» of a new ціль витрат is open: «назад» closes it before the form. */
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
+  const closeCategories = useCallback(() => setCategoriesOpen(false), []);
+  useCloseOnBack(draft !== undefined && !categoriesOpen, closeForm, !categoriesOpen && dirty);
+  useCloseOnBack(categoriesOpen, closeCategories);
 
   /**
    * The рахунки the склад offers: the unarchived ones, plus whatever this ціль already holds even
@@ -126,13 +138,12 @@ export default function GoalsScreen() {
     [draft, stored.accounts],
   );
 
-  const categoryChoices = useMemo(
-    () =>
-      spendingGoalCategoryChoices({ categories: stored.categories, limits: stored.limits }).map(
-        (c) => ({ value: c.id, label: c.name }),
-      ),
+  // A new ціль витрат picks its категорія the entry form's way: five, and «Всі категорії (N)».
+  const categoryRows = useMemo(
+    () => spendingGoalCategoryRows({ categories: stored.categories, limits: stored.limits }),
     [stored.categories, stored.limits],
   );
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE), [stored.latest]);
 
   const save = useCallback(() => {
     if (typeof draft !== 'object') return;
@@ -214,6 +225,7 @@ export default function GoalsScreen() {
         amount: '',
         currency: DEFAULT_GOAL_CURRENCY,
       };
+      setCategoriesOpen(false);
       setDraft({ kind: 'spending', fields, opened: fields });
     }
   }, []);
@@ -336,27 +348,36 @@ export default function GoalsScreen() {
         </Card>
       ) : typeof draft === 'object' ? (
         <Card style={styles.form}>
-          <Choices
-            label="Категорія"
-            choices={
-              draft.editing
-                ? [
-                    {
-                      value: draft.editing,
-                      label:
-                        spendingRows.find((row) => row.categoryId === draft.editing)?.name ??
-                        draft.editing,
-                    },
-                  ]
-                : categoryChoices
-            }
-            selected={draft.fields.categoryId}
-            // The категорія of an existing ціль витрат is its identity and is not re-chosen.
-            disabled={draft.editing !== undefined}
-            onSelect={(categoryId) =>
-              setDraft({ ...draft, fields: { ...draft.fields, categoryId } })
-            }
-          />
+          {draft.editing ? (
+            <Choices
+              label="Категорія"
+              choices={[
+                {
+                  value: draft.editing,
+                  label:
+                    spendingRows.find((row) => row.categoryId === draft.editing)?.name ??
+                    draft.editing,
+                },
+              ]}
+              selected={draft.fields.categoryId}
+              // The категорія of an existing ціль витрат is its identity and is not re-chosen.
+              disabled
+              onSelect={() => undefined}
+            />
+          ) : (
+            <Picker
+              label="Категорія"
+              rows={categoryRows}
+              recentIds={recent.categories}
+              selected={draft.fields.categoryId}
+              onSelect={(categoryId) =>
+                setDraft({ ...draft, fields: { ...draft.fields, categoryId } })
+              }
+              noun="categories"
+              expanded={categoriesOpen}
+              onExpandedChange={setCategoriesOpen}
+            />
+          )}
           <Choices
             label="Валюта"
             choices={currencyChoices}

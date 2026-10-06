@@ -24,8 +24,11 @@ import {
   KNOWN_BANK_APPS,
   removeConfirmation,
   removeWatchedApp,
+  watchAccountChoices,
+  watchAccountRows,
   watchRows,
 } from './notification-settings';
+import { allOffer } from './shortlist';
 
 const card = account({ id: 'card', name: 'Приват', kind: 'spending', currency: 'UAH' });
 const dollars = account({ id: 'usd', name: 'USD картка', kind: 'spending', currency: 'USD' });
@@ -378,5 +381,28 @@ describe('the known bank apps the picker offers', () => {
         /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u,
       );
     }
+  });
+});
+
+describe('bank-notifications-screen — the рахунок a watch lands on', () => {
+  const privat = account({ id: 'privat', name: 'Приват', kind: 'spending', currency: 'UAH' });
+  const bonds = account({ id: 'bonds', name: 'військові облігації', kind: 'investment', currency: 'UAH' });
+  const olya = account({ id: 'olya', name: 'Оля', kind: 'debt', currency: 'UAH' });
+
+  it('Scenario: A watched bank app is not mapped to a person', () => {
+    expect(watchAccountChoices([privat, bonds, olya]).map((a) => a.id)).toEqual(['bonds', 'privat']);
+  });
+
+  it('Scenario: An archived рахунок is not offered — nor by the picker rows', () => {
+    expect(watchAccountRows([card, dollars, closed]).map((r) => r.id)).toEqual(['card', 'usd']);
+  });
+
+  it('Scenario: A short list is drawn whole', () => {
+    const cash = account({ id: 'cash', name: 'Готівка', kind: 'cash', currency: 'UAH' });
+    const rows = watchAccountRows([privat, bonds, olya, cash, dollars]);
+    expect(rows).toHaveLength(4);
+    // Each wears its currency, so a search for «USD» finds the USD one.
+    expect(rows.find((r) => r.id === 'usd')?.name).toBe('USD картка · USD');
+    expect(allOffer(rows, 'accounts')).toBeUndefined();
   });
 });

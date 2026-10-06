@@ -164,7 +164,9 @@ describe('the screens ask the rule rather than deciding themselves', () => {
   });
 
   it('Scenario: The back gesture closes an open ціль form', () => {
-    asksTheRule(goals, 'draft !== undefined', 'closeForm', 'Скасувати', 'dirty');
+    // The form stands aside while «Всі категорії» of a new ціль витрат is open: that closes first.
+    asksTheRule(goals, 'draft !== undefined && !categoriesOpen', 'closeForm', 'Скасувати', '!categoriesOpen && dirty');
+    asksTheRule(goals, 'categoriesOpen', 'closeCategories');
     expect(goals).toContain('!sameFields(draft.fields, draft.opened)');
   });
 
