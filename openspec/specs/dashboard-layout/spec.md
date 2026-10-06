@@ -7,33 +7,18 @@ Dashboard layout lets the owner arrange and hide a small, app-defined set of Г�
 
 ### Requirement: Dashboard layout is limited to a known widget registry
 
-The dashboard layout SHALL contain exactly one configurable entry for each widget known to this version of the app and SHALL offer no way to create, duplicate, rename, resize or change the data source of a widget. The initial known set SHALL be «Витрачено цього місяця», «Останні 5 транзакцій», «Топ категорій», «Статок» and «Прогрес».
+The dashboard layout SHALL contain exactly one configurable entry for each widget known to this version of the app and SHALL offer no way to create, duplicate, rename, resize or change the data source of a widget. The known set SHALL be «Витрачено цього місяця», «Останні 5 транзакцій», «Спостереження», «Топ категорій», «Статок» and «Прогрес».
 
 #### Scenario: Every known widget is listed once
-- **GIVEN** the current version knows five widgets
+- **GIVEN** the current version knows six widgets
 - **WHEN** the owner opens dashboard editing
-- **THEN** all five are shown once with their preview names, visible state and place in the order
+- **THEN** all six are shown once with their preview names, visible state and place in the order
 - **AND** no action offers adding a second copy or an unknown widget
 
 #### Scenario: Repeated editing cannot create a duplicate
 - **GIVEN** «Статок» is already present in the dashboard layout
 - **WHEN** the owner hides it, shows it and moves it several times
 - **THEN** the layout still contains exactly one «Статок» entry
-
-### Requirement: A fresh dashboard has a stable financial default
-
-With no saved dashboard preference, the dashboard SHALL show, in order, «Витрачено цього місяця», «Останні 5 транзакцій», «Топ категорій» and «Статок». «Прогрес» SHALL be known but hidden by default, so досягнення and виклики SHALL NOT precede the primary financial readings in the default layout.
-
-#### Scenario: Fresh install uses the four-widget default
-- **GIVEN** no dashboard preference has been saved or restored
-- **WHEN** Головний opens
-- **THEN** the visible widgets are витрачено, the latest five транзакції, top категорії and Статок in that order
-- **AND** «Прогрес» is not visible
-
-#### Scenario: Progress is available without taking priority by default
-- **GIVEN** the fresh default is active
-- **WHEN** the owner opens dashboard editing
-- **THEN** «Прогрес» is offered as hidden after the four financial widgets and can be made visible deliberately
 
 ### Requirement: The owner can change widget visibility and order
 
@@ -80,7 +65,7 @@ Every reorder action SHALL name the widget and direction, expose at least a 48 �
 #### Scenario: Reset restores the current default
 - **GIVEN** widgets have been hidden and reordered
 - **WHEN** the owner confirms «Скинути до стандартного вигляду»
-- **THEN** the four current default widgets are visible in their current default order and «Прогрес» has its current default hidden state
+- **THEN** the five current default widgets, «Спостереження» among them, are visible in their current default order and «Прогрес» has its current default hidden state
 
 #### Scenario: Cancelled reset changes nothing
 - **GIVEN** the owner has a customised order
@@ -125,3 +110,34 @@ Showing, hiding or moving a widget SHALL NOT change any транзакція, р
 - **GIVEN** the phone has no network connection
 - **WHEN** the owner edits, saves or resets dashboard layout
 - **THEN** the preference and every visible local widget work without a network request
+
+### Requirement: A fresh dashboard shows five financial readings before Прогрес
+
+With no saved dashboard preference, the dashboard SHALL show, in order, «Витрачено цього місяця», «Останні 5 транзакцій», «Спостереження», «Топ категорій» and «Статок». «Прогрес» SHALL be known but hidden by default, so досягнення and виклики SHALL NOT precede the primary financial readings in the default layout.
+
+#### Scenario: Fresh install uses the five-widget default
+- **GIVEN** no dashboard preference has been saved or restored
+- **WHEN** Головний opens
+- **THEN** the visible widgets are витрачено, the latest five транзакції, спостереження, top категорії and Статок in that order
+- **AND** «Прогрес» is not visible
+
+#### Scenario: Progress is available without taking priority by default
+- **GIVEN** the fresh default is active
+- **WHEN** the owner opens dashboard editing
+- **THEN** «Прогрес» is offered as hidden after the five financial widgets and can be made visible deliberately
+
+#### Scenario: A customised dashboard meets «Спостереження» hidden at its end
+- **GIVEN** a layout saved before «Спостереження» existed, with «Статок» moved first and «Топ категорій» hidden
+- **WHEN** the upgraded app reads it
+- **THEN** the saved order and visibility are kept, «Спостереження» is offered once at the end as hidden, and the owner can show and move it like any other widget
+
+### Requirement: Each widget's switch names its widget
+
+On «Налаштувати Головний», the switch that shows or hides a widget SHALL carry that widget's name as
+its accessible name, and its state SHALL be read as shown or hidden.
+
+#### Scenario: Six switches, six names
+
+- **WHEN** a screen reader moves through the six switches of «Налаштувати Головний»
+- **THEN** it hears «Витрачено цього місяця», «Останні 5 транзакцій», «Спостереження», «Топ
+  категорій», «Статок» and «Прогрес», each with whether it is shown

@@ -618,3 +618,186 @@ contradict itself and SHALL be refused whole, as every other dangling reference 
 
 - **WHEN** restoring a бекап whose mapping names a категорія the same бекап does not carry
 - **THEN** it is refused as contradicting itself and nothing local changes
+
+### Requirement: A бекап carries the зобов'язання
+
+A бекап SHALL carry every зобов'язання with every value it holds and the states of its платежі — the
+транзакція each is linked to, the owner's marks сплачено and пропущено, and the транзакції the owner
+unlinked — and restoring SHALL put them back exactly as they were. A зобов'язання is the owner's
+word about money no statement announces in advance: dropped from a бекап, the restored phone would
+know every платіж as an ordinary витрата and nothing of what is still owed.
+
+A restore SHALL replace the зобов'язання wholesale like every other part of the state. A бекап
+written before зобов'язання existed SHALL still restore, leaving the phone with none.
+
+A бекап SHALL be refused whole, with nothing restored, when a зобов'язання it carries names a
+рахунок or категорія the бекап does not contain, holds a currency other than its рахунок списання's,
+holds a value the commitments capability refuses — an archived рахунок or категорія is no such
+value, since a card may be archived after its зобов'язання was recorded — gives one платіж more than
+one of a link, a mark сплачено and a mark пропущено, holds a link, mark or refusal for a платіж
+dated after the зобов'язання's дата припинення, or links a платіж to a транзакція the бекап does
+not contain, that is not a витрата on its рахунок списання in its currency, or that is linked to
+another платіж of a зобов'язання or of a розстрочка as well.
+
+#### Scenario: A зобов'язання survives the round trip
+
+- **WHEN** a бекап made on a device holding «Netflix» with the ознака «netflix», платіж 1 linked to a
+  витрата, платіж 2 marked сплачено and платіж 3 marked пропущено, stopped on 2026-10-20, is
+  restored onto storage holding nothing
+- **THEN** «Netflix» is back with the same values, платіж 1 is linked to the same витрата, платежі
+  2 and 3 carry the same marks, and it is still stopped on 2026-10-20
+
+#### Scenario: A бекап written before зобов'язання existed still restores
+
+- **WHEN** a бекап that names no зобов'язання, because it was written before they existed, is
+  restored
+- **THEN** its рахунки, транзакції, розстрочки and settings are restored and there is no
+  зобов'язання
+
+#### Scenario: A зобов'язання on a рахунок outside the бекап stops the restore
+
+- **WHEN** restoring a бекап whose зобов'язання names a рахунок списання the бекап does not contain,
+  or holds USD while its рахунок списання is a UAH рахунок, is attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: One транзакція linked to a розстрочка and a зобов'язання stops the restore
+
+- **WHEN** restoring a бекап in which one витрата is linked to a платіж of a розстрочка and to a
+  платіж of a зобов'язання is attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: A платіж said twice, or said after the stop, stops the restore
+
+- **WHEN** restoring a бекап in which one платіж of a зобов'язання is both linked and marked, or a
+  платіж dated after its дата припинення is marked, is attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: A two-letter ознака stops the restore
+
+- **WHEN** restoring a бекап whose зобов'язання carries the ознака «tv» is attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: A link outside the бекап stops the restore
+
+- **WHEN** restoring a бекап whose зобов'язання links a платіж to a транзакція the бекап does not
+  contain is attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: A зобов'язання on a since-archived рахунок restores
+
+- **WHEN** a бекап whose «Інтернет» names a рахунок списання that was archived after «Інтернет» was
+  recorded is restored
+- **THEN** «Інтернет» is back on that рахунок and nothing is refused
+
+### Requirement: A бекап carries продавці, a правило's продавець and a транзакція's MCC
+
+A бекап SHALL carry every продавець with its назва and every написання it holds, with the moments
+they were named and added, since the newest написання decides a tie. It SHALL carry the продавець
+of every правило that names one, and the MCC of every транзакція that carries one. Restoring SHALL
+bring all of it back exactly, replacing what the device held, as a відновлення replaces everything
+else.
+
+They SHALL be carried as optional parts of the existing format, with no change to the envelope's
+format version. A бекап written before продавці existed carries no such part, and SHALL restore
+with no продавець stored, every правило matching by the pattern or MCC it names, and no транзакція
+carrying an MCC: exactly the state the device that wrote it was in.
+
+Each of the following SHALL make the whole бекап contradict itself. It SHALL be refused whole,
+before anything local is touched, as every other dangling reference in a бекап is:
+
+- a правило naming a продавець that the same бекап does not carry;
+- a написання whose продавець the бекап does not carry;
+- a написання held by two продавці;
+- a написання that is blank, or not stored trimmed and folded to lower case;
+- two продавці whose назви differ only in letter case or surrounding whitespace, or a blank назва;
+- a продавець holding no написання;
+- a правило naming both a pattern and a продавець;
+- an MCC on a транзакція that is not a whole number.
+
+#### Scenario: Продавці survive the round trip
+
+- **WHEN** a бекап made on a device holding «АТБ» with "атб" and "atb", the правило "АТБ →
+  Groceries" naming it, and a витрата carrying MCC 5411 is restored onto storage holding nothing
+- **THEN** «АТБ» holds "атб" and "atb" with their moments, the правило names «АТБ», and the
+  витрата carries MCC 5411
+
+#### Scenario: A бекап written before продавці existed restores without them
+
+- **WHEN** a бекап carrying no продавці and no MCC, written before they existed, is restored
+- **THEN** it is accepted, no продавець exists, every правило keeps its pattern, and no транзакція
+  carries an MCC
+
+#### Scenario: Two продавці with one назва are refused before anything changes
+
+- **WHEN** restoring a бекап that carries the продавці «АТБ» and «атб»
+- **THEN** it is refused as contradicting itself and nothing local changes
+
+#### Scenario: A продавець with nothing to recognise it by is refused
+
+- **WHEN** restoring a бекап that carries the продавець «Зерно» and no написання for it
+- **THEN** it is refused as contradicting itself and nothing local changes
+
+#### Scenario: An MCC that is not a whole number is refused
+
+- **WHEN** restoring a бекап in which a транзакція carries the MCC 54.11
+- **THEN** it is refused as contradicting itself and nothing local changes
+
+#### Scenario: A правило naming an absent продавець is refused whole
+
+- **WHEN** restoring a бекап whose правило names a продавець the same бекап does not carry
+- **THEN** it is refused as contradicting itself and nothing local changes
+
+### Requirement: A бекап carries the «Не дубль» answers
+
+A бекап SHALL carry every «Не дубль» answer the owner gave, with the two транзакції it names and
+the moment it was given. Restoring SHALL make the answers exactly the бекап's, replacing what the
+device held, as a відновлення replaces everything else. They are carried because they are the
+owner's word and cannot be recomputed: dropped, a restored phone would ask again about every pair
+already answered.
+
+No спостереження SHALL be carried: each is recomputed from the restored транзакції whenever it is
+shown.
+
+The answers SHALL be carried as one more optional section of the existing format, with no change
+to the envelope's format version. A бекап written before the answers existed carries no such
+section and SHALL restore with no answer stored.
+
+An answer naming a транзакція the бекап does not also carry, an answer pairing a транзакція with
+itself, or two answers naming the same pair in either order SHALL make the whole бекап contradict
+itself. Such a бекап SHALL be refused whole, as every other dangling reference or repetition in a
+бекап is. The order in which an answer names its two транзакції SHALL carry no meaning: a pair is
+unordered, so either order restores the same answer.
+
+#### Scenario: The answers survive the round trip
+
+- **WHEN** a бекап made on a device holding two «Не дубль» answers is restored onto storage holding
+  nothing
+- **THEN** both answers are back with their pairs and moments, and neither pair is stated as a
+  можливий дубль
+
+#### Scenario: A бекап written before the answers existed restores with none
+
+- **WHEN** a бекап carrying no answers section is restored
+- **THEN** it is accepted, no answer is stored, and every pair that qualifies is stated as a
+  можливий дубль again
+
+#### Scenario: An answer naming an absent транзакція is refused whole
+
+- **WHEN** restoring a бекап whose answers name a транзакція the same бекап does not carry
+- **THEN** it is refused as contradicting itself and nothing local changes
+
+#### Scenario: An answer pairing a транзакція with itself, or one pair twice, is refused whole
+
+- **WHEN** restoring a бекап whose answers pair транзакція `a` with `a`, or name the pair `a`, `b`
+  and also the pair `b`, `a`
+- **THEN** it is refused as contradicting itself and nothing local changes
+
+#### Scenario: Either order restores the same answer
+
+- **WHEN** a бекап names its one answer as the pair `b`, `a`
+- **THEN** it is accepted, and the pair `a`, `b` is answered afterwards
+
+#### Scenario: No спостереження is in the file
+
+- **WHEN** a бекап is made on a device whose current month has five спостереження
+- **THEN** the file carries the «Не дубль» answers and no спостереження

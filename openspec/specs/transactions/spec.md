@@ -285,13 +285,15 @@ of it is edited, and SHALL change only when the опис itself is changed or cl
 транзакція by hand SHALL NOT require an опис — it stays optional, and a транзакція carrying none
 SHALL behave exactly as one that never could.
 
-The one thing an опис decides is the категорія a витрата is offered, through the owner's own
-правила, wherever a витрата comes from — imported or recorded by hand. It proposes; it never
+An опис decides two things. The first is the продавець of the транзакція: what the опис is
+recognised as, read from it whenever it is read and never stored apart from it. The second is the
+категорія a витрата is offered, through the owner's own правила, wherever a витрата comes from —
+imported or recorded by hand. It proposes; it never
 overrules: a категорія the owner picked stands, and an опис SHALL never move a транзакція out of a
 категорія the owner chose or a правило gave it. «Без категорії» is the one exception, and it is not
-a категорія anyone chose — it is the gap left where nothing recognised the транзакція, and a
-правило that recognises it later may fill it. Nothing else reads the опис — no total, no баланс, no
-ліміт, no month.
+a категорія anyone chose — it is the gap left where nothing matched the транзакція, and a
+правило that matches it later may fill it. Nothing else reads the опис — no total, no баланс, no
+ліміт, no month — and the продавець it gives changes none of them either.
 
 #### Scenario: An imported витрата keeps the bank's text
 
@@ -328,8 +330,69 @@ a категорія anyone chose — it is the gap left where nothing recognise
   UAH
 - **THEN** the same транзакція carries 13000 minor units UAH and still exactly that опис
 
+#### Scenario: The опис gives the продавець and nothing more
+
+- **WHEN** «АТБ» holds "атб" and a витрата of 12550 minor units UAH carries the опис "АТБ 12"
+- **THEN** its продавець is «АТБ», and the month's spent counts exactly 12550 minor units UAH
+
 #### Scenario: A cleared опис changes no number
 
 - **WHEN** the опис of a stored витрата is cleared
 - **THEN** the транзакція carries no опис, and its сума, категорія, рахунок, дата and type are
   unchanged
+
+### Requirement: An imported транзакція keeps the MCC its import named
+
+A транзакція SHALL be able to carry an MCC: the whole-number merchant category code a bank named
+for it when it was imported. Like the опис, the MCC SHALL be informational. It SHALL NOT affect any
+total or balance, and SHALL NOT decide a транзакція's type. The one thing it takes part in is the
+категорія a витрата is given by the правила and the шаблон, where it is matched exactly as at
+import. It SHALL be preserved when the транзакція is retyped and when any other field of it, its
+опис included, is edited. A транзакція recorded by hand, imported from Saldo or confirmed from a
+чернетка SHALL carry none, because none of those sources names one. The owner never types an MCC.
+
+#### Scenario: An imported витрата keeps its MCC
+
+- **WHEN** an imported витрата of 12550 minor units UAH carries MCC 5411
+- **THEN** the stored витрата holds MCC 5411, and the month's spent counts exactly 12550 minor units
+  UAH
+
+#### Scenario: A retype keeps the MCC
+
+- **WHEN** a витрата carrying MCC 4829 is retyped into a переказ
+- **THEN** the same транзакція, now a переказ, still carries MCC 4829
+
+#### Scenario: Correcting the опис leaves the MCC alone
+
+- **WHEN** the опис of a витрата carrying MCC 5812 is changed
+- **THEN** the same транзакція still carries MCC 5812
+
+#### Scenario: A транзакція recorded by hand carries no MCC
+
+- **WHEN** the owner records a витрата by hand
+- **THEN** it carries no MCC
+
+### Requirement: A коригування opened from a list shows what it did
+
+Opening a коригування SHALL show its signed сума, its рахунок, its дата in words and its опис,
+and SHALL let the owner write, change or clear that опис and save it. Its сума, рахунок, дата and
+type SHALL NOT be offered for change: a коригування is what «Звірити» wrote. Deleting it SHALL ask
+first, naming the сума and the рахунок, and SHALL change that рахунок's розрахунковий баланс by
+exactly that сума. No sentence SHALL say a коригування cannot yet be recorded.
+
+#### Scenario: A коригування reads as one
+
+- **WHEN** the owner opens the коригування of −77686 minor units UAH on «РЕЗЕРВ» dated 2026-09-16
+- **THEN** the screen shows −776,86 UAH, «РЕЗЕРВ» and «16 вересня», an editable опис and
+  «Видалити транзакцію», and no type, сума or рахунок can be changed
+
+#### Scenario: Its опис is corrected
+
+- **WHEN** the owner writes «перерахунок готівки» into that коригування's опис and saves
+- **THEN** the коригування carries that опис and its сума, рахунок and дата are unchanged
+
+#### Scenario: Deleting it says what goes
+
+- **WHEN** the owner taps «Видалити транзакцію» on it
+- **THEN** the confirmation names −776,86 UAH on «РЕЗЕРВ», and on confirming the розрахунковий
+  баланс of «РЕЗЕРВ» rises by 776,86 UAH

@@ -13,7 +13,8 @@ Opening it SHALL offer «Перші кроки», which opens the setup view, an
 «Джерела» and «Правила», each opening its management list, «Ліміти», which opens limit
 management, «Цілі», which opens goal management, «Розстрочки», which opens the «Розстрочки» screen
 — so a розстрочка can be recorded in a month that has no платіж yet, when Місяць shows no block to
-tap — «Імпорт Saldo», which opens the one-time import
+tap — «Зобов'язання», which opens the «Зобов'язання» screen for the same reason, «Імпорт Saldo»,
+which opens the one-time import
 flow, «monobank», which opens token, account linking and sync management,
 «Сповіщення банків», which opens notification access and watched apps management,
 «Нагадування», which opens the daily reminder and what the app announces, «Бекап»,
@@ -29,13 +30,18 @@ asked. Each says which of the two it is.
 
 - **WHEN** the owner opens «Налаштування»
 - **THEN** the sections «Перші кроки», «Категорії», «Джерела», «Правила», «Ліміти», «Цілі»,
-  «Розстрочки», «Імпорт Saldo», «monobank», «Сповіщення банків», «Нагадування», «Бекап»,
-  «Google Drive» and «Репорти про помилки» are offered
+  «Розстрочки», «Зобов'язання», «Імпорт Saldo», «monobank», «Сповіщення банків», «Нагадування»,
+  «Бекап», «Google Drive» and «Репорти про помилки» are offered
 
 #### Scenario: The section opens the screen
 
 - **WHEN** the owner opens «Розстрочки» in «Налаштування»
 - **THEN** the «Розстрочки» screen opens with its list and «Нова розстрочка»
+
+#### Scenario: The Зобов'язання section opens its screen
+
+- **WHEN** the owner opens «Зобов'язання» in «Налаштування»
+- **THEN** the «Зобов'язання» screen opens with its list and «Нове зобов'язання»
 
 #### Scenario: The import section opens the import flow
 
@@ -103,18 +109,35 @@ SHALL be shown but SHALL offer neither rename nor archive.
 
 ### Requirement: The Правила section manages the rules
 
-The «Правила» section SHALL list every rule as its merchant pattern and/or MCC with its target: the
+The «Правила» section SHALL list every rule as its merchant criterion — the merchant pattern, or
+«продавець» and the продавець's назва — and/or MCC with its target: the
 target category's name, or «переказ на» and the destination рахунок's назва for a правило-переказ.
 It SHALL offer creating, editing and deleting rules per the categorisation-rules capability. The
-rule form SHALL let the owner choose what the rule targets — a категорія or a переказ on to a
+rule form SHALL let the owner choose what the rule matches by — a pattern typed by hand, or a
+продавець picked from the продавці, the picker being a short list with the full list behind a
+search — and SHALL drop the choice made for the other when this is switched, so a rule is never
+submitted naming both. The rule form SHALL let the owner choose what the rule targets — a
+категорія or a переказ on to a
 рахунок — and SHALL then offer the matching picker: unarchived категорії for the first, unarchived
 рахунки for the second. Switching what the rule targets SHALL drop the choice made for the other,
-so a rule is never submitted naming both.
+so a rule is never submitted naming both. With no продавець stored, the form SHALL still offer the
+pattern and SHALL say that продавці are named in «Продавці».
 
 #### Scenario: A created rule appears in the list
 
 - **WHEN** the owner creates the rule "сільпо → Groceries"
 - **THEN** the «Правила» section lists it with its pattern and the category name Groceries
+
+#### Scenario: A rule naming a продавець appears in the list
+
+- **WHEN** the owner creates a rule matching by the продавець «АТБ» and targeting Groceries
+- **THEN** the «Правила» section lists it as «продавець АТБ» with the category name Groceries
+
+#### Scenario: Switching the criterion drops the other choice
+
+- **WHEN** the owner types the pattern "атб" in the rule form, switches to a продавець, picks «АТБ»,
+  picks Groceries and saves
+- **THEN** the stored rule names the продавець «АТБ» and carries no pattern
 
 #### Scenario: A правило-переказ appears in the list
 
@@ -145,7 +168,7 @@ to discover that the two lists hold one сума; setting a ліміт here SHAL
 appear among the цілі, and clearing it here SHALL remove it from there.
 
 WHILE the editor of a category's ліміт is open, the device's own back gesture SHALL close that
-editor and leave the section open, discarding what was typed and storing nothing; only with no
+editor and leave the section open, discarding what was typed and storing nothing — after the confirmation the app-shell capability asks for when the form holds edits; only with no
 editor open SHALL it leave the section. The editor is what the owner opened last, so it is what
 the back gesture undoes first.
 
@@ -180,8 +203,8 @@ the back gesture undoes first.
 
 #### Scenario: The back gesture closes an open ліміт editor
 
-- **WHEN** the owner opens the ліміт editor on Groceries, types "2500" and uses the device's back
-  gesture
+- **WHEN** the owner opens the ліміт editor on Groceries, types "2500", uses the device's back
+  gesture and answers «Відкинути»
 - **THEN** the editor closes, the «Ліміти» section is still open, and Groceries' ліміт is
   unchanged
 
@@ -227,7 +250,7 @@ ticked, and SHALL refuse a ціль-накопичення with none.
 The kind SHALL NOT be offered for change while editing an existing ціль.
 
 WHILE the form of a ціль is open, the device's own back gesture SHALL close that form and leave
-the section open, discarding what was typed and storing nothing; only with no form open SHALL it
+the section open, discarding what was typed and storing nothing — after the confirmation the app-shell capability asks for when the form holds edits; only with no form open SHALL it
 leave the section — the same rule the «Ліміти» section carries, for the same reason.
 
 #### Scenario: The kind is asked before anything else
@@ -306,8 +329,8 @@ leave the section — the same rule the «Ліміти» section carries, for th
 
 #### Scenario: The back gesture closes an open ціль form
 
-- **WHEN** the owner opens the form of a new ціль, fills in its назва and uses the device's back
-  gesture
+- **WHEN** the owner opens the form of a new ціль, fills in its назва, uses the device's back
+  gesture and answers «Відкинути»
 - **THEN** the form closes, the «Цілі» section is still open, and no ціль has been created
 
 ### Requirement: A management list leads with its rows and edits a row from the row
@@ -320,7 +343,7 @@ unarchiving; for a ліміт setting, changing or clearing it; for a прави
 and a row SHALL NOT carry its verbs as a row of buttons of its own. Creating a правило stays the
 one «Нове правило» action it is today. A reserved row SHALL open no editor and SHALL still say that
 the app uses it. WHILE a create form or a row's editor is open in «Категорії» or «Джерела», the
-device's back gesture SHALL close it, discarding what was typed, and only with none open SHALL it
+device's back gesture SHALL close it, discarding what was typed — after the confirmation the app-shell capability asks for when the form holds edits, and only with none open SHALL it
 leave the section — as «Ліміти» already does.
 
 #### Scenario: Категорії opens on the list
@@ -360,7 +383,7 @@ leave the section — as «Ліміти» already does.
 
 #### Scenario: The back gesture closes an open create form
 
-- **WHEN** the owner taps «Нова категорія», types "Ремонт" and uses the device's back gesture
+- **WHEN** the owner taps «Нова категорія», types "Ремонт", uses the device's back gesture and answers «Відкинути»
 - **THEN** the form closes, «Категорії» is still open, and no «Ремонт» exists
 
 ### Requirement: The Налаштування tab offers the «Вібрація» switch
@@ -460,3 +483,21 @@ The section SHALL say, above the list, that a правило of the owner's own 
 
 - **WHEN** the owner opens «Продукти»
 - **THEN** its merchant patterns and its MCC codes are shown, and none of them can be changed
+
+### Requirement: Налаштування offers «Продавці» right after «Базові категорії»
+
+Among the sections the «Налаштування» tab offers, it SHALL offer «Продавці», which opens the
+продавці section, placed immediately after «Базові категорії». «Правила», «Базові категорії» and
+«Продавці» are read together: who was paid, and where that lands. Every other section SHALL stay
+where it is.
+
+#### Scenario: The tab offers «Продавці» after «Базові категорії»
+
+- **WHEN** the owner opens «Налаштування»
+- **THEN** «Продавці» is offered immediately after «Базові категорії», and every section offered
+  before it is still offered in the same order
+
+#### Scenario: The section opens on what is still nameless
+
+- **WHEN** the owner opens «Продавці»
+- **THEN** the section opens with «Без продавця», followed by the owner's продавці

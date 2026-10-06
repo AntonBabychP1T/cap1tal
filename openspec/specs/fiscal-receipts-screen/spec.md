@@ -32,7 +32,7 @@ SHALL show that it has one — the number of позиції and the чек's tot
 
 - **WHEN** the owner opens a витрата carrying a чек with nine позиції totalling 74230 minor units
   UAH
-- **THEN** the form shows «Фіскальний чек · 9 позицій · 742,30 ₴» in place of the scan offer, and
+- **THEN** the form shows «Фіскальний чек · 9 позицій · 742,30 UAH» in place of the scan offer, and
   tapping it opens the позиції
 
 #### Scenario: A переказ offers no scan
@@ -58,13 +58,13 @@ classify a позиція. The list SHALL be readable with no network at all.
 
 - **WHEN** a чек holds «Молоко 2.5%» 4720, «Хліб житній» 3890 and «Coca-Cola 2L» 6490 minor units
   UAH
-- **THEN** the list shows exactly those names with 47,20 ₴, 38,90 ₴ and 64,90 ₴ in that order
+- **THEN** the list shows exactly those names with 47,20 UAH, 38,90 UAH and 64,90 UAH in that order
 
 #### Scenario: A weighed позиція shows its quantity
 
 - **WHEN** a позиція holds quantity 5701 thousandths of «кг» at 5230 minor units with line total
   29816
-- **THEN** it shows «5,701 кг × 52,30 ₴» beside 298,16 ₴
+- **THEN** it shows «5,701 кг × 52,30 UAH» beside 298,16 UAH
 
 #### Scenario: A позиція without a unit price shows no invented one
 
@@ -75,7 +75,7 @@ classify a позиція. The list SHALL be readable with no network at all.
 
 - **WHEN** a транзакція's сума was changed to 70000 minor units UAH after a чек of 74230 was
   attached
-- **THEN** the чек view shows 742,30 ₴ and 700,00 ₴ marked as different
+- **THEN** the чек view shows 742,30 UAH and 700,00 UAH marked as different
 
 #### Scenario: Offline reading
 

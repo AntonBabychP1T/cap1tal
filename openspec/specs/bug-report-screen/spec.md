@@ -50,7 +50,7 @@ The репорт form SHALL offer «Що я робив» (required), «Що ст
 Ukrainian, with the prompting failure shown above them when there is one, and SHALL save on
 «Зберегти», opening the saved репорт in place of the form — except on the crash fallback, where
 saving returns the owner to Головний, as that requirement says. A save with «Що я робив» empty
-SHALL be refused in Ukrainian. Leaving the form by the device's back gesture SHALL store nothing.
+SHALL be refused in Ukrainian. Leaving the form by the device's back gesture SHALL store nothing — after the confirmation the app-shell capability asks for when the form holds edits.
 
 A refusal SHALL be shown only while it is still true. The refusal of an empty «Що я робив» SHALL
 disappear as soon as that line holds anything, without waiting for another «Зберегти» — the owner
@@ -91,7 +91,7 @@ until saving is tried again.
 
 #### Scenario: The back gesture discards the form
 
-- **WHEN** the owner has typed two lines and uses the device's back gesture
+- **WHEN** the owner has typed two lines, uses the device's back gesture and answers «Відкинути»
 - **THEN** the form closes and no репорт was created
 
 ### Requirement: The saved репорт is read whole and acted on

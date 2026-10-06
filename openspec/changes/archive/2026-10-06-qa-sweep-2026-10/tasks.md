@@ -7,7 +7,7 @@ green on the tree that holds it. Scenario names below are quoted from this chang
 
 ## 0. Order
 
-- [ ] 0.1 Before `/opsx:archive`, confirm `merchant-normalization`, `observations-and-month-summary`
+- [x] 0.1 Before `/opsx:archive`, confirm `merchant-normalization`, `observations-and-month-summary`
       and `commitments` are archived (design D1): `openspec validate qa-sweep-2026-10 --strict`
       shows no «target spec does not exist» and no «MODIFIED failed … not found» INFO line. Until
       then this change is applied and committed, never archived.

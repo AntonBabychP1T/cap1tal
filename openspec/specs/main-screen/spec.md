@@ -13,12 +13,12 @@ left stays one tap away, on Місяць, which is where all six monthly numbers
 
 ### Requirement: Головний presents the daily dashboard
 
-Головний SHALL present a compact cap1tal header, then the fixed service rail with any currently actionable item, then the known dashboard widgets in the owner's saved visible order. The fixed service rail SHALL appear directly below the header and before every widget regardless of widget order or which widget, if any, is first. With no saved preference the widgets SHALL present, in order, the current month's витрачено, the latest five stored транзакції, top categories and Статок, with recording available through «+» without scrolling and with no entry form, separate money-held card, large attention section or visible Progress widget.
+Головний SHALL present a compact cap1tal header, then the fixed service rail with any currently actionable item, then the known dashboard widgets in the owner's saved visible order. The fixed service rail SHALL appear directly below the header and before every widget regardless of widget order or which widget, if any, is first. With no saved preference the widgets SHALL present, in order, the current month's витрачено, the latest five stored транзакції, the current month's спостереження, top categories and Статок, with recording available through «+» without scrolling and with no entry form, separate money-held card, large attention section or visible Progress widget.
 
 #### Scenario: The first screen is entry plus the feed
 - **GIVEN** recorded expenses, accounts, twelve unseen досягнення, pending чернетки and no saved dashboard preference
 - **WHEN** the owner opens Головний
-- **THEN** the month leads, the latest records immediately follow, categories and Статок follow them, the fixed service rail sits directly below the header before every widget, and Progress does not precede the financial widgets
+- **THEN** the month leads, the latest records immediately follow, the спостереження follow them, categories and Статок follow those, the fixed service rail sits directly below the header before every widget, and Progress does not precede the financial widgets
 - **AND** «+» opens the existing separate recording form with its existing validation and confirmation
 
 #### Scenario: A saved layout controls only known widgets
@@ -83,7 +83,7 @@ Tapping the month card SHALL open the detailed місячна картина for
 
 ### Requirement: The feed shows the latest five legible records
 
-The latest-transactions section SHALL show at most five records across all history in descending date then recording-recency order, each with a category/type icon plus text, stored опис when present, date, account (both for a переказ) and exact amount/currency with explicit money direction (expense −, income/повернення +, коригування its sign, переказ a directional arrow with both leg amounts when different), and offer «Усі» and existing editing and one-tap categorisation.
+The latest-transactions section SHALL show at most five records across all history in descending date then recording-recency order, each with a category/type icon plus text, the назва of the продавець its опис is recognised as — or the stored опис itself when it is recognised as none — when an опис is present, date, account (both for a переказ) and exact amount/currency with explicit money direction (expense −, income/повернення +, коригування its sign, переказ a directional arrow with both leg amounts when different), and offer «Усі» and existing editing and one-tap categorisation.
 
 #### Scenario: Five of a long history
 - **GIVEN** eight records including equal-date records and a backdated newly entered record
@@ -96,10 +96,15 @@ The latest-transactions section SHALL show at most five records across all histo
 - **THEN** it shows those three, or «Поки нічого не записано», and «Усі» is available in both cases
 
 #### Scenario: Description and type stay distinguishable
-- **GIVEN** a «Без категорії» expense with опис «СІЛЬПО Київ», an income «Без джерела» and a cross-currency transfer
+- **GIVEN** a «Без категорії» expense with опис «СІЛЬПО Київ» that no написання recognises, an income «Без джерела» and a cross-currency transfer
 - **WHEN** their rows are read
 - **THEN** description never replaces category/source/type, the transfer exposes both accounts/amounts, and no meaning depends only on color
 - **AND** row taps open existing transaction editing, with existing correction restrictions
+
+#### Scenario: A recognised опис reads as its продавець
+- **GIVEN** «АТБ» holds the написання "atb" and a витрата carries the опис «ATB MARKET 23»
+- **WHEN** its row is read
+- **THEN** it shows «АТБ» where it would show the опис, and never in place of its category
 
 #### Scenario: Categorisation stays in place
 - **GIVEN** an uncategorised expense with a stored опис in the feed
@@ -127,7 +132,7 @@ A nonzero count of stored витрати and повернення carrying «Б�
 
 ### Requirement: Sync occupies a compact header
 
-Configured linked monobank accounts SHALL expose existing coverage/freshness and manual sync in the compact header, preserving pull-to-refresh, existing manual-sync rules and in-flight joining without creating a separate sync card.
+Configured linked monobank accounts SHALL expose existing coverage/freshness and manual sync in the compact header, preserving pull-to-refresh, existing manual-sync rules and in-flight joining without creating a separate sync card. Linked accounts without a configured token are not quiet: the service rail says so, as «A linked bank without a token is stated under the header» requires, while pulling down only reloads local data.
 
 #### Scenario: Partial coverage is not fresh coverage
 - **GIVEN** three of nine linked accounts have completed a sync
@@ -140,9 +145,14 @@ Configured linked monobank accounts SHALL expose existing coverage/freshness and
 - **THEN** the existing run is joined, no duplicate starts, cached values stay readable and refreshing ends on success or failure
 
 #### Scenario: No bank remains quiet
-- **GIVEN** no configured token or no linked accounts
+- **GIVEN** no linked accounts
 - **WHEN** Головний is read or pulled to refresh
 - **THEN** no bank status/control or bank failure appears and the gesture only reloads local data
+
+#### Scenario: A linked bank without a token is not synced by the gesture
+- **GIVEN** linked accounts and no configured token
+- **WHEN** Головний is pulled to refresh
+- **THEN** no sync starts, no request leaves the phone, local data reloads, and the no-token row stays
 
 ### Requirement: Operational alerts remain compact and actionable
 
@@ -908,8 +918,10 @@ before «Записати» is pressed and can be changed with one tap. Recordin
 
 After a категорія is set on a stored витрата or повернення that carries an опис — through the
 «Без категорії» mark in the feed or through the editing screen alike — the owner SHALL be offered
-a правило that would make the same decision next time, with the merchant pattern already proposed
-from that опис and editable before it is stored. After a stored витрата that carries an опис is
+a правило that would make the same decision next time, with the merchant criterion already
+proposed from that опис — the продавець it is recognised as, or a pattern — and changeable before
+it is stored: a pattern is editable, and a продавець can be switched to the pattern proposed from
+the опис. After a stored витрата that carries an опис is
 retyped into a переказ from editing, the owner SHALL likewise be offered a правило-переказ onto the
 destination рахунок just chosen. Accepting SHALL store the правило; declining
 SHALL store none and SHALL leave the категорія just set — or the переказ just stored — exactly as it
@@ -918,20 +930,27 @@ the offer is made, so dismissing the offer — or leaving the screen — can nev
 decision.
 
 The offer SHALL name what it would remember in words the owner can check before accepting: the
-pattern and the категорія it would target, or the pattern and «переказ на» the destination
-рахунок's назва. The cases in which no offer is made at all belong to the categorisation-rules
-capability.
+pattern, or «продавець» and the продавець's назва, and the категорія it would target, or the same
+criterion and «переказ на» the destination рахунок's назва. The cases in which no offer is made at
+all belong to the categorisation-rules capability.
 
 #### Scenario: One tap in the feed, then the offer
 
 - **WHEN** the owner uses the «Без категорії» mark on a витрата carrying the опис "СІЛЬПО 123
-  Київ" and picks Groceries
+  Київ", which no написання recognises, and picks Groceries
 - **THEN** the витрата carries Groceries and an offer appears naming the pattern "сільпо" and
   Groceries
 
+#### Scenario: A recognised опис offers its продавець
+
+- **WHEN** «АТБ» holds "atb", no правило names it, and the owner uses the «Без категорії» mark on a
+  витрата carrying the опис "ATB MARKET 23" and picks Groceries
+- **THEN** an offer appears naming «продавець АТБ» and Groceries, with a way to switch to the
+  pattern "atb market"
+
 #### Scenario: Accepting the offer stores the правило
 
-- **WHEN** that offer is accepted unchanged
+- **WHEN** the offer naming the pattern "сільпо" and Groceries is accepted unchanged
 - **THEN** the правило "сільпо → Groceries" exists
 
 #### Scenario: Declining keeps the категорія
@@ -1200,18 +1219,28 @@ confirmation, so it never describes a form that has moved on.
 
 ### Requirement: The опис is visible everywhere and correctable
 
-The latest-transactions feed and transaction editing SHALL show a stored опис when one exists and
-SHALL omit it when none exists. From editing, the owner SHALL be able to write, change or clear
+The latest-transactions feed SHALL show, for a транзакція carrying an опис, the назва of the
+продавець that опис is recognised as, and the stored опис itself when it is recognised as none; it
+SHALL omit both when no опис exists. Transaction editing SHALL show the stored опис, as stored,
+whether or not it is recognised. From editing, the owner SHALL be able to write, change or clear
 the опис of any транзакція, whatever put it there — an import, a чернетка or the owner's own hand
 — and the опис SHALL be named neutrally rather than as the bank's alone. Changing any other field
-SHALL preserve the опис, and the опис SHALL NOT replace or be treated as the категорія, джерело,
-account name, amount, currency, date or type.
+SHALL preserve the опис, and neither the опис nor the назва shown for it SHALL replace or be
+treated as the категорія, джерело, account name, amount, currency, date or type.
 
 #### Scenario: An uncategorised merchant can be identified in the feed
 
-- **WHEN** monobank imports a витрата in «Без категорії» with опис "СІЛЬПО Київ"
+- **WHEN** monobank imports a витрата in «Без категорії» with опис "СІЛЬПО Київ" that no написання
+  recognises
 - **THEN** the latest feed shows "СІЛЬПО Київ" with that витрата while its category remains «Без
   категорії»
+
+#### Scenario: A recognised опис shows its продавець in the feed and itself in editing
+
+- **WHEN** «АТБ» holds "атб" and monobank imports a витрата with опис "Оплата послуг АТБ-Маркет 1234
+  Київ"
+- **THEN** the feed shows «АТБ» with that витрата, and editing shows the опис "Оплата послуг
+  АТБ-Маркет 1234 Київ" as stored
 
 #### Scenario: An arriving item keeps its source distinct from its description
 
@@ -1436,8 +1465,11 @@ back to its reading when the run ends — whoever started that run, and whether 
 after Головний was opened.
 
 WHEN no linked рахунок has ever completed a sync, Головний SHALL say that plainly instead of
-showing an empty age. WHEN monobank is not configured, or no рахунок is linked, Головний SHALL
-show no freshness line at all — an owner who never connected a bank is told nothing about one.
+showing an empty age. WHEN no рахунок is linked, Головний SHALL show no freshness line at all — an owner who never
+connected a bank is told nothing about one. WHEN рахунки are linked but monobank is not configured
+— the token was removed or never re-entered — Головний SHALL show no freshness line either, and
+the service rail SHALL instead say that the bank is not being heard, as «A linked bank without a
+token is stated under the header» requires.
 
 #### Scenario: Minutes are stated as minutes
 
@@ -1606,3 +1638,194 @@ newest one names none of the linked рахунки, every linked рахунок 
 - **WHEN** the newest stored answer names none of the two linked рахунки, last synced two days ago,
   and the last прогін ended unavailable
 - **THEN** Головний states the two-day-old moment and «Потребує уваги» carries the monobank row
+
+### Requirement: Editing names the транзакція's продавець
+
+Transaction editing SHALL show a «Продавець» row for a транзакція that carries an опис. When the
+опис is recognised as a продавець, the row SHALL show that продавець's назва, and tapping it SHALL
+open that продавець's screen. When the опис is recognised as none, the row SHALL offer «Назвати
+продавця», which opens the naming form for that опис. A транзакція carrying no опис SHALL show no
+such row. The row SHALL read the опис as it stands when the screen is shown. An опис changed in
+the same editing SHALL be read once it is saved, since the продавець is what the stored опис is
+recognised as.
+
+#### Scenario: A recognised транзакція names its продавець
+
+- **WHEN** «АТБ» holds "atb" and the owner opens a витрата carrying the опис "ATB MARKET 23"
+- **THEN** editing shows the опис "ATB MARKET 23" and a «Продавець» row reading «АТБ», which opens
+  «АТБ»'s screen
+
+#### Scenario: An unrecognised транзакція offers naming
+
+- **WHEN** the owner opens a витрата carrying the опис "ЗЕРНО 12" that no написання recognises
+- **THEN** the «Продавець» row offers «Назвати продавця», which opens the naming form proposing
+  «Зерно» and "зерно"
+
+#### Scenario: No опис, no row
+
+- **WHEN** the owner opens a витрата recorded by hand with no опис
+- **THEN** editing shows no «Продавець» row
+
+### Requirement: The «Спостереження» widget points at what is notable this month
+
+When visible, the «Спостереження» widget SHALL show up to three спостереження of the current
+month. It SHALL take the first three in the order the observations capability defines, each in
+its one sentence, each leading where that capability says. A можливий дубль SHALL carry its «Не
+дубль» answer, which takes effect in place without leaving Головний.
+
+WHEN the current month has more than three спостереження, the widget SHALL offer «Усі (N)»,
+naming how many there are and leading to Місяць on the current month.
+
+WHEN the current month has none, the widget SHALL say so in one sentence, drawn inside the same card
+its lines are drawn in, and keep its place.
+
+On the first seven days of a month, WHEN the previous month is a завершений активний місяць, the
+widget SHALL open with one more row, «Підсумок <місяця>», leading to that month's підсумок. From
+the eighth day that row SHALL no longer be shown. It is not remembered as seen.
+
+Showing the widget SHALL write nothing, post nothing and request nothing.
+
+#### Scenario: Three of five
+
+- **WHEN** October 2026 has five спостереження and the widget is visible
+- **THEN** the widget shows the first three in order and «Усі (5)», which opens Місяць on October
+
+#### Scenario: Nothing notable yet
+
+- **WHEN** today is 2026-10-10 and the current month has no спостереження
+- **THEN** the widget says there is nothing unusual this month so far, inside the widget's card,
+  and nothing else
+
+#### Scenario: September's підсумок in the first week of October
+
+- **WHEN** today is 2026-10-02 and September 2026 holds транзакції
+- **THEN** the widget opens with «Підсумок вересня», which opens the підсумок of September
+
+#### Scenario: The підсумок row leaves after the seventh day
+
+- **WHEN** today is 2026-10-08
+- **THEN** the widget shows no «Підсумок вересня» row, and the підсумок is still reachable from
+  Місяць
+
+#### Scenario: «Не дубль» on Головний
+
+- **WHEN** the widget shows a можливий дубль and the owner answers «Не дубль»
+- **THEN** the pair disappears from the widget, the next спостереження takes its place if there is
+  one, and Головний is not left
+
+#### Scenario: A hidden widget shows nothing
+
+- **WHEN** the owner has hidden «Спостереження» in dashboard editing
+- **THEN** Головний shows no спостереження and no «Підсумок» row, and the service rail is unchanged
+
+### Requirement: A linked bank without a token is stated under the header
+
+WHEN at least one unarchived рахунок is linked to monobank and no monobank token is configured,
+the service rail directly below Головний's header SHALL carry one compact row saying that monobank
+is not being read for lack of a token, how many linked рахунки are affected, and since when: the
+oldest last completed sync among the linked рахунки that ever synced, as a дата in words — a
+linked рахунок that never synced does not hide the others' дата — or, when none of them ever
+synced, no дата and that they never synced. Its tap SHALL
+open the monobank screen. The row SHALL follow the rail's rules: outside the configurable widgets,
+never hidden or reordered, taking no space when absent, and making no network request of its own.
+It SHALL be gone as soon as a token is configured or no рахунок is linked any more.
+
+#### Scenario: Twelve days without a token are said
+
+- **WHEN** nine рахунки are linked to monobank, no token is configured, the oldest last sync of
+  them completed on 2026-09-21 and today is 2026-10-05
+- **THEN** the rail says monobank is not read without a token for 9 рахунків since 21 вересня, and
+  its tap opens the monobank screen
+
+#### Scenario: Some linked рахунки never synced
+
+- **WHEN** nine рахунки are linked to monobank, no token is configured, seven of them last synced
+  between 2026-09-21 and 2026-09-28, two never synced, and today is 2026-10-05
+- **THEN** the rail says monobank is not read without a token for 9 рахунків since 21 вересня
+
+#### Scenario: No linked рахунок ever synced
+
+- **WHEN** two рахунки are linked to monobank, no token is configured and neither ever synced
+- **THEN** the rail says monobank is not read without a token for 2 рахунків and that they never
+  synced, and names no дата
+
+#### Scenario: A device that never connected a bank stays quiet
+
+- **WHEN** no рахунок is linked and no token is configured
+- **THEN** no monobank row and no freshness line appear
+
+#### Scenario: Entering the token clears the row
+
+- **WHEN** the owner enters a token on the monobank screen and returns to Головний
+- **THEN** the no-token row is gone and the freshness line states the bank's freshness as usual
+
+### Requirement: A дохід «Без джерела» is given its джерело in one tap
+
+The feed and «Транзакції» SHALL visibly mark every дохід carrying «Без джерела», and from that
+mark the owner SHALL be able to pick an unarchived джерело and have it stored on that дохід without
+opening editing; the mark SHALL disappear with the pick. The джерела offered SHALL follow the same
+short-list rule as the категорії of «Без категорії»: at most five, the rest behind one offer naming
+how many there are in all, «Без джерела» itself not among them. The mark SHALL offer only джерела.
+A дохід «Без джерела» that is really a повернення or one leg of a переказ is not answered from the
+mark: tapping the line itself, outside the mark, SHALL open its editing as it does today, where the
+дохід is retyped as that editing already allows.
+
+#### Scenario: One tap gives a дохід its джерело
+
+- **WHEN** the feed holds a дохід of 96000 minor units UAH «Від: Міхаіл Кас'ян» in «Без джерела»
+  and the owner picks «Подарунки» from its mark
+- **THEN** that дохід carries «Подарунки», editing never opened, and the mark is gone
+
+#### Scenario: The same mark in «Транзакції»
+
+- **WHEN** «Транзакції» lists a дохід of 96000 minor units UAH «Від: Міхаіл Кас'ян» in «Без
+  джерела» and the owner picks «Подарунки» from its mark
+- **THEN** that дохід carries «Подарунки», editing never opened, and the mark is gone
+
+#### Scenario: A дохід that is really a повернення is retyped from its editing
+
+- **WHEN** the feed holds a дохід «Без джерела» of 45000 minor units UAH «Скасування покупки
+  Rozetka» and the owner taps the line outside its mark
+- **THEN** the editing of that дохід opens, where it can be retyped as a повернення as it can
+  today, and the mark itself offers nothing but джерела
+
+#### Scenario: Nothing else is offered a джерело
+
+- **WHEN** the feed holds a витрата, a переказ and a коригування
+- **THEN** none of them carries the «Без джерела» mark
+
+### Requirement: The quick категорія picker leads with what a правило would give
+
+WHEN the «Без категорії» mark is used on a витрата whose опис a правило or the шаблон categorises,
+that категорія SHALL be offered first among the five, marked as the suggestion; it SHALL be stored
+only when the owner picks it. Opening the full list of категорії from the mark SHALL show the list
+and its search field without raising the keyboard; the keyboard SHALL open only when the owner taps
+the search field, and the list SHALL stay in sight above it while they type.
+
+#### Scenario: The шаблон's категорія is one tap away
+
+- **WHEN** a витрата «Oplata poslug MEGOGO KYIV» in «Без категорії» is marked and the шаблон gives
+  that опис «Підписки»
+- **THEN** «Підписки» is the first of the five offered, marked as the suggestion, and nothing is
+  stored until it is picked
+
+#### Scenario: The full list is read before it is searched
+
+- **WHEN** the owner opens «Всі категорії (27)» from the mark
+- **THEN** the list is shown and no keyboard covers it
+
+### Requirement: A сума the owner left empty or not positive is refused by what is wrong
+
+The entry and editing forms SHALL refuse an empty сума with «Напишіть суму» and a сума that is
+zero or negative with «Сума має бути більшою за нуль», and keep the refusal that quotes the typed
+text for anything that is not a number.
+
+#### Scenario: An empty сума asks for one
+
+- **WHEN** the owner chooses a рахунок, leaves «Сума» empty and taps «Записати»
+- **THEN** nothing is recorded and the refusal reads «Напишіть суму»
+
+#### Scenario: A negative сума is named as such
+
+- **WHEN** the owner types «-50» into «Сума» and taps «Записати»
+- **THEN** nothing is recorded and the refusal reads «Сума має бути більшою за нуль»

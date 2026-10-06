@@ -6,6 +6,7 @@ progress, an unambiguous finish and one action to start from. At most three stan
 chosen deterministically from local aggregates, never by a language model. It exists because
 Головний names what was spent and Місяць names what a month cost, but nothing named anything
 worth reaching.
+
 ## Requirements
 
 ### Requirement: A виклик states why it was proposed, how far it has come and when it is done
@@ -93,8 +94,8 @@ from the list makes «bring a dismissed one back» a sentence with nothing behin
 
 #### Scenario: A dismissal binds only its own parameters
 
-- **WHEN** the owner dismisses «Закрий 2026-07» and 2026-08 later ends holding «Без категорії»
-- **THEN** «Закрий 2026-08» is proposed
+- **WHEN** the owner dismisses «Закрий липень 2026» and 2026-08 later ends holding «Без категорії»
+- **THEN** «Закрий серпень 2026» is proposed
 
 #### Scenario: An unfinished accepted виклик costs nothing
 
@@ -145,11 +146,14 @@ finished where the owner can see it.
 The catalogue SHALL hold exactly these виклики, in this order of priority:
 
 1. **«Закрий <місяць>»** — offered when the most recent завершений активний місяць still holds a
-   витрата «Без категорії», a дохід «Без джерела», or a чернетка dated inside it still waiting.
+   витрата or a повернення «Без категорії», a дохід «Без джерела», or a чернетка dated inside it
+   still waiting.
    Progress: **how many such items remain**, counted from the stored data each time it is shown and
    never against a remembered total — nothing but the owner's decision is stored, so a denominator
    fixed at the moment it was proposed does not exist. Finished: none of the three remain for that
-   місяць. Action: the place where those items are answered.
+   місяць. Action: the place where those items are answered. Its name and sentences SHALL carry the
+   місяць as Ukrainian grammar asks — «Закрий вересень 2026», «У вересні 2026 ще 9 записів…» —
+   never the nominative label of a heading inside a sentence.
 2. **«Фінансова подушка»** — offered for one currency: the currency whose резерв is below one
    місячна норма витрат of that currency, and, WHEN no currency has a confirmed норма, the currency
    holding the most завершені активні місяці — the one the owner's record knows best — with ties
@@ -176,7 +180,9 @@ The catalogue SHALL hold exactly these виклики, in this order of priority
 Each **action** SHALL open the work its виклик names, already shaped: «recording a переказ onto a
 рахунок of вид `savings`» SHALL open the entry form as a **переказ** with a рахунок of that вид
 already chosen where one exists, and «the place where those items are answered» SHALL open already
-narrowed to the місяць in question. An action that merely opens a screen on its own defaults is not
+narrowed to the місяць in question and to what is left in it — «Без категорії» while any витрата
+or повернення carries it, else «Без джерела» while any дохід carries it; when only чернетки dated in it
+are left, Головний, where чернетки are confirmed or dismissed. An action that merely opens a screen on its own defaults is not
 the work the criterion measures.
 
 No виклик SHALL ask the owner to spend, to spend less in a way the app cannot measure, to open the
@@ -186,7 +192,18 @@ app, or to do anything the app cannot verify from the транзакції.
 
 - **WHEN** 2026-08 is завершений and holds two витрати «Без категорії», and the conditions of
   «Фінансова подушка» and «Інвестиційна звичка» also hold
-- **THEN** «Закрий 2026-08» is offered first
+- **THEN** «Закрий серпень 2026» is offered first
+
+#### Scenario: The month is named in its case
+
+- **WHEN** «Закрий <місяць>» is offered for вересень 2026 with nine доходи «Без джерела» left
+- **THEN** it is named «Закрий вересень 2026» and its reason begins «У вересні 2026 ще 9 записів»
+
+#### Scenario: Only доходи left opens them
+
+- **WHEN** its action is begun while вересень 2026 holds no витрата «Без категорії» and nine доходи
+  «Без джерела»
+- **THEN** «Транзакції» opens narrowed to вересень 2026 and «Без джерела»
 
 #### Scenario: The action opens the переказ, not a витрата form
 
@@ -235,4 +252,3 @@ device with nothing is told what to do, and a виклик SHALL NOT repeat it.
 - **WHEN** the app is opened on a device holding no транзакція
 - **THEN** no виклик is proposed, and the progress screen states plainly that there is nothing yet
   rather than showing an empty list of виклики
-

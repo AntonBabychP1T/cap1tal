@@ -29,7 +29,7 @@ mixed into their kind groups.
 ### Requirement: An account can be created from the screen
 
 The owner SHALL create an account by giving a назва, a вид (`spending`, `savings`, `investment`,
-`cash`, `debt`) and a валюта offered from UAH, EUR and USD; the початковий залишок SHALL be
+`cash`, `debt`) and a валюта offered from UAH, EUR, PLN and USD; the початковий залишок SHALL be
 optional and default to zero. The created account SHALL appear on the screen and be offered when
 a transaction is recorded.
 
@@ -222,6 +222,10 @@ neither balance SHALL be overwritten without a транзакція. WHEN the en
 equals the розрахунковий баланс, nothing SHALL be created and the screen SHALL say so. An entry
 that is not an amount in that currency SHALL be rejected and SHALL create nothing.
 
+WHEN the рахунок is linked and a баланс банку is known, the field SHALL offer that balance as a
+one-tap value, named as the bank's; it SHALL be entered only when tapped, and the field SHALL
+otherwise open empty.
+
 #### Scenario: Cash is brought into line with a recount
 
 - **WHEN** a `cash` рахунок's розрахунковий баланс is 47000 minor units UAH, the owner enters a
@@ -240,6 +244,12 @@ that is not an amount in that currency SHALL be rejected and SHALL create nothin
 
 - **WHEN** the owner enters a фактичний залишок equal to the розрахунковий баланс and confirms
 - **THEN** no коригування is created and the screen says the two already agree
+
+#### Scenario: The bank's balance is one tap away
+
+- **WHEN** the owner opens «Звірити» on «platinum ··6628», whose last баланс банку is 2144505 minor
+  units UAH
+- **THEN** the field is empty and offers «Як у банку: 21 445,05 UAH», which fills it when tapped
 
 #### Scenario: A rejected entry writes nothing
 

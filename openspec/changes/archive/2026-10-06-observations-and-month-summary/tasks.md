@@ -92,6 +92,7 @@
   - "A large history scrolls smoothly".
 
   Where the owner's own бекап is available locally, also restore it and note what each detector said, as input for the thresholds (design, Risks)
+  **Not run** — archived at the owner's request on 2026-10-06 without this step; the qa-sweep-2026-10 emulator sweep (task 12.1) is the latest on-device evidence.
 - [x] 9.1 Run `npm run verify` and paste the final lines
 
   ```

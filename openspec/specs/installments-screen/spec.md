@@ -20,9 +20,9 @@ what a розстрочка is for in one sentence and offer «Нова розс
 #### Scenario: The nearest платіж leads
 
 - **WHEN** today is 2026-10-01, «Пилосос» has its next платіж on 2026-10-20, and «iPhone» — 10
-  платежі of 1 000,00 ₴, 4 сплачено раніше — has its next on 2026-10-05
-- **THEN** «iPhone» is listed above «Пилосос», showing «4 з 10», its залишок «6 000,00 ₴» and
-  «5 жовт. · 1 000,00 ₴»
+  платежі of 1 000,00 UAH, 4 сплачено раніше — has its next on 2026-10-05
+- **THEN** «iPhone» is listed above «Пилосос», showing «4 з 10», its залишок «6 000,00 UAH» and
+  «5 жовтня · 1 000,00 UAH»
 
 #### Scenario: A missed debit is visible from the list
 
@@ -51,7 +51,7 @@ start at the number of платежі dated before today and follow the дата
 owner sets it. «Рахунок списання» SHALL offer only unarchived UAH рахунки. Every refusal of the
 installments capability SHALL be stated in Ukrainian next to the field it concerns, and nothing
 SHALL be stored while any stands. WHILE the form is open, the device's back gesture SHALL close it,
-storing nothing.
+storing nothing — after the confirmation the app-shell capability asks for when the form holds edits.
 
 #### Scenario: Ten thousand over ten months
 
@@ -75,7 +75,7 @@ storing nothing.
 
 #### Scenario: The back gesture discards the form
 
-- **WHEN** the owner types into the form and uses the device's back gesture
+- **WHEN** the owner types into the form, uses the device's back gesture and answers «Відкинути»
 - **THEN** the form closes and no розстрочка is stored
 
 ### Requirement: One розстрочка shows its графік with a verb per платіж
@@ -91,9 +91,9 @@ closed) and «Видалити»; deleting SHALL ask for confirmation and say th
 
 #### Scenario: The графік reads month by month
 
-- **WHEN** on 2026-10-10 the owner opens «iPhone», 10 платежі of 1 000,00 ₴ from 2026-06-05, 4
+- **WHEN** on 2026-10-10 the owner opens «iPhone», 10 платежі of 1 000,00 UAH from 2026-06-05, 4
   сплачено раніше and платіж 5 linked to a витрата of 2026-10-05
-- **THEN** платежі 1–4 say «сплачено раніше», платіж 5 shows its списання of 5 жовт. 1 000,00 ₴,
+- **THEN** платежі 1–4 say «сплачено раніше», платіж 5 shows its списання of 5 жовтня 1 000,00 UAH,
   and платежі 6–10 show their дати and «очікується»
 
 #### Scenario: Picking the списання by hand

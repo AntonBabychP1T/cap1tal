@@ -397,3 +397,40 @@ choice. Every number shown after a choice SHALL be exactly what a full re-deriva
 
 - **WHEN** any month, категорія and currency are chosen in any order
 - **THEN** every number on the tab equals the one derived from scratch for the same choice
+
+### Requirement: A spelled-out finished month leads to its підсумок
+
+WHEN the month spelled out on «Звіти» is a завершений активний місяць, the spelled-out reading
+SHALL offer «Підсумок <місяця>», leading to that month's підсумок. A spelled-out current month or a
+month with no транзакція SHALL offer none. Picking another month SHALL offer that month's, or none.
+The offer SHALL compute nothing beyond whether the month has a підсумок.
+
+#### Scenario: The newest finished month offers its підсумок
+
+- **WHEN** today is 2026-10-02, October holds no транзакція yet, and «Звіти» spells out September
+  2026
+- **THEN** «Підсумок вересня» is offered beneath September's numbers and opens the підсумок of
+  September
+
+#### Scenario: Picking an older month offers that month's
+
+- **WHEN** the owner picks June 2026 on the history chart and June holds транзакції
+- **THEN** «Підсумок червня» is offered and opens the підсумок of June
+
+#### Scenario: The current month offers none
+
+- **WHEN** «Звіти» spells out the current month
+- **THEN** no «Підсумок» is offered
+
+### Requirement: The history chart says that earlier months lie beyond its edge
+
+WHEN «Історія за місяцями» holds more months than fit the width of the screen, the chart SHALL show
+at its leading edge that earlier months lie to the left, and its scale SHALL be written short enough
+— the сума rounded to a whole number with its currency code — that the bars, not the scale, take
+most of the width.
+
+#### Scenario: Seven months on a narrow phone
+
+- **WHEN** the UAH history holds seven months and only three columns fit a phone 360 dp wide
+- **THEN** the chart opens on the latest month, shows that earlier months lie to the left, and its
+  scale reads «160 263 UAH» rather than «160 263,13 UAH»

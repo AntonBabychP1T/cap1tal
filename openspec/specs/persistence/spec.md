@@ -868,10 +868,12 @@ The system SHALL find stored транзакції by a **search** and by **filte
 транзакція only when it satisfies every filter given and, when a search is given, the search too.
 
 A search SHALL be satisfied by any one of the things given with it: a text occurring in the опис,
-matched without regard to letter case and at any position; a сума equal to a given amount on
+matched without regard to letter case and at any position; the транзакція's опис being recognised
+as one of the given продавці; a сума equal to a given amount on
 either leg, whatever the currency; or the транзакція carrying one of the given категорії or
-джерела. The filters SHALL be one рахунок — counting a переказ on either leg — and one calendar
-month; each SHALL only ever remove транзакції from the result.
+джерела. The filters SHALL be one рахунок — counting a переказ on either leg — one calendar
+month, and one продавець, which keeps only the транзакції whose опис is recognised as it; each
+SHALL only ever remove транзакції from the result.
 
 Results SHALL come in the latest listing's order — newest date first, then most recently stored,
 then by id — and SHALL be returned up to a requested count from a requested starting position, so
@@ -913,6 +915,18 @@ nothing SHALL return nothing rather than everything.
 - **WHEN** five matching транзакції are stored and two are requested from the position after the
   first two
 - **THEN** the third and fourth in the latest listing's order are returned, in that order
+
+#### Scenario: A продавець given with the search matches every spelling
+
+- **WHEN** «АТБ» holds "атб" and "atb", витрати with описи "АТБ 12" and "ATB MARKET" are stored, and
+  the search gives the text "атб" together with «АТБ» among its продавці
+- **THEN** both витрати are returned
+
+#### Scenario: The продавець filter keeps only what it recognises
+
+- **WHEN** «АТБ» holds "атб", витрати with описи "АТБ 12" and "Сільпо" are stored, and the
+  продавець filter is «АТБ»
+- **THEN** only the first is returned
 
 #### Scenario: Nothing matching returns nothing
 
@@ -1999,3 +2013,222 @@ The mapping SHALL arrive by a new migration that leaves every stored row as it i
 - **WHEN** storage holding рахунки, транзакції, категорії and правила is brought to the shape that
   has the mapping
 - **THEN** every stored row is unchanged and no базова категорія has a stored choice
+
+### Requirement: Зобов'язання and the states of their платежі survive a restart
+
+Stored зобов'язання SHALL remain readable after storage is closed and reopened, each with its
+назва, сума with its currency, періодичність, дата першого платежу, рахунок списання, категорія and
+ознака where it has them, the moment it was recorded and its дата припинення where it was stopped.
+For every платіж SHALL be kept, by number, the транзакція it is linked to, the owner's mark
+сплачено or пропущено, and every транзакція the owner unlinked from it. A платіж SHALL hold at most
+one of a link, a mark сплачено and a mark пропущено, and storage SHALL reject a link, mark or
+refusal for a платіж dated after the зобов'язання's дата припинення. The data SHALL live only on the
+device.
+
+#### Scenario: A зобов'язання comes back whole
+
+- **WHEN** «Netflix» of 29900 minor units UAH «щомісяця» from 2026-08-15 on «mono black» with the
+  ознака «netflix», платіж 1 linked to a витрата, платіж 2 marked сплачено, платіж 3 marked
+  пропущено and one витрата unlinked from платіж 1, stopped on 2026-10-20, is stored, and storage is
+  closed and reopened
+- **THEN** all of it is read back exactly so
+
+#### Scenario: A marked платіж cannot also be linked
+
+- **WHEN** a link to a витрата is stored for a платіж of «Netflix» that is marked пропущено
+- **THEN** storage rejects it and the платіж stays marked пропущено with no link
+
+#### Scenario: Nothing is stored for a платіж after the stop
+
+- **WHEN** a mark пропущено is stored for the платіж of 2026-11-15 of «Netflix», stopped on
+  2026-10-20
+- **THEN** storage rejects it and holds no mark for that платіж
+
+### Requirement: A stored зобов'язання refers only to what storage holds
+
+The system SHALL reject storing a зобов'язання whose рахунок списання or категорія is not present
+in storage, or whose currency is not the currency of its рахунок списання, and SHALL reject linking
+a платіж of a зобов'язання to a транзакція that is not present, is not a витрата on the
+зобов'язання's рахунок списання in its currency, or is already linked to another платіж — of a
+зобов'язання or of a розстрочка. It SHALL likewise reject linking a платіж of a розстрочка to a
+транзакція already linked to a платіж of a зобов'язання. A rejected write SHALL leave storage as it
+was. Removing a транзакція SHALL remove its link and leave the платіж otherwise as it was.
+
+#### Scenario: A currency other than the рахунок's is rejected
+
+- **WHEN** a зобов'язання of 2000 minor units USD naming the UAH рахунок «mono black» as its
+  рахунок списання is stored
+- **THEN** storage rejects it and holds no зобов'язання
+
+#### Scenario: A транзакція links to one платіж at most, whatever the plan
+
+- **WHEN** a витрата already linked to платіж 5 of the розстрочка «iPhone» is linked to a платіж of
+  the зобов'язання «Спортзал», or a витрата linked to a платіж of «Спортзал» is linked to a платіж
+  of «iPhone»
+- **THEN** storage rejects it and the витрата stays linked to its first платіж only
+
+#### Scenario: A removed транзакція releases its link
+
+- **WHEN** the витрата linked to a платіж of «Інтернет» is removed
+- **THEN** that платіж has no link, «Інтернет» is otherwise unchanged, and nothing refuses the
+  removal
+
+### Requirement: A merged рахунок takes its зобов'язання along
+
+When one рахунок is merged into another, every зобов'язання whose рахунок списання was the merged
+рахунок SHALL name the рахунок it was merged into, with every link of its платежі kept.
+
+#### Scenario: Merging the card of a зобов'язання
+
+- **WHEN** the UAH рахунок «mono black (Saldo)», рахунок списання of «Інтернет», is merged into
+  «mono black»
+- **THEN** «Інтернет» has «mono black» as its рахунок списання and its linked платежі are still
+  linked to the same витрати
+
+### Requirement: Зобов'язання arrive by a new append-only migration
+
+Applying every committed migration in order to an empty database SHALL produce storage that holds
+зобов'язання alongside everything the earlier migrations already hold. Rows stored under the
+earlier migrations SHALL survive the new one unchanged, and no зобов'язання SHALL exist that the
+owner never recorded. Committed migrations SHALL NOT be edited.
+
+#### Scenario: Existing data survives the migration
+
+- **WHEN** рахунки, транзакції, категорії, ліміти, цілі and розстрочки stored under the earlier
+  migrations are read after the new migration is applied
+- **THEN** every row is exactly what it was and there is no зобов'язання
+
+### Requirement: The snapshot carries the зобов'язання
+
+The whole stored state read as one snapshot SHALL include every зобов'язання and every state of
+its платежі, and replacing the stored state by a snapshot SHALL replace them with the snapshot's,
+as one unit with everything else.
+
+#### Scenario: Replacing the state replaces the зобов'язання
+
+- **WHEN** storage holding «Інтернет» is replaced by a snapshot holding only «Оренда»
+- **THEN** storage holds «Оренда» and no «Інтернет»
+
+### Requirement: Продавці, their написання and a транзакція's MCC survive a restart
+
+Stored продавці SHALL remain readable after storage is closed and reopened, each with its назва,
+every написання it holds, the moment each написання was added and the moment the продавець was
+named. A правило's продавець, where it names one, and a транзакція's MCC, where it carries one,
+SHALL survive likewise. A транзакція's продавець SHALL NOT be stored: it is read from the опис.
+The data SHALL live only on the device and in the owner's бекап.
+
+#### Scenario: A продавець comes back whole
+
+- **WHEN** «АТБ» holding "атб" and "atb", the правило "АТБ → Groceries" naming it, and a витрата
+  carrying MCC 5411 are stored, and storage is closed and reopened
+- **THEN** all of it is read back exactly so, with the moments the написання were added
+
+### Requirement: Stored продавці refer only to what storage holds
+
+Storage SHALL reject a написання that is blank, a написання another продавець already holds, a
+second продавець whose назва differs from a stored one only in letter case or surrounding
+whitespace, and a правило naming a продавець that is not stored. A правило SHALL name at most one
+of a merchant pattern and a продавець. Storage SHALL refuse to remove a продавець while a правило
+names it, and SHALL remove a продавець's написання together with it. A rejected write SHALL leave
+storage as it was.
+
+#### Scenario: One написання, one продавець
+
+- **WHEN** «АТБ» holds "атб" and a second продавець holding "атб" is stored
+- **THEN** storage rejects it and holds only «АТБ»
+
+#### Scenario: A продавець a правило names stays
+
+- **WHEN** removing «АТБ» is attempted while the правило "АТБ → Groceries" names it
+- **THEN** storage rejects it and «АТБ», its написання and the правило are unchanged
+
+#### Scenario: A removed продавець takes its написання
+
+- **WHEN** «Зерно», holding "зерно" and named by no правило, is removed
+- **THEN** storage holds neither «Зерно» nor "зерно"
+
+### Requirement: Продавці and the MCC arrive by a new append-only migration
+
+Applying every committed migration in order to an empty database SHALL produce storage that holds
+продавці, their написання, a правило's продавець and a транзакція's MCC alongside everything the
+earlier migrations already hold. Rows stored under the earlier migrations SHALL survive the new one
+unchanged: every правило keeps its pattern, MCC, target and the moment it was created, and every
+транзакція carries no MCC. No продавець SHALL exist that the owner never named. Committed
+migrations SHALL NOT be edited.
+
+#### Scenario: Existing data survives the migration
+
+- **WHEN** рахунки, транзакції, категорії, правила, правила-перекази and фіскальні чеки stored
+  under the earlier migrations are read after the new migration is applied
+- **THEN** every row is exactly what it was, no транзакція carries an MCC, every чек still belongs
+  to its транзакція, and there is no продавець
+
+### Requirement: The snapshot carries the продавці and the MCC
+
+The whole stored state read as one snapshot SHALL include every продавець with its написання, every
+правило's продавець and every транзакція's MCC. Replacing the stored state by a snapshot SHALL
+replace them with the snapshot's, as one unit with everything else.
+
+#### Scenario: Replacing the state replaces the продавці
+
+- **WHEN** storage holding «АТБ» is replaced by a snapshot holding only «Сільпо»
+- **THEN** storage holds «Сільпо» with its написання and no «АТБ»
+
+### Requirement: A «Не дубль» answer survives a restart and lives exactly as long as both транзакції
+
+The system SHALL store, for a pair of транзакції, that the owner answered «Не дубль», and when.
+The pair SHALL be unordered: the answer to X with Y is the answer to Y with X, and at most one
+answer SHALL exist for a pair. It SHALL read back unchanged after a restart. Replacing either
+транзакція SHALL keep the answer. Deleting either SHALL delete the answer with it, in the same
+unit. Nothing about any спостереження other than this answer SHALL be stored.
+
+#### Scenario: An answer round-trips
+
+- **WHEN** «Не дубль» is stored for the pair of транзакції `a` and `b`, and storage is closed and
+  reopened
+- **THEN** the pair `a`, `b` reads back as answered, at the moment it was answered, and so does the
+  pair `b`, `a`
+
+#### Scenario: Answering twice keeps one answer
+
+- **WHEN** «Не дубль» is stored for `a` with `b` and then for `b` with `a`
+- **THEN** exactly one answer exists for that pair
+
+#### Scenario: Editing keeps the answer
+
+- **WHEN** транзакція `a` of an answered pair is replaced with a new опис
+- **THEN** the pair is still answered
+
+#### Scenario: Deleting takes the answer with it
+
+- **WHEN** транзакція `b` of an answered pair is removed
+- **THEN** no answer naming `b` remains, and транзакція `a` is unchanged
+
+### Requirement: The «Не дубль» answers arrive by a new migration that keeps stored rows
+
+The storage for «Не дубль» answers SHALL arrive by a new migration, appended after every
+committed one. Applying it to a database that already holds рахунки, транзакції and the rest of
+the owner's state SHALL keep every stored row unchanged and SHALL start with no answer.
+
+#### Scenario: An upgraded device keeps everything and has no answers
+
+- **WHEN** the new migration is applied to a database holding рахунки, транзакції, цілі and earned
+  досягнення
+- **THEN** every one of those rows reads back unchanged, and no «Не дубль» answer exists
+
+### Requirement: The snapshot carries the «Не дубль» answers as well
+
+The snapshot the system reads out and the snapshot it replaces the whole stored state with SHALL
+both carry every «Не дубль» answer, with its pair and its moment, alongside everything else those
+requirements enumerate. Replacing SHALL make the answers exactly the snapshot's, in the same single
+unit as the транзакції they name.
+
+#### Scenario: The snapshot carries the answers
+
+- **WHEN** a snapshot is read from storage holding two «Не дубль» answers
+- **THEN** it carries both, each with its pair and moment
+
+#### Scenario: Replacing replaces the answers
+
+- **WHEN** a snapshot holding no answer replaces a stored state holding two
+- **THEN** storage holds no answer afterwards, and the транзакції were replaced in the same unit

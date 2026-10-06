@@ -11,13 +11,16 @@ entry form alike. Storing a rule, newly created or edited, also sweeps the store
 
 ### Requirement: A rule maps merchant and/or MCC to one category
 
-A rule SHALL hold a merchant pattern (non-empty text), or an MCC (an integer), or both, and
-exactly one target: either one expense category that exists, or one destination рахунок that
-exists — a правило-переказ. A rule holding both a category and a destination рахунок, or neither,
-SHALL be rejected. A rule with neither criterion SHALL be rejected; a rule targeting a category or
-a рахунок that does not exist SHALL be rejected; an MCC that is not a whole number SHALL be
-rejected, since matching compares it for equality against the integer the bank sends and anything
-else is a rule that can never fire. «Коригування» SHALL NOT be a rule's target:
+A rule SHALL hold a merchant criterion, or an MCC (an integer), or both, and exactly one target:
+either one expense category that exists, or one destination рахунок that exists — a
+правило-переказ. A merchant criterion SHALL be exactly one of a merchant pattern (non-empty text)
+or a продавець that exists; a rule naming both a pattern and a продавець SHALL be rejected, and so
+SHALL a rule naming a продавець that does not exist. A rule holding both a category and a
+destination рахунок, or neither, SHALL be rejected. A rule with neither criterion SHALL be
+rejected; a rule targeting a category or a рахунок that does not exist SHALL be rejected; an MCC
+that is not a whole number SHALL be rejected, since matching compares it for equality against the
+integer the bank sends and anything else is a rule that can never fire. «Коригування» SHALL NOT be
+a rule's target:
 it is carried only by коригування the app itself creates, so aiming an imported витрата at it
 would label one transaction type as another. «Без категорії» SHALL NOT be a rule's target either:
 it is the absence of a категорія, not one, and a rule aiming at it would pin a merchant to the very
@@ -32,6 +35,22 @@ reason.
 
 - **WHEN** the owner creates the rule "сільпо → Groceries"
 - **THEN** the rule exists with merchant pattern "сільпо" and target Groceries
+
+#### Scenario: A rule naming a продавець is stored
+
+- **WHEN** the продавець «АТБ» exists and the owner creates the rule "АТБ → Groceries" naming it
+- **THEN** the rule exists naming the продавець «АТБ», with no merchant pattern and the target
+  Groceries
+
+#### Scenario: A rule naming both a pattern and a продавець is rejected
+
+- **WHEN** a rule is created with the merchant pattern "атб" and the продавець «АТБ» at once
+- **THEN** creation is rejected and nothing is stored
+
+#### Scenario: A rule naming an unknown продавець is rejected
+
+- **WHEN** a rule is created naming a продавець id that does not exist
+- **THEN** creation is rejected and nothing is stored
 
 #### Scenario: A правило-переказ is stored
 
@@ -51,7 +70,7 @@ reason.
 
 #### Scenario: A rule with no criterion is rejected
 
-- **WHEN** the owner submits a rule with neither a merchant pattern nor an MCC
+- **WHEN** the owner submits a rule with neither a merchant pattern, nor a продавець, nor an MCC
 - **THEN** creation is rejected and nothing is stored
 
 #### Scenario: A rule targeting an unknown category is rejected
@@ -87,8 +106,9 @@ reason.
 
 ### Requirement: Rules can be created, edited and deleted
 
-The owner SHALL be able to create a rule, change its merchant pattern, MCC or target — a category
-or a destination рахунок, either switched for the other — and delete it. Creating or editing one
+The owner SHALL be able to create a rule, change its merchant criterion — a merchant pattern or a
+продавець, either switched for the other — its MCC or its target — a category or a destination
+рахунок, either switched for the other — and delete it. Creating or editing one
 SHALL recategorise the stored витрати in «Без категорії» that the правила now match, as "A stored
 правило recategorises the «Без категорії» витрати it matches" requires; deleting one SHALL NOT
 change any stored транзакція, and a витрата a deleted rule had categorised SHALL keep the категорія
@@ -106,6 +126,11 @@ it was given, as a переказ it made SHALL stay a переказ.
 - **THEN** the same rule now targets the переказ на РЕЗЕРВ, names no category, and that витрата is a
   переказ onto РЕЗЕРВ
 
+#### Scenario: A rule switched from a pattern to a продавець
+
+- **WHEN** the owner changes the rule "atb market → Groceries" to match by the продавець «АТБ»
+- **THEN** the same rule names «АТБ», carries no pattern and still targets Groceries
+
 #### Scenario: A deleted rule is gone and history stands
 
 - **WHEN** a rule that earlier categorised an imported витрата into Groceries is deleted
@@ -116,15 +141,28 @@ it was given, as a переказ it made SHALL stay a переказ.
 Given a transaction's merchant description, when present its MCC, and the рахунок the money left,
 the system SHALL return the target of the best-matching rule — a category, or a переказ to a
 destination рахунок — or nothing when no rule matches. A merchant
-pattern matches WHEN it occurs anywhere in the description, case-insensitively; an MCC matches
-WHEN it is equal; a rule holding both criteria matches only when both do. Case is all that is
+pattern matches WHEN it occurs in the description, case-insensitively, **beginning where a word
+begins** — at the start of the description or right after a character that is neither a letter nor
+a digit — wherever in the description that is; a pattern that occurs only inside a word SHALL NOT
+match. A pattern that itself starts with a character that is neither a letter nor a digit («*megogo»,
+«-маркет») SHALL match wherever it occurs: its own first character is the boundary. A продавець
+matches WHEN the description is recognised as that продавець, as the merchants capability
+defines; an MCC matches WHEN it is equal; a rule holding both a merchant criterion and an MCC
+matches only when both do. Case is all that is
 folded: a pattern written in one script SHALL NOT match a description written in another, because
 the owner writes the pattern by looking at the descriptions their bank actually sends — «Uklon»
 arrives in Latin and «СІЛЬПО» in Cyrillic. Among matching rules,
 a rule with both criteria SHALL beat a merchant-only rule, and a merchant-only rule SHALL beat
-an MCC-only rule; among matching merchant patterns the longest SHALL win; a remaining tie SHALL
-go to the most recently created rule. A правило-переказ and a rule naming a category SHALL be
+an MCC-only rule; among matching merchant criteria the longest SHALL win, a продавець counting as
+long as the написання that recognised the description; a remaining tie SHALL
+go to the most recently created rule. A rule naming a продавець SHALL therefore rank exactly as a
+rule carrying, as its pattern, the написання that recognised the description, created when that
+rule was. A правило-переказ and a rule naming a category SHALL be
 ranked on this one ladder together, with no preference for either kind.
+
+A rule naming a продавець SHALL NOT match a description recognised as another продавець, even
+when one of its own написання occurs in that description: recognition gives one answer to one
+опис, and the rule follows that answer.
 
 A правило-переказ SHALL NOT match money leaving its own destination рахунок, nor money leaving a
 рахунок in another currency than its destination: the first would be a переказ from a рахунок to
@@ -136,6 +174,39 @@ part in that match at all, so the best of the remaining rules decides.
 - **WHEN** the rule "сільпо → Groceries" exists and a transaction's description is
   "СІЛЬПО Київ вул. Хрещатик"
 - **THEN** matching returns Groceries
+
+#### Scenario: A merchant pattern inside a word does not match
+
+- **WHEN** the rule "коло → Звички" exists and a transaction's description is "НАВКОЛО маркет"
+- **THEN** matching returns nothing
+
+#### Scenario: A merchant pattern after punctuation matches
+
+- **WHEN** the rule "megogo → Підписки" exists and a transaction's description is "WFP*MEGOGO.NET"
+- **THEN** matching returns Підписки
+
+#### Scenario: A pattern that starts with punctuation matches wherever it occurs
+
+- **WHEN** the rule "*megogo → Підписки" exists and a transaction's description is "WFP*MEGOGO.NET"
+- **THEN** matching returns Підписки — the pattern's own «*» is where its word begins
+
+#### Scenario: A продавець matches every spelling it is recognised by
+
+- **WHEN** «АТБ» holds the написання "атб" and "atb", the rule "АТБ → Groceries" names it, and two
+  transactions carry the descriptions "Оплата послуг АТБ-Маркет 1234" and "ATB MARKET"
+- **THEN** matching returns Groceries for both
+
+#### Scenario: A продавець ranks as long as its recognising написання
+
+- **WHEN** «АТБ» holds "атб" and is named by the rule "АТБ → Groceries", the rule "атб 421 → Eating
+  out" exists, and a transaction's description is "АТБ 421"
+- **THEN** matching returns Eating out — "атб 421" is longer than "атб"
+
+#### Scenario: A продавець rule follows recognition, not a bare substring
+
+- **WHEN** «Bolt» holds "bolt" and is named by the rule "Bolt → Transport", «Bolt Food» holds "bolt
+  food" and no rule names it, and a transaction's description is "BOLT FOOD 3411"
+- **THEN** the rule naming «Bolt» does not match — the description is recognised as «Bolt Food»
 
 #### Scenario: An MCC matches exactly
 
@@ -255,28 +326,30 @@ When a категорія is set on a stored витрата or повернен�
 offer to remember the decision as a правило whose target is the категорія just set. When a stored
 витрата that carries an опис is retyped into a переказ, the system SHALL likewise offer to remember
 it as a правило-переказ whose destination is the рахунок the money was just said to arrive at. The
-offer SHALL arrive with a merchant pattern already proposed from that опис, SHALL let the owner
-change that pattern before it is stored, and SHALL store nothing unless the owner accepts it.
+offer SHALL arrive with a merchant criterion already proposed from that опис, SHALL let the owner
+change it before it is stored, and SHALL store nothing unless the owner accepts it.
 Declining SHALL leave no правило. The offer SHALL be made only when a категорія is actually set or
 a витрата actually becomes a переказ, so merely opening a транзакція again — or editing any other
 field of it, or editing a переказ that was already one — SHALL offer nothing.
 
-The proposed pattern SHALL be the опис's leading run of letters, folded to lower case and trimmed,
-cut to at most its first two words — the merchant's name before the branch number, the city and the
-street the bank appends, so «СІЛЬПО 123 Київ, вул. Хрещатик» proposes «сільпо» and «Нова Пошта
-відділення 5» proposes «нова пошта». Two words because merchant names arrive as one or two, and a
-third word is almost always what the branch is named by. An опис whose first character is not a letter SHALL propose
-the whole folded, trimmed опис instead, since there is no name to cut out of it. A транзакція
-carrying no опис SHALL be offered nothing: there is no pattern to propose, and a правило with no
-merchant and no MCC is rejected.
+When the опис is recognised as a продавець, the proposed criterion SHALL be that продавець, and
+the owner SHALL be able to replace it by the pattern proposed from the опис, editable, before
+accepting. When the опис is recognised as no продавець, the proposed criterion SHALL be that
+pattern.
 
-What is stored SHALL be what the pattern field holds when the owner accepts, validated exactly as
-a правило typed in Налаштування is — a pattern emptied before accepting SHALL be refused with the
+The proposed pattern SHALL be the написання the merchants capability proposes from that опис, by
+exactly its rule and nothing restated here — so «СІЛЬПО 123 Київ, вул. Хрещатик» proposes «сільпо»,
+«Оплата послуг АТБ-Маркет 1234» proposes «атб» and «Oplata poslug MEGOGO 1234» proposes
+«megogo» rather than a service word, a pattern that would capture every service payment. A транзакція carrying no опис SHALL be offered nothing: there is no criterion to propose, and a
+правило with no merchant criterion and no MCC is rejected.
+
+What is stored SHALL be what the offer holds when the owner accepts, validated exactly as a
+правило typed in Налаштування is — a pattern emptied before accepting SHALL be refused with the
 same words, and SHALL store nothing.
 
 The offer SHALL NOT be made when the owner's правила already give that опис the категорія being
 set — or, for a переказ, already give that опис, on the рахунок the money left, a переказ to the
-same destination — the правило that would be written already exists, under whatever pattern it
+same destination — the правило that would be written already exists, under whatever criterion it
 carries. Nor SHALL it be made when the категорія being set is «Без категорії»: that is not a
 категорія a правило may target, so the only thing the offer could end in is a refusal. Nor SHALL
 a правило-переказ be offered for a переказ between рахунки in different currencies: such a
@@ -284,9 +357,32 @@ a правило-переказ be offered for a переказ between раху
 
 #### Scenario: Categorising an imported витрата offers the правило
 
-- **WHEN** a витрата carrying the опис "СІЛЬПО 123 Київ, вул. Хрещатик" is put into Groceries and
-  no правило matches that опис
+- **WHEN** a витрата carrying the опис "СІЛЬПО 123 Київ, вул. Хрещатик" is put into Groceries,
+  that опис is recognised as no продавець, and no правило matches it
 - **THEN** a правило is offered with the merchant pattern "сільпо" and the target Groceries
+
+#### Scenario: A recognised опис offers its продавець
+
+- **WHEN** «АТБ» holds "атб" and "atb", no правило names it or matches the опис, and a витрата
+  carrying the опис "ATB MARKET" is put into Groceries
+- **THEN** a правило is offered naming the продавець «АТБ» with the target Groceries
+
+#### Scenario: The продавець can be replaced by a pattern
+
+- **WHEN** that offer is switched to a pattern and accepted unchanged
+- **THEN** the правило "atb market → Groceries" is stored, and no правило names «АТБ»
+
+#### Scenario: Service words are skipped in the proposed pattern
+
+- **WHEN** a витрата carrying the опис "Оплата послуг АТБ-Маркет 1234 Київ", recognised as no
+  продавець, is put into Groceries and no правило matches it
+- **THEN** a правило is offered with the merchant pattern "атб" and the target Groceries
+
+#### Scenario: A transliterated service word is skipped in the proposed pattern
+
+- **WHEN** a витрата carrying the опис "Oplata poslug MEGOGO 1234", recognised as no продавець,
+  is put into Підписки and no правило matches it
+- **THEN** a правило is offered with the merchant pattern "megogo" and the target Підписки
 
 #### Scenario: Retyping a витрата into a переказ offers the правило-переказ
 
@@ -294,6 +390,13 @@ a правило-переказ be offered for a переказ between раху
   переказ onto the UAH рахунок РЕЗЕРВ and no правило matches that опис
 - **THEN** a правило is offered with the merchant pattern "округлення балансу" and the destination
   рахунок РЕЗЕРВ
+
+#### Scenario: A recognised опис offers a правило-переказ naming its продавець
+
+- **WHEN** «Резерв» holds "округлення балансу", no правило names it or matches the опис, and a
+  витрата on a UAH card carrying "Округлення балансу «Резерв»" is retyped into a переказ onto the
+  UAH рахунок РЕЗЕРВ
+- **THEN** a правило is offered naming the продавець «Резерв» with the destination рахунок РЕЗЕРВ
 
 #### Scenario: A cross-currency переказ offers no правило
 
@@ -361,6 +464,12 @@ a правило-переказ be offered for a переказ between раху
   put into Groceries
 - **THEN** no правило is offered
 
+#### Scenario: A правило naming the продавець already covers it
+
+- **WHEN** the правило "АТБ → Groceries" names «АТБ», which holds "atb", and a витрата carrying the
+  опис "ATB MARKET" is put into Groceries
+- **THEN** no правило is offered
+
 #### Scenario: A different категорія than the правила give is still offered
 
 - **WHEN** the правило "сільпо → Groceries" exists and a витрата carrying the опис "СІЛЬПО 123" is
@@ -375,8 +484,11 @@ that the two tiers now match onto what they give it — the owner's правил
 правило-переказ that matches it — into a переказ. This SHALL happen at once, without asking, and
 SHALL be complete: after storing, no витрата in «Без категорії» is given a категорія or a переказ
 by the правила or the шаблон on its рахунок. The same розбір SHALL also run when the owner changes
-what a базова категорія points at, and once per шаблон version when the app opens, as the
-requirements on the шаблон say. A правило-переказ that matches the опис of a
+what a базова категорія points at, after every change to the продавці that the merchants
+capability says is followed by one — naming, adding or removing a написання, merging and deleting
+— because a правило naming a продавець matches whatever that продавець now recognises, and once
+per шаблон version when the app opens, as the requirements on the шаблон say. A правило-переказ
+that matches the опис of a
 витрата on its own destination, or on a рахунок in another currency, gives it nothing; only the
 шаблон may still answer for that витрата, and when it does not, the витрата stays.
 
@@ -390,19 +502,22 @@ a target a правило may be created with, but a бекап written elsewher
 that "moved" a витрата from the gap into the gap would be a move that changes nothing while
 outranking the правило that would have filled it.
 
-Matching SHALL run on the витрата's опис with no MCC — a stored транзакція keeps no MCC, the
-bank's code is not carried past import — so a правило whose only criterion is an MCC SHALL move
-nothing, and neither SHALL the MCC codes the шаблон carries, the same restriction a чернетка from a bank сповіщення already carries. A витрата carrying
-no опис SHALL match nothing and SHALL stay where it is.
+Matching SHALL run on the витрата's опис and on the MCC it carries when it carries one. An MCC is
+kept only on a транзакція whose import named one — a monobank statement item — so a правило whose
+only criterion is an MCC, and the MCC codes the шаблон carries, SHALL move only the витрати that
+carry that MCC; a витрата carrying none, as every витрата recorded by hand, imported from Saldo,
+confirmed from a bank сповіщення or imported before the MCC was kept does, SHALL be matched on its
+опис alone, the same restriction a чернетка from a bank сповіщення already carries. A витрата
+carrying neither an опис nor an MCC SHALL match nothing and SHALL stay where it is.
 
 It SHALL touch nothing else. A витрата in any other категорія SHALL be left exactly as it is, a
 повернення SHALL be left as it is whatever its категорія, and a переказ and a коригування SHALL be
 untouched — «Коригування», «Комісія» and every категорія the owner chose are decisions, not gaps. A
 дохід SHALL be untouched except the зустрічний дохід a new переказ absorbs. Every field of a moved
-витрата other than its категорія SHALL be unchanged, its опис included.
+витрата other than its категорія SHALL be unchanged, its опис and its MCC included.
 
 The категорія or переказ a swept витрата lands on SHALL be the one the whole set of правила — and,
-when none of them matches, the шаблон — gives its опис on its рахунок, not the target of the
+when none of them matches, the шаблон — gives its опис and MCC on its рахунок, not the target of the
 правило just written: a правило more specific than
 the new one keeps the last word, exactly as it would at import. Deleting a правило SHALL move
 nothing: a витрата already carrying a категорія is no longer a gap, and moving it back into «Без
@@ -410,7 +525,7 @@ nothing: a витрата already carrying a категорія is no longer a g
 
 Each pass SHALL be recorded in the журнал as one operation carrying how many витрати it examined,
 how many it moved onto a категорія, how many it turned into перекази and how many зустрічні доходи
-those absorbed, and nothing else — the журнал holds no опис, no сума and no назва. The count
+those absorbed, and nothing else — the журнал holds no опис, no сума, no назва and no MCC. The count
 examined SHALL be the «Без категорії» витрати the pass considered, not every транзакція stored.
 
 A pass that moved anything SHALL say so where it was triggered, naming how many витрати it
@@ -474,9 +589,23 @@ lead back to them. A pass that moved nothing SHALL say nothing.
 
 #### Scenario: An MCC-only правило moves nothing
 
-- **WHEN** a витрата carrying the опис "НОВИЙ ЗАКЛАД 7", which no базова категорія matches, sits in
-  «Без категорії» and the правило "MCC 5411 → Groceries" is created
-- **THEN** that витрата still carries «Без категорії»
+- **WHEN** a витрата carrying the опис "НОВИЙ ЗАКЛАД 7" and no MCC, which no базова категорія
+  matches, sits in «Без категорії» and the правило "MCC 5411 → Groceries" is created
+- **THEN** that витрата still carries «Без категорії» — it carries no MCC to match
+
+#### Scenario: An MCC-only правило moves the витрати carrying that MCC
+
+- **WHEN** two витрати carrying the описи "НОВИЙ ЗАКЛАД 7" and "НОВИЙ ЗАКЛАД 8", which no базова
+  категорія matches, sit in «Без категорії», the first carrying no MCC and the second MCC 7399, and
+  the правило "MCC 7399 → Services" is created
+- **THEN** the second carries Services and the first still carries «Без категорії»
+
+#### Scenario: A правило naming a продавець sweeps every spelling
+
+- **WHEN** «АТБ» holds "атб" and "atb", витрати carrying "АТБ 12" and "ATB MARKET" sit in «Без
+  категорії» with «Продукти» switched off, and the правило "АТБ → Groceries" naming «АТБ» is
+  created
+- **THEN** both carry Groceries, and the owner is told two витрати were recategorised
 
 #### Scenario: The шаблон fills what the new правило does not
 
@@ -486,8 +615,8 @@ lead back to them. A pass that moved nothing SHALL say nothing.
 
 #### Scenario: A витрата with no опис is not swept
 
-- **WHEN** a витрата carrying no опис sits in «Без категорії» and the правило "атб → Groceries" is
-  created
+- **WHEN** a витрата carrying no опис and no MCC sits in «Без категорії» and the правило "атб →
+  Groceries" is created
 - **THEN** that витрата still carries «Без категорії»
 
 #### Scenario: A повернення is not swept
@@ -518,7 +647,7 @@ lead back to them. A pass that moved nothing SHALL say nothing.
 - **WHEN** a правило is stored and moves two of forty stored «Без категорії» витрати onto a
   категорія and turns one into a переказ that absorbs one дохід
 - **THEN** the журнал holds one operation for that pass carrying the counts forty, two, one and one,
-  and no опис, сума or назва
+  and no опис, сума, назва or MCC
 
 ### Requirement: The app ships a шаблон of базові категорії
 
@@ -554,9 +683,11 @@ The базові категорії and their типові категорії SH
 | Благодійність | Charity |
 | Алкоголь і тютюн | habits |
 
-Every merchant pattern in the шаблон SHALL be stored folded, and SHALL be matched exactly as a
-правило's pattern is — as a substring of the опис, case folded, with no transliteration between
-scripts. A merchant written in both scripts in the wild SHALL therefore appear in the шаблон under
+Every merchant pattern in the шаблон SHALL be stored folded, and SHALL be matched as a substring
+of the опис anywhere in it, case folded, with no transliteration between scripts — unlike a
+правило's pattern, which matches only where a word begins: the шаблон's patterns are written as
+fragments («ярня», «kava») that occur inside the words banks send, while a правило's pattern is
+the owner's own word. A merchant written in both scripts in the wild SHALL therefore appear in the шаблон under
 both spellings. Every MCC in the шаблон SHALL be a whole number and SHALL match by equality.
 
 No базова категорія SHALL name «Коригування», «Комісія» or «Без категорії» as its типова
@@ -579,6 +710,12 @@ absence this whole capability exists to fill.
 
 - **WHEN** no правило exists and two imported витрати arrive with the описи "UKLON" and "Уклон"
 - **THEN** both carry Transport
+
+#### Scenario: A шаблон fragment inside a word still matches
+
+- **WHEN** no правило exists and an imported витрата arrives with the опис "AROMAKAVA 12" and the
+  шаблон holds the pattern "kava" under Кава
+- **THEN** that витрата carries COFFEE ☕
 
 #### Scenario: The шаблон never names a reserved категорія
 
@@ -707,7 +844,8 @@ exactly what the owner accepting the offer is asking for.
 #### Scenario: A шаблон match still offers the правило
 
 - **WHEN** no правило exists, «Продукти» is at its типова категорія, a витрата carrying the опис
-  "АТБ 421" is stored in Eating out, and the owner puts it into Groceries
+  "АТБ 421", recognised as no продавець, is stored in Eating out, and the owner puts it into
+  Groceries
 - **THEN** a правило is offered with the merchant pattern "атб" and the target Groceries
 
 #### Scenario: Neither tier matches
@@ -727,8 +865,9 @@ The version SHALL change whenever what the шаблон covers changes — a mer
 reaches the витрати already sitting in «Без категорії», and one that carries none costs nothing.
 
 The sweep SHALL be the ordinary one: only витрати in «Без категорії» move, they move onto what the
-two tiers give their опис, and every other транзакція is untouched. Like every розбір it runs on the
-опис with no MCC, so the шаблон's MCC codes move nothing here. It SHALL be recorded in the журнал as
+two tiers give their опис and MCC, and every other транзакція is untouched. Like every розбір it
+reads the MCC a витрата carries, so the шаблон's MCC codes move the витрати that carry one and
+nothing else. It SHALL be recorded in the журнал as
 one operation with its counts, and SHALL NOT block the app from opening — it runs among the launch
 chores after the first screen is drawn, and a sweep that fails SHALL leave the version unrecorded so
 the next open tries again. Nothing was triggered on any screen, so nothing about it SHALL be said to
@@ -753,8 +892,61 @@ the owner; the витрати it moved simply no longer sit in «Без кате
   is opened on a device holding a витрата in «Без категорії» carrying that merchant's опис
 - **THEN** that витрата carries the категорія «Продукти» lands in
 
+#### Scenario: An MCC the new шаблон adds reaches the витрати carrying it
+
+- **WHEN** an app update adds MCC 7399 to «Краса й догляд» and raises the шаблон's version, and the
+  app is opened on a device holding two витрати in «Без категорії» whose описи nothing matches, one
+  carrying MCC 7399 and one carrying no MCC
+- **THEN** the first carries the категорія «Краса й догляд» lands in and the second still carries
+  «Без категорії»
+
 #### Scenario: A категорія the owner chose is still never taken away
 
 - **WHEN** the first open under a new шаблон version finds a витрата in Eating out whose опис the
   шаблон matches into Groceries
 - **THEN** that витрата still carries Eating out
+
+### Requirement: A правило naming a продавець decides wherever a категорія is decided
+
+Wherever a категорія is decided — the monobank sync, a чернетка from a bank сповіщення at drafting
+and at confirmation, the entry form, and every розбір — the опис, or a чернетка's text, SHALL be
+recognised against the продавці as they are stored at that moment, and a правило naming a продавець SHALL take part in
+matching there exactly as the matching requirement ranks it. No place that decides a категорія
+SHALL match the owner's правила without that recognition.
+
+#### Scenario: The monobank sync honours a продавець
+
+- **WHEN** «АТБ» holds "atb", the правило "АТБ → Eating out" names it, and a statement item of
+  amount −8000 with description "ATB MARKET 23" is mapped
+- **THEN** the result is a витрата of 8000 minor units in Eating out
+
+#### Scenario: A чернетка auto-confirms by a продавець
+
+- **WHEN** «АТБ» holds "atb", the правило "АТБ → Eating out" names it, and a money-out movement of
+  12550 minor units UAH whose text holds "ATB MARKET" drafts on a watched UAH рахунок
+- **THEN** a витрата of 12550 minor units UAH in Eating out exists at once and no чернетка awaits
+
+#### Scenario: The entry form proposes by a продавець
+
+- **WHEN** «АТБ» holds "atb", the правило "АТБ → Eating out" names it, and the owner types the
+  опис "ATB 12" while recording a витрата with no категорія picked
+- **THEN** Eating out is shown as the chosen категорія
+
+### Requirement: The offer to remember a правило says what that правило will do
+
+The offer to remember a правило SHALL describe the target it would store: for a категорія, that
+such an опис will go to that категорія; for a правило-переказ, that such an опис will become a
+переказ to that рахунок. It SHALL NOT speak of a категорія when it offers a переказ.
+
+#### Scenario: A правило-переказ is offered as a переказ
+
+- **WHEN** the owner retypes a витрата carrying the опис "Double tap" into a переказ to «РЕЗЕРВ» and
+  the app offers to remember it
+- **THEN** the offer says such an опис will become a переказ to «РЕЗЕРВ», and says nothing about a
+  категорія
+
+#### Scenario: A категорія правило is offered as a категорія
+
+- **WHEN** the owner categorises a витрата carrying the опис "Megogo" as «Підписки» and the app
+  offers to remember it
+- **THEN** the offer says such an опис will go to «Підписки»

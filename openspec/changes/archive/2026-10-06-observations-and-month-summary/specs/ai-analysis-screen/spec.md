@@ -8,7 +8,7 @@ custom range of whole calendar months from one month to another. A month of that
 not yet a whole calendar month — the owner is still typing it — SHALL be answered with how a month
 is written, never with an exception. It SHALL offer two detail
 choices, «Продавці» (the описи of транзакції — the bank's text, including what a confirmed
-чернетка carried) and «Окремі транзакції», both off when the screen
+чернетка carried — and the назви the owner gave their продавці) and «Окремі транзакції», both off when the screen
 opens and never remembered between openings. It SHALL state that agregates — the monthly
 picture, категорії, тренди, ліміти and цілі — are always included. Changing any choice SHALL
 hand nothing to any app.
@@ -55,6 +55,12 @@ fail.
   «2026-0» on the way to «2026-08»
 - **THEN** the screen says how a month is written, offers no «Поділитися з AI», builds nothing,
   and shows no exception; the preview returns as soon as both months are whole again
+
+#### Scenario: «Продавці» says the owner's назви go too
+
+- **WHEN** the owner reads the «Продавці» choice
+- **THEN** it says it carries the описи as the bank sent them and the назви the owner gave their
+  продавці
 
 #### Scenario: Details are not remembered
 

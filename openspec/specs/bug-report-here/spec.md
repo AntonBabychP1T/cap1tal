@@ -191,7 +191,8 @@ over as **one file** — the same one file «Передати» hands over from 
 
 ### Requirement: Changing one's mind leaves nothing behind
 
-WHEN the owner chooses «Скасувати», or leaves the sheet by the device's back gesture, the app SHALL
+WHEN the owner chooses «Скасувати», or leaves the sheet by the device's back gesture — after the
+confirmation the app-shell capability asks for when the owner has typed into the sheet — the app SHALL
 store no репорт, SHALL keep no скріншот, and SHALL leave no captured file anywhere on the phone.
 
 A refused save is not changing one's mind. WHEN a save is refused the sheet SHALL stay open with

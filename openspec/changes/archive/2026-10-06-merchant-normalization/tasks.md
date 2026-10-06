@@ -175,6 +175,7 @@
   «Транзакції» narrowed to a продавець on the emulator. Record both in
   `openspec/changes/merchant-normalization/measurements.md`. If either takes longer than the
   existing search ceiling recorded by search-fold-speed, stop and raise it before going on.
+  **Not run** — archived at the owner's request on 2026-10-06 without this step; the qa-sweep-2026-10 emulator sweep (task 12.1) is the latest on-device evidence.
 
 - [x] 4.5 Make the «Продавці» choice on the AI-аналіз screen (`src/ui/ai-analysis-screen.ts`) say
   that the owner's назви go with the описи. Its test proves "«Продавці» says the owner's назви go
@@ -279,5 +280,6 @@
   4. search by the назва;
   5. open the продавець's «Транзакції»;
   6. merge two продавці.
+  **Not run** — archived at the owner's request on 2026-10-06 without this step; the qa-sweep-2026-10 emulator sweep (task 12.1) is the latest on-device evidence.
 - [x] 7.3 Run `npm run verify` and paste the final lines
 - [x] 7.4 Run the diff-reviewer subagent; fix CRITICAL findings until PASS

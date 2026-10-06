@@ -164,19 +164,20 @@ out of the кількість платежів.
 
 ### Requirement: A платіж is linked to its списання by the app
 
-Before the app shows a розстрочка's платежі, counts «Вільно після розстрочок» or arranges an
+Before the app shows a розстрочка's платежі, counts «Вільно після зобов'язань» or arranges an
 нагадування про платіж, it SHALL link every платіж that is neither сплачено nor закрито to its
 списання, when one exists. A транзакція SHALL be a candidate for a платіж only when it is a
 витрата — never a переказ, an інвестиція, a повернення, a дохід or a коригування — on the
 розстрочка's рахунок списання, in UAH, of exactly the платіж's scheduled сума, dated no more than
-three days before or after the платіж's дата, not linked to any платіж, and not refused for that
-платіж by the owner. Платежі SHALL be served in order of their дата, then of the moment their
-розстрочка was recorded, then of their number; each SHALL take the candidate nearest its дата, and
-of equally near candidates the one recorded first. At the moment it is linked, a витрата that is
-«Без категорії» SHALL take the розстрочка's категорія when the розстрочка has one; a витрата with
-any other категорія SHALL keep it. Nothing SHALL re-categorise a витрата after that moment: an owner
-who sets a linked витрата back to «Без категорії», or changes the розстрочка's категорія, is not
-overruled.
+three days before or after the платіж's дата, not linked to any платіж of a розстрочка or of a
+зобов'язання, and not refused for that платіж by the owner. Платежі SHALL be served in order of
+their дата, then of the moment their розстрочка was recorded, then of their number; each SHALL take
+the candidate nearest its дата, and of equally near candidates the one recorded first. The платежі
+of розстрочки SHALL be served before those of any зобов'язання. At the moment it is linked, a
+витрата that is «Без категорії» SHALL take the розстрочка's категорія when the розстрочка has one; a
+витрата with any other категорія SHALL keep it. Nothing SHALL re-categorise a витрата after that
+moment: an owner who sets a linked витрата back to «Без категорії», or changes the розстрочка's
+категорія, is not overruled.
 
 #### Scenario: A monobank debit becomes the платіж
 
@@ -221,17 +222,24 @@ overruled.
 - **THEN** each платіж is linked to a different витрата: «Пилосос» to the one recorded first and
   «Чайник» to the other
 
+#### Scenario: A витрата already linked to a зобов'язання is not taken
+
+- **WHEN** the only витрата of 100000 minor units UAH on «mono black» within three days of платіж 5
+  of «iPhone» is already linked to a платіж of the зобов'язання «Спортзал»
+- **THEN** платіж 5 stays unlinked and the витрата stays linked to «Спортзал»
+
 ### Requirement: The owner corrects what the app linked
 
 The owner SHALL be able to unlink a платіж from its списання; the app SHALL then never link that
 транзакція to that платіж again by itself, and the категорія the транзакція took SHALL stay. The
 owner SHALL be able to link a платіж that is not сплачено to a витрата they pick among the UAH
 витрати on the рахунок списання dated no more than ten days before or after its дата and not linked
-to any платіж, whatever their сума; a picked витрата that is «Без категорії» SHALL take the
-розстрочка's категорія when it has one, as at the app's own linking. The owner SHALL be able to mark a платіж сплачено without any
-списання, and to take that mark back. When a linked транзакція is removed, or is changed so that
-it is no longer a UAH витрата on the розстрочка's рахунок списання, its платіж SHALL be unlinked and
-return to the state its дата gives it.
+to any платіж of a розстрочка or of a зобов'язання, whatever their сума; a picked витрата that is
+«Без категорії» SHALL take the розстрочка's категорія when it has one, as at the app's own linking.
+The owner SHALL be able to mark a платіж сплачено without any списання, and to take that mark back.
+When a linked транзакція is removed, or is changed so that it is no longer a UAH витрата on the
+розстрочка's рахунок списання, its платіж SHALL be unlinked and return to the state its дата gives
+it.
 
 #### Scenario: An unlinked debit is not taken back
 
@@ -250,6 +258,12 @@ return to the state its дата gives it.
 - **WHEN** the owner picks a витрата «Без категорії» for платіж 5 of «iPhone», whose категорія is
   «Техніка»
 - **THEN** платіж 5 is linked to it and the витрата's категорія is «Техніка»
+
+#### Scenario: A витрата linked to a зобов'язання is not offered
+
+- **WHEN** the owner chooses a списання by hand for платіж 5 of «iPhone», and a витрата on «mono
+  black» within ten days of its дата is linked to a платіж of «Інтернет»
+- **THEN** that витрата is not among the ones offered
 
 #### Scenario: Marked as paid without a debit
 
@@ -309,34 +323,6 @@ else.
 
 - **WHEN** a розстрочка of 12 платежі whose платіж 11 is marked сплачено is edited to 10 платежі
 - **THEN** it has 10 платежі, and the mark of платіж 11 is gone
-
-### Requirement: Вільно після розстрочок is залишилось less what this month still owes
-
-For the current calendar month the app SHALL derive «Вільно після розстрочок» in UAH: the UAH
-залишилось of the month, as the monthly-picture capability computes it, minus the scheduled сума of
-every платіж dated in the current month that is очікується or списання не знайдено. A платіж that is
-сплачено is already inside залишилось as its витрата and SHALL NOT be subtracted again; a закрито
-платіж SHALL NOT be subtracted. It SHALL NOT exist for any other month, for any other currency, or
-when no платіж of the current month is очікується or списання не знайдено. It SHALL NOT change
-залишилось or any other number of the monthly picture.
-
-#### Scenario: Two платежі, one already debited
-
-- **WHEN** in October 2026 the UAH залишилось is 2000000 minor units, «iPhone» has a платіж of
-  100000 on 2026-10-05 that is сплачено and «Пилосос» has a платіж of 50000 on 2026-10-20 that is
-  очікується
-- **THEN** «Вільно після розстрочок» is 1950000 minor units UAH and залишилось is still 2000000
-
-#### Scenario: Nothing owed means no reading
-
-- **WHEN** every платіж dated in the current month is сплачено
-- **THEN** there is no «Вільно після розстрочок»
-
-#### Scenario: A past month has none
-
-- **WHEN** September 2026 is shown in October 2026 and a платіж of September is списання не
-  знайдено
-- **THEN** September carries no «Вільно після розстрочок»
 
 ### Requirement: The app warns the day before an expected платіж
 
