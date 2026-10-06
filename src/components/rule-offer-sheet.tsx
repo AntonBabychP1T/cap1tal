@@ -27,6 +27,7 @@ export function RuleOfferSheet({
   offer,
   categoryNames,
   accountNames,
+  sourceNames,
   onAccept,
   onDecline,
   onExited,
@@ -35,6 +36,8 @@ export function RuleOfferSheet({
   /** The names the offer's target is said with — a категорія's, or a правило-переказ's рахунок. */
   categoryNames: ReadonlyMap<string, string>;
   accountNames: ReadonlyMap<string, string>;
+  /** A правило-джерело's джерело, by id. */
+  sourceNames: ReadonlyMap<string, string>;
   onAccept: (criterion: RuleCriterion) => void;
   onDecline: () => void;
   /** Once the sheet has left, however it was answered — where a screen change after it belongs. */
@@ -53,7 +56,7 @@ export function RuleOfferSheet({
     setPattern(offer?.merchant ?? '');
     setUsePattern(false);
   }
-  const view = offer ? ruleOfferView(offer, usePattern, pattern, { categoryNames, accountNames }) : undefined;
+  const view = offer ? ruleOfferView(offer, usePattern, pattern, { categoryNames, accountNames, sourceNames }) : undefined;
 
   return (
     <Sheet

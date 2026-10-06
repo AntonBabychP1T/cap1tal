@@ -101,7 +101,8 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Counterpart income** (зустрічний дохід) — the дохід «Без джерела» the *destination* рахунок of
   a переказ reports for the same movement the source рахунок already reports as that переказ: same
   рахунок, same arrived сума and currency, dated within one calendar day, carrying no фіскальний
-  чек and no джерело the owner chose. A переказ made by a правило-переказ or by retyping absorbs it
+  чек and no джерело the owner chose — a джерело a правило-джерело gave counts as one the owner
+  chose, through the правило they wrote, so such a дохід is never absorbed. A переказ made by a правило-переказ or by retyping absorbs it
   instead of leaving it beside the переказ — the money would otherwise be counted twice, once as
   the переказ and once as income. If none is stored yet, the переказ **awaits** its зустрічний
   дохід and absorbs the first monobank statement item that qualifies once it arrives; a переказ
@@ -129,8 +130,9 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
 - **Source** (джерело доходу) — the label on an income: salary, freelance, parents, gift,
   investments, interest, …
 - **Starter set** **[PROPOSED]** — the owner's Saldo categories and sources, flattened.
-- **Rule** (правило) — "merchant / MCC X → category Y", or "merchant / MCC X → переказ на рахунок
-  Z" (see Transfer rule), editable by the owner. Its merchant criterion is a pattern — a piece of
+- **Rule** (правило) — "merchant / MCC X → category Y", "merchant / MCC X → переказ на рахунок
+  Z" (see Transfer rule), or "merchant / MCC X → джерело W" for money arriving (see Source rule),
+  exactly one target, editable by the owner. Its merchant criterion is a pattern — a piece of
   the опис — or a продавець, never both: «АТБ → Продукти» naming the продавець covers every
   spelling it is recognised by, and ranks as long as the написання that recognised the опис.
   Applied wherever a категорія is decided — the three import sources and manual entry alike —
@@ -143,6 +145,14 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   specific one wins whichever kind it is. Takes no part in matching money leaving its own
   destination, money in another currency than its destination, or a категорія being decided by
   hand or from a chernetka — there it is simply not a категорія.
+- **Source rule** (правило-джерело) — a правило whose target is a джерело instead of a category:
+  money arriving that it matches gets that джерело instead of «Без джерела». It takes part only in
+  matching money arriving — a monobank statement item that would be a дохід «Без джерела», a
+  дохід-чернетка at confirmation, and the розбір over stored доходи «Без джерела» — ranked among
+  the правила-джерела alone on the same ladder; money leaving never sees one, and the шаблон
+  категоризації never gives a джерело. It never touches a дохід recorded by hand or from Saldo at
+  the moment it is stored, never replaces a джерело already given, and never retypes a дохід into
+  a повернення or a переказ. «Без джерела» is never its target.
 - **Sweep** (розбір) — what storing a правило, newly created or edited, does about history — and
   so does pointing a базова категорія elsewhere or switching it off, every change to the продавці
   but a rename (naming one, adding or removing a написання, merging, deleting), and the first open
@@ -151,7 +161,9 @@ Companion to [product-vision.md](product-vision.md). No implementation detail he
   one — moves onto what they give it, the правила first, the шаблон where none of them answers, at
   once and without asking — a категорія, or a переказ when the best правило is a правило-переказ.
   It only ever fills the gap — a категорія the owner chose, or an earlier правило gave, is never
-  revisited.
+  revisited. The same pass then gives every stored дохід «Без джерела» the правила-джерела now
+  match its джерело — after the витрати, so a зустрічний дохід a new переказ absorbs is absorbed
+  before any дохід is sourced; a джерело already given is never replaced.
 - **Rule template** (шаблон категоризації) — the built-in knowledge that «АТБ» is продукти and MCC
   5411 is продукти, shipped with the app as data and updated with it: a fixed set of базові
   категорії, each holding merchant patterns, MCC codes or both. It is the second tier of

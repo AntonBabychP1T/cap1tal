@@ -350,7 +350,36 @@ describe('what a бекап holding правила may not contradict', () => {
           },
         ],
       }),
-    ).toThrow(/і категорію, і рахунок/);
+    ).toThrow(/більше однієї мети/);
+  });
+
+  it('Scenario: A правило-джерело pointing outside the бекап stops the restore', () => {
+    expect(() =>
+      checkConsistent({
+        ...heldWithAccounts,
+        rules: [{ id: 'r1', merchant: 'зарплата', sourceId: 'gone', createdAtMs: 1 }],
+      }),
+    ).toThrow(/джерело, якого в бекапі немає/);
+  });
+
+  it('Scenario: A правило naming a категорія and a джерело stops the restore', () => {
+    expect(() =>
+      checkConsistent({
+        ...heldWithAccounts,
+        sources: [{ id: 'salary', name: 'Зарплата', archived: false }],
+        rules: [{ id: 'r1', merchant: 'зарплата', categoryId: 'groceries', sourceId: 'salary', createdAtMs: 1 }],
+      }),
+    ).toThrow(/більше однієї мети/);
+  });
+
+  it('accepts a правило-джерело naming a джерело the бекап holds', () => {
+    expect(() =>
+      checkConsistent({
+        ...heldWithAccounts,
+        sources: [{ id: 'salary', name: 'Зарплата', archived: false }],
+        rules: [{ id: 'r1', merchant: 'зарплата', sourceId: 'salary', createdAtMs: 1 }],
+      }),
+    ).not.toThrow();
   });
 
   it('a rule naming neither a category nor a рахунок stops the restore', () => {

@@ -5,6 +5,7 @@ import { Refusal } from './refusal';
 import { TEMPLATE_GROUPS } from './rule-template';
 import {
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
   type Transaction,
 } from './transaction';
 
@@ -14,14 +15,23 @@ import {
  * (glossary, "Rule (правило)") — the three import sources, and the entry form when the owner
  * records one by hand. A **правило-переказ** targets a destination рахунок instead: money leaving
  * a linked рахунок it matches is a переказ to that destination, not a витрата (glossary,
- * "Transfer rule").
+ * "Transfer rule"). A **правило-джерело** targets a джерело: money arriving that it matches gets
+ * that джерело instead of «Без джерела» (glossary, "Source rule").
  *
  * Nothing here reads or writes storage: the callers load the правила once and call `matchRule` or
  * `matchCategory`, and `sweepUncategorised` below decides a розбір without performing it.
  */
 export type RuleTarget =
   | { readonly kind: 'category'; readonly categoryId: string }
-  | { readonly kind: 'transfer'; readonly toAccountId: string };
+  | { readonly kind: 'transfer'; readonly toAccountId: string }
+  | { readonly kind: 'source'; readonly sourceId: string };
+
+/**
+ * Which way the money moves (answer-queue design D7): leaving a рахунок, where the category rules
+ * and the правила-перекази take part, or arriving, where only the правила-джерела do. One ladder
+ * ranks either set; the two never compete.
+ */
+export type MatchDirection = 'out' | 'in';
 
 export interface Rule {
   readonly id: string;
@@ -142,8 +152,12 @@ function eligible(
   rule: Rule,
   from: FromAccount | undefined,
   accounts: readonly Pick<Account, 'id' | 'currency'>[],
+  direction: MatchDirection,
 ): boolean {
   const target = rule.target;
+  // A правило-джерело decides money arriving and nothing else; every other kind, money leaving.
+  if (direction === 'in') return target.kind === 'source';
+  if (target.kind === 'source') return false;
   if (target.kind === 'category') return true;
   if (from === undefined) return false;
   const destination = accounts.find((a) => a.id === target.toAccountId);
@@ -171,8 +185,9 @@ export function matchRule(
     readonly from?: FromAccount;
   },
   accounts: readonly Pick<Account, 'id' | 'currency'>[] = [],
+  direction: MatchDirection = 'out',
 ): RuleTarget | undefined {
-  return bestTarget(rules, merchants.recognise(transaction.description), transaction, accounts);
+  return bestTarget(rules, merchants.recognise(transaction.description), transaction, accounts, direction);
 }
 
 /** `matchRule` with the recognition already made, so a caller deciding two tiers recognises once. */
@@ -185,10 +200,11 @@ function bestTarget(
     readonly from?: FromAccount;
   },
   accounts: readonly Pick<Account, 'id' | 'currency'>[] = [],
+  direction: MatchDirection = 'out',
 ): RuleTarget | undefined {
   let best: Rule | undefined;
   for (const rule of rules) {
-    if (!eligible(rule, transaction.from, accounts)) continue;
+    if (!eligible(rule, transaction.from, accounts, direction)) continue;
     if (!matches(rule, transaction, recognised)) continue;
     if (best === undefined || beats(rule, best, recognised)) best = rule;
   }
@@ -212,6 +228,23 @@ export function matchCategory(
   transaction: { readonly description: string; readonly mcc?: number },
 ): string | undefined {
   return categoryOf(matchRule(rules, merchants, transaction));
+}
+
+/**
+ * The джерело the best правило-джерело gives money arriving with this опис and MCC, or nothing
+ * (categorisation-rules, "Matching is deterministic and most-specific-first"): only the
+ * правила-джерела take part, ranked among themselves on the one ladder, and the шаблон is never
+ * consulted — its rules all name a категорія. A правило-джерело naming «Без джерела», which only a
+ * бекап written elsewhere could hold, gives nothing: it would "answer" the gap with the gap.
+ */
+export function matchSource(
+  rules: readonly Rule[],
+  merchants: MerchantIndex,
+  transaction: { readonly description: string; readonly mcc?: number },
+): string | undefined {
+  const target = matchRule(rules, merchants, transaction, [], 'in');
+  if (target?.kind !== 'source' || target.sourceId === UNSOURCED_SOURCE_ID) return undefined;
+  return target.sourceId;
 }
 
 /**
@@ -383,11 +416,50 @@ export function sweepUncategorised(
     if (target.kind === 'category') {
       if (target.categoryId === UNCATEGORISED_CATEGORY_ID) continue;
       moves.push({ kind: 'category', id: transaction.id, categoryId: target.categoryId });
-    } else {
+    } else if (target.kind === 'transfer') {
       moves.push({ kind: 'transfer', id: transaction.id, toAccountId: target.toAccountId });
     }
   }
   return moves;
+}
+
+/** One дохід «Без джерела» the розбір gives a джерело. */
+export interface SourceMove {
+  readonly id: string;
+  readonly sourceId: string;
+}
+
+/**
+ * The розбір over доходи (categorisation-rules, "A stored правило-джерело gives the доходи «Без
+ * джерела» it matches their джерело"): which stored доходи carrying «Без джерела» the правила-джерела
+ * now match, and the джерело of the best one. A дохід carrying any other джерело is the owner's
+ * decision and is never revisited. Matching runs on the опис and on the MCC when one is carried;
+ * a дохід with neither matches nothing.
+ *
+ * Kept apart from `sweepUncategorised` so the caller can run it over the транзакції as they stand
+ * *after* the витрати moves were written: a зустрічний дохід a new переказ absorbed no longer exists
+ * then, so it is never given a джерело (answer-queue design D8c).
+ */
+export function sweepUnsourced(
+  tiers: Pick<RuleTiers, 'rules' | 'merchants'>,
+  transactions: readonly Transaction[],
+): readonly SourceMove[] {
+  const moves: SourceMove[] = [];
+  for (const transaction of transactions) {
+    if (transaction.type !== 'income' || transaction.sourceId !== UNSOURCED_SOURCE_ID) continue;
+    if (transaction.description === undefined && transaction.mcc === undefined) continue;
+    const sourceId = matchSource(tiers.rules, tiers.merchants, {
+      description: transaction.description ?? '',
+      ...(transaction.mcc === undefined ? {} : { mcc: transaction.mcc }),
+    });
+    if (sourceId !== undefined) moves.push({ id: transaction.id, sourceId });
+  }
+  return moves;
+}
+
+/** The доходи «Без джерела» a розбір considered — the count the журнал and the owner are given. */
+export function countUnsourcedIncomes(transactions: readonly Transaction[]): number {
+  return transactions.filter((t) => t.type === 'income' && t.sourceId === UNSOURCED_SOURCE_ID).length;
 }
 
 /**

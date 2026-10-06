@@ -326,6 +326,8 @@ describe('the five places a failure is already a value', () => {
   const saldo = source('../app/manage/saldo-import.tsx');
   const backup = source('../app/manage/backup.tsx');
   const main = source('../app/(tabs)/index.tsx');
+  /** Where a чернетка is confirmed now: the queue «Що потребує відповіді» (answer-queue design D4). */
+  const queue = source('../app/answers.tsx');
   /** Recording moved off Головний to its own screen, and the raise around a store moved with it. */
   const entryScreen = source('../app/transaction/new.tsx');
   const notifications = source('../app/manage/notifications.tsx');
@@ -344,10 +346,10 @@ describe('the five places a failure is already a value', () => {
     for (const [screen, kind] of [
       [saldo, 'saldo-import'],
       [backup, 'backup'],
-      // Both places a транзакція is stored by hand: the entry form, and confirming a чернетка on
-      // Головний. One kind of сповіщення, raised wherever that work fails.
+      // Both places a транзакція is stored by hand: the entry form, and confirming a чернетка in
+      // the queue. One kind of сповіщення, raised wherever that work fails.
       [entryScreen, 'local-save'],
-      [main, 'local-save'],
+      [queue, 'local-save'],
     ] as const) {
       expect(screen, kind).toContain(`raiseAlert('${kind}', { attended: attended() }, ALERT_PORTS)`);
     }
@@ -398,7 +400,7 @@ describe('the five places a failure is already a value', () => {
     );
     expect(saldo).toContain("title: 'Не вдалося прочитати файл'");
     expect(entryScreen).toContain("title: 'Не записано'");
-    expect(main).toContain("title: 'Не підтверджено'");
+    expect(queue).toContain("title: 'Не підтверджено'");
     // «Бекап» reports through its own state, and the banner still shows that state's message.
     expect(backup).toContain('{message ? <Banner>{message}</Banner> : null}');
   });

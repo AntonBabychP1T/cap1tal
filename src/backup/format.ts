@@ -57,7 +57,7 @@ export const BACKUP_FORMAT_VERSION = 2;
  * nothing is lost in starting the count over. From here the usual rule applies again: every new
  * migration bumps this by one.
  */
-export const BACKUP_SCHEMA_VERSION = 13;
+export const BACKUP_SCHEMA_VERSION = 14;
 
 /** How a бекап says it is one. First in the envelope, so a truncated file still says it. */
 export const BACKUP_APP = 'cap1tal';
@@ -204,8 +204,9 @@ export const BACKUP_TABLES: readonly string[] = [
 
 /**
  * A правило, with the `createdAt` that breaks ties between two equally specific ones as epoch ms.
- * Exactly one of `categoryId` / `toAccountId` is present — never both, never neither — a
- * правило-переказ names the destination рахунок instead of a category (design D9).
+ * Exactly one of `categoryId` / `toAccountId` / `sourceId` is present — never two, never none — a
+ * правило-переказ names the destination рахунок instead of a category (design D9), and a
+ * правило-джерело a джерело (answer-queue design D6).
  */
 export interface BackupRule {
   readonly id: string;
@@ -215,6 +216,8 @@ export interface BackupRule {
   readonly mcc?: number;
   readonly categoryId?: string;
   readonly toAccountId?: string;
+  /** A правило-джерело's джерело; absent on every older бекап, which holds none. */
+  readonly sourceId?: string;
   readonly createdAtMs: number;
 }
 
@@ -684,6 +687,7 @@ function ruleAt(value: unknown, at: string): BackupRule {
     ...(row.mcc === undefined || row.mcc === null ? {} : { mcc: integerAt(row.mcc, `${at}.mcc`) }),
     ...optionalString(row, 'categoryId', at),
     ...optionalString(row, 'toAccountId', at),
+    ...optionalString(row, 'sourceId', at),
     createdAtMs: integerAt(row.createdAtMs, `${at}.createdAtMs`),
   };
 }
@@ -1528,19 +1532,20 @@ export function checkConsistent(state: BackupState): void {
         fail(`${what} називає і текст опису, і продавця`);
       }
     }
-    const hasCategory = rule.categoryId !== undefined;
-    const hasAccount = rule.toAccountId !== undefined;
-    if (hasCategory === hasAccount) {
+    const targets = [rule.categoryId, rule.toAccountId, rule.sourceId].filter((t) => t !== undefined);
+    if (targets.length !== 1) {
       fail(
-        hasCategory
-          ? `${what} називає і категорію, і рахунок призначення`
-          : `${what} не називає ні категорії, ні рахунку призначення`,
+        targets.length > 1
+          ? `${what} називає більше однієї мети: категорію, рахунок призначення чи джерело`
+          : `${what} не називає ні категорії, ні рахунку призначення, ні джерела`,
       );
     }
-    if (hasCategory) {
-      needsCategory(rule.categoryId!, what);
-    } else {
-      needsAccount(rule.toAccountId!, what);
+    if (rule.categoryId !== undefined) {
+      needsCategory(rule.categoryId, what);
+    } else if (rule.toAccountId !== undefined) {
+      needsAccount(rule.toAccountId, what);
+    } else if (rule.sourceId !== undefined && !sources.has(rule.sourceId)) {
+      fail(`${what} посилається на джерело, якого в бекапі немає`);
     }
   }
   for (const limit of state.limits) {

@@ -550,7 +550,11 @@ export function monobankRepo(db: Storage) {
             storeTransferPairing(tx, t, storedAt);
             return;
           }
-          if (t.type === 'income' && t.sourceId === UNSOURCED_SOURCE_ID && absorbIncomeIfAwaited(tx, t, storedAt)) {
+          // Every дохід here came from `mapStatement`, so whatever джерело it carries a
+          // правило-джерело gave it a moment ago: it is asked about first as the «Без джерела»
+          // arrival it was, and a зустрічний дохід is absorbed before any правило-джерело counts
+          // (monobank-sync, "A зустрічний дохід is absorbed before any правило-джерело is asked").
+          if (t.type === 'income' && absorbIncomeIfAwaited(tx, { ...t, sourceId: UNSOURCED_SOURCE_ID }, storedAt)) {
             return;
           }
           tx.insert(transactionsTable).values({ ...toTransactionRow(t), createdAt: storedAt }).run();

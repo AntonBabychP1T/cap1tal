@@ -318,12 +318,15 @@ export default function TransactionsScreen() {
   /**
    * One tap behind the «Без джерела» mark: the same дохід under the same id, now carrying the pick
    * — the editing screen's plain save of a дохід. Under the «Без джерела» narrowing the reload
-   * simply no longer returns the line. A джерело is not a категорія: no правило is offered.
+   * simply no longer returns the line. The правило-джерело offer follows.
    */
   const giveSource = useCallback(
     (t: Transaction, picked: string) => {
       try {
         transactionsRepo.save(assignSource(t, picked), new Date());
+        // The джерело is stored before the offer can show, so declining it never loses the pick
+        // (main-screen, "Giving a дохід its джерело offers the правило-джерело").
+        ruleOffer.raise({ description: t.description, target: { kind: 'source', sourceId: picked } });
         judgeProgressLater();
         haptics.play('stored');
         setSourcing(undefined);
@@ -342,7 +345,7 @@ export default function TransactionsScreen() {
         );
       }
     },
-    [haptics, reload, reloadStored, reportBug],
+    [haptics, reload, reloadStored, reportBug, ruleOffer],
   );
 
   const accountChoices = [
@@ -555,6 +558,7 @@ export default function TransactionsScreen() {
         offer={ruleOffer.offer}
         categoryNames={categoryNames}
         accountNames={accountNames}
+        sourceNames={sourceNames}
         onAccept={ruleOffer.accept}
         onDecline={ruleOffer.decline}
       />

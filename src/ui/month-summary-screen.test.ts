@@ -242,7 +242,8 @@ describe('the sections of a підсумок', () => {
     const rows = [...plainSeptember(), b.expense('2026-09-20', 'uncategorised', 45000)];
     const unanswered = screenOf(rows).sections.find((s) => s.key === 'unanswered')!;
     const [first] = unanswered.groups[0]!.rows;
-    expect(first).toMatchObject({ label: '«Без категорії»', route: '/transactions?month=2026-09&only=uncategorised' });
+    // The queue «Що потребує відповіді», narrowed to вересень 2026, where each is answered in place.
+    expect(first).toMatchObject({ label: '«Без категорії»', route: '/answers?month=2026-09' });
     // A clean month leads to the month's транзакції unnarrowed.
     const clean = screenOf(plainSeptember()).sections.find((s) => s.key === 'unanswered')!;
     expect(clean.groups[0]!.rows[0]).toMatchObject({ label: 'Вересень — чистий місяць', route: '/transactions?month=2026-09' });
@@ -259,7 +260,7 @@ describe('the sections of a підсумок', () => {
     expect(rows.map((r) => r.key)).toEqual(['unsourced']);
     expect(rows[0]).toMatchObject({
       label: '«Без джерела»',
-      route: '/transactions?month=2026-09&only=unsourced',
+      route: '/answers?month=2026-09',
     });
     expect(plain(rows[0]!.value)).toMatch(/^9 · /);
   });
@@ -273,16 +274,16 @@ describe('the sections of a підсумок', () => {
     ];
     const unanswered = screenOf(rows).sections.find((s) => s.key === 'unanswered')!;
     const byKey = new Map(unanswered.groups[0]!.rows.map((r) => [r.key, r]));
-    // Each count leads to its own narrowing, even when both stand side by side.
-    expect(byKey.get('uncategorised')!.route).toBe('/transactions?month=2026-09&only=uncategorised');
-    expect(byKey.get('unsourced')!.route).toBe('/transactions?month=2026-09&only=unsourced');
+    // Both counts lead to the queue narrowed to the month, which holds both groups.
+    expect(byKey.get('uncategorised')!.route).toBe('/answers?month=2026-09');
+    expect(byKey.get('unsourced')!.route).toBe('/answers?month=2026-09');
   });
 
-  it('leads the waiting чернетки to Головний, where they are answered', () => {
+  it('Scenario: Waiting чернетки open the queue, not Головний', () => {
     const drafts = screenOf(plainSeptember(), { waitingDrafts: 2 })
       .sections.find((s) => s.key === 'unanswered')!
       .groups[0]!.rows.find((r) => r.key === 'drafts')!;
-    expect(drafts.route).toBe('/');
+    expect(drafts.route).toBe('/answers?month=2026-09');
     expect(drafts.accessibilityLabel).toMatch(/Відкрити$/);
   });
 

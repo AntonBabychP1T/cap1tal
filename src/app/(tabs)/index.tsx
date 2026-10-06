@@ -11,14 +11,13 @@ import {
 } from 'react-native';
 
 import { Appear, ChangingFigure, Reflow, TabFade, Tap } from '@/components/motion';
-import { Action, Field, Picker, RowAction } from '@/components/form';
+import { Action, Picker, RowAction } from '@/components/form';
 import { RuleOfferSheet } from '@/components/rule-offer-sheet';
 import { TransactionRow } from '@/components/transaction-row';
 import {
   Card,
   CardGlow,
   Chevron,
-  Divider,
   Fab,
   ListCard,
   ListRow,
@@ -30,6 +29,7 @@ import { ThemedText } from '@/components/themed-text';
 import {
   categories as categoriesRepo,
   dashboardLayout as dashboardLayoutRepo,
+  duplicateAnswers as duplicateAnswersRepo,
   investments as investmentsRepo,
   limits as limitsRepo,
   merchants as merchantsRepo,
@@ -57,25 +57,13 @@ import { syncEvent } from '@/ui/read-policy';
 import { useRuleOffer } from '@/hooks/use-rule-offer';
 import { syncPorts } from '@/hooks/monobank-ports';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
-import { raise as raiseAlert } from '@/ui/alerting';
-import {
-  confirmPendingDraft,
-  dismissConfirmation,
-  dismissPendingDraft,
-  draftLines,
-  type DraftAnswer,
-  type DraftLine,
-} from '@/ui/drafts-section';
 import { expenseCategoryChoices, recentlyUsed, sourceChoices } from '@/ui/category-choices';
 import { CategoryWidget } from '@/components/category-widget';
 import { NetWorthWidget } from '@/components/net-worth-widget';
 import { ObservationsWidget } from '@/components/observations-widget';
-import {
-  answerNotDuplicate,
-  currentObservations,
-  deleteOneOfDuplicate,
-  forgetNotDuplicate,
-} from '@/hooks/observations-reads';
+import { currentObservations, linkedAccountIds } from '@/hooks/observations-reads';
+import { useDuplicateAnswers } from '@/hooks/use-duplicate-answers';
+import { answerQueue } from '@/ui/answer-queue';
 import { homeDashboardReadPlan } from '@/ui/home-dashboard';
 import { categoryMonthRoute, currentMonthRoute, remainderRoute } from '@/ui/home-navigation';
 import { categoryPresentation } from '@/ui/home-categories';
@@ -84,7 +72,7 @@ import { manualRefresh } from '@/ui/home-refresh';
 import { homeViewModel } from '@/ui/home-screen';
 import { bankCoverage } from '@/ui/monobank-screen';
 import { onSyncState, startSync, syncInFlight } from '@/ui/monobank-sync';
-import { failureAlert, refusalAlert } from '@/ui/failure-alert';
+import { failureAlert } from '@/ui/failure-alert';
 import { judgeProgressLater, onProgressJudged, progressScreenData } from '@/hooks/progress-ports';
 import {
   PROGRESS_ROUTE,
@@ -100,7 +88,6 @@ import { todayIso } from '@/ui/dates';
 import { netWorthWidgetModel } from '@/ui/net-worth';
 import { observationsWidgetModel } from '@/ui/observations';
 import { PICKER_SIZE } from '@/ui/shortlist';
-import { ONLY_UNCATEGORISED } from '@/ui/transaction-search';
 import { onCapturesStored } from '@/ui/notification-drain';
 import { firstRun } from '@/ui/onboarding';
 import { assignSource, offersTransferMark, recategorise } from '@/ui/retype';
@@ -143,18 +130,6 @@ const RECENT_WINDOW = 50;
  * allowed, and «Перші кроки» stays in Налаштування.
  */
 let landedOnSetup = false;
-
-/**
- * What answering a чернетка needs. A module constant because none of it depends on the screen's
- * state: the правила are re-read at the moment of confirmation (so one created since the чернетка
- * appeared is honoured), and everything the answer decides lives in `src/ui/drafts-section.ts`.
- */
-const DRAFT_PORTS = {
-  storage: notificationsRepo,
-  categorisation: categorisationContext,
-  newId,
-  now: () => new Date(),
-};
 
 function MainScreen() {
   const router = useRouter();
@@ -226,9 +201,12 @@ function MainScreen() {
         activeMonths: plan.needsObservations ? new Set(history.months) : new Set<string>(),
         // The read-only прогrес reading — evaluates nothing, marks nothing seen (design D6).
         progressData: plan.needsProgress ? progressScreenData(now) : undefined,
-        // Everything stored that still carries «Без категорії» — counted, not listed. Always
-        // read: the banner is fixed, not a widget, and stays visible whatever is hidden.
-        uncategorised: transactionsRepo.countUncategorised(),
+        // What the queue «Що потребує відповіді» reads to count the rail row: the whole history this
+        // screen already holds, the «Не дубль» answers and the linked рахунки. Always read: the row
+        // is fixed, not a widget, and stays visible whatever is hidden.
+        queueTransactions: history.transactions,
+        duplicateAnswers: duplicateAnswersRepo.list(),
+        linkedAccountIds: linkedAccountIds(),
         // Every row, archived included: pickers filter, but a feed line still shows the name of a
         // category that has since been archived.
         categories: categoriesRepo.list(),
@@ -249,6 +227,7 @@ function MainScreen() {
       };
     }, []),
   );
+  const duplicateAnswers = useDuplicateAnswers(reload);
 
   // The «≈ … грн» beside the money held; its absence changes nothing else on the screen.
   useCurrentRates(reload);
@@ -475,18 +454,24 @@ function MainScreen() {
    */
   const sourceRows = useMemo(() => sourceChoices(stored.sources), [stored.sources]);
 
-  /** The pending чернетки as lines; an empty list is no block at all, not an empty state. */
-  const drafts = useMemo(
+  /**
+   * The queue «Що потребує відповіді», unnarrowed — what the rail row counts and opens. The same
+   * `answerQueue` the queue screen reads, so the number here is the entries there (main-screen,
+   * "Count and destination agree"). The bank is not passed: it is its own rail row, not an entry.
+   */
+  const queue = useMemo(
     () =>
-      draftLines({
+      answerQueue({
+        transactions: stored.queueTransactions,
         drafts: stored.drafts,
-        accounts: stored.accounts,
-        sourceNames,
+        answers: stored.duplicateAnswers,
+        linkedAccountIds: stored.linkedAccountIds,
+        bank: null,
+        today: stored.today,
+        categoryNames,
       }),
-    [sourceNames, stored.accounts, stored.drafts],
+    [categoryNames, stored.drafts, stored.duplicateAnswers, stored.linkedAccountIds, stored.queueTransactions, stored.today],
   );
-  /** Collapsed by default (main-screen, "Operational alerts remain compact and actionable"). */
-  const [draftsExpanded, setDraftsExpanded] = useState(false);
 
   /**
    * How much of the bank has synced, and how old the whole of it is — `bankCoverage`'s own answer,
@@ -513,8 +498,7 @@ function MainScreen() {
         transactions: stored.monthTransactions,
         balances: stored.balances,
         rates: stored.rates,
-        uncategorised: stored.uncategorised,
-        pendingDrafts: drafts.length,
+        queue,
         monobank: {
           configured: configured === true,
           linked: coverage.linked,
@@ -533,7 +517,7 @@ function MainScreen() {
         },
         now: new Date(),
       }),
-    [configured, coverage, drafts.length, stored, syncing],
+    [configured, coverage, queue, stored, syncing],
   );
 
   /**
@@ -736,13 +720,16 @@ function MainScreen() {
 
   /**
    * One tap behind the «Без джерела» mark: the same дохід under the same id, now carrying the pick
-   * — the editing screen's plain save of a дохід, without editing ever opening. A джерело is not a
-   * категорія: no правило is offered for it.
+   * — the editing screen's plain save of a дохід, without editing ever opening. The правило-джерело offer
+   * follows, as a категорія's правило does.
    */
   const giveSource = useCallback(
     (t: Transaction, picked: string) => {
       try {
         transactionsRepo.save(assignSource(t, picked), new Date());
+        // The джерело is stored before the offer can show, so declining it never loses the pick
+        // (main-screen, "Giving a дохід its джерело offers the правило-джерело").
+        ruleOffer.raise({ description: t.description, target: { kind: 'source', sourceId: picked } });
         judgeProgressLater();
         haptics.play('stored');
         setSourcing(undefined);
@@ -754,74 +741,9 @@ function MainScreen() {
         );
       }
     },
-    [haptics, reload, reportBug],
+    [haptics, reload, reportBug, ruleOffer],
   );
 
-  const settleDraft = useCallback(
-    (draftId: string, answer: DraftAnswer) => {
-      if (answer.kind === 'amount-required' || answer.kind === 'rejected') {
-        // Nothing was stored and the чернетка still awaits — the parser's own words say why. A
-        // missing or mistyped сума is the owner's to fix, so it is a refusal: journaled like any
-        // other, but with «Зрозуміло» alone and no offer to report a bug that is not one.
-        Alert.alert(
-          ...refusalAlert({ title: 'Не підтверджено', where: 'draft-confirm', message: answer.message }),
-        );
-        return;
-      }
-      // A чернетка was confirmed or dismissed: confirming one stores a транзакція.
-      judgeProgressLater();
-      reload();
-    },
-    [reload],
-  );
-
-  const confirmDraftLine = useCallback(
-    (draftId: string, typedAmount: string | undefined) => {
-      const draft = stored.drafts.find((pending) => pending.id === draftId);
-      if (!draft) {
-        return;
-      }
-      try {
-        const answer = confirmPendingDraft(draft, DRAFT_PORTS, typedAmount);
-        settleDraft(draftId, answer);
-        // Confirming a чернетка stores a транзакція: felt like any other store.
-        if (answer.kind === 'confirmed') haptics.play('stored');
-      } catch (error) {
-        Alert.alert(
-          ...failureAlert({ title: 'Не підтверджено', where: 'draft-confirm', error, report: reportBug }),
-        );
-        void raiseAlert('local-save', { attended: attended() }, ALERT_PORTS);
-      }
-    },
-    [haptics, reportBug, settleDraft, stored.drafts],
-  );
-
-  const dismissDraftLine = useCallback(
-    (line: (typeof drafts)[number]) => {
-      const draft = stored.drafts.find((pending) => pending.id === line.id);
-      if (!draft) {
-        return;
-      }
-      // The same confirmed gesture deletion uses everywhere else in the app.
-      Alert.alert('Чернетка', dismissConfirmation(line), [
-        { text: 'Скасувати', style: 'cancel' },
-        {
-          text: 'Відхилити',
-          style: 'destructive',
-          onPress: () => {
-            try {
-              settleDraft(line.id, dismissPendingDraft(draft, DRAFT_PORTS));
-            } catch (error) {
-              Alert.alert(
-                ...failureAlert({ title: 'Не відхилено', where: 'draft-dismiss', error, report: reportBug }),
-              );
-            }
-          },
-        },
-      ]);
-    },
-    [reportBug, settleDraft, stored.drafts],
-  );
 
   /**
    * One known widget's whole content, exhaustively — adding an id to the registry without a case
@@ -1015,18 +937,7 @@ function MainScreen() {
             key={id}
             model={observations}
             onOpen={(route) => router.push(route)}
-            onNotDuplicate={(pair) => {
-              answerNotDuplicate(pair);
-              reload();
-            }}
-            onUndoNotDuplicate={(pair) => {
-              forgetNotDuplicate(pair);
-              reload();
-            }}
-            onDeleteOne={(id) => {
-              deleteOneOfDuplicate(id);
-              reload();
-            }}
+            {...duplicateAnswers}
           />
         ) : null;
 
@@ -1141,47 +1052,37 @@ function MainScreen() {
         </Card>
       ) : null}
 
-      {/* The uncategorised banner: a compact actionable row, counted over everything stored,
-          absent entirely at zero — no heading, no reserved space (main-screen, "Uncategorised
-          records are a compact feed banner"). Visible even with «Останні 5 транзакцій» hidden. */}
-      {model.alerts.uncategorisedBanner ? (
+      {/* «Що потребує відповіді»: one compact row naming how many entries wait and of which kinds,
+          opening the queue where each is answered in place — absent entirely when nothing waits,
+          no heading and no reserved space. Visible even with «Останні 5 транзакцій» hidden
+          (main-screen, "One rail row names what waits for an answer and opens the queue"). */}
+      {model.alerts.queueRow ? (
         <Appear>
           <Tap
-            onPress={() =>
-              router.push({ pathname: '/transactions', params: { only: ONLY_UNCATEGORISED } })
-            }
-            accessibilityRole="button">
+            onPress={() => router.push('/answers')}
+            accessibilityRole="button"
+            accessibilityLabel={`${model.alerts.queueRow.label}. ${model.alerts.queueRow.kinds}`}>
             <Card style={styles.attentionRow}>
-              <ThemedText numberOfLines={2} style={styles.attentionLabel}>
-                {model.alerts.uncategorisedBanner}
-              </ThemedText>
+              <View style={styles.attentionLabel}>
+                <ThemedText>{model.alerts.queueRow.label}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {model.alerts.queueRow.kinds}
+                </ThemedText>
+              </View>
               <Chevron />
             </Card>
           </Tap>
         </Appear>
       ) : null}
 
-      {/* At most two collapsed operational rows: the pending чернетки (count only, expanding in
-          place to the existing confirm/dismiss surface) and an actionable sync failure. Neither,
-          and nothing here renders at all (main-screen, "Operational alerts remain compact and
-          actionable"). */}
-      {model.alerts.draftCount > 0 || model.alerts.failureRow ? (
+      {/* The actionable monobank row: a sync failure, or a linked bank without a token. Pending
+          чернетки have no row of their own — they are counted in «Що потребує відповіді» above
+          (main-screen, "Operational alerts remain compact and actionable"). */}
+      {model.alerts.failureRow ? (
         <Appear>
           <Card style={styles.attention}>
-            {model.alerts.draftCount > 0 ? (
-              <Tap
-                onPress={() => setDraftsExpanded((expanded) => !expanded)}
-                accessibilityRole="button"
-                style={styles.attentionRow}>
-                <ThemedText numberOfLines={2} style={styles.attentionLabel}>
-                  {model.alerts.draftLabel}
-                </ThemedText>
-                <Chevron />
-              </Tap>
-            ) : null}
             {model.alerts.failureRow ? (
               <Appear>
-                {model.alerts.draftCount > 0 ? <Divider /> : null}
                 <Tap
                   onPress={() => router.push('/manage/monobank')}
                   accessibilityRole="button"
@@ -1199,24 +1100,6 @@ function MainScreen() {
               </Appear>
             ) : null}
           </Card>
-        </Appear>
-      ) : null}
-
-      {/* The чернетки open in place: they fade in and everything under them moves down with them
-          (motion, "Opening чернетки moves the feed down smoothly"). */}
-      {draftsExpanded && drafts.length > 0 ? (
-        <Appear>
-          <ListCard>
-            {drafts.map((line, index) => (
-              <DraftRow
-                key={line.id}
-                line={line}
-                last={index === drafts.length - 1}
-                onConfirm={confirmDraftLine}
-                onDismiss={dismissDraftLine}
-              />
-            ))}
-          </ListCard>
         </Appear>
       ) : null}
 
@@ -1251,77 +1134,11 @@ function MainScreen() {
         offer={ruleOffer.offer}
         categoryNames={categoryNames}
         accountNames={accountNames}
+        sourceNames={sourceNames}
         onAccept={ruleOffer.accept}
         onDecline={ruleOffer.decline}
       />
     </Screen>
-  );
-}
-
-/**
- * One pending чернетка on Головний, owning what the owner types as its сума: a keystroke redraws
- * this row and nothing else — not the статок, the категорії or the стрічка (app-shell, "A long list
- * draws only what is near the screen"; app-speed-pass design D7). A settled чернетка leaves the
- * list, and its typed сума goes with it.
- */
-function DraftRow({
-  line,
-  last,
-  onConfirm,
-  onDismiss,
-}: {
-  line: DraftLine;
-  last: boolean;
-  onConfirm: (draftId: string, typedAmount: string | undefined) => void;
-  onDismiss: (line: DraftLine) => void;
-}) {
-  const [amount, setAmount] = useState('');
-  return (
-    <ListRow last={last} style={styles.row}>
-      <View style={styles.rowTop}>
-        <View style={styles.rowLabel}>
-          <ThemedText numberOfLines={1}>{line.proposal}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {`${line.accountName} · ${line.date}`}
-          </ThemedText>
-          <ThemedText type="small" themeColor="textMuted">
-            {line.text}
-          </ThemedText>
-          {/* The foreign сума the notification named: information, never a proposal. */}
-          {line.original ? (
-            <ThemedText type="small" themeColor="textMuted">
-              {line.original}
-            </ThemedText>
-          ) : null}
-        </View>
-        {line.amount ? (
-          <ThemedText tabular style={styles.amount}>
-            {line.amount}
-          </ThemedText>
-        ) : null}
-      </View>
-
-      {/* A raw чернетка has no сума of its own; it confirms only with one the owner
-          supplies, in the рахунок's currency and under the manual-entry rules. */}
-      {line.needsAmount ? (
-        <Field
-          label="Сума"
-          value={amount}
-          onChangeText={setAmount}
-          keyboardType="decimal-pad"
-          placeholder="0,00"
-          hint={line.currency}
-        />
-      ) : null}
-
-      <View style={styles.rowActions}>
-        <RowAction
-          title="Підтвердити"
-          onPress={() => onConfirm(line.id, line.needsAmount ? amount : undefined)}
-        />
-        <RowAction title="Відхилити" onPress={() => onDismiss(line)} />
-      </View>
-    </ListRow>
   );
 }
 

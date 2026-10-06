@@ -30,12 +30,8 @@ import { NO_INSTALLMENT_FACTS } from '@/domain/installments';
 import { settleInstallmentsOnFocus } from '@/hooks/installment-ports';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { useCurrentRates } from '@/hooks/use-current-rates';
-import {
-  answerNotDuplicate,
-  deleteOneOfDuplicate,
-  forgetNotDuplicate,
-  monthObservations,
-} from '@/hooks/observations-reads';
+import { monthObservations } from '@/hooks/observations-reads';
+import { useDuplicateAnswers } from '@/hooks/use-duplicate-answers';
 import { todayIso } from '@/ui/dates';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { monthViewModel } from '@/ui/month-screen';
@@ -187,6 +183,7 @@ function MonthScreen() {
     ),
     { whileUnseen: UNSEEN },
   );
+  const duplicateAnswers = useDuplicateAnswers(reload);
 
   useCurrentRates(reload);
 
@@ -419,18 +416,7 @@ function MonthScreen() {
               more={model.observations.more}
               onMore={() => setExpandedMonth(model.month)}
               onOpen={(route) => router.push(route)}
-              onNotDuplicate={(pair) => {
-                answerNotDuplicate(pair);
-                reload();
-              }}
-              onUndoNotDuplicate={(pair) => {
-                forgetNotDuplicate(pair);
-                reload();
-              }}
-              onDeleteOne={(id) => {
-                deleteOneOfDuplicate(id);
-                reload();
-              }}
+              {...duplicateAnswers}
             />
           </>
         ) : null}

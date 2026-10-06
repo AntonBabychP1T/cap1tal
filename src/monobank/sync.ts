@@ -1,7 +1,7 @@
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
 import type { MerchantIndex } from '../domain/merchants';
-import { resolveTarget, type Rule } from '../domain/rules';
+import { matchSource, resolveTarget, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
   isoDate,
@@ -362,7 +362,9 @@ export interface MappedStatement {
  * none matches — or, when the best matching правило is a правило-переказ, a переказ to its
  * destination instead, awaiting its зустрічний дохід (this is pure and never looks at storage; the
  * caller's commit decides whether one is already stored — design D5). Money that arrived is a
- * дохід with the reserved джерело «Без джерела» — a starting state, not a verdict: an arriving
+ * дохід with the джерело the best of the owner's правила-джерела gives its description and MCC
+ * (answer-queue design D8a) — the commit still asks first whether it is a зустрічний дохід, as if
+ * it carried none — and otherwise the reserved джерело «Без джерела» — a starting state, not a verdict: an arriving
  * повернення or cashback is money the owner retypes through витрата into повернення, because a
  * повернення is never income. Nothing here reclassifies it on the owner's behalf, and the «Без
  * джерела» mark is what keeps it visible until they do.
@@ -460,7 +462,11 @@ export function mapStatement(
       date: isoDate(item.date),
       accountId: ctx.accountId,
       amount: money(item.amount.amount, ctx.currency),
-      sourceId: UNSOURCED_SOURCE_ID,
+      // The owner's правило-джерело, when one matches; it gives a джерело and nothing else — it
+      // never makes the item a повернення or a переказ (monobank-sync).
+      sourceId:
+        matchSource(ctx.rules, ctx.merchants, { description: item.description ?? '', mcc: item.mcc }) ??
+        UNSOURCED_SOURCE_ID,
       // Guarded exactly as the domain's factories guard it, so an item the bank sent no text with
       // makes a дохід of the same shape as the витрата beside it — not one carrying an empty опис.
       ...(item.description ? { description: item.description } : {}),

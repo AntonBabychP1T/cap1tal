@@ -187,6 +187,11 @@ export function sourceCount(n: number): string {
   return `${n} ${plural(n, 'джерело', 'джерела', 'джерел')}`;
 }
 
+/** The same three forms for «дохід», for the sentence a розбір leaves behind. */
+export function incomeCount(n: number): string {
+  return `${n} ${plural(n, 'дохід', 'доходи', 'доходів')}`;
+}
+
 /** The same three forms for «витрата», for the sentence a розбір leaves behind. */
 export function expenseCount(n: number): string {
   return `${n} ${plural(n, 'витрата', 'витрати', 'витрат')}`;

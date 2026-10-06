@@ -155,6 +155,7 @@ export function backupRepo(db: Storage): BackupStore {
             ...(row.mcc === null ? {} : { mcc: row.mcc }),
             ...(row.categoryId === null ? {} : { categoryId: row.categoryId }),
             ...(row.toAccountId === null ? {} : { toAccountId: row.toAccountId }),
+            ...(row.sourceId === null ? {} : { sourceId: row.sourceId }),
             createdAtMs: row.createdAt.getTime(),
           })),
         limits: db
@@ -580,6 +581,7 @@ export function backupRepo(db: Storage): BackupStore {
               mcc: rule.mcc ?? null,
               categoryId: rule.categoryId ?? null,
               toAccountId: rule.toAccountId ?? null,
+              sourceId: rule.sourceId ?? null,
               createdAt: new Date(rule.createdAtMs),
             })
             .run();

@@ -117,36 +117,30 @@ describe('the «Сповіщення банків» section reads the device, ne
   });
 });
 
-describe('Головний shows чернетки only while some are pending', () => {
+describe('Головний names the чернетки; the queue shows and answers them', () => {
+  const queue = readFileSync(new URL('../app/answers.tsx', import.meta.url), 'utf8');
+
   it('A drained чернетка reaches the screen in the session that captured it', () => {
     // The drain runs in the shell, on opening and on foreground — neither is a navigation focus,
-    // so `useReloadOnFocus` alone would leave the чернетка invisible until the owner left the tab
-    // and came back. That is exactly the "built but invisible" this change exists to end.
-    // `reloadWhenSeen` since app-speed-pass: at once in sight, on the next focus otherwise.
+    // so `useReloadOnFocus` alone would leave the чернетка uncounted until the owner left the tab
+    // and came back. `reloadWhenSeen` since app-speed-pass: at once in sight, on the next focus otherwise.
     expect(main).toContain('onCapturesStored(reloadWhenSeen)');
   });
 
-
   it('Scenario: No pending чернетки, no surface', () => {
-    // The collapsed draft row itself renders only while something is pending, and the expanded
-    // confirm/dismiss surface renders only while both expanded and non-empty — no heading and no
-    // placeholder either way now that «Потребує уваги» no longer exists as a shared section
-    // (main-screen, "Operational alerts remain compact and actionable").
-    expect(main).toContain('{model.alerts.draftCount > 0 ? (');
-    expect(main).toContain('{draftsExpanded && drafts.length > 0 ? (');
-    const expanded = main.slice(main.indexOf('{draftsExpanded && drafts.length > 0 ? ('));
-    const guardedRows = expanded.slice(0, expanded.indexOf('Останні транзакції'));
-    expect(guardedRows).toContain('drafts.map(');
-    expect(guardedRows).toContain(') : null}');
-
-    // What feeds the collapsed row's count is the pending чернетки, so zero pending is zero row.
-    expect(main).toContain('pendingDrafts: drafts.length');
+    // Головний renders no draft body at all; the rail row names чернетки only while some wait
+    // (`queueRow`, proven in home-screen.test.ts), and the queue draws its «Чернетки» group only
+    // when it holds an entry — `answerQueue` drops an empty group (answer-queue.test.ts).
+    expect(main).not.toContain('DraftRow');
+    expect(main).not.toContain('draftLines(');
+    expect(queue).toMatch(/group\.kind === 'drafts' \? \(/);
+    expect(queue).toContain('queue.groups.map((group) =>');
   });
 
   it('Scenario: Dismissing a чернетка is confirmed first', () => {
     // The gesture deletion uses everywhere else: the call sits inside the Alert's own button.
-    const dismiss = main.slice(main.indexOf('const dismissDraftLine'));
-    const handler = dismiss.slice(0, dismiss.indexOf('  return ('));
+    const dismiss = queue.slice(queue.indexOf('const dismissDraftLine'));
+    const handler = dismiss.slice(0, dismiss.indexOf('const monthChoices'));
     expect(handler).toContain('Alert.alert(');
     expect(handler).toContain('dismissConfirmation(line)');
     expect(handler.indexOf('Alert.alert(')).toBeLessThan(handler.indexOf('dismissPendingDraft('));
@@ -155,10 +149,12 @@ describe('Головний shows чернетки only while some are pending', 
   it('Confirming and dismissing decide nothing here', () => {
     // Both answers are the tested module's; the screen may not reach past it into the engine or
     // write a транзакція of its own from a чернетка.
-    expect(main).toContain('confirmPendingDraft(');
-    expect(main).toContain('dismissPendingDraft(');
-    for (const engineCall of ['confirmDraft(', 'dismissDraft(', 'processCapture(']) {
-      expect(main).not.toContain(engineCall);
+    expect(queue).toContain('confirmPendingDraft(');
+    expect(queue).toContain('dismissPendingDraft(');
+    for (const screen of [main, queue]) {
+      for (const engineCall of ['confirmDraft(', 'dismissDraft(', 'processCapture(']) {
+        expect(screen).not.toContain(engineCall);
+      }
     }
   });
 });

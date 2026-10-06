@@ -7,12 +7,14 @@ import {
 } from '../domain/category';
 import type { CurrencyCode } from '../domain/money';
 import { resolveCategoryIcon } from '../domain/category-icon';
+import { foldCase } from '../domain/fold';
 import type { MerchantIndex } from '../domain/merchants';
 import { matchRule, proposeMerchantPattern, type Rule, type RuleTarget } from '../domain/rules';
-import { UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
+import { UNCATEGORISED_CATEGORY_ID, UNSOURCED_SOURCE_ID, type Transaction } from '../domain/transaction';
 import type { SweepCounts } from '../db/rules-repo';
+import { sourceChoicesFor } from './category-choices';
 import { journal } from './journal';
-import { accountLabel, byName, categoryLabel, expenseCount } from './labels';
+import { accountLabel, byName, categoryLabel, expenseCount, incomeCount, plural, sourceLabel } from './labels';
 import { categoryIconDefinition } from './category-icons';
 import type { IconName } from './icons';
 import { Refusal } from '../domain/refusal';
@@ -101,9 +103,11 @@ export interface RuleDraft {
   /** As typed; empty means the rule has no MCC. */
   readonly mcc: string;
   /** Which target the form is filling in — the other one's id is dropped when this is saved. */
-  readonly target: 'category' | 'transfer';
+  readonly target: 'category' | 'transfer' | 'source';
   readonly categoryId?: string;
   readonly toAccountId?: string;
+  /** A правило-джерело's джерело; never «Без джерела», which the picker does not offer. */
+  readonly sourceId?: string;
 }
 
 /** What «Нове правило» opens on — and so what an untouched one is compared against. */
@@ -153,6 +157,11 @@ export function ruleFromDraft(
       throw new Refusal('Правило потребує рахунку призначення');
     }
     target = { kind: 'transfer', toAccountId: draft.toAccountId };
+  } else if (draft.target === 'source') {
+    if (draft.sourceId === undefined || draft.sourceId === '') {
+      throw new Refusal('Правило потребує джерела');
+    }
+    target = { kind: 'source', sourceId: draft.sourceId };
   } else {
     if (draft.categoryId === undefined || draft.categoryId === '') {
       throw new Refusal('Правило потребує категорії');
@@ -169,11 +178,24 @@ export function ruleFromDraft(
   };
 }
 
+/**
+ * The джерела the rule form offers a правило-джерело (settings-screen, "The джерело picker offers
+ * no «Без джерела»"): the unarchived ones, and the archived one an edited правило already names so
+ * it is not silently retargeted — but never «Без джерела», which is no target, whatever is stored.
+ */
+export function ruleSourceChoices(
+  all: readonly Source[],
+  currentSourceId: string | undefined,
+): Source[] {
+  return sourceChoicesFor(all, currentSourceId).filter((s) => s.id !== UNSOURCED_SOURCE_ID);
+}
+
 /** What the rule form says when no продавець is stored to pick: where продавці are named. */
 export const NO_MERCHANT_TO_PICK = 'Продавців ще немає — їх називають у «Продавці» в Налаштуваннях.';
 
 /**
- * A `RuleTarget`'s own label: the category's name, or «переказ на <назва>» for a правило-переказ.
+ * A `RuleTarget`'s own label: the category's name, «переказ на <назва>» for a правило-переказ, or
+ * «джерело <назва>» for a правило-джерело.
  * A rule keeps working into an archived категорія or рахунок, so both names are resolved the same
  * way — and an id either map misses shows itself rather than leaving the line blank.
  */
@@ -181,10 +203,11 @@ export function ruleTargetLabel(
   target: RuleTarget,
   categoryNames: ReadonlyMap<string, string>,
   accountNames: ReadonlyMap<string, string>,
+  sourceNames: ReadonlyMap<string, string> = new Map(),
 ): string {
-  return target.kind === 'category'
-    ? categoryLabel(target.categoryId, categoryNames)
-    : `переказ на ${accountLabel(target.toAccountId, accountNames)}`;
+  if (target.kind === 'category') return categoryLabel(target.categoryId, categoryNames);
+  if (target.kind === 'source') return `джерело ${sourceLabel(target.sourceId, sourceNames)}`;
+  return `переказ на ${accountLabel(target.toAccountId, accountNames)}`;
 }
 
 /**
@@ -204,6 +227,8 @@ export function ruleLine(
   accountNames: ReadonlyMap<string, string>,
   /** The продавці by id, for a rule that names one — «продавець АТБ» (settings-screen). */
   merchantNames: ReadonlyMap<string, string> = new Map(),
+  /** The джерела by id, for a правило-джерело — «джерело Зарплата» (settings-screen). */
+  sourceNames: ReadonlyMap<string, string> = new Map(),
 ): { readonly id: string; readonly criteria: string; readonly category: string } {
   const criteria: string[] = [];
   if (rule.merchant) {
@@ -219,7 +244,7 @@ export function ruleLine(
     id: rule.id,
     // Both criteria read as one line, joined the way an account choice joins its currency.
     criteria: criteria.join(' · '),
-    category: ruleTargetLabel(rule.target, categoryNames, accountNames),
+    category: ruleTargetLabel(rule.target, categoryNames, accountNames, sourceNames),
   };
 }
 
@@ -256,6 +281,7 @@ export function ruleOfferView(
   names: {
     readonly categoryNames: ReadonlyMap<string, string>;
     readonly accountNames: ReadonlyMap<string, string>;
+    readonly sourceNames?: ReadonlyMap<string, string>;
   },
 ): {
   readonly sentence: string;
@@ -266,12 +292,15 @@ export function ruleOfferView(
   readonly criterion: RuleCriterion;
 } {
   const { target } = offer;
+  const sourceNames = names.sourceNames ?? new Map<string, string>();
   const said = {
     sentence:
       target.kind === 'category'
         ? `Наступного разу такий опис одразу піде в «${categoryLabel(target.categoryId, names.categoryNames)}».`
-        : `Наступного разу такий опис одразу стане переказом на «${accountLabel(target.toAccountId, names.accountNames)}».`,
-    targetLabel: ruleTargetLabel(target, names.categoryNames, names.accountNames),
+        : target.kind === 'source'
+          ? `Гроші з таким описом отримають джерело «${sourceLabel(target.sourceId, sourceNames)}».`
+          : `Наступного разу такий опис одразу стане переказом на «${accountLabel(target.toAccountId, names.accountNames)}».`,
+    targetLabel: ruleTargetLabel(target, names.categoryNames, names.accountNames, sourceNames),
   };
   if (offer.recognised !== undefined && !usePattern) {
     return {
@@ -295,14 +324,28 @@ export function ruleDraftFromOffer(offer: RuleOffer, criterion: RuleCriterion): 
     target: offer.target.kind,
     ...(offer.target.kind === 'category'
       ? { categoryId: offer.target.categoryId }
-      : { toAccountId: offer.target.toAccountId }),
+      : offer.target.kind === 'source'
+        ? { sourceId: offer.target.sourceId }
+        : { toAccountId: offer.target.toAccountId }),
   };
 }
 
 function sameTarget(a: RuleTarget, b: RuleTarget): boolean {
-  return a.kind === 'category' && b.kind === 'category'
-    ? a.categoryId === b.categoryId
-    : a.kind === 'transfer' && b.kind === 'transfer' && a.toAccountId === b.toAccountId;
+  if (a.kind === 'category' && b.kind === 'category') return a.categoryId === b.categoryId;
+  if (a.kind === 'source' && b.kind === 'source') return a.sourceId === b.sourceId;
+  return a.kind === 'transfer' && b.kind === 'transfer' && a.toAccountId === b.toAccountId;
+}
+
+/**
+ * The pattern offered for a правило-джерело (categorisation-rules, "A правило is proposed from a
+ * транзакція that carries an опис"): a дохід whose folded опис begins with «від:» is a payment from
+ * a person, and the leading word the merchants capability would propose names every person who ever
+ * paid — so the whole folded, trimmed опис is proposed, naming that one sender.
+ */
+function proposeSourcePattern(description: string | undefined): string | undefined {
+  const whole = foldCase(description ?? '').trim();
+  if (whole.startsWith('від:')) return whole;
+  return proposeMerchantPattern(description);
 }
 
 /**
@@ -330,7 +373,11 @@ export function ruleOffer(input: {
   if (target.kind === 'category' && target.categoryId === UNCATEGORISED_CATEGORY_ID) {
     return undefined;
   }
-  const merchant = proposeMerchantPattern(input.description);
+  if (target.kind === 'source' && target.sourceId === UNSOURCED_SOURCE_ID) {
+    return undefined;
+  }
+  const merchant =
+    target.kind === 'source' ? proposeSourcePattern(input.description) : proposeMerchantPattern(input.description);
   if (merchant === undefined) {
     return undefined;
   }
@@ -352,6 +399,8 @@ export function ruleOffer(input: {
       ...(input.fromAccount ? { from: input.fromAccount } : {}),
     },
     input.accounts ?? [],
+    // A правило-джерело is checked against the правила-джерела alone, as money arriving matches.
+    target.kind === 'source' ? 'in' : 'out',
   );
   if (existing !== undefined && sameTarget(existing, input.target)) {
     return undefined;
@@ -362,6 +411,26 @@ export function ruleOffer(input: {
     ...(recognised ? { recognised: { merchantId: recognised.merchantId, name: recognised.name } } : {}),
     target: input.target,
   };
+}
+
+/**
+ * What a plain save of an edited транзакція offers to remember, if anything (main-screen,
+ * "Categorising a транзакція offers to remember it as a правило"): the категорія just set on a
+ * витрата or повернення, or the джерело just set on a дохід — only when saving actually changed
+ * it and the транзакція carries an опис. Editing any other field, or a переказ, offers nothing;
+ * `ruleOffer` still decides whether that target is worth offering at all.
+ */
+export function savedRuleTarget(before: Transaction, after: Transaction): RuleTarget | undefined {
+  if (!after.description) return undefined;
+  if (after.type === 'expense' || after.type === 'refund') {
+    const was = before.type === 'expense' || before.type === 'refund' ? before.categoryId : undefined;
+    return after.categoryId !== was ? { kind: 'category', categoryId: after.categoryId } : undefined;
+  }
+  if (after.type === 'income') {
+    const was = before.type === 'income' ? before.sourceId : undefined;
+    return after.sourceId !== was ? { kind: 'source', sourceId: after.sourceId } : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -401,6 +470,8 @@ export async function sweepStep<T extends SweepCounts | undefined>(
               moved: c.moved,
               transferred: c.transferred,
               absorbed: c.absorbed,
+              incomesExamined: c.incomesExamined,
+              incomesSourced: c.incomesSourced,
             },
           },
   });
@@ -416,5 +487,9 @@ export function sweepSaid(counts: SweepCounts): string | undefined {
   const said: string[] = [];
   if (counts.moved > 0) said.push(`${expenseCount(counts.moved)} перекатегоризовано.`);
   if (counts.transferred > 0) said.push(`${expenseCount(counts.transferred)} стали переказами.`);
+  if (counts.incomesSourced > 0) {
+    const n = counts.incomesSourced;
+    said.push(`${incomeCount(n)} ${plural(n, 'отримав', 'отримали', 'отримали')} джерело.`);
+  }
   return said.length > 0 ? said.join(' ') : undefined;
 }

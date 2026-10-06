@@ -268,6 +268,76 @@ describe('mapStatement', () => {
     });
   });
 
+  const sourceRule = (id: string, over: Partial<Rule> & { sourceId: string }): Rule => ({
+    id,
+    ...over,
+    target: { kind: 'source', sourceId: over.sourceId },
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+  });
+
+  it('Scenario: A правило-джерело gives arriving money its джерело', () => {
+    const { transactions } = mapStatement(
+      [item({ id: 'a1', description: 'Зарахування зарплати', mcc: 4829, amount: money(5_000_000, 'UAH') })],
+      context({ rules: [groceries, sourceRule('r-salary', { merchant: 'зарахування зарплати', sourceId: 'salary' })] }),
+    );
+    expect(transactions[0]).toMatchObject({
+      type: 'income',
+      amount: money(5_000_000, 'UAH'),
+      sourceId: 'salary',
+      description: 'Зарахування зарплати',
+    });
+  });
+
+  it('Scenario: A правило-джерело never matches money leaving', () => {
+    const { transactions } = mapStatement(
+      [item({ id: 'a1', description: 'Відсотки сервіс', mcc: 7399, amount: money(-2000, 'UAH') })],
+      context({ rules: [sourceRule('r-interest', { merchant: 'відсотки', sourceId: 'interest' })] }),
+    );
+    expect(transactions).toHaveLength(1);
+    expect(transactions[0]).toMatchObject({ type: 'expense', amount: money(2000, 'UAH'), categoryId: UNCATEGORISED_CATEGORY_ID });
+    expect(transactions[0]).not.toHaveProperty('sourceId');
+  });
+
+  it('Scenario: An MCC-only правило-джерело sources a statement item that carries the MCC', () => {
+    const { transactions } = mapStatement(
+      [item({ id: 'a1', description: 'Від: Олена П.', mcc: 4829, amount: money(20_000, 'UAH') })],
+      context({ rules: [sourceRule('r-people', { mcc: 4829, sourceId: 'from-people' })] }),
+    );
+    expect(transactions[0]).toMatchObject({ type: 'income', amount: money(20_000, 'UAH'), sourceId: 'from-people' });
+  });
+
+  it('Scenario: A правило-джерело naming a продавець follows recognition', () => {
+    const monobank = merchant({
+      id: 'mono',
+      name: 'Monobank',
+      spellings: [{ id: 'm-s0', spelling: 'monobank', addedAt: new Date(0) }],
+      createdAt: new Date(0),
+    });
+    const { transactions } = mapStatement(
+      [item({ id: 'a1', description: 'Monobank відсотки на залишок', amount: money(1234, 'UAH') })],
+      context({ rules: [sourceRule('r-mono', { merchantId: 'mono', sourceId: 'interest' })], merchants: merchantIndex([monobank]) }),
+    );
+    expect(transactions[0]).toMatchObject({ type: 'income', amount: money(1234, 'UAH'), sourceId: 'interest' });
+  });
+
+  it('Scenario: Cashback is not silently finalised as income', () => {
+    const { transactions } = mapStatement(
+      [item({ id: 'a1', description: 'Кешбек за вересень', mcc: 0, amount: money(1250, 'UAH') })],
+      context(),
+    );
+    expect(transactions).toEqual([expect.objectContaining({ type: 'income', sourceId: UNSOURCED_SOURCE_ID })]);
+  });
+
+  it('Scenario: A правило-джерело never turns cashback into a повернення', () => {
+    const { transactions } = mapStatement(
+      [item({ id: 'a1', description: 'Кешбек за вересень', mcc: 0, amount: money(1250, 'UAH') })],
+      context({ rules: [sourceRule('r-salary', { merchant: 'зарплата', sourceId: 'salary' })] }),
+    );
+    expect(transactions).toEqual([
+      expect.objectContaining({ type: 'income', amount: money(1250, 'UAH'), sourceId: UNSOURCED_SOURCE_ID }),
+    ]);
+  });
+
   it('Scenario: Arriving money is a дохід «Без джерела»', () => {
     const { transactions } = mapStatement(
       [

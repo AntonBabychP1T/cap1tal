@@ -1375,6 +1375,67 @@ describe('the round trip a бекап promises', () => {
     expect(merchantsRepo(target.db).list().map((m) => m.name)).toEqual(['АТБ']);
   });
 
+  it('Scenario: A правило-джерело survives the round trip', async () => {
+    transactionsRepo(source.db).save(
+      {
+        type: 'income',
+        id: 'i-salary',
+        date: '2026-09-05',
+        accountId: 'card',
+        amount: money(5_000_000, 'UAH'),
+        sourceId: UNSOURCED_SOURCE_ID,
+        description: 'Зарахування зарплати',
+      },
+      MADE_AT,
+    );
+    // Storing the правило runs the розбір, which gives that дохід «Зарплата».
+    rulesRepo(source.db).save({
+      id: 'r-salary',
+      merchant: 'зарахування зарплати',
+      target: { kind: 'source', sourceId: 'salary' },
+      createdAt: new Date('2026-09-01T10:00:00.000Z'),
+    });
+    expect(transactionsRepo(source.db).get('i-salary')).toMatchObject({ sourceId: 'salary' });
+
+    await roundTrip();
+
+    expect(rulesRepo(target.db).get('r-salary')?.target).toEqual({ kind: 'source', sourceId: 'salary' });
+    expect(transactionsRepo(target.db).get('i-salary')).toMatchObject({ sourceId: 'salary' });
+  });
+
+  it('Scenario: An older бекап restores with no правило-джерело', async () => {
+    rulesRepo(source.db).save({
+      id: 'r-silpo-old',
+      merchant: 'сільпо',
+      target: { kind: 'category', categoryId: 'food' },
+      createdAt: new Date('2026-01-01T10:00:00.000Z'),
+    });
+    rulesRepo(source.db).save({
+      id: 'r-reserve-old',
+      merchant: 'округлення балансу',
+      target: { kind: 'transfer', toAccountId: 'jar' },
+      createdAt: new Date('2026-01-02T10:00:00.000Z'),
+    });
+    const snapshot = await saveBackup(backupRepo(source.db), MADE_AT);
+    // The file a build of the previous storage shape wrote: one schema version lower, and its
+    // правила carry no `sourceId` key at all.
+    const body = JSON.parse(snapshot.bytes) as {
+      schemaVersion: number;
+      data: { rules: Record<string, unknown>[] };
+      checksum: string;
+    };
+    body.schemaVersion -= 1;
+    expect(body.data.rules.every((r) => !('sourceId' in r))).toBe(true);
+    body.checksum = crc32(canonicalJson(body.data));
+
+    expect(await restoreBackup(backupRepo(target.db), JSON.stringify(body))).toBe('ok');
+
+    const restored = rulesRepo(target.db).list();
+    expect(restored.find((r) => r.id === 'r-silpo-old')?.target).toEqual({ kind: 'category', categoryId: 'food' });
+    expect(restored.find((r) => r.id === 'r-reserve-old')?.target).toEqual({ kind: 'transfer', toAccountId: 'jar' });
+    expect(restored.filter((r) => r.target.kind === 'source')).toEqual([]);
+  });
+
   it('Scenario: A правило-переказ and an awaiting переказ survive the round trip', async () => {
     rulesRepo(source.db).save({
       id: 'r-reserve',

@@ -16,12 +16,8 @@ import {
   storedHistory,
 } from '@/db/repos';
 import { monthOf } from '@/domain/transaction';
-import {
-  answerNotDuplicate,
-  deleteOneOfDuplicate,
-  forgetNotDuplicate,
-  linkedAccountIds,
-} from '@/hooks/observations-reads';
+import { linkedAccountIds } from '@/hooks/observations-reads';
+import { useDuplicateAnswers } from '@/hooks/use-duplicate-answers';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { monthSummaryOf } from '@/month-summary/summary';
 import { todayIso } from '@/ui/dates';
@@ -85,6 +81,7 @@ export default function MonthSummaryScreen() {
       };
     }, [param]),
   );
+  const duplicateAnswers = useDuplicateAnswers(reload);
 
   /** «Ще N» chosen: every спостереження of the month is listed, in place. */
   const [observationsExpanded, setObservationsExpanded] = useState(false);
@@ -125,19 +122,7 @@ export default function MonthSummaryScreen() {
               more={section.observationsMore}
               onMore={() => setObservationsExpanded(true)}
               onOpen={open}
-              onNotDuplicate={(pair) => {
-                // Stored at once; the reload re-derives the підсумок without the pair, in place.
-                answerNotDuplicate(pair);
-                reload();
-              }}
-              onUndoNotDuplicate={(pair) => {
-                forgetNotDuplicate(pair);
-                reload();
-              }}
-              onDeleteOne={(id) => {
-                deleteOneOfDuplicate(id);
-                reload();
-              }}
+              {...duplicateAnswers}
             />
           ) : null}
           {section.empty && !section.observations ? (

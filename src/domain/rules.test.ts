@@ -9,16 +9,19 @@ import {
   countUncategorisedExpenses,
   matchCategory,
   matchRule,
+  matchSource,
   proposeMerchantPattern,
   resolveCategory,
   resolveTarget,
   sweepUncategorised,
+  sweepUnsourced,
   templateRules,
   type Rule,
 } from './rules';
 import { TEMPLATE_GROUPS } from './rule-template';
 import {
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
   expenseByDefault,
   refund,
   transfer,
@@ -896,5 +899,136 @@ describe('a правило naming a продавець', () => {
 
   it('Scenario: A transliterated service word is skipped in the proposed pattern', () => {
     expect(proposeMerchantPattern('Oplata poslug MEGOGO 1234')).toBe('megogo');
+  });
+});
+
+describe('правила-джерела', () => {
+  /** A правило-джерело, the same shape as `rule` otherwise. */
+  function sourceRule(input: {
+    id: string;
+    merchant?: string;
+    merchantId?: string;
+    mcc?: number;
+    sourceId: string;
+    createdAt?: string;
+  }): Rule {
+    return {
+      id: input.id,
+      ...(input.merchant === undefined ? {} : { merchant: input.merchant }),
+      ...(input.merchantId === undefined ? {} : { merchantId: input.merchantId }),
+      ...(input.mcc === undefined ? {} : { mcc: input.mcc }),
+      target: { kind: 'source', sourceId: input.sourceId },
+      createdAt: new Date(input.createdAt ?? '2026-01-01T00:00:00.000Z'),
+    };
+  }
+
+  function income(id: string, description: string | undefined, sourceId = UNSOURCED_SOURCE_ID): Income {
+    return {
+      type: 'income',
+      id,
+      date: '2026-09-12',
+      accountId: platinum.id,
+      amount: money(1250, 'UAH'),
+      sourceId,
+      ...(description === undefined ? {} : { description }),
+    };
+  }
+
+  it('Scenario: Arriving money is matched by правила-джерела alone', () => {
+    const rules = [
+      rule({ id: 'r1', merchant: 'відсотки', categoryId: 'groceries' }),
+      sourceRule({ id: 'r2', merchant: 'відсотки', sourceId: 'interest' }),
+    ];
+    expect(matchSource(rules, NO_MERCHANTS, { description: 'Відсотки за вересень' })).toBe('interest');
+    expect(matchRule(rules, NO_MERCHANTS, { description: 'Відсотки за вересень' }, [], 'in')).toEqual({
+      kind: 'source',
+      sourceId: 'interest',
+    });
+  });
+
+  it('Scenario: Leaving money ignores правила-джерела', () => {
+    const rules = [
+      rule({ id: 'r1', merchant: 'відсотки', categoryId: 'groceries' }),
+      sourceRule({ id: 'r2', merchant: 'відсотки за', sourceId: 'interest', createdAt: '2026-02-01T00:00:00.000Z' }),
+    ];
+    const leaving = { description: 'Відсотки за підписку', from: { accountId: platinum.id, currency: 'UAH' as const } };
+    expect(matchRule(rules, NO_MERCHANTS, leaving, accounts)).toEqual({ kind: 'category', categoryId: 'groceries' });
+    expect(matchCategory(rules, NO_MERCHANTS, { description: 'Відсотки за підписку' })).toBe('groceries');
+    expect(resolveCategory({ rules, merchants: NO_MERCHANTS }, { description: 'Відсотки за підписку' })).toBe('groceries');
+  });
+
+  it('Scenario: The longest правило-джерело wins', () => {
+    const rules = [
+      sourceRule({ id: 'r1', merchant: 'зарплата', sourceId: 'salary' }),
+      sourceRule({ id: 'r2', merchant: 'зарплата аванс', sourceId: 'advance' }),
+    ];
+    expect(matchSource(rules, NO_MERCHANTS, { description: 'Зарплата аванс жовтень' })).toBe('advance');
+  });
+
+  it('Scenario: A правило-джерело naming a продавець follows recognition', () => {
+    const monobank = merchant({
+      id: 'mono',
+      name: 'Monobank',
+      spellings: [{ id: 'm-s0', spelling: 'monobank', addedAt: new Date(0) }],
+      createdAt: new Date(0),
+    });
+    const rules = [sourceRule({ id: 'r1', merchantId: 'mono', sourceId: 'interest' })];
+    expect(matchSource(rules, merchantIndex([monobank]), { description: 'Monobank відсотки на залишок' })).toBe('interest');
+  });
+
+  it('the шаблон is never consulted for money arriving, and «Без джерела» answers nothing', () => {
+    const template = templateRules(new Map([[TEMPLATE_GROUPS[0]!.id, 'groceries']]));
+    expect(matchRule(template, NO_MERCHANTS, { description: TEMPLATE_GROUPS[0]!.merchants[0]! }, [], 'in')).toBeUndefined();
+    const restored = [sourceRule({ id: 'r1', merchant: 'відсотки', sourceId: UNSOURCED_SOURCE_ID })];
+    expect(matchSource(restored, NO_MERCHANTS, { description: 'Відсотки' })).toBeUndefined();
+  });
+
+  it('Scenario: A new правило-джерело answers the доходи already waiting', () => {
+    const rules = [sourceRule({ id: 'r1', merchant: 'відсотки', sourceId: 'interest' })];
+    const stored = [
+      income('i1', 'Відсотки 12.50 UAH'),
+      income('i2', 'Відсотки 8.00 UAH'),
+      income('i3', "Від: Міхаіл Кас'ян"),
+    ];
+    expect(sweepUnsourced({ rules, merchants: NO_MERCHANTS }, stored)).toEqual([
+      { id: 'i1', sourceId: 'interest' },
+      { id: 'i2', sourceId: 'interest' },
+    ]);
+  });
+
+  it('Scenario: A more specific правило-джерело keeps the last word', () => {
+    const rules = [
+      sourceRule({ id: 'r1', merchant: 'зарплата аванс', sourceId: 'advance' }),
+      sourceRule({ id: 'r2', merchant: 'зарплата', sourceId: 'salary', createdAt: '2026-03-01T00:00:00.000Z' }),
+    ];
+    expect(sweepUnsourced({ rules, merchants: NO_MERCHANTS }, [income('i1', 'Зарплата аванс жовтень')])).toEqual([
+      { id: 'i1', sourceId: 'advance' },
+    ]);
+  });
+
+  it('Scenario: A category правило moves no дохід', () => {
+    const rules = [rule({ id: 'r1', merchant: 'атб', categoryId: 'groceries' })];
+    const stored = [income('i1', 'АТБ повернення коштів')];
+    expect(sweepUnsourced({ rules, merchants: NO_MERCHANTS }, stored)).toEqual([]);
+    expect(sweepUncategorised({ rules, merchants: NO_MERCHANTS }, stored, accounts)).toEqual([]);
+  });
+
+  it('Scenario: A джерело the owner chose is never replaced', () => {
+    const rules = [sourceRule({ id: 'r1', merchant: 'відсотки', sourceId: 'interest' })];
+    expect(sweepUnsourced({ rules, merchants: NO_MERCHANTS }, [income('i1', 'Відсотки 12.50 UAH', 'gifts')])).toEqual([]);
+  });
+
+  it('a правило-джерело moves no витрата, and a дохід with neither опис nor MCC matches nothing', () => {
+    const rules = [sourceRule({ id: 'r1', merchant: 'відсотки', sourceId: 'interest' })];
+    const expense = expenseByDefault({
+      id: 'e1',
+      date: '2026-09-12',
+      accountId: platinum.id,
+      amount: money(2000, 'UAH'),
+      categoryId: UNCATEGORISED_CATEGORY_ID,
+      description: 'Відсотки сервіс',
+    });
+    expect(sweepUncategorised({ rules, merchants: NO_MERCHANTS }, [expense], accounts)).toEqual([]);
+    expect(sweepUnsourced({ rules, merchants: NO_MERCHANTS }, [expense, income('i1', undefined)])).toEqual([]);
   });
 });

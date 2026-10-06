@@ -38,6 +38,7 @@ import {
   type EntryType,
 } from '@/ui/entry-form';
 import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
+import { savedRuleTarget } from '@/ui/list-management';
 import { transactionMerchantRow, type NamingForm } from '@/ui/merchants-screen';
 import { receiptOffer } from '@/ui/receipt-screen';
 import {
@@ -152,6 +153,7 @@ export default function EditTransactionScreen() {
     [entry?.categoryId, stored.categories],
   );
   const categoryNames = useMemo(() => namesById(stored.categories), [stored.categories]);
+  const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
   const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
   const sourceRows = useMemo(
     () => sourceChoicesFor(stored.sources, entry?.sourceId),
@@ -339,21 +341,12 @@ export default function EditTransactionScreen() {
           return;
         }
         persist(built);
-        // The категорія is already stored by the time the offer could show, exactly as design D5
-        // requires — leaving this screen (accepting, declining, or the back gesture) can never lose
-        // it. Offered only when saving actually changed the категорія of a витрата or повернення
-        // that carries an опис — never for a дохід's джерело, and never when nothing moved.
-        const before =
-          (original.type === 'expense' || original.type === 'refund') ? original.categoryId : undefined;
-        const offered =
-          (built.type === 'expense' || built.type === 'refund') &&
-          built.description &&
-          built.categoryId !== before
-            ? ruleOffer.raise({
-                description: built.description,
-                target: { kind: 'category', categoryId: built.categoryId },
-              })
-            : undefined;
+        // The категорія or джерело is already stored by the time the offer could show, exactly as
+        // design D5 requires — leaving this screen (accepting, declining, or the back gesture) can
+        // never lose it. Offered only when saving actually changed the категорія of a витрата or
+        // повернення, or the джерело of a дохід, that carries an опис — never when nothing moved.
+        const target = savedRuleTarget(original, built);
+        const offered = target ? ruleOffer.raise({ description: built.description, target }) : undefined;
         // `ruleOffer.raise` legitimately answers "no offer" too — «Без категорії», a правило that
         // already covers this опис — and only a real offer keeps the screen open for the sheet;
         // anything else leaves exactly where saving always left before this offer existed.
@@ -592,6 +585,7 @@ export default function EditTransactionScreen() {
         offer={ruleOffer.offer}
         categoryNames={categoryNames}
         accountNames={accountNames}
+        sourceNames={sourceNames}
         // The save this offer follows already wrote the транзакція; leaving the editing screen —
         // by accepting, declining or the back gesture that `Sheet` treats the same as «Не треба» —
         // is what «Зберегти» was always going to do next. The choice is stored at once; the editor

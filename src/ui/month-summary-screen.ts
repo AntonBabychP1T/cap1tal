@@ -22,7 +22,8 @@ import {
   type ObservationsMore,
 } from './observations';
 import { percentText } from './net-worth';
-import { narrowedMonthRoute, ONLY_UNCATEGORISED, ONLY_UNSOURCED } from './transaction-search';
+import { answersRoute } from './answer-queue';
+import { narrowedMonthRoute } from './transaction-search';
 
 /**
  * The pushed «Підсумок <місяця>» screen, as strings (month-summary-screen): which month it is for,
@@ -369,10 +370,13 @@ export function monthSummaryScreen(
   };
 
   const u = summary.unanswered;
-  // Each count leads to where it is answered: its own narrowing of the month's транзакції, and
-  // the waiting чернетки to Головний, where чернетки are confirmed or dismissed.
-  const uncategorisedRoute = narrowedMonthRoute(month, ONLY_UNCATEGORISED);
-  const unsourcedRoute = narrowedMonthRoute(month, ONLY_UNSOURCED);
+  // Each count leads to where it is answered: the queue «Що потребує відповіді» narrowed to the
+  // month, which holds the «Без категорії» records, the «Без джерела» доходи and the waiting
+  // чернетки of it, each answerable in place (month-summary-screen, design D10). A clean month
+  // leads to its транзакції, as before.
+  const answerRoute = answersRoute(month);
+  const uncategorisedRoute = answerRoute;
+  const unsourcedRoute = answerRoute;
   const cleanRoute = narrowedMonthRoute(month);
   const sums = (list: readonly Money[]) => list.map((m) => formatMoney(m)).join(' · ');
   const unanswered: SummarySection = {
@@ -399,7 +403,7 @@ export function monthSummaryScreen(
                   key: 'drafts',
                   label: `${u.waitingDrafts} ${plural(u.waitingDrafts, 'чернетка чекає', 'чернетки чекають', 'чернеток чекають')}`,
                   detail: 'окремо від чистого місяця',
-                  route: '/',
+                  route: answerRoute,
                 }),
               ]
             : []),

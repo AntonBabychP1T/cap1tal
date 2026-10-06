@@ -135,14 +135,16 @@ describe('opening, closing, leaving', () => {
   const home = read('app/(tabs)/index.tsx');
   const motion = read('components/motion.tsx');
 
-  it('Scenario: Opening чернетки moves the feed down smoothly', () => {
-    // The чернетки fade in where they open…
-    expect(home).toMatch(/\{draftsExpanded && drafts\.length > 0 \? \(\s*<Appear>\s*<ListCard>/);
-    // …and every widget under them moves to its new place instead of jumping.
+  it('Scenario: The rail row comes and goes smoothly', () => {
+    // The row «Що потребує відповіді» fades in and out of the rail…
+    expect(home).toMatch(/\{model\.alerts\.queueRow \? \(\s*<Appear>/);
+    expect(home).toMatch(/\{model\.alerts\.failureRow \? \(\s*<Appear>/);
+    // …and every widget under it moves to its new place instead of jumping.
     expect(home).toMatch(/return widget \? <Reflow key=\{id\}>\{widget\}<\/Reflow> : null;/);
-    // The service rows and the inline категорія picker come and go the same way.
-    expect(home).toMatch(/\{model\.alerts\.uncategorisedBanner \? \(\s*<Appear>/);
+    // The inline категорія picker comes and goes the same way.
     expect(home).toMatch(/categorising === line\.id \? \(\s*<Appear>\s*<Picker/);
+    // Nothing opens in place any more: the чернетки are answered in the queue.
+    expect(home).not.toContain('draftsExpanded');
     // Fading in at the standard duration, the neighbours moving over the same 220 ms.
     expect(motion).toContain(
       'enterFade: FadeIn.duration(Motion.standard).easing(enterEasing).reduceMotion(ReduceMotion.System)',
@@ -152,6 +154,16 @@ describe('opening, closing, leaving', () => {
     expect(appear.slice(0, appear.indexOf('\n}\n'))).toMatch(
       /entering=\{motion\.enterFade\}\s+exiting=\{motion\.exitFade\}\s+layout=\{motion\.reflow\}/,
     );
+  });
+
+  it('Scenario: An answered entry leaves the queue smoothly', () => {
+    const queue = read('app/answers.tsx');
+    // An answered entry — a «Без категорії» or «Без джерела» record, or a чернетка — fades out
+    // while the ones after it close the gap, and every group moves to its new place.
+    expect(queue).toMatch(/<ListItem key=\{t\.id\} reflow>\s*<ListRow/);
+    expect(queue).toMatch(/<ListItem key=\{line\.id\} reflow>\s*<DraftRow/);
+    expect(queue).toMatch(/<Reflow key=\{group\.kind\}>/);
+    expect(queue).toMatch(/\{queue\.bank \? \(\s*<Appear>/);
   });
 
   it('draws what a screen first holds at once', () => {
@@ -361,8 +373,10 @@ describe('haptics', () => {
       'app/transaction/scan.tsx': ["'scanned'", "'scanned'"],
       'app/account/[id].tsx': ["'merged'"],
       'hooks/use-rule-offer.ts': ["'rule-accepted'"],
-      // The third and the second: a джерело picked behind the «Без джерела» mark stores the дохід.
-      'app/(tabs)/index.tsx': ['event', "'stored'", "'stored'", "'stored'"],
+      // A категорія and a джерело picked behind the feed's marks; чернетки are answered in the queue.
+      'app/(tabs)/index.tsx': ['event', "'stored'", "'stored'"],
+      // The queue: a категорія, a джерело, and a confirmed чернетка — each a store.
+      'app/answers.tsx': ["'stored'", "'stored'", "'stored'"],
       'app/transactions.tsx': ["'stored'", "'stored'"],
       'app/manage/monobank.tsx': ["'failed'", "'failed'", 'event'],
       'app/manage/drive-backup.tsx': ["'failed'"],
@@ -378,7 +392,7 @@ describe('haptics', () => {
     expect(form).toContain("const event = choiceEvent(picked, true, 'chosen');");
     expect(form).toContain("const event = choiceEvent(props.value, value, 'toggled');");
     // A чернетка plays only once it is confirmed; a refused or dismissed one plays nothing here.
-    expect(home).toContain("if (answer.kind === 'confirmed') haptics.play('stored');");
+    expect(SOURCES.get('app/answers.tsx')).toContain("if (answer.kind === 'confirmed') haptics.play('stored');");
     // The switch plays after the change it reports, so «Вібрація» off stores before the read.
     expect(form.indexOf('props.onValueChange?.(value);')).toBeLessThan(
       form.indexOf("const event = choiceEvent(props.value, value, 'toggled');"),

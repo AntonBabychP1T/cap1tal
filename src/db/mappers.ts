@@ -244,7 +244,9 @@ export function toRule(row: RuleRow): Rule {
     target:
       row.categoryId !== null
         ? { kind: 'category', categoryId: row.categoryId }
-        : { kind: 'transfer', toAccountId: row.toAccountId! },
+        : row.sourceId !== null
+          ? { kind: 'source', sourceId: row.sourceId }
+          : { kind: 'transfer', toAccountId: row.toAccountId! },
     createdAt: row.createdAt,
   };
 }

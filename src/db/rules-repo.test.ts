@@ -18,6 +18,7 @@ import {
   type Income,
 } from '../domain/transaction';
 import { accountsRepo } from './accounts-repo';
+import { merchantsRepo } from './merchants-repo';
 import { rulesRepo, type RulesRepo } from './rules-repo';
 import { accounts, categories, sources } from './schema';
 import {
@@ -535,7 +536,7 @@ describe('rulesRepo — the розбір a stored правило runs', () => {
     expect(transactions.get('t1')).toMatchObject({ categoryId: 'groceries' });
     expect(transactions.get('t2')).toMatchObject({ categoryId: 'groceries' });
     expect(transactions.get('t3')).toMatchObject({ categoryId: UNCATEGORISED_CATEGORY_ID });
-    expect(counts).toEqual({ examined: 3, moved: 2, transferred: 0, absorbed: 0 });
+    expect(counts).toEqual({ examined: 3, moved: 2, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
   });
 
   it('Scenario: An MCC-only правило moves the витрати carrying that MCC — stored, read back, swept', () => {
@@ -577,7 +578,7 @@ describe('rulesRepo — the розбір a stored правило runs', () => {
     const counts = repo.save({ ...silpo, id: 'r-atb', merchant: 'атб' });
 
     expect(transactions.get('t1')).toMatchObject({ categoryId: 'eating-out' });
-    expect(counts).toEqual({ examined: 0, moved: 0, transferred: 0, absorbed: 0 });
+    expect(counts).toEqual({ examined: 0, moved: 0, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
   });
 
   it('Scenario: A витрата already moved is not swept again', () => {
@@ -592,7 +593,7 @@ describe('rulesRepo — the розбір a stored правило runs', () => {
     });
 
     expect(transactions.get('t1')).toMatchObject({ categoryId: 'groceries' });
-    expect(counts).toEqual({ examined: 0, moved: 0, transferred: 0, absorbed: 0 });
+    expect(counts).toEqual({ examined: 0, moved: 0, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
   });
 
   it('Scenario: A more specific правило keeps the last word during the sweep', () => {
@@ -746,7 +747,7 @@ describe('rulesRepo — the розбір turns матching витрати into �
     expect((moved as { awaitingCounterpartIncome?: true }).awaitingCounterpartIncome).toBeUndefined();
     // The зустрічний дохід is gone — absorbed, not left beside the переказ.
     expect(transactions.get('i1')).toBeUndefined();
-    expect(counts).toEqual({ examined: 1, moved: 0, transferred: 1, absorbed: 1 });
+    expect(counts).toEqual({ examined: 1, moved: 0, transferred: 1, absorbed: 1, incomesExamined: 0, incomesSourced: 0 });
   });
 
   it('a правило-переказ with no stored зустрічний дохід leaves the переказ awaiting one', () => {
@@ -755,7 +756,7 @@ describe('rulesRepo — the розбір turns матching витрати into �
     const counts = repo.save(roundUp);
 
     expect(transactions.get('t1')).toMatchObject({ type: 'transfer', awaitingCounterpartIncome: true });
-    expect(counts).toEqual({ examined: 1, moved: 0, transferred: 1, absorbed: 0 });
+    expect(counts).toEqual({ examined: 1, moved: 0, transferred: 1, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
   });
 
   it('Scenario: A правило-переказ leaves a витрата on its own destination where it is', () => {
@@ -764,7 +765,7 @@ describe('rulesRepo — the розбір turns матching витрати into �
     const counts = repo.save(roundUp);
 
     expect(transactions.get('t1')).toMatchObject({ type: 'expense', categoryId: UNCATEGORISED_CATEGORY_ID });
-    expect(counts).toEqual({ examined: 1, moved: 0, transferred: 0, absorbed: 0 });
+    expect(counts).toEqual({ examined: 1, moved: 0, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
   });
 
   it('Scenario: A правило-переказ does not take a витрата out of a chosen категорія', () => {
@@ -773,7 +774,7 @@ describe('rulesRepo — the розбір turns матching витрати into �
     const counts = repo.save(roundUp);
 
     expect(transactions.get('t1')).toMatchObject({ type: 'expense', categoryId: 'eating-out' });
-    expect(counts).toEqual({ examined: 0, moved: 0, transferred: 0, absorbed: 0 });
+    expect(counts).toEqual({ examined: 0, moved: 0, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
   });
 
   it('Scenario: A rule retargeted to a переказ runs the розбір', () => {
@@ -805,5 +806,207 @@ describe('rulesRepo — the розбір turns матching витрати into �
     expect(transactions.get('t1')).toMatchObject({ type: 'transfer', toAccountId: 'reserve' });
     expect(transactions.get('t2')).toMatchObject({ type: 'transfer', toAccountId: 'reserve' });
     expect(counts.transferred).toBe(2);
+  });
+});
+
+describe('rulesRepo — правила-джерела', () => {
+  let storage: TestStorage;
+  let repo: RulesRepo;
+  let transactions: TransactionsRepo;
+
+  const interest: Rule = {
+    id: 'r-interest',
+    merchant: 'відсотки',
+    target: { kind: 'source', sourceId: 'interest' },
+    createdAt: created,
+  };
+
+  function storeIncome(id: string, description: string | undefined, sourceId = UNSOURCED_SOURCE_ID, accountId = 'platinum'): void {
+    const income: Income = {
+      type: 'income',
+      id,
+      date: '2026-09-13',
+      accountId,
+      amount: money(1250, 'UAH'),
+      sourceId,
+      ...(description === undefined ? {} : { description }),
+    };
+    transactions.save(income, stored);
+  }
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, { categories: ['groceries'], sources: ['salary', 'advance', 'gifts'] });
+    seedReservedCategories(storage.db);
+    seedReservedSources(storage.db);
+    accountsRepo(storage.db).save(account({ id: 'platinum', name: 'platinum', kind: 'spending', currency: 'UAH' }));
+    accountsRepo(storage.db).save(account({ id: 'reserve', name: 'РЕЗЕРВ', kind: 'savings', currency: 'UAH' }));
+    repo = rulesRepo(storage.db);
+    transactions = transactionsRepo(storage.db);
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('Scenario: A правило-джерело is stored', () => {
+    const salary: Rule = {
+      id: 'r-salary',
+      merchant: 'зарахування зарплати',
+      target: { kind: 'source', sourceId: 'salary' },
+      createdAt: created,
+    };
+    repo.save(salary);
+    expect(repo.get('r-salary')).toEqual(salary);
+    const row = storage.db.select().from(sources).where(eq(sources.id, 'salary')).get();
+    expect(row?.id).toBe('salary');
+  });
+
+  it('Scenario: A rule naming a category and a джерело is rejected', () => {
+    const both = {
+      id: 'r-both',
+      merchant: 'зарплата',
+      target: { kind: 'source', sourceId: 'salary', categoryId: 'groceries' },
+      createdAt: created,
+    } as unknown as Rule;
+    expect(() => repo.save(both)).toThrow('Правило має одну мету');
+    expect(repo.list()).toEqual([]);
+  });
+
+  it('Scenario: «Без джерела» is rejected as a rule\'s target', () => {
+    expect(() =>
+      repo.save({ ...interest, target: { kind: 'source', sourceId: UNSOURCED_SOURCE_ID } }),
+    ).toThrow('«Без джерела» не може бути метою правила');
+    expect(repo.list()).toEqual([]);
+  });
+
+  it('Scenario: A правило-джерело to an unknown джерело is rejected', () => {
+    expect(() => repo.save({ ...interest, target: { kind: 'source', sourceId: 'nobody' } })).toThrow(
+      'Такого джерела немає',
+    );
+    expect(repo.list()).toEqual([]);
+  });
+
+  it('Scenario: A new правило-джерело answers the доходи already waiting', () => {
+    storeIncome('i1', 'Відсотки 12.50 UAH');
+    storeIncome('i2', 'Відсотки 8.00 UAH');
+    storeIncome('i3', "Від: Міхаіл Кас'ян");
+    const before = transactions.get('i1');
+
+    const counts = repo.save(interest);
+
+    expect(transactions.get('i1')).toEqual({ ...before, sourceId: 'interest' });
+    expect(transactions.get('i2')).toMatchObject({ sourceId: 'interest', description: 'Відсотки 8.00 UAH' });
+    expect(transactions.get('i3')).toMatchObject({ sourceId: UNSOURCED_SOURCE_ID });
+    expect(counts).toEqual({ examined: 0, moved: 0, transferred: 0, absorbed: 0, incomesExamined: 3, incomesSourced: 2 });
+  });
+
+  it('Scenario: The розбір reaches a дохід «Без джерела» whatever stored it', () => {
+    // One confirmed from a чернетка, one restored from a бекап: storage records neither door.
+    storeIncome('from-draft', 'Відсотки 12.50 UAH');
+    storeIncome('from-backup', 'Відсотки 8.00 UAH', UNSOURCED_SOURCE_ID, 'reserve');
+    repo.save(interest);
+    expect(transactions.get('from-draft')).toMatchObject({ sourceId: 'interest' });
+    expect(transactions.get('from-backup')).toMatchObject({ sourceId: 'interest' });
+  });
+
+  it('Scenario: A джерело the owner chose is never replaced', () => {
+    storeIncome('i1', 'Відсотки 12.50 UAH', 'gifts');
+    repo.save(interest);
+    expect(transactions.get('i1')).toMatchObject({ sourceId: 'gifts' });
+  });
+
+  it('Scenario: A category правило moves no дохід', () => {
+    storeIncome('i1', 'АТБ повернення коштів');
+    repo.save({ id: 'r-atb', merchant: 'атб', target: { kind: 'category', categoryId: 'groceries' }, createdAt: created });
+    expect(transactions.get('i1')).toMatchObject({ type: 'income', sourceId: UNSOURCED_SOURCE_ID });
+  });
+
+  it('Scenario: A правило-джерело keeps matching into an archived джерело', () => {
+    storage.db.update(sources).set({ archived: true }).where(eq(sources.id, 'gifts')).run();
+    storeIncome('i1', 'Подарунок від мами');
+    repo.save({ id: 'r-gift', merchant: 'подарунок', target: { kind: 'source', sourceId: 'gifts' }, createdAt: created });
+    expect(transactions.get('i1')).toMatchObject({ sourceId: 'gifts' });
+  });
+
+  it('Scenario: A rule switched from a category to a джерело', () => {
+    repo.save({ ...interest, target: { kind: 'category', categoryId: 'groceries' } });
+    storeIncome('i1', 'Відсотки за вересень');
+
+    repo.save(interest);
+
+    expect(repo.get('r-interest')?.target).toEqual({ kind: 'source', sourceId: 'interest' });
+    const row = storage.db.select().from(categories).all();
+    expect(row.length).toBeGreaterThan(0);
+    expect(transactions.get('i1')).toMatchObject({ sourceId: 'interest' });
+  });
+
+  it('Scenario: A deleted правило-джерело leaves its доходи as they are', () => {
+    storeIncome('i1', 'Відсотки 12.50 UAH');
+    repo.save(interest);
+    repo.remove('r-interest');
+    expect(repo.get('r-interest')).toBeUndefined();
+    expect(transactions.get('i1')).toMatchObject({ sourceId: 'interest' });
+  });
+
+  it('Scenario: A naming of a продавець reaches the доходи too', () => {
+    const merchants = merchantsRepo(storage.db);
+    merchants.name({
+      description: 'Monobank відсотки',
+      spelling: 'monobank',
+      spellingId: 's-mono',
+      into: { kind: 'new', id: 'mono', name: 'Monobank' },
+      now: created,
+    });
+    repo.save({ id: 'r-mono', merchantId: 'mono', target: { kind: 'source', sourceId: 'interest' }, createdAt: created });
+    storeIncome('i1', 'MONO BANK відсотки');
+    expect(transactions.get('i1')).toMatchObject({ sourceId: UNSOURCED_SOURCE_ID });
+
+    merchants.addSpelling({ merchantId: 'mono', spelling: 'mono bank', spellingId: 's-mono-2', now: created });
+
+    expect(transactions.get('i1')).toMatchObject({ sourceId: 'interest' });
+  });
+
+  it('Scenario: Absorption comes before sourcing in one pass', () => {
+    const merchants = merchantsRepo(storage.db);
+    merchants.name({
+      description: 'Резерв скарбничка',
+      spelling: 'резерв скарбничка',
+      spellingId: 's-r1',
+      into: { kind: 'new', id: 'reserve-m', name: 'Резерв' },
+      now: created,
+    });
+    repo.save({ id: 'r-transfer', merchantId: 'reserve-m', target: { kind: 'transfer', toAccountId: 'reserve' }, createdAt: created });
+    repo.save({ id: 'r-gift', merchantId: 'reserve-m', target: { kind: 'source', sourceId: 'gifts' }, createdAt: created });
+    transactions.save(
+      expenseByDefault({
+        id: 'e1',
+        date: '2026-09-13',
+        accountId: 'platinum',
+        amount: money(479, 'UAH'),
+        categoryId: UNCATEGORISED_CATEGORY_ID,
+        description: 'Округлення балансу «Резерв»',
+      }),
+      stored,
+    );
+    transactions.save(
+      {
+        type: 'income',
+        id: 'i1',
+        date: '2026-09-13',
+        accountId: 'reserve',
+        amount: money(479, 'UAH'),
+        sourceId: UNSOURCED_SOURCE_ID,
+        description: 'Поповнення «Резерв»',
+      },
+      stored,
+    );
+
+    const counts = merchants.addSpelling({ merchantId: 'reserve-m', spelling: 'резерв', spellingId: 's-r2', now: created });
+
+    expect(transactions.get('e1')).toMatchObject({ type: 'transfer', toAccountId: 'reserve' });
+    expect(transactions.get('i1')).toBeUndefined();
+    expect(transactions.listAll().filter((t) => t.type === 'income' && t.sourceId === 'gifts')).toEqual([]);
+    expect(counts).toMatchObject({ transferred: 1, absorbed: 1, incomesSourced: 0 });
   });
 });

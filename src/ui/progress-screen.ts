@@ -6,7 +6,8 @@ import { newestFirst, type EarnedAchievement, type Evidence } from '../progress/
 import type { Challenge, ChallengeAction, ChallengeProgress, MonthLeft } from '../progress/challenges';
 import { formatMoney } from './amount-input';
 import { calendarLabel, todayIso } from './dates';
-import { narrowedMonthRoute, ONLY_UNCATEGORISED, ONLY_UNSOURCED } from './transaction-search';
+import { answersRoute } from './answer-queue';
+import { narrowedMonthRoute } from './transaction-search';
 
 /**
  * What «Прогрес», the «Прогрес» section of Головний and the two detail screens say.
@@ -425,20 +426,13 @@ export function challengeDetail(input: {
 }
 
 /**
- * Where «Закрий <місяць>» opens: already narrowed to the місяць and to what is left in it. The
- * чернетки are confirmed or dismissed on Головний; a closed місяць opens on its own транзакції.
+ * Where «Закрий <місяць>» opens: the queue «Що потребує відповіді» already narrowed to the місяць,
+ * where every витрата or повернення «Без категорії», every дохід «Без джерела» and every чернетка
+ * dated in it is answered in place (challenges, answer-queue design D10). A closed місяць opens on
+ * its own транзакції.
  */
 function answerMonthRoute(month: Month, left: MonthLeft): string {
-  switch (left) {
-    case 'uncategorised':
-      return narrowedMonthRoute(month, ONLY_UNCATEGORISED);
-    case 'unsourced':
-      return narrowedMonthRoute(month, ONLY_UNSOURCED);
-    case 'drafts':
-      return '/';
-    case 'nothing':
-      return narrowedMonthRoute(month);
-  }
+  return left === 'nothing' ? narrowedMonthRoute(month) : answersRoute(month);
 }
 
 /**

@@ -10,6 +10,7 @@ import { account } from '../domain/account';
 import { money } from '../domain/money';
 import {
   expenseByDefault,
+  refund,
   UNCATEGORISED_CATEGORY_ID,
   UNSOURCED_SOURCE_ID,
   type Income,
@@ -25,7 +26,8 @@ import {
   type TestDb,
   type TestStorage,
 } from '../db/test-db';
-import { transactionsRepo } from '../db/transactions-repo';
+import { transactionsRepo, type TransactionsRepo } from '../db/transactions-repo';
+import { answerQueue, queueRow } from './answer-queue';
 import { feedTitle, transactionLine } from './transaction-line';
 import {
   merchantFromRoute,
@@ -228,7 +230,10 @@ describe('the shown list follows storage', () => {
 });
 
 describe('the місяць a route may ask for', () => {
-  it('opens narrowed to the місяць «Закрий <місяць>» is about', () => {
+  it('Scenario: A виклик opens the місяць it is about', () => {
+    // «Закрий серпень 2026» with nothing left in it opens «Транзакції» asking for 2026-08; one still
+    // waiting opens the queue instead (progress-screen.test.ts).
+    expect(narrowedMonthRoute('2026-08')).toBe('/transactions?month=2026-08');
     expect(monthFromRoute('2026-08')).toBe('2026-08');
   });
 
@@ -529,7 +534,10 @@ describe('giving a дохід its джерело from «Транзакції»',
     expect(giveBody).toContain('setSourcing(undefined)');
     expect(giveBody).toContain('reload();');
     expect(giveBody).not.toContain('router.push');
-    expect(giveBody).not.toContain('ruleOffer.raise(');
+    // The правило-джерело offer follows the stored pick, never precedes it (main-screen, "Giving a
+    // дохід its джерело offers the правило-джерело").
+    const saved = giveBody.indexOf('transactionsRepo.save(assignSource(t, picked)');
+    expect(giveBody.indexOf("ruleOffer.raise({ description: t.description, target: { kind: 'source', sourceId: picked } })")).toBeGreaterThan(saved);
     // The line's own tap still opens its editing.
     expect(screen).toContain('onPress={() => router.push(`/transaction/${line.id}`)}');
   });
@@ -825,5 +833,50 @@ describe('narrowedMonthRoute', () => {
     const query = new URLSearchParams(narrowedMonthRoute('2026-09', ONLY_UNSOURCED).split('?')[1]);
     expect(monthFromRoute(query.get('month') ?? undefined)).toBe('2026-09');
     expect(onlyFromRoute(query.get('only') ?? undefined)).toBe(ONLY_UNSOURCED);
+  });
+});
+
+describe('«Без категорії» agrees with the queue', () => {
+  let storage: TestStorage;
+  let repo: TransactionsRepo;
+  const at = new Date('2026-10-06T09:00:00.000Z');
+
+  beforeEach(() => {
+    storage = openTestDb();
+    seedReferences(storage.db, { categories: [UNCATEGORISED_CATEGORY_ID, 'food'], sources: [UNSOURCED_SOURCE_ID] });
+    accountsRepo(storage.db).save(account({ id: 'card', name: 'card', kind: 'spending', currency: 'UAH' }));
+    repo = transactionsRepo(storage.db);
+  });
+  afterEach(() => storage.close());
+
+  const queueOver = (transactions: readonly Transaction[]) =>
+    answerQueue({ transactions, drafts: [], answers: [], linkedAccountIds: new Set(), bank: null, today: '2026-10-06' });
+
+  it('Scenario: A повернення in «Без категорії» is a question too', () => {
+    repo.save(refund({ id: 'r-gap', date: '2026-09-02', accountId: 'card', amount: money(4500, 'UAH'), categoryId: UNCATEGORISED_CATEGORY_ID }), at);
+    repo.save(refund({ id: 'r-food', date: '2026-09-03', accountId: 'card', amount: money(4600, 'UAH'), categoryId: 'food' }), at);
+
+    expect(repo.search({ uncategorised: true, limit: 50, offset: 0 }).map((t) => t.id)).toEqual(['r-gap']);
+    const group = queueOver(repo.listAll()).groups.find((g) => g.kind === 'uncategorised');
+    expect(group?.entries.map((t) => (t as Transaction).id)).toEqual(['r-gap']);
+  });
+
+  it("Scenario: The list and Головний's count agree", () => {
+    // Six витрати and one повернення «Без категорії», each of its own сума and day.
+    for (let n = 0; n < 6; n += 1) {
+      repo.save(
+        expenseByDefault({ id: `e${n}`, date: `2026-0${n + 3}-1${n}`, accountId: 'card', amount: money(1000 + n * 13, 'UAH'), categoryId: UNCATEGORISED_CATEGORY_ID }),
+        at,
+      );
+    }
+    repo.save(refund({ id: 'r1', date: '2026-09-20', accountId: 'card', amount: money(777, 'UAH'), categoryId: UNCATEGORISED_CATEGORY_ID }), at);
+    repo.save(expenseByDefault({ id: 'other', date: '2026-09-21', accountId: 'card', amount: money(500, 'UAH'), categoryId: 'food' }), at);
+
+    const queue = queueOver(repo.listAll());
+    expect(queueRow(queue)?.kinds).toBe('7 без категорії');
+    const listed = repo.search({ uncategorised: true, limit: 50, offset: 0 }).map((t) => t.id).sort();
+    const grouped = queue.groups.find((g) => g.kind === 'uncategorised')!.entries.map((t) => (t as Transaction).id).sort();
+    expect(listed).toEqual(grouped);
+    expect(listed).toHaveLength(7);
   });
 });

@@ -649,6 +649,12 @@ export default function RootLayout() {
               name="transactions"
               options={{ presentation: 'card', animation: animation('transactions') }}
             />
+            {/* «Що потребує відповіді»: everything that waits for the owner's word, opened from
+                Головний's rail row, the підсумок and «Закрий <місяць>», pushed like «Транзакції». */}
+            <Stack.Screen
+              name="answers"
+              options={{ presentation: 'card', animation: animation('answers') }}
+            />
             {/* «Статок»: the whole history month by month, opened from its widget on Головний and
                 pushed over the tabs like «Транзакції». */}
             <Stack.Screen

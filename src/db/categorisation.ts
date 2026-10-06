@@ -4,7 +4,9 @@ import { merchantIndex } from '../domain/merchants';
 import { TEMPLATE_GROUPS, templateTargetOf } from '../domain/rule-template';
 import {
   countUncategorisedExpenses,
+  countUnsourcedIncomes,
   sweepUncategorised,
+  sweepUnsourced,
   templateRules,
   type Rule,
   type RuleTiers,
@@ -28,13 +30,16 @@ import { transactionsRepo } from './transactions-repo';
 
 /**
  * What a розбір did: the «Без категорії» витрати it looked at, how many it moved onto a
- * категорія, how many it turned into перекази, and how many зустрічні доходи those absorbed.
+ * категорія, how many it turned into перекази, how many зустрічні доходи those absorbed, the
+ * доходи «Без джерела» it looked at and how many of them it gave a джерело.
  */
 export interface SweepCounts {
   readonly examined: number;
   readonly moved: number;
   readonly transferred: number;
   readonly absorbed: number;
+  readonly incomesExamined: number;
+  readonly incomesSourced: number;
 }
 
 /** The two tiers as storage holds them right now — `templateRules` always present. */
@@ -90,7 +95,8 @@ export function categorisationContext(db: Storage): CategorisationContext {
 export function sweepStored(tx: Storage, now: Date): SweepCounts {
   const stored = transactionsRepo(tx).listAll();
   const knownAccounts = tx.select().from(accounts).all();
-  const moves = sweepUncategorised(categorisationContext(tx), stored, knownAccounts);
+  const context = categorisationContext(tx);
+  const moves = sweepUncategorised(context, stored, knownAccounts);
   // By id once, rather than a scan of the whole history per move (app-speed-pass design D9).
   const storedById = new Map(stored.map((t) => [t.id, t]));
   const write = transactionsRepo(tx);
@@ -123,10 +129,19 @@ export function sweepStored(tx: Storage, now: Date): SweepCounts {
     transferred += 1;
     if (result.absorbed) absorbed += 1;
   }
+  // The доходи after the витрати: re-read, so a зустрічний дохід a new переказ absorbed above is
+  // gone and can never be given a джерело (categorisation-rules, "Absorption comes before sourcing").
+  const afterMoves = moves.some((m) => m.kind === 'transfer') ? transactionsRepo(tx).listAll() : stored;
+  const sourced = sweepUnsourced(context, afterMoves);
+  for (const move of sourced) {
+    write.setSource(move.id, move.sourceId);
+  }
   return {
     examined: countUncategorisedExpenses(stored),
     moved: moves.filter((m) => m.kind === 'category').length,
     transferred,
     absorbed,
+    incomesExamined: countUnsourcedIncomes(afterMoves),
+    incomesSourced: sourced.length,
   };
 }

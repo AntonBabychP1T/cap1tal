@@ -65,8 +65,8 @@ describe('every failure a screen shows', () => {
     // refusal — journaled through `refusalAlert`, with «Зрозуміло» and no bug report (QA).
     expect(read('transaction/scan.tsx')).toContain('failureAlert(');
     expect(read('transaction/scan.tsx')).toContain("title: 'Не прикріплено'");
-    expect(read('(tabs)/index.tsx')).toContain('refusalAlert(');
-    expect(read('(tabs)/index.tsx')).toContain('message: answer.message');
+    expect(read('answers.tsx')).toContain('refusalAlert(');
+    expect(read('answers.tsx')).toContain('message: answer.message');
   });
 
   it('journals the two failures that are shown in place rather than in a dialog', () => {

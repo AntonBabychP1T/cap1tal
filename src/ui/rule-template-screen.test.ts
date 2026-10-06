@@ -125,13 +125,13 @@ describe('a choice and its розбір', () => {
       examined: 3,
       moved: 1,
       transferred: 0,
-      absorbed: 0,
+      absorbed: 0, incomesExamined: 0, incomesSourced: 0,
     }));
 
     expect(said).toBe('1 витрата перекатегоризовано.');
     const steps = tail().filter((entry) => entry.name === 'rules/sweep');
     expect(steps).toHaveLength(2);
-    expect(steps[1]?.counts).toEqual({ examined: 3, moved: 1, transferred: 0, absorbed: 0 });
+    expect(steps[1]?.counts).toEqual({ examined: 3, moved: 1, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
   });
 
   it('a choice that moved nothing says nothing', async () => {
@@ -141,7 +141,7 @@ describe('a choice and its розбір', () => {
         examined: 3,
         moved: 0,
         transferred: 0,
-        absorbed: 0,
+        absorbed: 0, incomesExamined: 0, incomesSourced: 0,
       })),
     ).toBeUndefined();
   });
@@ -153,12 +153,12 @@ describe('the open-time розбір', () => {
 
     await sweepNewTemplate({
       due: () => true,
-      sweep: () => ({ examined: 40, moved: 11, transferred: 0, absorbed: 0 }),
+      sweep: () => ({ examined: 40, moved: 11, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 }),
     });
 
     const steps = tail().filter((entry) => entry.name === 'rules/template-sweep');
     expect(steps).toHaveLength(2);
-    expect(steps[1]?.counts).toEqual({ examined: 40, moved: 11, transferred: 0, absorbed: 0 });
+    expect(steps[1]?.counts).toEqual({ examined: 40, moved: 11, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
   });
 
   it('Scenario: Opening again sweeps nothing — and records no operation', async () => {

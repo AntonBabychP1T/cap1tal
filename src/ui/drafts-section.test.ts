@@ -23,6 +23,7 @@ import {
   dismissPendingDraft,
   draftLines,
 } from './drafts-section';
+import { answerQueue } from './answer-queue';
 
 const card = account({ id: 'card', name: 'Приват', kind: 'spending', currency: 'UAH' });
 const closed = account({
@@ -72,7 +73,7 @@ const groceries: Rule = {
 
 const storedAt = new Date('2026-08-27T09:00:00.000Z');
 
-describe('the чернетки block on Головний', () => {
+describe('the «Чернетки» group of the queue «Що потребує відповіді»', () => {
   const lines = (drafts: readonly Draft[], accounts = [card, closed]) =>
     draftLines({ drafts, accounts, sourceNames });
 
@@ -164,6 +165,71 @@ describe('answering a чернетка', () => {
 
   afterEach(() => {
     storage.close();
+  });
+
+  /** The queue as the screen would read it right now, over what storage holds. */
+  const queueNow = () =>
+    answerQueue({
+      transactions: transactions.listAll(),
+      drafts: repo.pendingDrafts(),
+      answers: [],
+      linkedAccountIds: new Set(),
+      bank: null,
+      today: '2026-10-06',
+    });
+  const groupsOf = () => queueNow().groups.map((g) => [g.kind, g.entries.length]);
+
+  it('Scenario: A confirmed витрата with no правило moves to «Без категорії»', () => {
+    const draft = pending({ ...expenseDraft, date: isoDate('2026-10-04'), text: 'Оплата 250.00UAH. НОВИЙ ЗАКЛАД' });
+    expect(groupsOf()).toEqual([['drafts', 1]]);
+
+    expect(confirmPendingDraft(draft, ports()).kind).toBe('confirmed');
+
+    // The чернетка left «Чернетки» and the витрата it became stands in «Без категорії» at once.
+    expect(groupsOf()).toEqual([['uncategorised', 1]]);
+    expect(queueNow().groups[0]?.entries[0]).toMatchObject({
+      type: 'expense',
+      amount: money(25000, 'UAH'),
+      categoryId: UNCATEGORISED_CATEGORY_ID,
+    });
+  });
+
+  it('Scenario: A confirmed дохід with no правило-джерело moves to «Без джерела»', () => {
+    const draft = pending({ ...incomeDraft, date: isoDate('2026-10-04') });
+    confirmPendingDraft(draft, ports());
+    expect(groupsOf()).toEqual([['unsourced', 1]]);
+    expect(queueNow().groups[0]?.entries[0]).toMatchObject({
+      type: 'income',
+      amount: money(50000, 'UAH'),
+      sourceId: UNSOURCED_SOURCE_ID,
+    });
+  });
+
+  it('Scenario: A raw чернетка asks for its сума', () => {
+    const draft = pending(rawDraft);
+    expect(confirmPendingDraft(draft, ports()).kind).toBe('amount-required');
+    expect(groupsOf()).toEqual([['drafts', 1]]);
+
+    expect(confirmPendingDraft(draft, ports(), '415,00').kind).toBe('confirmed');
+
+    expect(transactions.listAll()).toMatchObject([
+      { type: 'expense', amount: money(41500, 'UAH'), originalAmount: money(1000, 'USD') },
+    ]);
+    expect(repo.pendingDrafts()).toEqual([]);
+  });
+
+  it('Scenario: Dismissing asks first and stores nothing', () => {
+    const draft = pending(incomeDraft);
+    const [line] = draftLines({ drafts: [draft], accounts: [card], sourceNames });
+    // The question the screen asks before anything happens.
+    expect(dismissConfirmation(line!)).toContain('Транзакція не створиться');
+
+    dismissPendingDraft(draft, ports());
+
+    expect(transactions.listAll()).toEqual([]);
+    expect(groupsOf()).toEqual([]);
+    // And it never returns: the same notification drafts nothing again.
+    expect(repo.pendingDrafts()).toEqual([]);
   });
 
   it('Scenario: The newest чернетка stands first', () => {

@@ -1,7 +1,7 @@
 import type { Account } from '../domain/account';
 import { money, type CurrencyCode, type Money } from '../domain/money';
 import type { MerchantIndex } from '../domain/merchants';
-import { resolveCategory, type Rule } from '../domain/rules';
+import { matchSource, resolveCategory, type Rule } from '../domain/rules';
 import {
   expenseByDefault,
   isoDate,
@@ -274,7 +274,9 @@ export function confirmDraft(
       date,
       accountId: draft.accountId,
       amount: draft.proposal.amount,
-      sourceId: UNSOURCED_SOURCE_ID,
+      // The owner's правила-джерела at this moment, on the text with no MCC; never the шаблон, and
+      // never a категорія правило (bank-notifications, "Confirmation creates the транзакція…").
+      sourceId: matchSource(ctx.rules, ctx.merchants, { description: draft.text }) ?? UNSOURCED_SOURCE_ID,
       ...(draft.text ? { description: draft.text } : {}),
     };
     return { kind: 'confirmed', draftId: draft.id, transaction: income };

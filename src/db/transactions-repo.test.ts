@@ -29,7 +29,8 @@ import { observationsOf } from '../observations/observations';
 import { accountsRepo } from './accounts-repo';
 import { duplicateAnswersRepo } from './duplicate-answers-repo';
 import { merchantsRepo } from './merchants-repo';
-import { countingDb, openFileDb, openTestDb, seedReferences, type TestStorage } from './test-db';
+import { rulesRepo } from './rules-repo';
+import { countingDb, openFileDb, openTestDb, seedReferences, seedReservedSources, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
 
 /**
@@ -2210,5 +2211,38 @@ describe('transactionsRepo — deleting one of a можливий дубль', (
     repo.remove('c');
     expect(answers.list()).toEqual([]);
     expect(repo.get('a')).toEqual(coffee('a', '2026-10-03', 'Aroma Kava'));
+  });
+});
+
+describe('the save layer — a дохід recorded by hand', () => {
+  it('Scenario: A дохід recorded by hand is not touched', () => {
+    const storage = openTestDb();
+    try {
+      seedReferences(storage.db, { sources: ['salary', 'freelance'] });
+      seedReservedSources(storage.db);
+      accountsRepo(storage.db).save(account({ id: 'platinum', name: 'platinum', kind: 'spending', currency: 'UAH' }));
+      rulesRepo(storage.db).save({
+        id: 'r-salary',
+        merchant: 'зарплата',
+        target: { kind: 'source', sourceId: 'salary' },
+        createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      });
+      const transactions = transactionsRepo(storage.db);
+      transactions.save(
+        {
+          type: 'income',
+          id: 'i1',
+          date: '2026-09-13',
+          accountId: 'platinum',
+          amount: money(3000000, 'UAH'),
+          sourceId: 'freelance',
+          description: 'зарплата за проєкт',
+        },
+        new Date('2026-09-13T08:00:00.000Z'),
+      );
+      expect(transactions.get('i1')).toMatchObject({ sourceId: 'freelance' });
+    } finally {
+      storage.close();
+    }
   });
 });

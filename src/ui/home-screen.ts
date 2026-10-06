@@ -6,8 +6,9 @@ import { needsOwner, type OwnerSituation, type SyncAttempt } from '../monobank/a
 import type { MonobankRate } from '../monobank/currency';
 import { accountTotals, approximateTotals, totalsLine, wholeMoney } from './account-totals';
 import { byCurrency } from './amount-input';
+import { queueRow, type AnswerQueue } from './answer-queue';
 import { calendarLabel, dateOfEpochMs, freshnessLabel } from './dates';
-import { plural, transactionCount } from './labels';
+import { plural } from './labels';
 import { syncedCountLine } from './monobank-screen';
 import { monthInLabel } from './months';
 
@@ -57,24 +58,18 @@ export interface HomeHeld {
 }
 
 /**
- * The compact operational rows below the feed — at most two, both collapsed by default
- * (main-screen, "Uncategorised records are a compact feed banner", "Operational alerts remain
- * compact and actionable"). Neither an empty heading nor reserved space stands for one that is
- * absent: a `null`/zero field renders nothing at all, not a placeholder.
+ * The compact rows of the fixed service rail — at most two (main-screen, "One rail row names what
+ * waits for an answer and opens the queue", "Operational alerts remain compact and actionable").
+ * Neither an empty heading nor reserved space stands for one that is absent: a `null` field renders
+ * nothing at all, not a placeholder.
  */
 export interface HomeAlerts {
   /**
-   * «7 транзакцій без категорії · Переглянути», counted over everything stored, not only the
-   * latest five. `null` at zero — no banner and no reserved space.
+   * «Що потребує відповіді: 12» with its kinds in the queue's order — «2 чернетки · 1 дубль · 8 без
+   * категорії · 1 без джерела» — counted by `queueRow` over the same queue the screen opens, so the
+   * two never disagree. `null` when nothing waits; the bank is never counted in it.
    */
-  readonly uncategorisedBanner: string | null;
-  /**
-   * How many pending чернетки — the collapsed row names the count and expands in place to the
-   * existing confirm/dismiss surface (`draftLines`, unchanged). Zero means no row at all.
-   */
-  readonly draftCount: number;
-  /** «50 чернеток» — the collapsed row's own text; `''` when `draftCount` is zero. */
-  readonly draftLabel: string;
+  readonly queueRow: { readonly total: number; readonly label: string; readonly kinds: string } | null;
   /**
    * The actionable monobank row, when monobank needs the owner: what happened, and that it opens
    * the monobank screen. `null` the rest of the time, which is nearly always — a failed run over
@@ -180,6 +175,49 @@ function monthEmptyMessage(currencyCount: number, hasTransactions: boolean): str
   return hasTransactions ? 'Цього місяця лише перекази.' : 'Цього місяця ще немає транзакцій.';
 }
 
+/** The monobank connection as Головний and the queue see it — `syncCoverage`'s answer and the run. */
+export interface RailMonobank {
+  readonly configured: boolean;
+  readonly linked: number;
+  /** How many linked рахунки a sync has ever completed for. */
+  readonly synced: number;
+  /** The oldest of those moments — present only when every linked рахунок has one. */
+  readonly oldestCompletedAtMs?: number;
+  /**
+   * The oldest of those moments among the рахунки that have one — `syncCoverage`'s
+   * `oldestSyncedMs`, present whenever any has synced. Read only by the no-token row.
+   */
+  readonly oldestSyncedAtMs?: number;
+  readonly syncing: boolean;
+  readonly attempt?: SyncAttempt;
+}
+
+/**
+ * The rail's monobank row, or `null`: a linked bank without a token (`bankUnheardRow`), or monobank
+ * needing the owner (`needsOwner`). One function, called by `homeViewModel` and by the queue «Що
+ * потребує відповіді» alike, so the queue's bank entry says the same thing in the same words and
+ * leaves exactly when this row leaves Головний (answer-queue design D1).
+ */
+export function monobankRailRow(bank: RailMonobank | undefined, now: Date): string | null {
+  const connected = bank !== undefined && bank.configured && bank.linked > 0;
+  // Linked and no token: not a failed run but no run at all, so `needsOwner` is not asked (and the
+  // background task does not notify about it).
+  if (bank !== undefined && !bank.configured && bank.linked > 0) {
+    return bankUnheardRow(bank.linked, bank.oldestSyncedAtMs, now);
+  }
+  if (!connected) return null;
+  const situation = needsOwner({
+    attempt: bank.attempt,
+    // The whole-bank moment, not the freshest рахунок's: a bank the app has never wholly heard
+    // from is not fresh data whatever its best corner says, so a failing run over it is a failure
+    // over stale data and the row appears. Deciding this from the newest moment is what let one
+    // рахунок of nine silence the row entirely.
+    ...(bank.oldestCompletedAtMs === undefined ? {} : { lastCompletedAtMs: bank.oldestCompletedAtMs }),
+    nowMs: now.getTime(),
+  });
+  return situation === undefined ? null : ATTENTION_WORDS[situation];
+}
+
 export function homeViewModel(input: {
   month: Month;
   /** Every account, archived included: classifying a transfer needs its вид (design decision 8). */
@@ -189,10 +227,8 @@ export function homeViewModel(input: {
   /** The розрахунковий баланс per account id — the same map Рахунки builds. */
   balances: ReadonlyMap<string, Money>;
   rates: readonly MonobankRate[];
-  /** How many stored витрати carry «Без категорії», counted over everything stored. */
-  uncategorised: number;
-  /** How many чернетки await an answer. Counted for nothing but whether the section exists. */
-  pendingDrafts: number;
+  /** The queue «Що потребує відповіді», unnarrowed, as `answerQueue` read it for this screen. */
+  queue: AnswerQueue;
   /**
    * The monobank connection as this screen sees it, or absent on a device with none.
    *
@@ -201,21 +237,7 @@ export function homeViewModel(input: {
    * does not take links and should not start to. `syncing` is whether a run is going on right
    * now, whoever started it.
    */
-  monobank?: {
-    readonly configured: boolean;
-    readonly linked: number;
-    /** How many linked рахунки a sync has ever completed for. */
-    readonly synced: number;
-    /** The oldest of those moments — present only when every linked рахунок has one. */
-    readonly oldestCompletedAtMs?: number;
-    /**
-     * The oldest of those moments among the рахунки that have one — `syncCoverage`'s
-     * `oldestSyncedMs`, present whenever any has synced. Read only by the no-token row.
-     */
-    readonly oldestSyncedAtMs?: number;
-    readonly syncing: boolean;
-    readonly attempt?: SyncAttempt;
-  };
+  monobank?: RailMonobank;
   /** The moment the screen is drawn — every clock in this app is passed in. */
   now: Date;
 }): HomeViewModel {
@@ -233,30 +255,10 @@ export function homeViewModel(input: {
   // and no row: nothing about monobank appears on this screen at all.
   const bank = input.monobank;
   const connected = bank !== undefined && bank.configured && bank.linked > 0;
-  const situation = connected
-    ? needsOwner({
-        attempt: bank.attempt,
-        // The whole-bank moment, not the freshest рахунок's: a bank the app has never wholly
-        // heard from is not fresh data whatever its best corner says, so a failing run over it is
-        // a failure over stale data and the row appears. Deciding this from the newest moment is
-        // what let one рахунок of nine silence the row entirely.
-        ...(bank.oldestCompletedAtMs === undefined
-          ? {}
-          : { lastCompletedAtMs: bank.oldestCompletedAtMs }),
-        nowMs: input.now.getTime(),
-      })
-    : undefined;
   const monobank: HomeMonobank | null = connected
     ? { freshness: freshnessOf(bank, input.now) }
     : null;
-  // Linked and no token: not a failed run but no run at all, so `needsOwner` is not asked (and the
-  // background task does not notify about it). The row says so; no freshness line is drawn.
-  const unheard = bank !== undefined && !bank.configured && bank.linked > 0;
-  const failureRow = unheard
-    ? bankUnheardRow(bank.linked, bank.oldestSyncedAtMs, input.now)
-    : situation === undefined
-      ? null
-      : ATTENTION_WORDS[situation];
+  const failureRow = monobankRailRow(bank, input.now);
 
   return {
     month: input.month,
@@ -274,15 +276,7 @@ export function homeViewModel(input: {
           }
         : null,
     alerts: {
-      uncategorisedBanner:
-        input.uncategorised > 0
-          ? `${transactionCount(input.uncategorised)} без категорії · Переглянути`
-          : null,
-      draftCount: input.pendingDrafts,
-      draftLabel:
-        input.pendingDrafts > 0
-          ? `${input.pendingDrafts} ${plural(input.pendingDrafts, 'чернетка', 'чернетки', 'чернеток')}`
-          : '',
+      queueRow: queueRow(input.queue),
       failureRow,
     },
     monobank,

@@ -194,6 +194,17 @@ export function transactionsRepo(db: Storage) {
         .run();
     },
 
+    /**
+     * The розбір over доходи: gives a stored дохід its джерело, touching nothing else, and only a
+     * дохід — the type guard keeps a stale id from writing a джерело onto anything that is not one.
+     */
+    setSource(id: string, sourceId: string): void {
+      db.update(transactions)
+        .set({ sourceId })
+        .where(and(eq(transactions.id, id), eq(transactions.type, 'income')))
+        .run();
+    },
+
     get(id: string): Transaction | undefined {
       const row = db.select().from(transactions).where(eq(transactions.id, id)).get();
       return row ? withAwaiting(db, [row])[0] : undefined;

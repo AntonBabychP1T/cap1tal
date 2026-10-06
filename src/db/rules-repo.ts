@@ -1,10 +1,10 @@
 import { asc, eq } from 'drizzle-orm';
 
 import { checkMerchantCriterion, type Rule } from '../domain/rules';
-import { CORRECTION_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
+import { CORRECTION_CATEGORY_ID, UNCATEGORISED_CATEGORY_ID, UNSOURCED_SOURCE_ID } from '../domain/transaction';
 import { sweepStored, type SweepCounts } from './categorisation';
 import { toRule } from './mappers';
-import { merchants, rules, type NewRuleRow } from './schema';
+import { merchants, rules, sources, type NewRuleRow } from './schema';
 import type { Storage } from './storage';
 import { Refusal } from '../domain/refusal';
 
@@ -57,6 +57,10 @@ export function rulesRepo(db: Storage) {
         if (row.merchantId && !tx.select().from(merchants).where(eq(merchants.id, row.merchantId)).get()) {
           throw new Refusal('Такого продавця немає');
         }
+        // Likewise an unknown джерело: a sentence, not a constraint name.
+        if (row.sourceId && !tx.select().from(sources).where(eq(sources.id, row.sourceId)).get()) {
+          throw new Refusal('Такого джерела немає');
+        }
         tx.insert(rules)
           .values(row)
           .onConflictDoUpdate({
@@ -67,6 +71,7 @@ export function rulesRepo(db: Storage) {
               mcc: row.mcc,
               categoryId: row.categoryId,
               toAccountId: row.toAccountId,
+              sourceId: row.sourceId,
               createdAt: row.createdAt,
             },
           })
@@ -119,9 +124,14 @@ function toRuleRow(rule: Rule): NewRuleRow {
   // naming both — but a hand-crafted value (a restore writes `rules` directly, and could carry a
   // malformed row) still reaches this function, and the CHECK it would otherwise fail on gives a
   // constraint name rather than a sentence the owner reads.
-  const rawTarget = rule.target as unknown as { categoryId?: string; toAccountId?: string };
-  if (rawTarget.categoryId !== undefined && rawTarget.toAccountId !== undefined) {
-    throw new Refusal('Правило не може мати одразу і категорію, і рахунок призначення');
+  const rawTarget = rule.target as unknown as { categoryId?: string; toAccountId?: string; sourceId?: string };
+  const named = [rawTarget.categoryId, rawTarget.toAccountId, rawTarget.sourceId].filter((t) => t !== undefined);
+  if (named.length > 1) {
+    throw new Refusal('Правило має одну мету: категорію, рахунок призначення або джерело');
+  }
+  if (rule.target.kind === 'source' && rule.target.sourceId === UNSOURCED_SOURCE_ID) {
+    // «Без джерела» is the absence of a джерело — the very gap a правило-джерело exists to fill.
+    throw new Refusal('«Без джерела» не може бути метою правила — це відсутність джерела');
   }
   if (rule.target.kind === 'category') {
     if (rule.target.categoryId === CORRECTION_CATEGORY_ID) {
@@ -145,6 +155,7 @@ function toRuleRow(rule: Rule): NewRuleRow {
     mcc,
     categoryId: rule.target.kind === 'category' ? rule.target.categoryId : null,
     toAccountId: rule.target.kind === 'transfer' ? rule.target.toAccountId : null,
+    sourceId: rule.target.kind === 'source' ? rule.target.sourceId : null,
     createdAt: rule.createdAt,
   };
 }

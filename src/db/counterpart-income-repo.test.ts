@@ -17,6 +17,7 @@ import {
   storeTransferPairing,
 } from './counterpart-income-repo';
 import { receiptsRepo } from './receipts-repo';
+import { rulesRepo } from './rules-repo';
 import { openTestDb, seedReferences, type TestStorage } from './test-db';
 import { transactionsRepo, type TransactionsRepo } from './transactions-repo';
 
@@ -104,6 +105,28 @@ describe('counterpart-income-repo', () => {
 
       expect(result).toEqual({ absorbed: false });
       expect(txs.get('i1')).toMatchObject({ sourceId: 'gifts' });
+    });
+
+    it('Scenario: A sourced дохід is not absorbed later', () => {
+      txs.save(
+        { ...unsourcedIncome({ id: 'i1', amount: 616, date: '2026-09-12' }), description: 'Поповнення «Резерв»' },
+        storedAt,
+      );
+      // The правило-джерело gives it «Подарунки» through the розбір, the owner's choice by proxy.
+      rulesRepo(storage.db).save({
+        id: 'r-gift',
+        merchant: 'поповнення',
+        target: { kind: 'source', sourceId: 'gifts' },
+        createdAt: storedAt,
+      });
+      expect(txs.get('i1')).toMatchObject({ sourceId: 'gifts' });
+
+      // The owner then retypes a витрата of the same сума and date into a переказ onto РЕЗЕРВ.
+      const result = storeTransferPairing(storage.db, roundUp, storedAt);
+
+      expect(result).toEqual({ absorbed: false });
+      expect(txs.get('i1')).toMatchObject({ type: 'income', sourceId: 'gifts' });
+      expect(txs.get('tr1')).toMatchObject({ type: 'transfer', awaitingCounterpartIncome: true });
     });
 
     it('Scenario: A дохід carrying a фіскальний чек is never absorbed', () => {

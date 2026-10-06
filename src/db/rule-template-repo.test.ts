@@ -163,7 +163,7 @@ describe('ruleTemplateRepo', () => {
       const counts = repo.choose('groceries', { kind: 'category', categoryId: 'groceries' }, AT);
 
       expect(categoryOf('t1')).toBe('groceries');
-      expect(counts).toEqual({ examined: 1, moved: 1, transferred: 0, absorbed: 0 });
+      expect(counts).toEqual({ examined: 1, moved: 1, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
     });
 
     it('Scenario: Switching a базова категорія off takes nothing back', () => {
@@ -191,7 +191,7 @@ describe('ruleTemplateRepo', () => {
 
       expect(categoryOf('t1')).toBe('groceries');
       expect(categoryOf('t2')).toBe('eating-out');
-      expect(counts).toEqual({ examined: 2, moved: 2, transferred: 0, absorbed: 0 });
+      expect(counts).toEqual({ examined: 2, moved: 2, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
     });
 
     it('Scenario: An MCC-only правило moves nothing', () => {
@@ -216,7 +216,7 @@ describe('ruleTemplateRepo', () => {
 
       const counts = repo.sweepIfTemplateChanged(AT);
 
-      expect(counts).toEqual({ examined: 40, moved: 11, transferred: 0, absorbed: 0 });
+      expect(counts).toEqual({ examined: 40, moved: 11, transferred: 0, absorbed: 0, incomesExamined: 0, incomesSourced: 0 });
       expect(categoryOf('k0')).toBe('groceries');
       expect(categoryOf('k2')).toBe('transport');
       expect(categoryOf('k4')).toBe('food-delivery');

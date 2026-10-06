@@ -10,6 +10,8 @@ import {
   FEES_CATEGORY_ID,
   INTEREST_SOURCE_ID,
   UNCATEGORISED_CATEGORY_ID,
+  UNSOURCED_SOURCE_ID,
+  type Transaction,
 } from '../domain/transaction';
 import { bindTestJournal } from './journal';
 import {
@@ -22,7 +24,10 @@ import {
   ruleDraftFromOffer,
   ruleOffer,
   ruleOfferView,
+  ruleSourceChoices,
+  savedRuleTarget,
   storeRule,
+  sweepSaid,
   type ManagedRow,
 } from './list-management';
 
@@ -628,7 +633,7 @@ describe('storeRule', () => {
       examined: 40,
       moved: 8,
       transferred: 3,
-      absorbed: 1,
+      absorbed: 1, incomesExamined: 0, incomesSourced: 0,
     }));
 
     expect(message).toBe('8 витрат перекатегоризовано. 3 витрати стали переказами.');
@@ -641,7 +646,7 @@ describe('storeRule', () => {
       examined: 40,
       moved: 0,
       transferred: 0,
-      absorbed: 0,
+      absorbed: 0, incomesExamined: 0, incomesSourced: 0,
     }));
 
     expect(message).toBeUndefined();
@@ -650,13 +655,15 @@ describe('storeRule', () => {
   it('Scenario: The pass is in the журнал as counts alone', async () => {
     const tail = bindTestJournal();
 
-    await storeRule(silpo, () => ({ examined: 40, moved: 2, transferred: 1, absorbed: 1 }));
+    // Two of forty «Без категорії» витрати onto a категорія, one into a переказ that absorbs one
+    // дохід, and nine доходи «Без джерела» of which no правило-джерело matches any.
+    await storeRule(silpo, () => ({ examined: 40, moved: 2, transferred: 1, absorbed: 1, incomesExamined: 9, incomesSourced: 0 }));
 
     const steps = tail().filter((entry) => entry.name === 'rules/sweep');
-    // Both ends of the step, and both carry only what a розбір may carry: four numbers, never an
+    // Both ends of the step, and both carry only what a розбір may carry: six numbers, never an
     // опис, a сума or a назва.
     expect(steps).toHaveLength(2);
-    expect(steps[1]?.counts).toEqual({ examined: 40, moved: 2, transferred: 1, absorbed: 1 });
+    expect(steps[1]?.counts).toEqual({ examined: 40, moved: 2, transferred: 1, absorbed: 1, incomesExamined: 9, incomesSourced: 0 });
     for (const entry of steps) {
       expect(Object.keys(entry)).not.toContain('merchant');
       expect(JSON.stringify(entry)).not.toMatch(/сільпо/i);
@@ -668,7 +675,7 @@ describe('storeRule', () => {
       examined: 40,
       moved: 1,
       transferred: 0,
-      absorbed: 0,
+      absorbed: 0, incomesExamined: 0, incomesSourced: 0,
     }));
     for (const entry of tail().filter((e) => e.name === 'rules/sweep')) {
       expect(JSON.stringify(entry)).not.toMatch(/mcc|5411/i);
@@ -716,9 +723,9 @@ describe('who raises and answers the offer to remember a правило', () => 
     }
   });
 
-  it('Scenario: Setting a джерело on a дохід offers nothing', () => {
-    // ruleOffer itself takes no transaction type — the guard is every caller's, and none raises
-    // the offer for anything but a витрата or a повернення.
+  it('the feed\'s категорія picker offers a категорія правило for a витрата or повернення only', () => {
+    // ruleOffer itself takes no transaction type — the guard is every caller's: `categorise` raises
+    // a категорія правило for a витрата or a повернення, and the джерело mark raises its own.
     for (const screen of [home, transactionsScreen]) {
       const categorise = screen.slice(screen.indexOf('const categorise = useCallback'));
       const guard = categorise.slice(0, categorise.indexOf('ruleOffer.raise('));
@@ -744,8 +751,8 @@ describe('who raises and answers the offer to remember a правило', () => 
     // The категорія is already stored (design D5) before the offer is even considered.
     expect(persistedAt).toBeGreaterThanOrEqual(0);
     expect(raisedAt).toBeGreaterThan(persistedAt);
-    // Offered only when the категорія this screen shows actually changed.
-    expect(apply).toContain('built.categoryId !== before');
+    // Offered only when the категорія or джерело this screen shows actually changed.
+    expect(apply).toContain('const target = savedRuleTarget(original, built);');
   });
 
   it('No offer leaves the editing screen exactly where saving always left it', () => {
@@ -760,7 +767,7 @@ describe('who raises and answers the offer to remember a правило', () => 
   it('Scenario: The proposed pattern can be changed before it is stored', () => {
     // The sheet's own edited state is what `onAccept` is called with — never the offer's original
     // pattern — and the hook builds the правило from exactly that argument.
-    expect(sheet).toContain('ruleOfferView(offer, usePattern, pattern, { categoryNames, accountNames })');
+    expect(sheet).toContain('ruleOfferView(offer, usePattern, pattern, { categoryNames, accountNames, sourceNames })');
     expect(sheet).toContain('onPress={() => view && onAccept(view.criterion)}');
     const accept = hook.slice(hook.indexOf('const accept = useCallback'));
     expect(accept).toContain('async (criterion: RuleCriterion) => {');
@@ -850,5 +857,159 @@ describe('the offer to remember a правило says what that правило w
     expect(sheet).toContain('{view?.targetLabel}');
     expect(sheet).not.toContain('Наступного разу');
     expect(sheet).not.toContain('категорію');
+  });
+});
+
+describe('the правило-джерело offer', () => {
+  const noRules: readonly Rule[] = [];
+  const toSource = (sourceId: string) => ({ kind: 'source', sourceId }) as const;
+  const sourceNames = new Map([
+    ['salary', 'Зарплата'],
+    ['gifts', 'Подарунки'],
+    ['interest', 'Відсотки'],
+  ]);
+  const names = { ...offerNames, sourceNames };
+
+  it('Scenario: Setting a джерело on a дохід offers the правило-джерело', () => {
+    const offer = ruleOffer({
+      description: 'Зарахування зарплати',
+      target: toSource('salary'),
+      rules: noRules,
+      merchants: NO_MERCHANTS,
+    });
+    expect(offer).toEqual({ merchant: 'зарахування зарплати', target: toSource('salary') });
+  });
+
+  it('Scenario: A payment from a person proposes that person alone', () => {
+    const offer = ruleOffer({
+      description: "Від: Міхаіл Кас'ян",
+      target: toSource('gifts'),
+      rules: noRules,
+      merchants: NO_MERCHANTS,
+    });
+    expect(offer?.merchant).toBe("від: міхаіл кас'ян");
+  });
+
+  it('Scenario: Setting a джерело on a дохід offers nothing', () => {
+    const existing: Rule = {
+      id: 'r-person',
+      merchant: "від: міхаіл кас'ян",
+      target: toSource('gifts'),
+      createdAt: new Date(0),
+    };
+    expect(
+      ruleOffer({ description: "Від: Міхаіл Кас'ян", target: toSource('gifts'), rules: [existing], merchants: NO_MERCHANTS }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A джерело an existing правило-джерело already gives offers nothing', () => {
+    const interest: Rule = { id: 'r-i', merchant: 'відсотки', target: toSource('interest'), createdAt: new Date(0) };
+    expect(
+      ruleOffer({ description: 'Відсотки за вересень', target: toSource('interest'), rules: [interest], merchants: NO_MERCHANTS }),
+    ).toBeUndefined();
+    // A category правило on the same text is not a правило-джерело: it does not cover the джерело.
+    const categoryRule: Rule = { ...interest, target: { kind: 'category', categoryId: 'groceries' } };
+    expect(
+      ruleOffer({ description: 'Відсотки за вересень', target: toSource('interest'), rules: [categoryRule], merchants: NO_MERCHANTS }),
+    ).toBeDefined();
+  });
+
+  it('Scenario: A дохід put back into «Без джерела» offers nothing', () => {
+    expect(
+      ruleOffer({ description: 'Відсотки за вересень', target: toSource(UNSOURCED_SOURCE_ID), rules: noRules, merchants: NO_MERCHANTS }),
+    ).toBeUndefined();
+  });
+
+  it('Scenario: A правило-джерело is offered as a джерело', () => {
+    const offer = ruleOffer({ description: 'Відсотки 12.50 UAH', target: toSource('interest'), rules: noRules, merchants: NO_MERCHANTS })!;
+    const view = ruleOfferView(offer, false, offer.merchant, names);
+    expect(view.sentence).toBe('Гроші з таким описом отримають джерело «Відсотки».');
+    expect(view.sentence).not.toMatch(/категорі/);
+    expect(view.targetLabel).toBe('джерело Відсотки');
+  });
+
+  it('Scenario: Giving a дохід its джерело offers the правило-джерело', () => {
+    const offer = ruleOffer({ description: 'Відсотки 12.50 UAH', target: toSource('interest'), rules: noRules, merchants: NO_MERCHANTS })!;
+    expect(offer.merchant).toBe('відсотки');
+    const draft = ruleDraftFromOffer(offer, { kind: 'pattern', pattern: offer.merchant });
+    expect(ruleFromDraft(draft, { id: 'r1', createdAt: new Date(0) })).toEqual({
+      id: 'r1',
+      merchant: 'відсотки',
+      target: toSource('interest'),
+      createdAt: new Date(0),
+    });
+  });
+
+  it('Scenario: Declining the правило-джерело keeps the джерело', () => {
+    // Declining is the hook's `setOffer(undefined)` and nothing else (see "A declined offer stores
+    // nothing"); the джерело was stored before the offer was raised, on both screens.
+    const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+    for (const screen of [read('../app/(tabs)/index.tsx'), read('../app/transactions.tsx')]) {
+      const give = screen.slice(screen.indexOf('const giveSource = useCallback('));
+      expect(give.indexOf('ruleOffer.raise(')).toBeGreaterThan(give.indexOf('transactionsRepo.save(assignSource(t, picked)'));
+    }
+  });
+
+  it('editing offers the правило-джерело only when the джерело changed on a дохід carrying an опис', () => {
+    const income = (sourceId: string, description?: string): Transaction => ({
+      type: 'income',
+      id: 'i1',
+      date: '2026-09-12',
+      accountId: 'card',
+      amount: { amount: 1250, currency: 'UAH' },
+      sourceId,
+      ...(description === undefined ? {} : { description }),
+    });
+    expect(savedRuleTarget(income(UNSOURCED_SOURCE_ID, 'Відсотки'), income('interest', 'Відсотки'))).toEqual(toSource('interest'));
+    expect(savedRuleTarget(income('interest', 'Відсотки'), income('interest', 'Відсотки'))).toBeUndefined();
+    expect(savedRuleTarget(income(UNSOURCED_SOURCE_ID), income('interest'))).toBeUndefined();
+  });
+
+  it('Scenario: The owner is told how many доходи were given a джерело', () => {
+    expect(
+      sweepSaid({ examined: 0, moved: 0, transferred: 0, absorbed: 0, incomesExamined: 7, incomesSourced: 5 }),
+    ).toBe('5 доходів отримали джерело.');
+    expect(
+      sweepSaid({ examined: 0, moved: 0, transferred: 0, absorbed: 0, incomesExamined: 1, incomesSourced: 1 }),
+    ).toBe('1 дохід отримав джерело.');
+  });
+});
+
+describe('the «Правила» section and a правило-джерело', () => {
+  it('Scenario: A правило-джерело appears in the list', () => {
+    const rule: Rule = {
+      id: 'r1',
+      merchant: 'зарахування зарплати',
+      target: { kind: 'source', sourceId: 'salary' },
+      createdAt: new Date(0),
+    };
+    expect(ruleLine(rule, new Map(), new Map(), new Map(), new Map([['salary', 'Зарплата']]))).toEqual({
+      id: 'r1',
+      criteria: 'зарахування зарплати',
+      category: 'джерело Зарплата',
+    });
+  });
+
+  it('Scenario: The джерело picker offers no «Без джерела»', () => {
+    const all = [
+      source(UNSOURCED_SOURCE_ID, 'Без джерела'),
+      source('salary', 'Зарплата'),
+      source('old', 'Старе', true),
+      source(INTEREST_SOURCE_ID, 'Відсотки'),
+    ];
+    expect(ruleSourceChoices(all, undefined).map((s) => s.id)).toEqual([INTEREST_SOURCE_ID, 'salary']);
+    // Even an edited правило that somehow names «Без джерела» is not offered it back.
+    expect(ruleSourceChoices(all, UNSOURCED_SOURCE_ID).map((s) => s.id)).not.toContain(UNSOURCED_SOURCE_ID);
+  });
+
+  it('Scenario: Switching from a категорія to a джерело drops the категорія', () => {
+    const rule = ruleFromDraft(
+      { merchant: 'відсотки', criterion: 'pattern', mcc: '', target: 'source', categoryId: 'groceries', sourceId: INTEREST_SOURCE_ID },
+      { id: 'r1', createdAt: new Date(0) },
+    );
+    expect(rule.target).toEqual({ kind: 'source', sourceId: INTEREST_SOURCE_ID });
+    expect(() =>
+      ruleFromDraft({ merchant: 'відсотки', mcc: '', target: 'source' }, { id: 'r1', createdAt: new Date(0) }),
+    ).toThrow('Правило потребує джерела');
   });
 });

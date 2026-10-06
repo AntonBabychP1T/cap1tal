@@ -98,7 +98,8 @@ export const merchantSpellings = sqliteTable(
 
 /**
  * A правило автокатегоризації: "merchant and/or MCC → one category, or → a destination рахунок
- * (a правило-переказ)". Exactly one target, never both and never neither — the CHECK below, the
+ * (a правило-переказ), or → a джерело for money arriving (a правило-джерело)". Exactly one target,
+ * never two and never none — the CHECK below, the
  * same shape `rules_criterion_present` already keeps for the criteria (design D1).
  *
  * `createdAt` is domain data here, not storage metadata: the matching order uses it as the
@@ -122,10 +123,16 @@ export const rules = sqliteTable(
     merchantId: text('merchant_id').references(() => merchants.id, { onDelete: 'restrict' }),
     /** ISO-18245 merchant category code; NULL when the rule matches on the merchant alone. */
     mcc: integer('mcc'),
-    /** NULL exactly when the target is a рахунок instead — a правило-переказ. */
+    /** The target category; NULL when the target is a рахунок or a джерело instead. */
     categoryId: text('category_id').references(() => categories.id, { onDelete: 'restrict' }),
-    /** NULL exactly when the target is a category — a правило-переказ's destination otherwise. */
+    /** A правило-переказ's destination; NULL for every other target. */
     toAccountId: text('to_account_id').references(() => accounts.id, { onDelete: 'restrict' }),
+    /**
+     * A правило-джерело's джерело; NULL for every other target. RESTRICT only guards storage: a
+     * джерело is archived, never deleted, and an archived one keeps its правила working
+     * (answer-queue design D6).
+     */
+    sourceId: text('source_id').references(() => sources.id, { onDelete: 'restrict' }),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => [
@@ -137,7 +144,7 @@ export const rules = sqliteTable(
     check('rules_merchant_not_blank', sql`${t.merchant} IS NULL OR length(trim(${t.merchant})) > 0`),
     check(
       'rules_target_exactly_one',
-      sql`(${t.categoryId} IS NULL) <> (${t.toAccountId} IS NULL)`,
+      sql`(${t.categoryId} IS NOT NULL) + (${t.toAccountId} IS NOT NULL) + (${t.sourceId} IS NOT NULL) = 1`,
     ),
   ],
 );

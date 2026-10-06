@@ -413,6 +413,7 @@ describe('migrations — the editable lists', () => {
       mcc: 5411,
       categoryId: 'groceries',
       toAccountId: null,
+      sourceId: null,
       createdAt: new Date(1_700_000_000_000),
     });
     for (const original of everyType) {
@@ -2136,12 +2137,12 @@ describe('migrations — the шаблон mapping', () => {
 
       staged.migrateToLatest();
 
-      // `mcc` and `merchant_id` arrive with a later migration than this one, empty.
+      // `mcc`, `merchant_id` and `source_id` arrive with later migrations than this one, empty.
       expect({
         accounts: db.select().from(accounts).all(),
         transactions: rawRows(db, 'transactions', ['mcc']),
         categories: db.select().from(categories).all(),
-        rules: rawRows(db, 'rules', ['merchant_id']),
+        rules: rawRows(db, 'rules', ['merchant_id', 'source_id']),
       }).toEqual(before);
       // No базова категорія has a stored choice: every one follows its типова категорія.
       expect(db.select().from(ruleTemplateChoices).all()).toEqual([]);
@@ -2392,7 +2393,8 @@ describe('migrations — продавці and the MCC', () => {
 
       // Every правило keeps its pattern, MCC, target and moment, and names no продавець.
       const rulesAfter = db.all<Record<string, unknown>>(sql`SELECT * FROM rules ORDER BY id`);
-      expect(rulesAfter.map(({ merchant_id: merchantId, ...rest }) => rest)).toEqual(rulesBefore);
+      // `source_id` arrives with a later migration, empty.
+      expect(rulesAfter.map(({ merchant_id: merchantId, source_id: sourceId, ...rest }) => rest)).toEqual(rulesBefore);
       expect(rulesAfter.map((r) => r.merchant_id)).toEqual([null, null, null, null]);
       // Every транзакція is what it was, and none carries an MCC.
       const transactionsAfter = db.all<Record<string, unknown>>(sql`SELECT * FROM transactions ORDER BY id`);
@@ -2442,6 +2444,58 @@ describe('migrations — продавці and the MCC', () => {
       db.delete(rules).run();
       db.delete(merchants).where(eq(merchants.id, 'atb')).run();
       expect(db.select().from(merchantSpellings).all()).toEqual([]);
+    } finally {
+      storage.close();
+    }
+  });
+});
+
+describe('migrations — правило-джерело', () => {
+  it('Scenario: Stored category rules and правила-перекази survive the migration unchanged', () => {
+    // Thirteen migrations precede this one; the rows below are written as a device on that shape did.
+    const staged = openTestDbMigratedTo(13);
+    try {
+      const { db } = staged;
+      seedReferences(db, VOCABULARY);
+      insertLegacyAccount(db, card);
+      insertLegacyAccount(db, jar);
+      db.run(sql`INSERT INTO rules (id, merchant, mcc, category_id, to_account_id, created_at) VALUES
+        ('r-pattern', 'сільпо', NULL, 'food', NULL, 1001),
+        ('r-mcc', NULL, 5411, 'food', NULL, 1002),
+        ('r-transfer', 'округлення балансу', NULL, NULL, 'jar', 1004)`);
+      const before = db.all(sql`SELECT * FROM rules ORDER BY id`);
+
+      staged.migrateToLatest();
+
+      const after = db.all<Record<string, unknown>>(sql`SELECT * FROM rules ORDER BY id`);
+      expect(after.map(({ source_id: sourceId, ...rest }) => rest)).toEqual(before);
+      expect(after.map((r) => r.source_id)).toEqual([null, null, null]);
+    } finally {
+      staged.close();
+    }
+  });
+
+  it('A fresh database stores a правило-джерело and refuses a row naming two targets or none', () => {
+    const storage = openTestDb();
+    try {
+      const { db } = storage;
+      seedReferences(db, VOCABULARY);
+      insertLegacyAccount(db, jar);
+      const at = new Date(1);
+      db.insert(rules).values({ id: 'r1', merchant: 'зарплата', sourceId: 'salary', createdAt: at }).run();
+      expect(db.select().from(rules).where(eq(rules.id, 'r1')).get()).toMatchObject({
+        sourceId: 'salary',
+        categoryId: null,
+        toAccountId: null,
+      });
+      expect(() =>
+        db.insert(rules).values({ id: 'r2', merchant: 'x', categoryId: 'food', sourceId: 'salary', createdAt: at }).run(),
+      ).toThrow();
+      expect(() =>
+        db.insert(rules).values({ id: 'r3', merchant: 'x', toAccountId: 'jar', sourceId: 'salary', createdAt: at }).run(),
+      ).toThrow();
+      expect(() => db.insert(rules).values({ id: 'r4', merchant: 'x', createdAt: at }).run()).toThrow();
+      expect(() => db.insert(rules).values({ id: 'r5', merchant: 'x', sourceId: 'nobody', createdAt: at }).run()).toThrow();
     } finally {
       storage.close();
     }

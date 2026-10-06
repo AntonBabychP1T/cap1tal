@@ -255,6 +255,12 @@ describe('the app reconciles and routes when it opens', () => {
     // the migrations, because every screen a tap can land on reads storage.
     expect(layout).toContain('const cold = tappedOnColdStart();');
     expect(layout).toContain('router.push(cold)');
+    // Головний, not the queue: there the «+» records, and the rail row «Що потребує відповіді» names
+    // any pending чернетки — counted by `queueRow`, as home-screen.test.ts's "Many drafts are one
+    // number on Головний" proves — one tap from where they are answered.
+    const main = readFileSync(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
+    expect(main).toContain('drafts: stored.drafts,');
+    expect(main).toContain("router.push('/answers')");
   });
 
   it('Scenario: A tap while the app is running opens Головний', () => {

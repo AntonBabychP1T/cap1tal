@@ -377,6 +377,51 @@ describe('confirmDraft', () => {
     });
   });
 
+  const salaryRule: Rule = {
+    id: 'r-salary',
+    merchant: 'зарплата',
+    target: { kind: 'source', sourceId: 'salary' },
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+  };
+
+  it('Scenario: A правило-джерело gives a confirmed дохід its джерело', () => {
+    const draft = drafted(
+      processCapture(capture({ title: 'Зарахування', text: '30000.00 грн. Зарплата ТОВ Ромашка' }), context()),
+    );
+    expect(confirmed(draft, [groceries, salaryRule])).toMatchObject({
+      type: 'income',
+      amount: money(3_000_000, 'UAH'),
+      sourceId: 'salary',
+    });
+  });
+
+  it('Scenario: A confirmed дохід takes the джерело of its правило-джерело', () => {
+    const draft = drafted(
+      processCapture(capture({ title: 'Зарахування', text: '30000.00 грн. Зарплата ТОВ Ромашка' }), context()),
+    );
+    // The правило-джерело was written after the чернетка was drafted: confirmation reads it now.
+    expect(confirmed(draft, [salaryRule])).toMatchObject({ type: 'income', sourceId: 'salary' });
+  });
+
+  it('Scenario: A правило naming a категорія gives a дохід-чернетка nothing', () => {
+    const draft = drafted(processCapture(capture({ title: 'Зарахування', text: '500.00 грн. Зарплата' }), context()));
+    const onlyCategory: Rule = { ...salaryRule, target: { kind: 'category', categoryId: 'groceries' } };
+    const income = confirmed(draft, [onlyCategory]);
+    expect(income).toMatchObject({ type: 'income', sourceId: UNSOURCED_SOURCE_ID });
+    expect(income).not.toHaveProperty('categoryId');
+  });
+
+  it('Scenario: «Відсотки» only by the owner\'s правило', () => {
+    const draft = drafted(
+      processCapture(capture({ title: 'Зарахування', text: '12.34 грн. Нараховані відсотки' }), context()),
+    );
+    expect(confirmed(draft, [])).toMatchObject({
+      type: 'income',
+      amount: money(1234, 'UAH'),
+      sourceId: UNSOURCED_SOURCE_ID,
+    });
+  });
+
   it('Scenario: A raw чернетка needs the owner’s сума', () => {
     const draft = drafted(
       processCapture(capture({ title: 'Банк', text: 'Операція виконана' }), context()),

@@ -11,6 +11,7 @@ import {
   categories as categoriesRepo,
   merchants as merchantsRepo,
   rules as rulesRepo,
+  sources as sourcesRepo,
 } from '@/db/repos';
 import { namesById } from '@/domain/category';
 import type { Rule } from '@/domain/rules';
@@ -27,6 +28,7 @@ import {
   mccText,
   ruleFromDraft,
   ruleLine,
+  ruleSourceChoices,
   storeRule,
   type RuleDraft,
 } from '@/ui/list-management';
@@ -53,6 +55,7 @@ const CRITERION_CHOICES = [
 const TARGET_CHOICES = [
   { value: 'category' as const, label: 'Категорія' },
   { value: 'transfer' as const, label: 'Переказ' },
+  { value: 'source' as const, label: 'Джерело' },
 ];
 
 export default function RulesScreen() {
@@ -72,6 +75,7 @@ export default function RulesScreen() {
         categories: categoriesRepo.list(),
         accounts: accountsRepo.list(),
         merchants: merchantsRepo.list(),
+        sources: sourcesRepo.list(),
       }),
       [],
     ),
@@ -96,6 +100,11 @@ export default function RulesScreen() {
   const names = useMemo(() => namesById(stored.categories), [stored.categories]);
   const accountNames = useMemo(() => namesById(stored.accounts), [stored.accounts]);
   const merchantNames = useMemo(() => namesById(stored.merchants), [stored.merchants]);
+  const sourceNames = useMemo(() => namesById(stored.sources), [stored.sources]);
+  const sourceChoices = useMemo(
+    () => ruleSourceChoices(stored.sources, draft?.sourceId).map((s) => ({ value: s.id, label: s.name })),
+    [draft?.sourceId, stored.sources],
+  );
   /** Whether the продавець picker has its full list open. */
   const [merchantListOpen, setMerchantListOpen] = useState(false);
   const choices = useMemo(
@@ -221,6 +230,13 @@ export default function RulesScreen() {
           selected={editing.toAccountId}
           onSelect={(toAccountId: string) => setDraft({ ...editing, toAccountId })}
         />
+      ) : editing.target === 'source' ? (
+        <Choices
+          label="Джерело (для грошей, що надходять)"
+          choices={sourceChoices}
+          selected={editing.sourceId}
+          onSelect={(sourceId: string) => setDraft({ ...editing, sourceId })}
+        />
       ) : (
         <Choices
           label="Категорія"
@@ -275,7 +291,7 @@ export default function RulesScreen() {
       ) : (
         <ListCard>
           {stored.rules.map((rule, index) => {
-            const line = ruleLine(rule, names, accountNames, merchantNames);
+            const line = ruleLine(rule, names, accountNames, merchantNames, sourceNames);
             return (
               // A deleted правило fades out and the rows under it close the gap.
               <ListItem key={line.id} reflow>
@@ -298,7 +314,9 @@ export default function RulesScreen() {
                           target: rule.target.kind,
                           ...(rule.target.kind === 'category'
                             ? { categoryId: rule.target.categoryId }
-                            : { toAccountId: rule.target.toAccountId }),
+                            : rule.target.kind === 'source'
+                              ? { sourceId: rule.target.sourceId }
+                              : { toAccountId: rule.target.toAccountId }),
                         });
                       }}
                       style={styles.rowTop}>

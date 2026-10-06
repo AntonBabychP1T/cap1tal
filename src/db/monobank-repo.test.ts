@@ -1115,6 +1115,75 @@ describe('monobankRepo — commitStatementAnswer pairs a переказ with its
     expect(repo.importedIds('mono-reserve')).toEqual(new Set(['item-in']));
   });
 
+  it('Scenario: A зустрічний дохід is absorbed before any правило-джерело is asked', () => {
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-card',
+      transactions: [
+        {
+          type: 'transfer',
+          id: 'tr1',
+          date: '2026-09-12',
+          fromAccountId: 'card',
+          toAccountId: 'reserve',
+          left: money(616, 'UAH'),
+          arrived: money(616, 'UAH'),
+          awaitingCounterpartIncome: true,
+        },
+      ],
+      newlySeenIds: ['item-out'],
+      bankBalance: money(0, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt,
+    });
+    // The arriving item is mapped with the правило-джерело "поповнення → Подарунки" in force.
+    const mapped = mapStatement(
+      [
+        {
+          id: 'item-in',
+          timeMs: Date.UTC(2026, 8, 12, 9, 0, 0),
+          date: '2026-09-12',
+          description: 'Поповнення «Резерв»',
+          mcc: 4829,
+          amount: money(616, 'UAH'),
+          hold: false,
+        },
+      ],
+      {
+        accountId: 'reserve',
+        currency: 'UAH',
+        rules: [
+          {
+            id: 'r-gift',
+            merchant: 'поповнення',
+            target: { kind: 'source', sourceId: 'gifts' },
+            createdAt: new Date('2026-01-01T00:00:00Z'),
+          },
+        ],
+        merchants: NO_MERCHANTS,
+        seenIds: new Set(),
+        newId: () => 'in1',
+      },
+    );
+    expect(mapped.transactions[0]).toMatchObject({ type: 'income', sourceId: 'gifts' });
+
+    repo.commitStatementAnswer({
+      monobankAccountId: 'mono-reserve',
+      transactions: mapped.transactions,
+      newlySeenIds: ['item-in'],
+      bankBalance: money(616, 'UAH'),
+      obtainedAt,
+      cursorMs: boundaryMs + 1000,
+      storedAt: new Date(storedAt.getTime() + 1000),
+    });
+
+    // No транзакція results, the переказ awaits nothing, and no дохід «Подарунки» exists.
+    expect(txs.get('in1')).toBeUndefined();
+    const settled = txs.get('tr1');
+    expect(settled && 'awaitingCounterpartIncome' in settled).toBe(false);
+    expect(txs.listAll().filter((t) => t.type === 'income')).toEqual([]);
+  });
+
   it('Scenario: Рахунок РЕЗЕРВ is synced before the card', () => {
     repo.commitStatementAnswer({
       monobankAccountId: 'mono-reserve',

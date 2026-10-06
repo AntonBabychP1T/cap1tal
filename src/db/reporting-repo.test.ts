@@ -23,7 +23,7 @@ const CONTEXT: Omit<NewBugReport, 'id' | 'createdAt' | 'journal' | 'prompting'> 
   route: '/(tabs)/accounts',
   build: { version: '0.0.0', commit: '3df8103', dirty: true, builtAt: '2026-09-02T14:33:32.747Z' },
   device: { platform: 'android', systemVersion: '16', model: 'Pixel 7' },
-  migrationsApplied: 13,
+  migrationsApplied: 14,
   counts: { accounts: 2, transactions: 7, categories: 5, rules: 0, drafts: 1 },
   origin: 'section',
   captureFailure: null,
@@ -334,7 +334,7 @@ describe('what the репорт says about the phone', () => {
 
   it('says how many migrations this database has had applied', () => {
     // Every committed migration, since `openTestDb` runs the real migrator over the real folder.
-    expect(repo.migrationsApplied()).toBe(13);
+    expect(repo.migrationsApplied()).toBe(14);
   });
 });
 
