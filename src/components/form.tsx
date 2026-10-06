@@ -46,8 +46,14 @@ export function Field({
   label,
   hint,
   reserveHint = false,
+  ref,
   ...rest
 }: TextInputProps & {
+  /**
+   * The input itself, for a screen that focuses it again by hand — the entry form's сума after
+   * «Записати і ще одну». A plain prop: React 19 passes `ref` through to function components.
+   */
+  ref?: React.Ref<TextInput>;
   label: string;
   hint?: string;
   /**
@@ -66,6 +72,7 @@ export function Field({
         {label}
       </ThemedText>
       <TextInput
+        ref={ref}
         placeholderTextColor={theme.textMuted}
         {...rest}
         onFocus={(e) => {

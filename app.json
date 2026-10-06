@@ -63,7 +63,8 @@
           "recordAudioAndroid": false
         }
       ],
-      "./plugins/with-android-accent"
+      "./plugins/with-android-accent",
+      "./plugins/with-android-shortcuts"
     ],
     "experiments": {
       "typedRoutes": true,

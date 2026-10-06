@@ -1,4 +1,4 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useIsFocused, useRouter } from 'expo-router';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -361,18 +361,24 @@ function MainScreen() {
    * the entry form refuses every entry without a рахунок. So the first launch of such a device
    * opens on «Перші кроки» instead. Once anything exists, or once the owner has left the
    * checklist, this never fires again.
+   *
+   * Only while Головний is in sight. A cold start from the launcher shortcut mounts Головний
+   * beneath the entry form; redirecting from under it would replace the form, which has its own
+   * «Спершу створіть рахунок» to say. Back on Головний the redirect fires as before (quick-entry
+   * design D6).
    */
+  const focused = useIsFocused();
   const setupNeeded = firstRun({
     accounts: stored.accounts.length,
     transactions: stored.feed.length,
   });
   useEffect(() => {
-    if (landedOnSetup || !setupNeeded) {
+    if (landedOnSetup || !setupNeeded || !focused) {
       return;
     }
     landedOnSetup = true;
     router.replace('/onboarding');
-  }, [router, setupNeeded]);
+  }, [focused, router, setupNeeded]);
 
   /**
    * The drain runs in the app shell, on opening and on every return to the foreground — neither of

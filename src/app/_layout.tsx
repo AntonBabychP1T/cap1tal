@@ -48,6 +48,7 @@ import { syncMonobankSyncTask } from '@/platform/monobank-sync-task';
 import { ALERT_PORTS } from '@/hooks/use-alerting';
 import { reportCollection } from '@/ui/alerting';
 import { dateOfEpochMs } from '@/ui/dates';
+import { entrySingularId } from '@/ui/entry-form';
 import { journalAppState } from '@/ui/device-journal';
 import { newId } from '@/ui/id';
 import { bindJournal, journal, reportFailure } from '@/ui/journal';
@@ -159,6 +160,14 @@ if (__DEV__) {
     onHandled: (id: number) => platformOptions.onHandled?.(id),
   });
 }
+
+/**
+ * The route under everything opened by a link. A cold start from the launcher shortcut
+ * (`cap1tal://transaction/new`) builds `[(tabs), transaction/new]` rather than the form alone, so
+ * «назад» and «Записати» land on Головний instead of leaving the app (quick-entry design D6). A
+ * normal launch is unchanged: `(tabs)` is the first route anyway.
+ */
+export const unstable_settings = { initialRouteName: '(tabs)' };
 
 /**
  * What replaces a screen that threw while being drawn.
@@ -610,6 +619,10 @@ export default function RootLayout() {
             <Stack.Screen
               name="transaction/new"
               options={{ presentation: 'card', animation: animation('transaction/new') }}
+              // A push naming nothing — the launcher shortcut, the «+» on Головний — brings an
+              // open form forward with what it holds instead of opening a second; a push naming a
+              // рахунок or a тип always opens a fresh one (quick-entry design D6).
+              dangerouslySingular={(_, params) => entrySingularId(params)}
             />
             {/* The фіскальний чек of a транзакція: the scanner, and the позиції of the чек it
                 attached. Pushed over the транзакція's own form, so «Назад» from either lands back

@@ -405,8 +405,11 @@ describe('haptics', () => {
       // The дата question: its Alert block holds no play.
       const question = source.slice(source.indexOf("if (verdict.kind === 'confirm' && !dateConfirmed) {"));
       expect(question.slice(0, question.indexOf('return;')), path).not.toContain('haptics.play');
-      // The refusal plays once, in the catch, which `buildEntry`'s refusal also lands in.
-      const refusal = source.slice(source.indexOf('} catch (error) {'));
+      // The refusal plays once, in the catch, which `buildEntry`'s refusal also lands in — on the
+      // entry form through `refuse`, which every catch there calls (quick-entry: the переказ
+      // question's store can throw outside the attempt).
+      const site = source.includes('const refuse = ') ? 'const refuse = ' : '} catch (error) {';
+      const refusal = source.slice(source.indexOf(site));
       expect(refusal.slice(0, refusal.indexOf('failureAlert'))).toContain("haptics.play('refused');");
       expect(source.match(/haptics\.play\('refused'\)/g)).toHaveLength(1);
       // The переказ question hands the store over; the store itself is what plays.

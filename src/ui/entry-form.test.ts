@@ -23,12 +23,15 @@ import {
   entryFromRoute,
   buildEntry,
   defaultAccountId,
+  draftAfterStore,
   entryDateCheck,
+  entrySingularId,
   entryHoldsEdits,
   normaliseDescription,
   proposeForTransfer,
   proposedCategoryId,
   recordedConfirmation,
+  tapAfterStore,
   type EntryDraft,
 } from './entry-form';
 import { initialForm } from './retype';
@@ -887,26 +890,208 @@ describe('the entry screen after a store', () => {
   const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
   const entryScreen = source('../app/transaction/new.tsx');
 
-  it('Recording returns to where the owner came from, after everything is stored', () => {
+  const storeBody = () => {
     const store = entryScreen.slice(entryScreen.indexOf('const store = useCallback'));
-    const body = store.slice(0, store.indexOf('const record = useCallback'));
+    return store.slice(0, store.indexOf('const record = useCallback'));
+  };
+  const recordBody = () => {
+    const record = entryScreen.slice(entryScreen.indexOf('const record = useCallback'));
+    return record.slice(0, record.indexOf('const insets = useSafeAreaInsets()'));
+  };
 
+  it('Scenario: «Записати» returns with what was recorded', () => {
+    const body = storeBody();
     const saved = body.indexOf('transactionsRepo.save(t, now)');
     const remembered = body.indexOf('entryDefaultsRepo.remember(fromId)');
-    const back = body.indexOf('router.back()');
+    const back = body.indexOf("if (then === 'leave') {\n        router.back();");
     expect(saved).toBeGreaterThan(-1);
     expect(remembered).toBeGreaterThan(saved);
     expect(back).toBeGreaterThan(remembered);
-    // Nothing is left behind to clear: no confirmation, no reset form.
-    expect(entryScreen).not.toContain('setConfirmation');
-    expect(entryScreen).not.toContain('const clear = useCallback');
+    // `router.back()` is the 'leave' branch only — the stay-open store never leaves.
+    expect(body.match(/router\.back\(\)/g)).toHaveLength(1);
+    expect(entryScreen).toContain("onPress={() => record('leave')}");
+  });
+
+  it('Scenario: The owner sees what was recorded', () => {
+    const body = storeBody();
+    const stay = body.slice(body.indexOf("if (then === 'leave')"));
+    expect(stay).toContain('const next = draftAfterStore(fields)');
+    expect(stay).toContain('setConfirmation({ text: recordedConfirmation(written, names)');
+    expect(stay).toContain('setOpened(next)');
+    expect(stay).toContain('setPickedByOwner(false)');
+    expect(stay).toContain('amountRef.current?.focus()');
+    expect(stay).toContain('reload()');
+    expect(entryScreen).toContain("onPress={() => record('stay')}");
+  });
+
+  it('Scenario: A refusal is not a confirmation — the catch sets none', () => {
+    const record = recordBody();
+    const refuse = record.slice(record.indexOf('const refuse = '), record.indexOf('const attempt = '));
+    expect(refuse).toContain('release();');
+    expect(refuse).toContain('Alert.alert(');
+    expect(refuse).not.toContain('setConfirmation');
+    expect(refuse).not.toContain('router.');
+    // Every catch — the attempt's and the переказ question's — refuses through it.
+    expect(record.match(/\} catch \(error\) \{\s*refuse\(error\);/g)).toHaveLength(2);
+  });
+
+  it('Scenario: An accepted комісія is part of the confirmation — both proposals store as the tapped action', () => {
+    expect(recordBody()).toMatch(/\(\.\.\.written\) => \{\s*try \{\s*store\(then, \.\.\.written\);/);
+    expect(recordBody()).toContain('store(then, built);');
+  });
+
+  it('Scenario: A repeated tap stores nothing', () => {
+    const record = recordBody();
+    const checked = record.indexOf('if (storing.current) {');
+    const tapped = record.indexOf('tapAfterStore(fields, confirmation,');
+    const set = record.indexOf('storing.current = true;');
+    const built = record.indexOf('buildEntry(');
+    const asked = record.indexOf('Alert.alert(');
+    expect(checked).toBeGreaterThan(-1);
+    expect(tapped).toBeGreaterThan(checked);
+    expect(set).toBeGreaterThan(tapped);
+    expect(built).toBeGreaterThan(set);
+    expect(asked).toBeGreaterThan(set);
+    // `store` never sets the guard; the refusal and «Скасувати» release it; a stay-open store
+    // releases it only once the cleared form is committed.
+    expect(storeBody()).not.toContain('storing.current');
+    expect(record).toContain("{ text: 'Скасувати', style: 'cancel', onPress: release }");
+    expect(record.slice(record.indexOf('const refuse = '))).toContain('release();');
+    expect(entryScreen).toMatch(
+      /useEffect\(\(\) => \{\s*storing\.current = false;\s*\}, \[confirmation\]\);/,
+    );
+  });
+
+  it('Scenario: The «+» opens on the сума with digits ready', () => {
+    const amount = entryScreen.slice(
+      entryScreen.indexOf("label={entry === 'transfer' ? 'Скільки пішло' : 'Сума'}"),
+    );
+    const props = amount.slice(0, amount.indexOf('/>'));
+    expect(props).toContain('autoFocus');
+    expect(props).toContain('keyboardType="decimal-pad"');
+    expect(entryScreen).toContain('ref={amountRef}');
+  });
+
+  it('Scenario: Typing first and choosing after records the typed сума', () => {
+    // The сума typed before the категорія is picked is the сума stored with it.
+    const stored = buildEntry(
+      { type: 'expense', accountId: 'card', amount: '125,50', date: TODAY, categoryId: 'coffee' },
+      { id: 'e1', accounts },
+    );
+    expect(stored.type === 'expense' && stored.amount).toEqual(money(12550, 'UAH'));
+    expect(stored.type === 'expense' && stored.categoryId).toBe('coffee');
+    // And picking a категорія touches no сума on the screen.
+    const chooseCategory = entryScreen.slice(
+      entryScreen.indexOf('const chooseCategory = useCallback'),
+      entryScreen.indexOf('/**', entryScreen.indexOf('const chooseCategory = useCallback')),
+    );
+    expect(chooseCategory).not.toContain('setAmount');
+  });
+
+  it('Scenario: Switching the тип keeps the typed сума', () => {
+    const chooseEntry = entryScreen.slice(
+      entryScreen.indexOf('const chooseEntry = useCallback'),
+      entryScreen.indexOf('const displayedCategoryId'),
+    );
+    expect(chooseEntry).not.toContain('setAmount');
+  });
+
+  it('Scenario: A рахунок in another currency still clears the сума', () => {
+    const chooseFrom = entryScreen.slice(
+      entryScreen.indexOf('const chooseFrom = useCallback'),
+      entryScreen.indexOf('const chooseTo = useCallback'),
+    );
+    expect(chooseFrom).toMatch(/next\.currency !== from\.currency\) \{\s*setAmount\(''\)/);
+  });
+
+  /** Where each field's label stands in the form, by its first appearance in the JSX. */
+  const at = (needle: string) => {
+    const form = entryScreen.slice(entryScreen.indexOf('<Card style={styles.form}>'));
+    const index = form.indexOf(needle);
+    expect(index, needle).toBeGreaterThan(-1);
+    return index;
+  };
+  const SUMA = "label={entry === 'transfer' ? 'Скільки пішло' : 'Сума'}";
+  const TYPE = 'label="Тип"';
+  const ACCOUNT = "label={entry === 'transfer' ? 'Звідки' : 'Рахунок'}";
+  const TO = 'label="Куди"';
+  const ARRIVED = 'label="Скільки прийшло"';
+  const OPYS = 'label="Опис"';
+  const CATEGORY = "label={entry === 'refund' ? 'До якої категорії' : 'Категорія'}";
+  const SOURCE = 'label="Джерело"';
+  const DATE = '<DateField';
+
+  it('Scenario: The сума is the first field and the дата the last', () => {
+    const order = [SUMA, TYPE, ACCOUNT, OPYS, CATEGORY, DATE].map(at);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(at(SOURCE)).toBeGreaterThan(at(OPYS));
+    expect(at(SOURCE)).toBeLessThan(at(DATE));
+  });
+
+  it('Scenario: A переказ keeps the сума first', () => {
+    const order = [SUMA, TYPE, ACCOUNT, TO, ARRIVED, OPYS, DATE].map(at);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it('Scenario: A повернення keeps the сума first', () => {
+    // The same label carries «До якої категорії» for a повернення, right under the опис.
+    const order = [SUMA, TYPE, ACCOUNT, OPYS, CATEGORY, DATE].map(at);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it('Scenario: The proposed категорія stands right under the опис', () => {
+    const between = entryScreen.slice(
+      entryScreen.indexOf(OPYS),
+      entryScreen.indexOf(CATEGORY),
+    );
+    // No other field's label stands between the two — the category picker opens right after.
+    expect(between.slice(OPYS.length)).not.toContain('label=');
+    expect(between).not.toContain('<DateField');
+    expect(between.match(/<Picker/g)).toHaveLength(1);
+  });
+
+  /** The JSX passed as `Screen`'s `footer`. */
+  const footer = () => {
+    const from = entryScreen.indexOf('footer={');
+    return entryScreen.slice(from, entryScreen.indexOf('<ScreenHeader', from));
+  };
+
+  it('Scenario: Both actions stand above the keyboard on opening', () => {
+    expect(footer()).toContain('title="Записати"');
+    expect(footer()).toContain('title="Записати і ще одну"');
+    expect(footer()).toContain('variant="secondary"');
+    // Only there: not in the scrolling column.
+    expect(entryScreen.match(/title="Записати"/g)).toHaveLength(1);
+    expect(entryScreen.match(/title="Записати і ще одну"/g)).toHaveLength(1);
+    // Clear of the navigation bar while the keyboard is down.
+    expect(footer()).toContain('insets.bottom');
+  });
+
+  it('Scenario: No рахунок, no actions', () => {
+    expect(footer()).toContain('offered.length === 0 ? undefined : (');
+  });
+
+  it('Scenario: The confirmation is seen where the button is', () => {
+    const f = footer();
+    const said = f.indexOf('{confirmation.text}');
+    expect(said).toBeGreaterThan(-1);
+    expect(said).toBeLessThan(f.indexOf('title="Записати"'));
+    // Shown only while the form still equals what the store left.
+    expect(entryScreen).toContain(
+      'const confirmed = confirmation && !entryHoldsEdits(fields, confirmation.draft);',
+    );
+    expect(f).toContain('{confirmed ? (');
   });
 
   it('A refusal keeps the owner on the form with what they typed', () => {
     const record = entryScreen.slice(entryScreen.indexOf('const record = useCallback'));
-    const failure = record.slice(record.indexOf('} catch (error) {'), record.indexOf('}, ['));
+    // The catch refuses through `refuse`, which shows the refusal and goes nowhere.
+    const failure = record.slice(record.indexOf('const refuse = '), record.indexOf('const attempt = '));
     expect(failure).toContain('Alert.alert(');
     expect(failure).not.toContain('router.');
+    expect(record.slice(record.indexOf('} catch (error) {'), record.indexOf('}, ['))).not.toContain(
+      'router.',
+    );
   });
 
   it('Scenario: With no рахунок nothing can be recorded yet', () => {
@@ -959,28 +1144,39 @@ describe('recordedConfirmation', () => {
   });
 
   it('Scenario: An accepted комісія is part of the confirmation', () => {
+    // «1000» UAH typed, «970» arrived, the комісія accepted.
     const short = transfer({
       id: 't1',
       date: '2026-09-01',
       fromAccountId: 'card',
       toAccountId: 'jar',
       left: money(100000, 'UAH'),
-      arrived: money(99500, 'UAH'),
+      arrived: money(97000, 'UAH'),
     });
     const proposal = proposeForTransfer(short, { accounts, sourceTransactions: [] });
     expect(proposal?.kind).toBe('fee');
     if (proposal?.kind !== 'fee') return;
+    expect(proposal.transfer.left).toEqual(money(97000, 'UAH'));
+    expect(proposal.expense.amount).toEqual(money(3000, 'UAH'));
 
     const said = recordedConfirmation(
       [proposal.transfer, { ...proposal.expense, id: 'f1' }],
       names,
     );
 
-    expect(said).toContain('переказ');
-    expect(said).toContain('mono black');
-    expect(said).toContain('банка');
-    // The комісія is named as what was stored with it, not silently added.
-    expect(said).toContain('разом із цим — витрата 5,00 UAH — Комісія');
+    // The переказ of 97000 and the комісія of 3000 stored with it, both named.
+    expect(said).toBe(
+      'Записано: переказ 970,00 UAH з «mono black» на «банка»; ' +
+        'разом із цим — витрата 30,00 UAH — Комісія.',
+    );
+  });
+
+  it('Scenario: A дохід is confirmed by its джерело', () => {
+    const income = buildEntry(
+      { type: 'income', accountId: 'card', amount: '5000', date: '2026-09-01', sourceId: 'salary' },
+      { id: 'i1', accounts },
+    );
+    expect(recordedConfirmation([income], names)).toBe('Записано: дохід 5 000,00 UAH — Salary.');
   });
 
   it('A дохід is named by its джерело, a переказ by both рахунки', () => {
@@ -1008,6 +1204,97 @@ describe('recordedConfirmation', () => {
   it('Scenario: A refusal is not a confirmation', () => {
     // Nothing was stored, so there is nothing to confirm — the refusal is shown on its own.
     expect(recordedConfirmation([], names)).toBeUndefined();
+  });
+});
+
+describe('main-screen: the form after «Записати і ще одну»', () => {
+  const YESTERDAY = '2026-08-23';
+
+  it('Scenario: The form is ready for the next транзакція', () => {
+    const stored = draft({
+      accountId: 'card',
+      amount: '1200',
+      date: YESTERDAY,
+      categoryId: 'groceries',
+      description: 'АТБ',
+    });
+
+    expect(draftAfterStore(stored)).toEqual({
+      type: 'expense',
+      accountId: 'card',
+      toAccountId: undefined,
+      amount: '',
+      arrived: '',
+      date: YESTERDAY,
+      categoryId: undefined,
+      sourceId: undefined,
+      description: '',
+    });
+  });
+
+  it('Scenario: A переказ keeps both рахунки for the next one', () => {
+    const next = draftAfterStore(
+      draft({ type: 'transfer', accountId: 'card', toAccountId: 'usd', amount: '1000', arrived: '24' }),
+    );
+
+    expect(next.type).toBe('transfer');
+    expect(next.accountId).toBe('card');
+    expect(next.toAccountId).toBe('usd');
+    expect(next.amount).toBe('');
+    expect(next.arrived).toBe('');
+  });
+
+  it('A дохід drops its джерело for the next one', () => {
+    const next = draftAfterStore(draft({ type: 'income', sourceId: 'salary', amount: '5000' }));
+    expect(next.type).toBe('income');
+    expect(next.sourceId).toBeUndefined();
+  });
+
+  it('A повернення drops its категорія, so the next one is refused until one is picked', () => {
+    const next = draftAfterStore(draft({ type: 'refund', categoryId: 'groceries', amount: '300' }));
+    expect(next.type).toBe('refund');
+    expect(next.categoryId).toBeUndefined();
+    expect(record({ ...next, amount: '100' }).refused).toBe('оберіть категорію');
+  });
+
+  it('Scenario: Leaving after a stay-open store asks nothing', () => {
+    const d = draft({ categoryId: 'groceries', description: 'АТБ' });
+    // The screen resets its «Відкинути зміни?» baseline to this very draft.
+    expect(entryHoldsEdits(draftAfterStore(d), draftAfterStore(d))).toBe(false);
+  });
+
+  it('Scenario: A repeated tap stores nothing', () => {
+    const left = draftAfterStore(draft({ amount: '250' }));
+    expect(tapAfterStore(left, { draft: left }, 'recordAndNext')).toBe('nothing');
+  });
+
+  it('Scenario: Three витрати in a row — «Записати» on the untouched form stores no fourth', () => {
+    const left = draftAfterStore(draft({ amount: '80' }));
+    expect(tapAfterStore(left, { draft: left }, 'record')).toBe('leave');
+  });
+
+  it('Any changed field, or no confirmation, is an ordinary recording', () => {
+    const left = draftAfterStore(draft({ amount: '45' }));
+    const typed = { ...left, amount: '120' };
+    for (const button of ['record', 'recordAndNext'] as const) {
+      expect(tapAfterStore(typed, { draft: left }, button)).toBe('record');
+      expect(tapAfterStore({ ...left, date: '2026-08-20' }, { draft: left }, button)).toBe('record');
+      expect(tapAfterStore(left, undefined, button)).toBe('record');
+    }
+  });
+});
+
+describe('app-shell: which pushes find the entry form already open', () => {
+  it('Scenario: An open form is not opened twice — a push naming nothing finds it', () => {
+    expect(entrySingularId({})).toBe('entry');
+    // The form forgets what its route named, so any open form answers the same.
+    expect(entrySingularId({ type: undefined, to: undefined, account: undefined })).toBe('entry');
+  });
+
+  it('A push naming a рахунок or a тип opens a fresh form that honours it', () => {
+    expect(entrySingularId({ account: 'card' })).toBeUndefined();
+    expect(entrySingularId({ type: 'transfer', to: 'jar' })).toBeUndefined();
+    expect(entrySingularId({ to: 'jar' })).toBeUndefined();
   });
 });
 
