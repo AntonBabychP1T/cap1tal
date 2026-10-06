@@ -4,7 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
-import { Action, Choices, DateField, Field, RowAction } from '@/components/form';
+import { Action, Choices, DateField, Field, Picker, RowAction } from '@/components/form';
 import {
   Banner,
   Card,
@@ -16,10 +16,13 @@ import {
 } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
 import type { AcceptedLink } from '@/db/monobank-repo';
-import { accounts as accountsRepo, monobank as monobankRepo } from '@/db/repos';
+import {
+  accounts as accountsRepo,
+  monobank as monobankRepo,
+  transactions as transactionsRepo,
+} from '@/db/repos';
 import { account, type AccountKind } from '@/domain/account';
 import { monobankConnection, type ConnectionResult } from '@/monobank/connection';
-import { suggestLinks } from '@/monobank/link';
 import type { SyncProgress, SyncRun } from '@/monobank/coordinator';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { useTheme } from '@/hooks/use-theme';
@@ -29,16 +32,19 @@ import type { BackgroundRestriction } from '@/platform/background-sync';
 import { syncMonobankSyncTask } from '@/platform/monobank-sync-task';
 import { useOnForeground } from '@/hooks/use-on-foreground';
 import { monobankTokenStore } from '@/platform/monobank-token-store';
+import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { syncOutcomeEvent } from '@/ui/haptics';
 import { syncEvent } from '@/ui/read-policy';
 import { judgeProgressLater } from '@/hooks/progress-ports';
 import { ALERT_PORTS, attended, useClearAlertOnOpen } from '@/hooks/use-alerting';
+import { recentlyUsed } from '@/ui/category-choices';
 import { todayIso } from '@/ui/dates';
 import { failureAlert } from '@/ui/failure-alert';
 import { journal } from '@/ui/journal';
 import { newId } from '@/ui/id';
 import { KIND_CHOICES } from '@/ui/labels';
+import { PICKER_SIZE } from '@/ui/shortlist';
 import {
   onSyncState,
   startSync,
@@ -50,8 +56,7 @@ import {
   FOREIGN_RUN_RUNNING,
   syncControl,
   CLIPBOARD_NO_TOKEN,
-  linkChoiceLabel,
-  linkChoices,
+  linkRows,
   linkSetConfirmation,
   MONOBANK_TOKEN_PAGE_URL,
   backgroundNote,
@@ -64,7 +69,7 @@ import {
   REFRESH_LIST_LABEL,
   outcomeLabel,
   progressLabel,
-  proposalRows,
+  proposalsForReview,
   removeTokenConfirmation,
   syncBoundary,
   syncFailed,
@@ -90,6 +95,9 @@ import { Spacing } from '@/constants/theme';
  * input, goes to the validation call, and the input is cleared the moment it is kept — after
  * that the screen knows only that monobank is configured, never what with.
  */
+
+/** How far back the link picker looks for what the owner reached for last — the entry form's window. */
+const RECENT_WINDOW = 50;
 
 /** The device's own network and clock, injected into everything below rather than reached for. */
 const connection = monobankConnection({
@@ -133,6 +141,8 @@ export default function MonobankScreen() {
         accounts: accountsRepo.list(),
         monobankAccounts: monobankRepo.listAccounts(),
         links: monobankRepo.listLinks(),
+        // What the owner reached for last, read off the latest транзакції, as the entry form does.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
       }),
       [],
     ),
@@ -203,6 +213,11 @@ export default function MonobankScreen() {
   const summary = useMemo(() => (run ? syncSummary(run, names) : undefined), [names, run]);
 
   const [linking, setLinking] = useState<string>();
+  /** Whether «Всі рахунки» of the link picker is open: «назад» closes it first. */
+  const [linkListOpen, setLinkListOpen] = useState(false);
+  const closeLinkList = useCallback(() => setLinkListOpen(false), []);
+  useCloseOnBack(linkListOpen, closeLinkList);
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE), [stored.latest]);
   const [draft, setDraft] = useState<Draft>();
   /**
    * The inclusive first day sync may import, for the account being linked. It starts at today —
@@ -216,22 +231,15 @@ export default function MonobankScreen() {
 
   /**
    * What the app would propose for every monobank account no link feeds yet, and the lines the
-   * review list shows for them. Recomputed from what is on screen and what is stored — a
-   * proposal is never remembered, so accepting one and reloading simply leaves one proposal
-   * fewer.
+   * review list shows for them. Built from `fetched`, never from `shown`: a cached
+   * `monobank_accounts` row is enough to list an account, but not enough to propose linking it —
+   * this opening's own client-info answer has to have succeeded first (design D8 of
+   * recovered-branch-fixes). A proposal is never remembered either way, so accepting one and
+   * reloading simply leaves one proposal fewer.
    */
   const proposals = useMemo(
-    () =>
-      proposalRows({
-        proposals: suggestLinks({
-          monobankAccounts: shown,
-          accounts: stored.accounts,
-          links: stored.links,
-        }),
-        monobankAccounts: shown,
-        accounts: stored.accounts,
-      }),
-    [shown, stored.accounts, stored.links],
+    () => proposalsForReview({ fetched, accounts: stored.accounts, links: stored.links }),
+    [fetched, stored.accounts, stored.links],
   );
   const accepted = useMemo(
     () => proposals.filter((row) => row.acceptable && !refused.has(row.monobankAccountId)),
@@ -416,7 +424,7 @@ export default function MonobankScreen() {
 
   /** The owner confirms the boundary before the link exists; declining leaves nothing behind. */
   const confirmBoundary = useCallback((accountName: string, date: string, link: () => void) => {
-    Alert.alert('Синхронізація', boundaryConfirmation(date, accountName), [
+    Alert.alert('Синхронізація', boundaryConfirmation(date, accountName, new Date()), [
       { text: 'Скасувати', style: 'cancel' },
       { text: 'Приєднати', onPress: link },
     ]);
@@ -485,7 +493,7 @@ export default function MonobankScreen() {
     if (entries.length === 0) {
       return;
     }
-    Alert.alert('Синхронізація', linkSetConfirmation(entries.length, boundary), [
+    Alert.alert('Синхронізація', linkSetConfirmation(entries.length, boundary, new Date()), [
       { text: 'Скасувати', style: 'cancel' },
       {
         text: 'Приєднати',
@@ -786,7 +794,7 @@ export default function MonobankScreen() {
           {rows.map((row, index) => {
             const monobankAccount = shown.find((a) => a.id === row.monobankAccountId);
             const offered = monobankAccount
-              ? linkChoices({
+              ? linkRows({
                   monobankAccount,
                   accounts: stored.accounts,
                   links: stored.links,
@@ -833,6 +841,7 @@ export default function MonobankScreen() {
                         setLinking(
                           linking === row.monobankAccountId ? undefined : row.monobankAccountId,
                         );
+                        setLinkListOpen(false);
                         setDraft(undefined);
                       }}
                     />
@@ -851,15 +860,20 @@ export default function MonobankScreen() {
                       now={new Date()}
                       hint="включно; раніші записи не імпортуються"
                     />
-                    <Choices
+                    {/* A tap asks to confirm and links — from the shown few or the full list. */}
+                    <Picker
                       label={`Наявний рахунок у ${row.currency}`}
-                      choices={offered.map((a) => ({ value: a.id, label: linkChoiceLabel(a) }))}
+                      rows={offered}
+                      recentIds={recent.accounts}
                       selected={undefined}
                       onSelect={(accountId: string) =>
                         confirmBoundary(row.name, boundary, () =>
                           linkExisting(row.monobankAccountId, accountId, boundary),
                         )
                       }
+                      noun="accounts"
+                      expanded={linkListOpen}
+                      onExpandedChange={setLinkListOpen}
                     />
                     {draft?.monobankAccountId === row.monobankAccountId ? (
                       <>

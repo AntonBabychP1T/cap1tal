@@ -3,22 +3,28 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { ListItem, Tap } from '@/components/motion';
-import { Action, Choices } from '@/components/form';
+import { Action, Picker } from '@/components/form';
 import { Chevron, ListCard, ListRow, Screen, ScreenHeader } from '@/components/surfaces';
 import { ThemedText } from '@/components/themed-text';
-import { categories as categoriesRepo, ruleTemplate } from '@/db/repos';
+import {
+  categories as categoriesRepo,
+  ruleTemplate,
+  transactions as transactionsRepo,
+} from '@/db/repos';
 import type { TemplateChoice } from '@/db/rule-template-repo';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
+import { recentlyUsed } from '@/ui/category-choices';
 import { failureAlert } from '@/ui/failure-alert';
 import {
   TEMPLATE_PRECEDENCE_NOTE,
   chooseTemplateTarget,
   templateRowLine,
   templateRows,
-  templateTargetChoices,
+  templateTargetRows,
   type TemplateRow,
 } from '@/ui/rule-template-screen';
+import { PICKER_SIZE } from '@/ui/shortlist';
 
 import { Spacing } from '@/constants/theme';
 
@@ -31,6 +37,10 @@ import { Spacing } from '@/constants/theme';
  * pointing it at another категорія or switching it off. Each choice runs the розбір of «Без
  * категорії» and says what it moved, exactly as storing a правило does.
  */
+
+/** How far back the picker looks for what the owner reached for last — the entry form's window. */
+const RECENT_WINDOW = 50;
+
 export default function RuleTemplateScreen() {
   const router = useRouter();
 
@@ -42,7 +52,12 @@ export default function RuleTemplateScreen() {
 
   const [stored, reload] = useReloadOnFocus(
     useCallback(
-      () => ({ choices: ruleTemplate.choices(), categories: categoriesRepo.list() }),
+      () => ({
+        choices: ruleTemplate.choices(),
+        categories: categoriesRepo.list(),
+        // What the owner reached for last, read off the latest транзакції, as the entry form does.
+        latest: transactionsRepo.listLatest(RECENT_WINDOW),
+      }),
       [],
     ),
   );
@@ -51,15 +66,19 @@ export default function RuleTemplateScreen() {
     () => templateRows({ choices: stored.choices, categories: stored.categories }),
     [stored.categories, stored.choices],
   );
-  const targets = useMemo(
-    () => templateTargetChoices(stored.categories).map((c) => ({ value: c.id, label: c.name })),
-    [stored.categories],
-  );
+  const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE), [stored.latest]);
 
   /** The базова категорія opened for a change; the phone's «назад» closes it first. */
   const [openId, setOpenId] = useState<string>();
-  const close = useCallback(() => setOpenId(undefined), []);
-  useCloseOnBack(openId !== undefined, close);
+  /** Whether its «Всі категорії» list is open: «назад» closes that before the базова категорія. */
+  const [targetsOpen, setTargetsOpen] = useState(false);
+  const close = useCallback(() => {
+    setOpenId(undefined);
+    setTargetsOpen(false);
+  }, []);
+  const closeTargets = useCallback(() => setTargetsOpen(false), []);
+  useCloseOnBack(openId !== undefined && !targetsOpen, close);
+  useCloseOnBack(targetsOpen, closeTargets);
 
   /** What the last choice's розбір moved, in the owner's words — nothing when it moved nothing. */
   const [sweptMessage, setSweptMessage] = useState<string>();
@@ -71,6 +90,7 @@ export default function RuleTemplateScreen() {
           ruleTemplate.choose(id, picked, new Date()),
         );
         setOpenId(undefined);
+        setTargetsOpen(false);
         setSweptMessage(message);
         reload();
       } catch (error) {
@@ -97,13 +117,18 @@ export default function RuleTemplateScreen() {
       {row.mcc.length > 0 ? (
         <ThemedText type="small">MCC: {row.mcc.join(', ')}</ThemedText>
       ) : null}
-      <Choices
+      {/* A tap stores and sweeps, from the shown few and from the full list alike. */}
+      <Picker
         label="Категорія"
-        choices={targets}
+        rows={templateTargetRows(stored.categories, row.categoryId)}
+        recentIds={recent.categories}
         selected={row.categoryId}
         onSelect={(categoryId: string) =>
           void choose(row.groupId, { kind: 'category', categoryId })
         }
+        noun="categories"
+        expanded={targetsOpen}
+        onExpandedChange={setTargetsOpen}
       />
       {row.state !== 'off' ? (
         <Action
@@ -148,6 +173,7 @@ export default function RuleTemplateScreen() {
                   accessibilityHint="Показати, що вона охоплює, і змінити категорію"
                   onPress={() => {
                     setSweptMessage(undefined);
+                    setTargetsOpen(false);
                     setOpenId(row.groupId);
                   }}
                   style={styles.rowTop}>

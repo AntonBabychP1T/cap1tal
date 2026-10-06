@@ -98,6 +98,21 @@ describe('what a виклик carries', () => {
     expect(`${closing.name} ${closing.reason} ${closing.criterion}`).not.toContain('Вересень');
   });
 
+  it('Scenario: A місяць that opens its sentence keeps its capital', () => {
+    const closed = allChallenges(
+      input({
+        today: '2026-10-02',
+        summary: summary({
+          months: [monthRow('2026-09', { transactions: 40 })],
+          history: { count: 40 },
+        }),
+      }),
+    ).find((one) => one.template === 'close-month')!;
+
+    expect(closed.name).toBe('Закрий вересень 2026');
+    expect(closed.reason.startsWith('Вересень 2026 закрито')).toBe(true);
+  });
+
   it('Scenario: Only доходи left opens them', () => {
     const closing = offered(
       input({
@@ -351,6 +366,21 @@ describe('the ліміт виклик', () => {
     expect(challenge.name).toBe('Втримай ліміт «Продукти»');
   });
 
+  it('Scenario: The ліміт виклик names the місяць that went over in its case', () => {
+    const held = input({
+      summary: monthsWith({ '2026-06': 700_000, '2026-07': 900_000 }),
+      limits,
+      categoryNames: names,
+    });
+
+    const challenge = allChallenges(held).find((one) => one.template === 'limit-hold')!;
+
+    expect(challenge.reason.startsWith('У липні 2026 ліміт «Продукти» перевищено востаннє')).toBe(
+      true,
+    );
+    expect(challenge.reason).not.toContain('у Липень');
+  });
+
   it('Scenario: The window is the data`s, not the acceptance`s', () => {
     const never = input({
       summary: monthsWith({ '2026-05': 900_000, '2026-06': 700_000, '2026-07': 700_000 }),
@@ -525,6 +555,52 @@ describe('choosing which виклики stand', () => {
       ],
       ...over,
     });
+
+  it('Scenario: No виклик puts a heading`s місяць inside a sentence', () => {
+    // The nominatives written out here, not read from months.ts, so a wrong table there cannot
+    // make this test agree with itself.
+    const NOMINATIVE = [
+      'Січень', 'Лютий', 'Березень', 'Квітень', 'Травень', 'Червень',
+      'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень',
+    ].join('|');
+    // Case-blind: «у липень 2026» is as wrong as «у Липень 2026». Only the prepositions that never
+    // take this form of a місяць are listed: «за липень» and «на листопад» are correct.
+    const afterPreposition = new RegExp(
+      `(^|[^\\p{L}])(у|в|до|з|із|від|після) (${NOMINATIVE})(?!\\p{L})`,
+      'iu',
+    );
+    const capitalised = new RegExp(`(${NOMINATIVE})`, 'gu');
+
+    const left = allChallenges(crowded());
+    const closed = allChallenges(
+      crowded({
+        summary: summary({
+          months: [
+            monthRow('2026-07', { transactions: 20 }),
+            monthRow('2026-08', { transactions: 20 }),
+          ],
+          limitedCategories: [
+            { month: '2026-07', currency: 'UAH', categoryId: 'food', spent: 900_000 },
+          ],
+          history: { count: 40 },
+        }),
+      }),
+    );
+    // The sweep proves nothing if the виклики that name a місяць are not among those it reads.
+    expect(keys(left)).toEqual(expect.arrayContaining(['close-month:2026-08', 'limit-hold:food']));
+    expect(closed.find((one) => one.template === 'close-month')!.finished).toBe(true);
+
+    for (const one of [...left, ...closed]) {
+      for (const text of [one.name, one.reason, one.criterion]) {
+        expect(text, one.key).not.toMatch(afterPreposition);
+        for (const match of text.matchAll(capitalised)) {
+          const before = text.slice(0, match.index).trimEnd();
+          // Only a sentence's first word starts with a capital.
+          expect(before === '' || /[.!?]$/u.test(before), `${one.key}: ${text}`).toBe(true);
+        }
+      }
+    }
+  });
 
   it('Scenario: Four eligible виклики yield three', () => {
     const all = allChallenges(crowded());

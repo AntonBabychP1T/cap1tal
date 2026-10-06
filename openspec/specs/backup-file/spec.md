@@ -207,8 +207,8 @@ No file SHALL ever be partly restored.
 
 A бекап SHALL be refused, with nothing restored, when what it holds cannot stand together: a
 транзакція naming a рахунок, категорія or джерело the бекап does not contain; a транзакція other
-than a переказ that says it awaits a зустрічний дохід; a правило naming a категорія or a destination
-рахунок the бекап does not contain, or naming both, or neither; a ліміт on a
+than a переказ that says it awaits a зустрічний дохід; a правило naming a категорія, a destination
+рахунок or a джерело the бекап does not contain, or naming more than one of the three, or none; a ліміт on a
 категорія it does not contain; a ціль whose склад names a рахунок the бекап does not contain; a
 ціль whose склад is empty; a ціль whose склад names one рахунок more than once; a ціль whose
 currency is neither UAH nor the single currency every рахунок of its склад is in; a чек naming a
@@ -269,6 +269,16 @@ SHALL be found before anything local is touched.
 
 - **WHEN** restoring a бекап holding a чек whose транзакція is not among the бекап's транзакції is
   attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: A правило-джерело pointing outside the бекап stops the restore
+
+- **WHEN** restoring a бекап holding a правило whose джерело id the бекап does not carry is attempted
+- **THEN** the бекап is refused as inconsistent and nothing local changes
+
+#### Scenario: A правило naming a категорія and a джерело stops the restore
+
+- **WHEN** restoring a бекап holding a правило naming both a категорія and a джерело is attempted
 - **THEN** the бекап is refused as inconsistent and nothing local changes
 
 ### Requirement: What a restore would do is knowable before it does it
@@ -801,3 +811,24 @@ unordered, so either order restores the same answer.
 
 - **WHEN** a бекап is made on a device whose current month has five спостереження
 - **THEN** the file carries the «Не дубль» answers and no спостереження
+
+### Requirement: A бекап carries a правило-джерело
+
+A бекап SHALL carry, for every правило-джерело, the джерело it names, and restoring SHALL bring it
+back exactly, so a restored phone gives arriving money the same джерела it did. A бекап written
+before правила-джерела existed SHALL restore with every правило targeting the категорія or the
+destination рахунок it names, and no правило naming a джерело.
+
+#### Scenario: A правило-джерело survives the round trip
+
+- **WHEN** a бекап is made on a device holding the правило-джерело "зарахування зарплати →
+  Зарплата" and a дохід of 5000000 minor units UAH it gave «Зарплата», and it is restored onto
+  storage that holds nothing
+- **THEN** the правило names the джерело «Зарплата», and the дохід carries «Зарплата»
+
+#### Scenario: An older бекап restores with no правило-джерело
+
+- **WHEN** a бекап written under the previous storage shape, holding the правила "сільпо →
+  Groceries" and "округлення балансу → переказ на РЕЗЕРВ", is restored
+- **THEN** the first targets Groceries, the second the destination РЕЗЕРВ, and no правило names a
+  джерело

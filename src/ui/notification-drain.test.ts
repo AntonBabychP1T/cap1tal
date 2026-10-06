@@ -7,12 +7,14 @@ import { money } from '../domain/money';
 import type { Rule } from '../domain/rules';
 import { isoDate, UNCATEGORISED_CATEGORY_ID } from '../domain/transaction';
 import { accountsRepo } from '../db/accounts-repo';
+import { backupRepo } from '../db/backup-repo';
 import { notificationsRepo, type NotificationsRepo } from '../db/notifications-repo';
 import { openTestDb, seedReferences, type TestStorage } from '../db/test-db';
 import { transactionsRepo, type TransactionsRepo } from '../db/transactions-repo';
 import type { CapturedNotification } from '../notifications/capture';
 import {
   inMemoryNotificationCapture,
+  MONOBANK_PACKAGE_PREFIX,
   type NotificationCapturePort,
   type WatchedSetOutcome,
 } from '../platform/notification-capture';
@@ -23,6 +25,7 @@ import { drainCaptures, onCapturesStored, type DrainStorage } from './notificati
 const card = account({ id: 'card', name: 'Приват', kind: 'spending', currency: 'UAH' });
 
 const PRIVAT = 'ua.privatbank.ap24';
+const OSCHAD = 'ua.oschadbank.flumo';
 
 function posted(overrides: Partial<CapturedNotification> = {}): CapturedNotification {
   return {
@@ -327,5 +330,123 @@ describe('drainCaptures', () => {
         expect(whole).not.toContain(part);
       }
     });
+  });
+
+  // The device's watched set follows storage. Every one of these exists because the two can
+  // disagree without anyone saying so: a відновлення writes watch rows straight into the database
+  // and tells the capture layer nothing, so the section lists an app as read while the phone drops
+  // everything it posts — no чернетка, no сповіщення про збій, and «Залишилось» quietly too high.
+
+  it('Scenario: A collection after a відновлення reads the restored watches', async () => {
+    // The real path, not an imitation of it: `replaceAll` is what putting a бекап back runs, it
+    // writes the watch rows inside its own transaction, and it knows of no capture port at all.
+    const backup = backupRepo(storage.db);
+    backup.replaceAll({
+      ...backup.snapshot(),
+      watches: [{ packageName: PRIVAT, accountId: 'card' }],
+    });
+    const capture = inMemoryNotificationCapture();
+    // The phone the бекап landed on: it has never been told anything about this app.
+    expect(capture.watched()).toEqual([]);
+
+    await drain(capture);
+
+    expect(capture.setWatchedCalls()).toEqual([[PRIVAT]]);
+    expect(capture.watched()).toEqual([PRIVAT]);
+  });
+
+  it('Scenario: A collection tells the capture layer the stored watches', async () => {
+    repo.addWatch({ packageName: PRIVAT, accountId: 'card' });
+    repo.addWatch({ packageName: OSCHAD, accountId: 'card' });
+    const capture = inMemoryNotificationCapture();
+
+    await drain(capture);
+
+    // The whole set, in the order storage holds it — never a delta.
+    expect(capture.setWatchedCalls()).toEqual([[OSCHAD, PRIVAT]]);
+  });
+
+  it('Scenario: No watches tells the capture layer to watch nothing', async () => {
+    // Nothing stored and nothing waiting. The empty set is still told: after a відновлення that
+    // carried no watches, the queue is empty *because* the device is dropping everything, so a
+    // reconciliation that only ran when something was waiting would never run at all.
+    const capture = inMemoryNotificationCapture();
+
+    await drain(capture);
+
+    expect(capture.setWatchedCalls()).toEqual([[]]);
+  });
+
+  it('Scenario: A stored monobank watch does not disable the others', async () => {
+    // A row a бекап written under a narrower reading of the family could carry. Telling the port
+    // the whole set would get *the whole set* refused — the device left on whatever it held, for
+    // good — so the packages that may never be watched are dropped before the question is asked.
+    repo.addWatch({ packageName: `${MONOBANK_PACKAGE_PREFIX}.beta`, accountId: 'card' });
+    repo.addWatch({ packageName: PRIVAT, accountId: 'card' });
+    const capture = inMemoryNotificationCapture();
+
+    await drain(capture);
+
+    expect(capture.setWatchedCalls()).toEqual([[PRIVAT]]);
+    expect(capture.watched()).toEqual([PRIVAT]);
+  });
+
+  it('Scenario: Watches changed between two collections are told again', async () => {
+    repo.addWatch({ packageName: PRIVAT, accountId: 'card' });
+    const capture = inMemoryNotificationCapture();
+
+    await drain(capture);
+    // Changed behind the section's back, as a відновлення changes it.
+    repo.addWatch({ packageName: OSCHAD, accountId: 'card' });
+    await drain(capture);
+
+    // Told every time, never once per run of the app: what the device holds is the thing this
+    // cannot trust, so a memo of "already told" would be exactly the belief that just proved wrong.
+    expect(capture.setWatchedCalls()).toEqual([[PRIVAT], [OSCHAD, PRIVAT]]);
+  });
+
+  it('The watched set is told before anything is collected', async () => {
+    repo.addWatch({ packageName: PRIVAT, accountId: 'card' });
+    const capture = inMemoryNotificationCapture({ queue: [posted()] });
+    const order: string[] = [];
+    const recording: NotificationCapturePort = {
+      setWatched: (packages) => {
+        order.push('setWatched');
+        return capture.setWatched(packages);
+      },
+      collect: () => {
+        order.push('collect');
+        return capture.collect();
+      },
+      acknowledge: (count) => {
+        order.push('acknowledge');
+        return capture.acknowledge(count);
+      },
+      installedAmong: (packages) => capture.installedAmong(packages),
+    };
+
+    await drain(recording);
+
+    expect(order).toEqual(['setWatched', 'collect', 'acknowledge']);
+  });
+
+  it('Scenario: A build that cannot capture still collects', async () => {
+    // The combination a device actually reaches: the native write threw — `notification-capture-
+    // device.ts` answers `unavailable` for that — while the queue and the collection are fine. A
+    // wholly unavailable double could not prove this: there `collect` answers nothing waiting too,
+    // so a drain that aborted on a non-`ok` outcome would report the very same zero.
+    repo.addWatch({ packageName: PRIVAT, accountId: 'card' });
+    const capture = inMemoryNotificationCapture({ queue: [posted()] });
+
+    const report = await drain({
+      ...capture,
+      setWatched: async () => ({ kind: 'unavailable' }) as WatchedSetOutcome,
+    });
+
+    // Exactly the happy path's report: telling the device is a reconciliation, never a new way for
+    // a collection to fail. The set is told again on the next foreground transition.
+    expect(report).toMatchObject({ collected: 1, acknowledged: 1, drafted: 1 });
+    expect(repo.pendingDrafts()).toHaveLength(1);
+    expect(capture.waiting()).toEqual([]);
   });
 });

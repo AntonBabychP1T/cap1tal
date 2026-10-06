@@ -172,6 +172,28 @@ function transferAmount(t: Transfer): string {
   return equal ? `→ ${formatMoney(t.left)}` : `${formatMoney(t.left)} → ${formatMoney(t.arrived)}`;
 }
 
+/**
+ * Whether a транзакція carries "Без категорії" — витрата and повернення only; every other type
+ * carries no категорія to begin with. `transactionLine`'s own `uncategorised` field is this; it is
+ * exported separately for Головний's feed picker, which needs the same check on a bare
+ * `Transaction` after a reload, with none of the label maps `transactionLine` otherwise requires.
+ */
+export function isUncategorised(t: Transaction): boolean {
+  return (t.type === 'expense' || t.type === 'refund') && t.categoryId === UNCATEGORISED_CATEGORY_ID;
+}
+
+/**
+ * Whether Головний's one-tap picker, left open on the транзакція `categorising` names, should
+ * still be considered open against the feed as it now stands. "Без категорії" is what the picker
+ * offers to fix; the moment its own транзакція stops carrying it — retyped into something else
+ * from editing, or no longer in the feed at all — the picker has nothing left to say about that
+ * row (main-screen: "«Без категорії» is highlighted and categorised in one tap").
+ */
+export function categorisingStillOpen(categorising: string, feed: readonly Transaction[]): boolean {
+  const t = feed.find((candidate) => candidate.id === categorising);
+  return t !== undefined && isUncategorised(t);
+}
+
 export function transactionLine(
   t: Transaction,
   accountsById: ReadonlyMap<string, Account>,
@@ -223,7 +245,7 @@ export function transactionLine(
       ? {
           category: categoryLabel(t.categoryId, categoryNames),
           // A повернення can carry it too, and it is as uncategorised as a витрата is.
-          uncategorised: t.categoryId === UNCATEGORISED_CATEGORY_ID,
+          uncategorised: isUncategorised(t),
           // By this транзакція's own month, not by the month the screen happens to be showing.
           overLimit: overLimit.get(monthOf(t.date))?.has(t.categoryId) ?? false,
         }

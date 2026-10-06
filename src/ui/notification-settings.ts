@@ -2,6 +2,9 @@ import type { Account } from '../domain/account';
 import { addWatch, type Watch, type WatchableAccount } from '../notifications/draft';
 import type { NotificationAccess } from '../platform/notification-access';
 import type { NotificationCapturePort, WatchedSetOutcome } from '../platform/notification-capture';
+import { accountChoicesFor, isPerson } from './account-choices';
+import { accountChoiceLabel } from './labels';
+import type { Named } from './shortlist';
 import { accountNameOf } from './transaction-line';
 
 /**
@@ -128,6 +131,24 @@ export function accessSection(access: NotificationAccess): AccessSection {
       status: 'Доступ до сповіщень не надано.',
       grant: 'Надати доступ',
       manageable: false,
+    };
+  }
+  if (access === 'not-listening') {
+    // Switched on and hearing nothing — what an app update, a reinstall or «Зупинити примусово»
+    // leaves behind. The status says both halves, because either alone misleads: «надано» is true
+    // and useless, «не надано» would send the owner to switch on a switch that is already on.
+    // The way out is the one Android actually accepts, so it is named rather than implied.
+    return {
+      access,
+      explanation,
+      status:
+        'Доступ надано, але сповіщення не читаються. Вимкніть і знову ввімкніть доступ ' +
+        'у налаштуваннях телефона.',
+      grant: 'Налаштування доступу',
+      // The watched apps are untouched by this: the set is stored, the рахунки it maps onto are
+      // unchanged, and reading resumes the moment the listener is bound again. Hiding the list
+      // would hide the very thing the owner opened the section to check.
+      manageable: true,
     };
   }
   return {
@@ -307,4 +328,18 @@ function refusalOf(answer: WatchedSetOutcome): WatchChange | undefined {
     };
   }
   return undefined;
+}
+
+/**
+ * The рахунки a new watch can be mapped to: the unarchived ones, by the one picker rule of
+ * `account-choices.ts`, without a рахунок-борг — a bank's сповіщення never lands on a person. A
+ * watch is added, never edited, so no stored choice needs carrying back.
+ */
+export function watchAccountChoices(accounts: readonly Account[]): Account[] {
+  return accountChoicesFor(accounts, undefined).filter((a) => !isPerson(a));
+}
+
+/** The same рахунки as the picker draws them, each wearing its currency. */
+export function watchAccountRows(accounts: readonly Account[]): Named[] {
+  return watchAccountChoices(accounts).map((a) => ({ id: a.id, name: accountChoiceLabel(a) }));
 }

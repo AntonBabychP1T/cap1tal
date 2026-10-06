@@ -226,9 +226,9 @@ WHEN there is no витрата or повернення «Без категор�
 month is a чистий місяць. Waiting чернетки SHALL be stated apart, as they are not part of that
 definition.
 
-Each count SHALL lead to where it is answered: «Без категорії» to the month's транзакції narrowed
-to «Без категорії», «Без джерела» to them narrowed to «Без джерела», and the waiting чернетки to
-Головний, where чернетки are confirmed or dismissed.
+Each count SHALL lead to where it is answered: the queue «Що потребує відповіді» narrowed to that
+month, where the «Без категорії» records, the «Без джерела» доходи and the waiting чернетки of the
+month are each answered in place.
 
 #### Scenario: Three uncategorised and one unsourced
 
@@ -241,7 +241,12 @@ to «Без категорії», «Без джерела» to them narrowed to 
 
 - **WHEN** September holds nine доходи «Без джерела» and no витрата «Без категорії», and the owner
   taps the «Без джерела» count
-- **THEN** «Транзакції» opens narrowed to вересень 2026 and «Без джерела», showing those nine
+- **THEN** the queue opens narrowed to вересень 2026, holding «Без джерела» with those nine
+
+#### Scenario: Waiting чернетки open the queue, not Головний
+
+- **WHEN** two чернетки dated in September still wait and the owner taps that count
+- **THEN** the queue opens narrowed to вересень 2026, holding «Чернетки» with those two
 
 #### Scenario: A clean month is called clean
 

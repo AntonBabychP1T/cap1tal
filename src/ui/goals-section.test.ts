@@ -6,6 +6,7 @@ import type { AccumulationGoal } from '../domain/goals';
 import type { CategoryLimit } from '../domain/limits';
 import { money } from '../domain/money';
 import { dateStepOffers, pickedDate } from './dates';
+import { allOffer, shortlist } from './shortlist';
 import {
   accumulationFromDraft,
   deleteGoalConfirmation,
@@ -13,6 +14,7 @@ import {
   goalRows,
   spendingFromDraft,
   spendingGoalCategoryChoices,
+  spendingGoalCategoryRows,
   spendingGoalRows,
   targetAfterCurrencyChange,
   tickedLabel,
@@ -28,6 +30,7 @@ const dollars = account({ id: 'usd', name: 'USD банка', kind: 'savings', cu
 const bonds = account({ id: 'bonds', name: 'ОВДП', kind: 'investment', currency: 'UAH' });
 const inzhur = account({ id: 'inzhur', name: 'Inzhur', kind: 'investment', currency: 'UAH' });
 const ACCOUNTS = [jar, cash, dollars, bonds, inzhur];
+const NOW = new Date(2026, 9, 6, 12, 0, 0);
 
 const draft = (over: Partial<AccumulationDraft> = {}): AccumulationDraft => ({
   name: 'Машина',
@@ -71,7 +74,7 @@ describe('accumulationFromDraft', () => {
       deadline: '2027-06-30',
       accountIds: ['jar', 'cash', 'usd'],
     });
-    expect(goalRows([goal], ACCOUNTS)[0]).toMatchObject({
+    expect(goalRows([goal], ACCOUNTS, NOW)[0]).toMatchObject({
       name: 'Машина',
       target: '700 000,00 UAH',
       deadline: '2027-06-30',
@@ -87,7 +90,7 @@ describe('accumulationFromDraft', () => {
 
     expect(goal.deadline).toBeUndefined();
     expect('deadline' in goal).toBe(false);
-    expect(goalRows([goal], ACCOUNTS)[0]?.deadline).toBeNull();
+    expect(goalRows([goal], ACCOUNTS, NOW)[0]?.deadline).toBeNull();
   });
 
   it('Scenario: A mixed-currency склад outside UAH is refused in the owner’s language', () => {
@@ -218,7 +221,7 @@ describe('the склад picker', () => {
     };
     const accounts = [jar, account({ ...cash, archived: true }), dollars];
 
-    const row = goalRows([goal], accounts)[0]!;
+    const row = goalRows([goal], accounts, NOW)[0]!;
     expect(row.accountNames).toEqual(['Резерв', 'Готівка']);
     expect(row.hasArchivedAccount).toBe(true);
   });
@@ -240,7 +243,7 @@ describe('the склад picker', () => {
       accountIds: ['jar', 'cash', 'usd', 'bonds'],
     };
 
-    const row = goalRows([goal], ACCOUNTS)[0]!;
+    const row = goalRows([goal], ACCOUNTS, NOW)[0]!;
     expect(row.accountSummary).toBe('4 рахунки');
     expect(row.accountNames).toEqual([]);
   });
@@ -300,7 +303,7 @@ describe('editing', () => {
       accountIds: ['jar'],
     };
 
-    expect(deleteGoalConfirmation(goalRows([goal], ACCOUNTS)[0]!)).toBe(
+    expect(deleteGoalConfirmation(goalRows([goal], ACCOUNTS, NOW)[0]!)).toBe(
       'Видалити ціль «Машина»? Рахунки і їхні транзакції лишаться недоторканими.',
     );
   });
@@ -365,5 +368,44 @@ describe('the ціль витрат half of the section', () => {
     expect(() =>
       spendingFromDraft({ categoryId: 'restaurants', amount: '0', currency: 'UAH' }),
     ).toThrow();
+  });
+});
+
+describe('app-shell — a ціль витрат\'s категорія uses the entry form\'s picker', () => {
+  it("Scenario: A ціль витрат's категорія comes from the same picker", () => {
+    const categories: Category[] = Array.from({ length: 22 }, (_, i) => ({
+      id: `c${i}`,
+      name: `Категорія ${String(i + 1).padStart(2, '0')}`,
+      archived: false,
+    }));
+    const limits: CategoryLimit[] = [
+      { categoryId: 'c0', amount: money(100_000, 'UAH') },
+      { categoryId: 'c1', amount: money(100_000, 'UAH') },
+    ];
+    const rows = spendingGoalCategoryRows({ categories, limits });
+    expect(rows).toHaveLength(20);
+    expect(shortlist(rows, { recentIds: [] })).toHaveLength(5);
+    expect(allOffer(rows, 'categories')).toBe('Всі категорії (20)');
+  });
+});
+
+describe("app-shell — a ціль's deadline is a day in words", () => {
+  it("Scenario: A ціль's deadline is a day in words wherever it is read — Налаштування", () => {
+    const goal = accumulationFromDraft(
+      draft({ name: 'Відпустка', target: '50000', deadline: '2026-12-31', accountIds: ['jar'] }),
+      { id: 'g-trip', accounts: ACCOUNTS },
+    );
+    const row = goalRows([goal], ACCOUNTS, NOW)[0]!;
+    expect(row.deadlineLabel).toBe('31 грудня');
+    expect(JSON.stringify({ ...row, deadline: undefined })).not.toContain('2026-12-31');
+    expect(goalRows([{ ...goal, deadline: '2027-03-01' }], ACCOUNTS, NOW)[0]!.deadlineLabel).toBe('1 березня 2027');
+  });
+
+  it('a ціль without a дата has no label', () => {
+    const { deadline: _none, ...undated } = accumulationFromDraft(draft({ accountIds: ['jar'] }), {
+      id: 'g',
+      accounts: ACCOUNTS,
+    });
+    expect(goalRows([undated], ACCOUNTS, NOW)[0]!.deadlineLabel).toBeNull();
   });
 });

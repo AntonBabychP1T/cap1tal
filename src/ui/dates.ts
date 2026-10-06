@@ -1,4 +1,5 @@
 import { isoDate, type IsoDate } from '../domain/transaction';
+import { dayInWords, GENITIVE_MONTHS, genitiveMonthName } from '../domain/day-words';
 import { Refusal } from '../domain/refusal';
 
 /**
@@ -41,26 +42,6 @@ export function startOfLocalDayMs(date: IsoDate): number {
 }
 
 /**
- * The twelve months in the genitive, as a day names its month: «30 серпня». The nominative list
- * in `./months` names a month on its own — «Серпень 2026» — and the two are different words, so
- * neither can be derived from the other.
- */
-const GENITIVE_MONTHS: readonly string[] = [
-  'січня',
-  'лютого',
-  'березня',
-  'квітня',
-  'травня',
-  'червня',
-  'липня',
-  'серпня',
-  'вересня',
-  'жовтня',
-  'листопада',
-  'грудня',
-];
-
-/**
  * «09», not «9». Deliberately not `formatTimeOfDay` from `src/reminders/time.ts`, which pads the
  * same two numbers: that one takes a `TimeOfDay` — a wall-clock hour the owner chose, which its
  * own module says is "deliberately not an instant" — and this one reads the local parts of one.
@@ -72,9 +53,7 @@ function twoDigits(value: number): string {
 }
 
 /** The month numbered 1–12 in the genitive — «вересня» — for `src/ui/months.ts` to name a month by. */
-export function genitiveMonthName(month: number): string {
-  return GENITIVE_MONTHS[month - 1]!;
-}
+export { genitiveMonthName };
 
 /**
  * A calendar дата in the owner's words: «30 серпня», and «30 серпня 2025» once the year is no
@@ -84,9 +63,7 @@ export function genitiveMonthName(month: number): string {
  * and a test can say what year it is.
  */
 export function calendarLabel(date: IsoDate, now: Date): string {
-  const [year, month, day] = isoDate(date).split('-');
-  const named = `${Number(day)} ${GENITIVE_MONTHS[Number(month) - 1]}`;
-  return Number(year) === now.getFullYear() ? named : `${named} ${year}`;
+  return dayInWords(date, todayIso(now));
 }
 
 /**
@@ -117,7 +94,8 @@ export function shiftIsoDate(date: IsoDate, days: number): IsoDate {
 /**
  * What the дата field of the entry form offers beside itself (main-screen, "The дата of a
  * транзакція is set without typing a date code"): «Сьогодні» and «Вчора» always; a day back and a
- * day forward from the typed дата only when it is one, the forward step never past today; and the
+ * day forward from the typed дата only when it is one, the forward step never past today unless the
+ * дата looks ahead; and the
  * typed дата named as a day when it parses. Pure, so which offers stand is proven by `verify`.
  */
 export interface DateStepOffers {
@@ -129,7 +107,16 @@ export interface DateStepOffers {
   readonly label?: string;
 }
 
-export function dateStepOffers(typed: string, now: Date): DateStepOffers {
+export function dateStepOffers(
+  typed: string,
+  now: Date,
+  /**
+   * A дата that looks ahead — «До дати» of a ціль, «Дата першого платежу» — steps a day forward
+   * whatever it is; one that records what already happened stops at today (app-shell, "A дата or
+   * a місяць the owner sets is set with the app's own control").
+   */
+  { looksAhead = false }: { readonly looksAhead?: boolean } = {},
+): DateStepOffers {
   const today = todayIso(now);
   const yesterday = shiftIsoDate(today, -1);
   let current: IsoDate;
@@ -142,7 +129,7 @@ export function dateStepOffers(typed: string, now: Date): DateStepOffers {
     today,
     yesterday,
     back: shiftIsoDate(current, -1),
-    ...(current < today ? { forward: shiftIsoDate(current, 1) } : {}),
+    ...(looksAhead || current < today ? { forward: shiftIsoDate(current, 1) } : {}),
     label: dayLabel(current, now),
   };
 }

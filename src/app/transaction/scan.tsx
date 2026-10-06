@@ -311,7 +311,7 @@ function Preview({
   onAttach: () => void;
   onCancel: () => void;
 }) {
-  const view = previewView(state);
+  const view = previewView(state, new Date());
   return (
     <>
       <Card style={styles.list}>

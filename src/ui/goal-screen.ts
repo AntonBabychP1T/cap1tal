@@ -61,6 +61,8 @@ export type GoalScreenModel =
       readonly kind: 'goal';
       readonly name: string;
       readonly deadline: IsoDate | null;
+      /** The дата in words — «31 грудня» — as the screen draws it after «до». */
+      readonly deadlineLabel: string | null;
       readonly overdue: boolean;
       readonly readout: AccumulationReadout;
       readonly accounts: readonly GoalAccountRow[];
@@ -123,6 +125,7 @@ export function goalScreenModel(input: {
     kind: 'goal',
     name: goal.name,
     deadline: goal.deadline ?? null,
+    deadlineLabel: goal.deadline === undefined ? null : calendarLabel(goal.deadline, input.now),
     // An unknown progress is no verdict, so a ціль whose rate is missing is not called overdue.
     overdue:
       progress.kind === 'unknown'

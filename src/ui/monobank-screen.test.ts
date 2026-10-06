@@ -21,6 +21,7 @@ import {
   lastSyncLine,
   syncCoverage,
   linkChoices,
+  linkRows,
   linkSetConfirmation,
   MONOBANK_TOKEN_PAGE_URL,
   monobankAccountRows,
@@ -28,6 +29,7 @@ import {
   outcomeLabel,
   progressLabel,
   proposalRows,
+  proposalsForReview,
   removeTokenConfirmation,
   syncBoundary,
   syncFailed,
@@ -38,6 +40,7 @@ import {
   unlinkConfirmation,
   type MonobankAccountView,
 } from './monobank-screen';
+import { allOffer } from './shortlist';
 
 /**
  * The «monobank» screen's decisions, without its JSX. Every bank answer here is a plain value —
@@ -389,6 +392,25 @@ describe('linkChoices', () => {
   });
 });
 
+describe('linkRows', () => {
+  it('draws the offered рахунки as the entry form\'s picker names them, with no offer below five', () => {
+    const rows = linkRows({ monobankAccount: blackCard, accounts: [card, cash, dollars], links: [] });
+    expect(rows).toEqual([
+      { id: 'cash', name: 'гаманець · UAH' },
+      { id: 'card', name: 'mono black · UAH' },
+    ]);
+    expect(allOffer(rows, 'accounts')).toBeUndefined();
+  });
+
+  it('puts the rest of many same-currency рахунки behind «Всі рахунки (N)»', () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      account({ id: `u${i}`, name: `Рахунок ${i + 1}`, kind: 'spending', currency: 'UAH' }),
+    );
+    const rows = linkRows({ monobankAccount: blackCard, accounts: many, links: [] });
+    expect(allOffer(rows, 'accounts')).toBe('Всі рахунки (8)');
+  });
+});
+
 describe('newAccountDraft', () => {
   it('Scenario: Creating for a банка starts from a suggestion', () => {
     expect(newAccountDraft(holidayJar)).toEqual({
@@ -409,13 +431,23 @@ describe('newAccountDraft', () => {
 
 describe('boundaryConfirmation', () => {
   it('Scenario: An existing same-currency рахунок is linked', () => {
-    const sentence = boundaryConfirmation('2026-08-28', 'mono black');
+    const sentence = boundaryConfirmation('2026-08-28', 'mono black', new Date(2026, 9, 6, 12));
 
     // The date is named, and named as inclusive…
-    expect(sentence).toContain('2026-08-28');
+    expect(sentence).toContain('з 28 серпня включно');
     expect(sentence).toContain('включно');
     // …and so is the thing the app deliberately does not do, before anything is imported.
     expect(sentence).toContain('Saldo');
+  });
+
+  it('Scenario: The monobank link confirmation names its day', () => {
+    const sentence = boundaryConfirmation('2026-09-11', 'mono USD', new Date(2026, 9, 6, 12));
+    expect(sentence).toMatch(/^Синхронізувати «mono USD» з 11 вересня включно\./);
+    expect(sentence).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    // Another year is named.
+    expect(boundaryConfirmation('2025-12-30', 'mono USD', new Date(2026, 9, 6, 12))).toContain(
+      'з 30 грудня 2025 включно',
+    );
   });
 });
 
@@ -795,12 +827,32 @@ describe('the review list of proposals', () => {
   });
 
   it('Confirms a whole set with the same promise one link is confirmed with', () => {
-    const sentence = linkSetConfirmation(3, '2026-08-01');
+    const sentence = linkSetConfirmation(3, '2026-08-01', new Date(2026, 9, 6, 12));
     expect(sentence).toContain('3 рахунки');
-    expect(sentence).toContain('2026-08-01');
+    expect(sentence).toContain('з 1 серпня включно');
+    expect(sentence).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     // The two things the owner must know before five links are made at once.
     expect(sentence).toContain('включно');
     expect(sentence).toContain('Saldo');
+  });
+
+  it('Scenario: No successful answer this opening proposes nothing', () => {
+    // A cached `monobank_accounts` row is not a fetch: seen on the emulator during
+    // monobank-sync-cadence's smoke, where a year-old row alone was enough to offer «Приєднати
+    // все» with no token ever entered this session (recovered-branch-fixes design D8).
+    expect(proposalsForReview({ fetched: undefined, accounts: [monoBlack], links: [] })).toEqual(
+      [],
+    );
+
+    // The gate is not a blanket refusal: once this opening's own client-info answer holds the
+    // same account, the matching heuristic runs exactly as it does everywhere else.
+    const withFetch = proposalsForReview({
+      fetched: [blackCard],
+      accounts: [monoBlack],
+      links: [],
+    });
+    expect(withFetch).toHaveLength(1);
+    expect(withFetch[0]?.accountId).toBe('a-black');
   });
 });
 

@@ -14,7 +14,9 @@ import {
   templateRowLine,
   templateRows,
   templateTargetChoices,
+  templateTargetRows,
 } from './rule-template-screen';
+import { allOffer, narrow, shortlist } from './shortlist';
 
 const category = (id: string, name: string, archived = false): Category => ({ id, name, archived });
 
@@ -115,6 +117,33 @@ describe('the «Базові категорії» rows', () => {
     expect(offered).toContain('yizha');
     expect(offered).not.toContain('old');
     expect(offered).not.toContain(UNCATEGORISED_CATEGORY_ID);
+  });
+});
+
+describe('app-shell — the шаблон\'s категорія uses the entry form\'s picker', () => {
+  const many: readonly Category[] = [
+    ...Array.from({ length: 25 }, (_, i) => category(`c${i}`, `Категорія ${String(i + 1).padStart(2, '0')}`)),
+    category('subscriptions', 'Підписки'),
+    category('fun', 'Розваги'),
+  ];
+
+  it('the opened базова категорія\'s current target stands among the shown five', () => {
+    const rows = templateTargetRows(many, 'subscriptions');
+    expect(rows).toHaveLength(27);
+    expect(allOffer(rows, 'categories')).toBe('Всі категорії (27)');
+    const shown = shortlist(rows, { recentIds: [], chosenIds: ['subscriptions'], selectedId: 'subscriptions' });
+    expect(shown.map((r) => r.id)).toContain('subscriptions');
+  });
+
+  it('Scenario: A picker that acts on tap acts from the full list too — «розваг» finds «Розваги»', () => {
+    const rows = templateTargetRows(many, 'subscriptions');
+    expect(narrow(rows, 'розваг').map((r) => r.id)).toEqual(['fun']);
+  });
+
+  it('keeps an archived current target on the row, and offers it for nothing new', () => {
+    const withOld = [...many, category('old', 'Стара', true)];
+    expect(templateTargetRows(withOld, 'old').map((r) => r.id)).toContain('old');
+    expect(templateTargetRows(withOld, undefined).map((r) => r.id)).not.toContain('old');
   });
 });
 

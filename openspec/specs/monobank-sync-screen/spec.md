@@ -210,7 +210,10 @@ account, either one named existing unlinked рахунок of the same currency 
 name for the account matches, or a new рахунок prefilled from the bank's name, currency and
 suggested вид. Where the evidence matches more than one рахунок equally well, the system SHALL
 propose neither and SHALL say the choice is the owner's. No рахунок SHALL be proposed for more
-than one monobank account, and no proposal SHALL be for a рахунок of another currency.
+than one monobank account, and no proposal SHALL be for a рахунок of another currency. A monobank
+account known only from an earlier connection's cached answer SHALL be listed but SHALL NOT be
+proposed: proposals SHALL be built only from a client-info answer that succeeded during the
+current opening of the screen.
 
 #### Scenario: A matching рахунок is proposed by name
 
@@ -233,6 +236,13 @@ than one monobank account, and no proposal SHALL be for a рахунок of anot
 
 - **WHEN** two monobank cards both match one unlinked рахунок best
 - **THEN** that рахунок is proposed for one of them only, and the other is given its own proposal
+
+#### Scenario: No successful answer this opening proposes nothing
+
+- **WHEN** the owner opens the monobank screen and no client-info answer has succeeded yet this
+  time — none was attempted, or every one attempted failed — however many monobank accounts an
+  earlier connection had already shown
+- **THEN** no proposal is shown for any of them and there is nothing to accept
 
 ### Requirement: The proposed links are accepted as one reviewed set
 

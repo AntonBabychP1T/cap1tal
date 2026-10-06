@@ -114,8 +114,16 @@ export default function CommitmentsScreen() {
   useCloseOnBack(!pickerClosed, closePicker);
 
   const debitAccounts = useMemo(() => commitmentAccountChoices(stored.accounts), [stored.accounts]);
+  // The рахунок a stored зобов'язання already sits on stays offered while it is edited, even when it
+  // is a рахунок-борг that a new one would not be offered.
+  const storedDebitId = editor?.id
+    ? stored.commitments.find((c) => c.id === editor.id)?.debitAccountId
+    : undefined;
   // The pickers: five — the last reached for, topped up by name — and «Всі … (N)» with a search.
-  const accountRows = useMemo(() => commitmentAccountRows(stored.accounts), [stored.accounts]);
+  const accountRows = useMemo(
+    () => commitmentAccountRows(stored.accounts, storedDebitId),
+    [stored.accounts, storedDebitId],
+  );
   const categoryRows = useMemo(() => commitmentCategoryRows(stored.categories), [stored.categories]);
   const recent = useMemo(() => recentlyUsed(stored.latest, PICKER_SIZE), [stored.latest]);
 
@@ -236,6 +244,7 @@ export default function CommitmentsScreen() {
             value={editor.draft.firstDue}
             onChange={(firstDue) => change({ firstDue })}
             now={new Date()}
+            looksAhead
             hint={problemOf('firstDue') ?? FIRST_DUE_HINT}
           />
           <Picker

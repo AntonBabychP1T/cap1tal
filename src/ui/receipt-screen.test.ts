@@ -44,6 +44,9 @@ import {
 const fixture = (name: string) =>
   readFileSync(new URL(`../fiscal/fixtures/${name}`, import.meta.url), 'utf8');
 
+/** Today on the device while these чеки are read: the same year as every fixture. */
+const NOW = new Date(2026, 9, 6, 12, 0, 0);
+
 const GROCERY_QR =
   'https://cabinet.tax.gov.ua/cashregs/check?id=696582&fn=3000909908&date=20260429&time=222006&sm=437.40';
 
@@ -153,9 +156,20 @@ describe('what a транзакція offers', () => {
     expect(offer.kind).toBe('attached');
     // And the чек opens and reads normally: a переказ has no single сума, so nothing is marked as
     // differing from one.
-    const header = receiptHeader({ stored: storedReceipt(), transaction: transfer });
+    const header = receiptHeader({ stored: storedReceipt(), transaction: transfer, now: NOW });
     expect(header.total).toBe('742,30 UAH');
     expect(header.differsFrom).toBeUndefined();
+  });
+
+  it("names the чек's own issue day in words with its time, never a date code", () => {
+    const header = receiptHeader({ stored: storedReceipt(), transaction: expense(), now: NOW });
+    expect(header.issued).toBe('29 квітня о 22:20');
+    const lastYear = receiptHeader({
+      stored: storedReceipt({ issuedDate: isoDate('2025-09-21') }),
+      transaction: expense(),
+      now: NOW,
+    });
+    expect(lastYear.issued).toBe('21 вересня 2025 о 22:20');
   });
 });
 
@@ -233,6 +247,7 @@ describe('the позиції list', () => {
     const header = receiptHeader({
       stored: storedReceipt(),
       transaction: expense({ amount: money(70000, 'UAH') }),
+      now: NOW,
     });
 
     expect(header.total).toBe('742,30 UAH');
@@ -244,6 +259,7 @@ describe('the позиції list', () => {
     const header = receiptHeader({
       stored: storedReceipt(),
       transaction: expense({ amount: money(74230, 'UAH') }),
+      now: NOW,
     });
 
     expect(header.differsFrom).toBeUndefined();
@@ -260,7 +276,7 @@ describe('the позиції list', () => {
     const tampered = storedReceipt({ snapshot: '<RQ>ЩОСЬ ЗОВСІМ ІНШЕ</RQ>' }, items);
 
     expect(receiptItemRows(tampered.items)).toEqual(before);
-    expect(receiptHeader({ stored: tampered, transaction: expense() }).total).toBe('742,30 UAH');
+    expect(receiptHeader({ stored: tampered, transaction: expense(), now: NOW }).total).toBe('742,30 UAH');
   });
 
   it('formats quantities the way a till prints them', () => {
@@ -283,7 +299,7 @@ describe('the позиції list', () => {
     ];
     const receipt = storedReceipt({ total: money(23750, 'UAH') }, items);
 
-    expect(receiptHeader({ stored: receipt, transaction: expense({ amount: money(23750, 'UAH') }) }).total).toBe(
+    expect(receiptHeader({ stored: receipt, transaction: expense({ amount: money(23750, 'UAH') }), now: NOW }).total).toBe(
       '237,50 UAH',
     );
     expect(receiptItemRows(receipt.items).map((r) => r.total)).toEqual(['45,00 UAH']);
@@ -572,7 +588,7 @@ describe('what the lookup answered', () => {
 
     expect(state.kind).toBe('preview');
     if (state.kind !== 'preview') return;
-    const view = previewView(state);
+    const view = previewView(state, NOW);
     expect(view.total).toBe('437,40 UAH');
     expect(view.items).toHaveLength(8);
     expect(view.confirmLabel).toBe(ATTACH_LABEL);
@@ -585,7 +601,7 @@ describe('what the lookup answered', () => {
 
     expect(state.kind).toBe('preview');
     if (state.kind !== 'preview') return;
-    const view = previewView(state);
+    const view = previewView(state, NOW);
     expect(view.mismatch).toContain('437,40');
     expect(view.mismatch).toContain('700,00');
     expect(view.confirmLabel).toBe(ATTACH_ANYWAY_LABEL);
@@ -668,9 +684,13 @@ describe('information beside the comparison', () => {
 
     expect(state.kind).toBe('preview');
     if (state.kind !== 'preview') return;
-    const view = previewView(state);
+    const view = previewView(state, NOW);
     expect(view.mismatch).toBeUndefined();
     expect(view.notes.join(' ')).toContain('1 день');
+    // app-shell — Scenario: A чек's issue day differs in words.
+    expect(view.notes.join(' ')).toMatch(/Чек виписано \d{1,2} квітня,/);
+    expect(view.issued).toMatch(/^\d{1,2} квітня о \d{2}:\d{2}$/);
+    expect(JSON.stringify(view.notes)).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(view.confirmLabel).toBe(ATTACH_LABEL);
   });
 
@@ -686,7 +706,7 @@ describe('information beside the comparison', () => {
 
     expect(state.kind).toBe('preview');
     if (state.kind !== 'preview') return;
-    const view = previewView(state);
+    const view = previewView(state, NOW);
     expect(view.mismatch).toBeUndefined();
     expect(view.notes.join(' ')).toContain('чек повернення');
   });
@@ -894,7 +914,7 @@ describe('the screens are wired to this module', () => {
     expect(scan).toContain("from '@/ui/receipt-screen'");
     expect(scan).toContain('refusalView(state.refusal)');
     expect(scan).toContain('refusalView(state.hint)');
-    expect(scan).toContain('previewView(state)');
+    expect(scan).toContain('previewView(state, new Date())');
     expect(scan).toContain('chkAllWebProvider');
     // The endpoint is the adapter's business; no screen writes one.
     expect(scan).not.toContain('cabinet.tax.gov.ua');

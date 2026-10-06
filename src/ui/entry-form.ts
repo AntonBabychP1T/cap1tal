@@ -56,6 +56,26 @@ export function entryFromRoute(asked: string | undefined): EntryType {
   return ENTRY_TYPES.find((one) => one === asked) ?? 'expense';
 }
 
+/**
+ * Which pushes of the entry form find the one already open instead of opening a second (design
+ * D6): exactly those that name nothing — the launcher shortcut and the «+» on Головний. A push that
+ * names a тип, a рахунок or a destination always opens a fresh form, because an older one below
+ * would come back with its own state and drop what the push names.
+ *
+ * expo-router asks this of the push's params and of each open form's params, so the form clears
+ * its own once it has read them; any open form then answers `'entry'`.
+ */
+export function entrySingularId(params: {
+  readonly type?: unknown;
+  readonly to?: unknown;
+  readonly account?: unknown;
+}): string | undefined {
+  const named = [params.type, params.to, params.account].some(
+    (value) => value !== undefined && value !== '',
+  );
+  return named ? undefined : 'entry';
+}
+
 export interface EntryDraft {
   readonly type: EntryType;
   /** The рахунок; for a переказ, the account the money left. */
@@ -99,6 +119,49 @@ export function entryHoldsEdits<T extends object>(
 ): boolean {
   if (current === undefined || opened === undefined) return false;
   return !sameFields(current, opened);
+}
+
+/**
+ * What the entry form holds right after «Записати і ще одну» stored `stored` (main-screen,
+ * "Recording is visibly confirmed"; design D3): ready for the next транзакція of the same kind.
+ *
+ * The тип, the рахунки and the дата stay — a batch of yesterday's cash receipts is recorded on one
+ * рахунок and one day, and a kept дата is visible beside its label (design D8). The сума, «Скільки
+ * прийшло» and the опис are cleared, and the picked категорія and джерело are dropped, so the
+ * категорія follows the next опис again rather than carrying the last one's over.
+ */
+export function draftAfterStore(stored: EntryDraft): EntryDraft {
+  return {
+    type: stored.type,
+    accountId: stored.accountId,
+    toAccountId: stored.toAccountId,
+    amount: '',
+    arrived: '',
+    date: stored.date,
+    categoryId: undefined,
+    sourceId: undefined,
+    description: '',
+  };
+}
+
+/**
+ * What a tap on «Записати» or «Записати і ще одну» does, given the confirmation of the last
+ * stay-open store (design D4).
+ *
+ * While that confirmation stands — the form is still exactly what `draftAfterStore` left — there is
+ * nothing new to store: «Записати і ще одну» does nothing at all (no refusal over a form the owner
+ * just used correctly), and «Записати» simply leaves, as it would have after storing. Any field
+ * changed since, or no confirmation at all, is an ordinary recording.
+ */
+export function tapAfterStore(
+  current: EntryDraft,
+  confirmation: { readonly draft: EntryDraft } | undefined,
+  button: 'record' | 'recordAndNext',
+): 'record' | 'nothing' | 'leave' {
+  if (confirmation === undefined || entryHoldsEdits(current, confirmation.draft)) {
+    return 'record';
+  }
+  return button === 'recordAndNext' ? 'nothing' : 'leave';
 }
 
 /**

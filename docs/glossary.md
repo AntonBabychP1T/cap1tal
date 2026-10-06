@@ -309,7 +309,9 @@ Owner's decision, 2026-10-01 (vision §4 «Розстрочки»).
   first, for a зобов'язання one every period of its періодичність on that day — in either case on
   the month's last day where that day does not exist. Derived, never entered платіж by платіж.
 - **Рахунок списання** (debit account) — the рахунок the платежі are debited from: a UAH рахунок
-  for a розстрочка, a рахунок of any currency for a зобов'язання.
+  for a розстрочка, a рахунок of any currency for a зобов'язання. Never a рахунок-борг — that is a
+  person, and a платіж is not paid from one; any other вид can be, an інвестиційний рахунок
+  included. A plan stored on a рахунок-борг before this rule keeps it.
 - **Списання** (debit) — the витрата a платіж is linked to: the bank's debit, arrived by monobank,
   a notification or by hand. The app links a витрата on the рахунок списання within three days of
   the платіж's дата: for a розстрочка a UAH витрата of exactly the платіж's сума; for a зобов'язання

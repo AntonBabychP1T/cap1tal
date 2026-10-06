@@ -2,7 +2,10 @@ import type { RuleTiers } from '../domain/rules';
 import type { IsoDate } from '../domain/transaction';
 import type { CapturedNotification } from '../notifications/capture';
 import { processCapture, type CaptureOutcome, type Watch } from '../notifications/draft';
-import type { NotificationCapturePort } from '../platform/notification-capture';
+import {
+  monobankPackagesIn,
+  type NotificationCapturePort,
+} from '../platform/notification-capture';
 import { STEP_FAILED } from '../reporting/journal';
 import { journal } from './journal';
 
@@ -103,12 +106,16 @@ export async function drainCaptures(input: DrainInput): Promise<DrainReport> {
 }
 
 async function drained(input: DrainInput): Promise<DrainReport> {
+  // Read once, before anything else: this one list is both the set the device is given and the set
+  // each notification is judged against, so the two cannot come apart.
+  const watches = input.storage.watches();
+  await applyWatchedSet(input.capture, watches);
+
   const collected = await input.capture.collect();
   if (collected.length === 0) {
     return { collected: 0, acknowledged: 0, drafted: 0, autoConfirmed: 0 };
   }
 
-  const watches = input.storage.watches();
   const categorisation = input.categorisation();
   const seen = new Set(input.storage.seenFingerprints());
   const storedAt = input.now();
@@ -160,6 +167,47 @@ async function drained(input: DrainInput): Promise<DrainReport> {
     autoConfirmed,
     ...(failure !== undefined ? { failure } : {}),
   };
+}
+
+/**
+ * The device's watched set made to follow storage, before a single notification is collected.
+ *
+ * Nothing else keeps the two in step. `addWatchedApp` and `removeWatchedApp` tell the capture layer
+ * when the owner changes a watch, and every other path that writes watch rows — a відновлення above
+ * all, which replaces the whole database inside one transaction and knows of no port — leaves the
+ * device holding whatever it was last told. The section then lists «Приват24» as read while the
+ * phone drops everything it posts: no чернетка, no сповіщення про збій (that alert answers withheld
+ * access and a storage failure, and this is neither), and «Залишилось» too high in the one
+ * direction that matters, with nothing for the owner to point at.
+ *
+ * Before `collect`, and before the early return for an empty collection, because after a
+ * відновлення the queue is empty *precisely because* the device has been dropping everything — a
+ * reconciliation that only ran when something was waiting would never run in the one case it is
+ * for. And unconditionally on every drain, never once per run: what the device holds is the very
+ * thing this cannot trust, so a memo of "already told" would be the belief that just proved wrong.
+ *
+ * The monobank family is dropped rather than left to be refused. `setWatched` rejects the *whole*
+ * set when any package matches — deliberately, so a screen can show the owner what they typed was
+ * rejected instead of silently ignoring it — but the drain has no owner watching and nothing to
+ * show, so a single stored monobank row (a бекап written under a narrower reading of the prefix)
+ * would make every collection refuse for good and leave every other відстежуваний застосунок
+ * unapplied. That is this bug back again, made permanent. The rule is pure and exported for exactly
+ * this: apply it here, and ask the port a question it can answer.
+ *
+ * The answer is then ignored, and both of its unhappy values are ones nothing here can act on.
+ * `refused` is unreachable past the filter. `unavailable` is a build with no listener in it — where
+ * access reports `unsupported` and no drain starts at all — or a native write that threw, and that
+ * one costs nothing: the set is told again on the next foreground transition, and until then the
+ * device holds no worse a set than it held before this existed. Neither is worth a сповіщення про
+ * збій, whose whole meaning is «the транзакції you expect stopped arriving».
+ */
+async function applyWatchedSet(
+  capture: NotificationCapturePort,
+  watches: readonly Watch[],
+): Promise<void> {
+  const packages = watches.map((watch) => watch.packageName);
+  const refusable = new Set(monobankPackagesIn(packages));
+  await capture.setWatched(packages.filter((name) => !refusable.has(name)));
 }
 
 function decide(

@@ -48,7 +48,7 @@ that, when it is filled, a списання is recognised by that text in the ba
 сума. The сума SHALL be entered in major units the way an amount is entered when recording, and the
 form SHALL show it in the currency of the chosen рахунок списання. «Як часто» SHALL offer
 «Щомісяця», «Щокварталу», «Щопівроку» and «Щороку», starting at «Щомісяця». «Дата першого
-платежу» SHALL start at today. «Рахунок списання» SHALL offer only unarchived рахунки. «Редагувати»
+платежу» SHALL start at today. «Рахунок списання» SHALL offer only unarchived рахунки that are not a рахунок-борг — a рахунок-борг is a person, and a платіж is never paid from one; every other вид, an інвестиційний рахунок included, SHALL stay offered. A зобов'язання already stored on a рахунок-борг SHALL keep showing it as the chosen «Рахунок списання» while it is edited, and saving it untouched SHALL keep it there. «Редагувати»
 SHALL open the same form holding the зобов'язання's current values. Every refusal of the
 commitments capability SHALL be stated in Ukrainian next to the field it concerns, and nothing SHALL
 be stored while any stands. WHILE the form is open, the device's back gesture SHALL close it,
@@ -89,6 +89,27 @@ own категорія, and a комісія is recorded with its переказ
 
 - **WHEN** the owner types into the form, uses the device's back gesture and answers «Відкинути»
 - **THEN** the form closes and no зобов'язання is stored
+
+#### Scenario: A зобов'язання is not paid from a person
+
+- **WHEN** the owner holds «mono чорна» (spending, UAH), «IBKR» (investment, USD) and «Ярослав»
+  (debt, UAH), all unarchived, and opens «Нове зобов'язання»
+- **THEN** «Рахунок списання» offers «mono чорна» and «IBKR» and not «Ярослав», and no offer to see
+  more is drawn
+
+#### Scenario: A stored зобов'язання on a рахунок-борг still shows it
+
+- **WHEN** a зобов'язання of 29900 minor units UAH stored before this change is paid from «Ярослав»
+  (debt, UAH) and the owner opens it for editing and saves without touching «Рахунок списання»
+- **THEN** «Ярослав» is shown as the chosen рахунок, and the зобов'язання of 29900 minor units UAH
+  stays on it
+
+#### Scenario: Only рахунки-борги leave nothing to pay from
+
+- **WHEN** the owner's only unarchived рахунки are «Ярослав» and «Оля», both of kind debt, and they
+  fill «Нове зобов'язання» and store it
+- **THEN** «Рахунок списання» offers no рахунок, the refusal stands next to «Рахунок списання», and
+  no зобов'язання is stored
 
 ### Requirement: One зобов'язання shows its платежі with a verb per платіж
 

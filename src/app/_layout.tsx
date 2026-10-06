@@ -48,6 +48,7 @@ import { syncMonobankSyncTask } from '@/platform/monobank-sync-task';
 import { ALERT_PORTS } from '@/hooks/use-alerting';
 import { reportCollection } from '@/ui/alerting';
 import { dateOfEpochMs } from '@/ui/dates';
+import { entrySingularId } from '@/ui/entry-form';
 import { journalAppState } from '@/ui/device-journal';
 import { newId } from '@/ui/id';
 import { bindJournal, journal, reportFailure } from '@/ui/journal';
@@ -161,6 +162,14 @@ if (__DEV__) {
 }
 
 /**
+ * The route under everything opened by a link. A cold start from the launcher shortcut
+ * (`cap1tal://transaction/new`) builds `[(tabs), transaction/new]` rather than the form alone, so
+ * «назад» and «Записати» land on Головний instead of leaving the app (quick-entry design D6). A
+ * normal launch is unchanged: `(tabs)` is the first route anyway.
+ */
+export const unstable_settings = { initialRouteName: '(tabs)' };
+
+/**
  * What replaces a screen that threw while being drawn.
  *
  * expo-router calls the nearest `ErrorBoundary` above the route that failed; this is the root's,
@@ -236,8 +245,9 @@ export default function RootLayout() {
   // сповіщень» screen is another app, so returning from it is a foreground transition.
   //
   // Everything this does is `drainCaptures`, which `verify` proves against the in-memory capture
-  // port and a real database. Here there is only the trigger and the one condition: no access, no
-  // collection. Storage waits for the migrations, like every other read in this file.
+  // port and a real database. Here there is only the trigger and the one condition: nowhere to
+  // collect from, no collection. Storage waits for the migrations, like every other read in this
+  // file.
   //
   // One drain at a time: opening and a foreground event can land together, and two loops over one
   // collection would each acknowledge a prefix — safe for the money (the fingerprint leads every
@@ -257,7 +267,12 @@ export default function RootLayout() {
       // nothing on screen says a word about it either way (design D5, D5a).
       const access = await notificationAccess.state();
       const watched = notificationsRepo.watches().length > 0;
-      if (access !== 'granted') {
+      // Only the two answers with no queue behind them stop here. A listener switched on and
+      // unbound — «not-listening» — still has one: everything it heard before it fell silent is
+      // waiting on the device, and those are транзакції the owner cannot recover any other way
+      // once the bounded queue forgets them. So it drains, and `reportCollection` announces the
+      // silence afterwards, because the answer is still not «granted» (design D5).
+      if (access === 'denied' || access === 'unsupported') {
         await reportCollection({ access, watched, failed: false }, NOTIFY);
         return;
       }
@@ -610,6 +625,10 @@ export default function RootLayout() {
             <Stack.Screen
               name="transaction/new"
               options={{ presentation: 'card', animation: animation('transaction/new') }}
+              // A push naming nothing — the launcher shortcut, the «+» on Головний — brings an
+              // open form forward with what it holds instead of opening a second; a push naming a
+              // рахунок or a тип always opens a fresh one (quick-entry design D6).
+              dangerouslySingular={(_, params) => entrySingularId(params)}
             />
             {/* The фіскальний чек of a транзакція: the scanner, and the позиції of the чек it
                 attached. Pushed over the транзакція's own form, so «Назад» from either lands back

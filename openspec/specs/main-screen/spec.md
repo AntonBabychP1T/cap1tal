@@ -109,26 +109,7 @@ The latest-transactions section SHALL show at most five records across all histo
 #### Scenario: Categorisation stays in place
 - **GIVEN** an uncategorised expense with a stored опис in the feed
 - **WHEN** its categorisation action is used
-- **THEN** the existing short picker and rule offer work without opening the editor and refreshed categories/banner reflect the stored choice
-
-### Requirement: Uncategorised records are a compact feed banner
-
-A nonzero count of stored витрати and повернення carrying «Без категорії» SHALL appear as one compact actionable service banner, counted over all history and opening the matching uncategorised filter, with no banner or reserved space at zero. The banner SHALL remain visible outside the configurable widget list when «Останні 5 транзакцій» is hidden and SHALL NOT be hideable or reorderable as a dashboard widget.
-
-#### Scenario: Count and destination agree
-- **GIVEN** seven matching records across several months, only one in the latest five, plus an income «Без джерела»
-- **WHEN** the banner is shown and tapped
-- **THEN** it reads «7 транзакцій без категорії · Переглянути» and opens exactly those seven through the existing filter
-
-#### Scenario: Hiding the feed does not hide the required action
-- **GIVEN** seven matching records and «Останні 5 транзакцій» is hidden
-- **WHEN** Головний opens
-- **THEN** the compact uncategorised banner is still visible and opens those seven records
-
-#### Scenario: Answering the last record removes the banner
-- **GIVEN** one matching record
-- **WHEN** it is categorised, deleted or retyped out of the filter
-- **THEN** the banner disappears without an empty attention heading
+- **THEN** the existing short picker and rule offer work without opening the editor, and the refreshed categories and the rail row «Що потребує відповіді» reflect the stored choice
 
 ### Requirement: Sync occupies a compact header
 
@@ -156,17 +137,17 @@ Configured linked monobank accounts SHALL expose existing coverage/freshness and
 
 ### Requirement: Operational alerts remain compact and actionable
 
-Pending чернетки and an existing actionable sync failure SHALL occupy at most one collapsed service row each in the fixed service rail directly below the header and before every widget, with draft expansion retaining existing in-place confirm/dismiss behavior and failure leading to existing details/retry. These rows SHALL remain outside the configurable widget list, SHALL NOT be hideable or reorderable, and SHALL take no space when absent.
+An existing actionable sync failure SHALL occupy at most one collapsed service row in the fixed service rail directly below the header and before every widget, leading to existing details/retry. Pending чернетки SHALL NOT have a row of their own: they are counted in the rail row «Що потребує відповіді» and confirmed or dismissed in the queue, as the answer-queue capability defines. These rows SHALL remain outside the configurable widget list, SHALL NOT be hideable or reorderable, and SHALL take no space when absent.
 
 #### Scenario: Many drafts do not bury the dashboard
 - **GIVEN** fifty pending чернетки, a rejected token and every configurable widget hidden
 - **WHEN** Головний opens
-- **THEN** two compact service rows remain visible directly below the header, no draft bodies render before expansion, and the failure action opens monobank details
+- **THEN** two compact service rows remain visible directly below the header — the failure row and «Що потребує відповіді» naming fifty чернеток — no draft body renders on Головний, and the failure action opens monobank details
 
 #### Scenario: Draft confirmation updates the same record
-- **GIVEN** an expanded pending чернетка
+- **GIVEN** a pending чернетка listed in the queue opened from the rail row
 - **WHEN** the owner confirms its proposed amount or supplies the required amount
-- **THEN** existing rules create the transaction, every visible financial widget refreshes, and the draft no longer waits
+- **THEN** existing rules create the transaction, every visible financial widget of Головний is refreshed on return, and the draft no longer waits
 - **AND** dismissal uses existing confirmation and creates no transaction
 
 #### Scenario: Routine postponement is not an error
@@ -176,8 +157,8 @@ Pending чернетки and an existing actionable sync failure SHALL occupy at
 
 #### Scenario: Confirming the last чернетка into «Без категорії» hands off between both alerts
 - **GIVEN** the only pending чернетка, whose text no правило matches, is the only thing needing attention
-- **WHEN** the owner expands and confirms it
-- **THEN** the draft row disappears and the uncategorised banner appears naming one транзакція, so the owner is never left facing neither alert nor the transaction it produced
+- **WHEN** the owner confirms it in the queue and returns to Головний
+- **THEN** the rail row «Що потребує відповіді» names one entry, «1 без категорії», instead of one чернетка, so the owner is never left facing neither the row nor the transaction it produced
 
 ### Requirement: Top categories read the same signed monthly breakdown
 
@@ -660,6 +641,11 @@ many категорії it offers in all, the five being those the owner reached
 head of the full list. "Без категорії" itself SHALL NOT be among them — it is what the transaction
 is being moved away from.
 
+The mark's picker SHALL close together with the mark: it SHALL NOT still show expanded under a
+transaction that no longer carries "Без категорії", whether that is because a category was just
+stored on it or because it was retyped into something else from editing and the feed has since
+reloaded.
+
 Beside the категорії, the mark on a витрата SHALL offer «Це переказ»: a переказ is a type, not a категорія, and
 the owner looking at a «Без категорії» витрата that is really money moved between their own рахунки
 reaches for this mark first. Choosing it SHALL open editing of that витрата with the type already
@@ -690,6 +676,13 @@ owner saves there, and leaving editing without saving SHALL leave the витра
   to see all категорії
 - **THEN** the same transaction now carries Pets, the editing screen never opened, and the mark is
   gone
+
+#### Scenario: A picker left open closes when its transaction is retyped away from editing
+
+- **WHEN** the owner opens the mark's picker on a "Без категорії" витрата, then from that same
+  transaction retypes it into a переказ from editing and returns to Головний
+- **THEN** the feed shows the transaction as a переказ with no mark and no category picker under
+  it, expanded or otherwise
 
 #### Scenario: «Це переказ» opens editing as a переказ
 
@@ -917,22 +910,25 @@ before «Записати» is pressed and can be changed with one tap. Recordin
 ### Requirement: Categorising a транзакція offers to remember it as a правило
 
 After a категорія is set on a stored витрата or повернення that carries an опис — through the
-«Без категорії» mark in the feed or through the editing screen alike — the owner SHALL be offered
-a правило that would make the same decision next time, with the merchant criterion already
-proposed from that опис — the продавець it is recognised as, or a pattern — and changeable before
-it is stored: a pattern is editable, and a продавець can be switched to the pattern proposed from
-the опис. After a stored витрата that carries an опис is
+«Без категорії» mark in the feed, through the queue «Що потребує відповіді» or through the editing
+screen alike — the owner SHALL be offered a правило that would make the same decision next time,
+with the merchant criterion already proposed from that опис — the продавець it is recognised as,
+or a pattern — and changeable before it is stored: a pattern is editable, and a продавець can be
+switched to the pattern proposed from the опис. After a stored витрата that carries an опис is
 retyped into a переказ from editing, the owner SHALL likewise be offered a правило-переказ onto the
-destination рахунок just chosen. Accepting SHALL store the правило; declining
-SHALL store none and SHALL leave the категорія just set — or the переказ just stored — exactly as it
-is. Whether the правило is stored or not, the категорія or переказ SHALL already be stored before
-the offer is made, so dismissing the offer — or leaving the screen — can never lose the owner's
-decision.
+destination рахунок just chosen. After a джерело is set on a stored дохід that carries an опис —
+through the «Без джерела» mark, through the queue or through editing alike — the owner SHALL
+likewise be offered a правило-джерело naming that джерело. Accepting SHALL store the правило;
+declining SHALL store none and SHALL leave the категорія or джерело just set — or the переказ just
+stored — exactly as it is. Whether the правило is stored or not, the категорія, джерело or переказ
+SHALL already be stored before the offer is made, so dismissing the offer — or leaving the screen —
+can never lose the owner's decision.
 
 The offer SHALL name what it would remember in words the owner can check before accepting: the
 pattern, or «продавець» and the продавець's назва, and the категорія it would target, or the same
-criterion and «переказ на» the destination рахунок's назва. The cases in which no offer is made at
-all belong to the categorisation-rules capability.
+criterion and «переказ на» the destination рахунок's назва, or the same criterion and the джерело
+it would give. The cases in which no offer is made at all belong to the categorisation-rules
+capability.
 
 #### Scenario: One tap in the feed, then the offer
 
@@ -978,6 +974,18 @@ all belong to the categorisation-rules capability.
   балансу «Резерв»" are stored on platinum
 - **THEN** the правило-переказ exists, both витрати are перекази onto РЕЗЕРВ, and the owner is told
   two витрати became перекази
+
+#### Scenario: Giving a дохід its джерело offers the правило-джерело
+
+- **WHEN** the owner uses the «Без джерела» mark on a дохід of 1250 minor units UAH carrying the
+  опис "Відсотки 12.50 UAH", which no написання recognises, and picks «Відсотки»
+- **THEN** the дохід carries «Відсотки» and an offer appears naming the pattern "відсотки" and the
+  джерело «Відсотки»
+
+#### Scenario: Declining the правило-джерело keeps the джерело
+
+- **WHEN** that offer is declined
+- **THEN** the дохід still carries «Відсотки» and no правило was stored
 
 ### Requirement: The entry form opens on the рахунок last recorded on by hand
 
@@ -1405,36 +1413,6 @@ It SHALL carry no point list, account explanation or selector of its own; those,
 - **WHEN** TalkBack reads the Статок widget
 - **THEN** it says the whole статок approximated in гривнях, its current value, its change with direction in words and its date, and that a tap opens Статок
 
-### Requirement: «Потребує уваги» leads to the транзакції without a категорія
-
-The row of «Потребує уваги» that names how many транзакції are without a категорія SHALL open
-«Транзакції» with the «Без категорії» narrowing already in force, as the transaction-search
-capability defines — not on the whole history. The number the row names SHALL count exactly the
-транзакції that narrowing shows: the витрати and повернення carrying «Без категорії». The offer of
-the latest-transactions section to go to all транзакції SHALL keep opening the whole history.
-
-#### Scenario: «Переглянути» opens only what is waiting
-
-- **WHEN** «Потребує уваги» names three транзакції without a категорія among 188 stored and the
-  owner follows that row
-- **THEN** «Транзакції» opens narrowed to «Без категорії», showing those three and no other
-
-#### Scenario: A повернення in «Без категорії» is counted
-
-- **WHEN** the only транзакція carrying «Без категорії» is a повернення
-- **THEN** «Потребує уваги» names one транзакція without a категорія
-
-#### Scenario: The feed's way to all транзакції is not narrowed
-
-- **WHEN** the owner follows the latest-transactions section's offer to see all транзакції
-- **THEN** «Транзакції» opens on the whole history with no narrowing in force
-
-#### Scenario: The owner can still see everything from there
-
-- **WHEN** the owner has followed that row to «Транзакції»
-- **THEN** the «Без категорії» narrowing reads as in force and taking it off shows the whole
-  history
-
 ### Requirement: Головний says how fresh the bank data is
 
 WHEN monobank is configured and at least one рахунок is linked, Головний SHALL state how fresh the
@@ -1829,3 +1807,47 @@ text for anything that is not a number.
 
 - **WHEN** the owner types «-50» into «Сума» and taps «Записати»
 - **THEN** nothing is recorded and the refusal reads «Сума має бути більшою за нуль»
+
+### Requirement: One rail row names what waits for an answer and opens the queue
+
+WHEN anything waits for the owner's answer — a pending чернетка, a можливий дубль the answer-queue
+capability lists unnarrowed, a витрата or повернення «Без категорії», or a дохід «Без джерела» —
+the fixed service rail directly below Головний's header SHALL carry one compact row «Що потребує
+відповіді» naming how many entries wait in all and, in the queue's order of groups, how many of
+each kind present: «N чернеток», «N дублів», «N без категорії», «N без джерела», each in the
+grammatical form its number asks. Its count SHALL be exactly the count of entries the unnarrowed
+queue holds; the bank the app cannot hear SHALL not be counted in it, as the rail states that in
+its own row. Its tap SHALL open the queue unnarrowed. The row SHALL follow the rail's rules: outside
+the configurable widgets, never hidden or reordered, visible when «Останні 5 транзакцій» is hidden,
+taking no space when nothing waits, and making no network request of its own. The offer of the
+latest-transactions section to go to all транзакції SHALL keep opening the whole history.
+
+#### Scenario: Count and destination agree
+
+- **WHEN** two чернетки are pending, seven витрати and one повернення carry «Без категорії» across
+  several months, one дохід carries «Без джерела», and one можливий дубль of October is stated
+- **THEN** the rail row reads «Що потребує відповіді: 12» with «2 чернетки · 1 дубль · 8 без
+  категорії · 1 без джерела», and its tap opens the queue holding exactly those twelve entries
+
+#### Scenario: Hiding the feed does not hide the row
+
+- **WHEN** seven витрати carry «Без категорії» and «Останні 5 транзакцій» is hidden
+- **THEN** the rail row is still visible and opens the queue
+
+#### Scenario: Answering the last entry removes the row
+
+- **WHEN** one дохід «Без джерела» is the only entry and the owner gives it «Зарплата» from the
+  feed's mark
+- **THEN** the rail row disappears without an empty attention heading
+
+#### Scenario: A bank without a token is its own row and is not counted
+
+- **WHEN** nine рахунки are linked to monobank, no token is configured and three витрати carry «Без
+  категорії»
+- **THEN** the rail carries the no-token row and the row «Що потребує відповіді: 3», and the bank is
+  not among the three
+
+#### Scenario: The feed's way to all транзакції is not narrowed
+
+- **WHEN** the owner follows the latest-transactions section's offer to see all транзакції
+- **THEN** «Транзакції» opens on the whole history with no narrowing in force

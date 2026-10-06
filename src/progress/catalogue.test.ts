@@ -335,6 +335,27 @@ describe('the ціль-накопичення досягнення', () => {
     expect(earnedKeys(onTime)).toContain('goal.reached-in-time:g1');
   });
 
+  it("Scenario: A досягнення's condition names its day", () => {
+    const list = candidates(
+      input({
+        today: '2026-10-06',
+        goals: [
+          { goal: goal({ name: 'Відпустка', deadline: '2027-03-01' }), progress: money(100_000, 'UAH') },
+        ],
+      }),
+    );
+    expect(byKey(list, 'goal.reached-in-time:g1').condition).toBe(
+      'Ціль «Відпустка» досягнута не пізніше за 1 березня 2027.',
+    );
+    const thisYear = candidates(
+      input({
+        today: '2026-10-06',
+        goals: [{ goal: goal({ deadline: '2026-12-31' }), progress: money(100_000, 'UAH') }],
+      }),
+    );
+    expect(byKey(thisYear, 'goal.reached-in-time:g1').condition).toMatch(/за 31 грудня\.$/);
+  });
+
   it('Scenario: A ціль with no дата is never reached in time', () => {
     const list = candidates(
       input({ goals: [{ goal: goal(), progress: money(1_000_000, 'UAH') }] }),

@@ -490,7 +490,10 @@ wrote on the row it was built from, with surrounding whitespace removed. A row w
 is empty SHALL produce транзакції with no опис rather than an empty one. This SHALL hold for every
 shape the import builds: витрата, повернення, дохід, коригування, a переказ between two рахунки, a
 переказ built from an in-transit departure and its arrival, the комісія split off such a переказ,
-and a переказ onto or off the рахунок-борг.
+and a переказ onto or off the рахунок-борг. A переказ built from an in-transit departure and its
+arrival SHALL carry the departure's опис, or the arrival's when the departure's description is
+empty or blank; the two SHALL NOT be joined, and the комісія split off it SHALL carry whatever опис
+that переказ carries.
 
 The опис SHALL be carried and nothing more: it SHALL NOT decide a категорія, a джерело, a вид, a
 merge or a сума, and it SHALL NOT appear anywhere in the звірка's arithmetic.
@@ -505,6 +508,13 @@ merge or a сума, and it SHALL NOT appear anywhere in the звірка's arit
 - **WHEN** an in-transit departure described «Переказ на картку» is matched with its arrival
 - **THEN** the переказ built from the pair carries the опис «Переказ на картку», and the комісія
   split off it carries the same опис
+
+#### Scenario: A blank departure takes its arrival's опис
+
+- **WHEN** an in-transit departure whose description is only spaces, carrying a комісія, is
+  matched with an arrival described «Зарахування»
+- **THEN** the переказ built from the pair carries the опис «Зарахування», and the комісія split
+  off it carries the same опис rather than none
 
 #### Scenario: An empty description leaves no опис
 

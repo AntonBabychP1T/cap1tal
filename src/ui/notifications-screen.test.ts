@@ -39,11 +39,31 @@ describe('the drain runs when the app runs', () => {
     expect(layout).toContain('useOnForeground(');
     expect(foreground).toMatch(/AppState\.addEventListener\('change'/);
     expect(foreground).toMatch(/state === 'active'/);
-    // Gated on the permission: no access, no collection. The answer is named now — the same
-    // value also decides whether the silence is announced (reminders-and-alerts design D5a) —
-    // but the gate itself is unchanged: anything other than granted returns before the drain.
+    // Gated on the permission: nowhere to collect from, no collection. The answer is named — the
+    // same value also decides whether the silence is announced (reminders-and-alerts design D5a)
+    // — and the gate names the two answers with no queue behind them, which return before the
+    // drain. Both, counted, so dropping either one fails here.
     expect(layout).toMatch(/const access = await notificationAccess\.state\(\);/);
-    expect(layout).toMatch(/if \(access !== 'granted'\) \{[\s\S]*?return;\s*\}\s*const report = await drainCaptures/);
+    expect(layout).toMatch(
+      /if \(access === 'denied' \|\| access === 'unsupported'\) \{[\s\S]*?return;\s*\}\s*const report = await drainCaptures/,
+    );
+  });
+
+  it('Scenario: What was captured before the silence is still collected', () => {
+    // A listener switched on and unbound still has a queue — everything it heard before it fell
+    // silent — and the bounded queue forgets its oldest to make room, so a gate that skipped the
+    // drain would lose транзакції the owner cannot recover any other way. `not-listening` is
+    // therefore deliberately absent from the gate, and present in what is reported afterwards.
+    const gate = layout.slice(
+      layout.indexOf('const access = await notificationAccess.state();'),
+      layout.indexOf('const report = await drainCaptures'),
+    );
+
+    expect(gate).not.toBe('');
+    expect(gate).not.toContain("'not-listening'");
+    // And the drain's own report still carries the answer, so the silence is announced once the
+    // waiting records are safely stored rather than instead of storing them.
+    expect(layout).toMatch(/reportCollection\(\{ access, watched, failed: report\.failure/);
   });
 
   it('The effect holds no logic of its own — it calls the tested driver', () => {
@@ -103,8 +123,10 @@ describe('the «Сповіщення банків» section reads the device, ne
   });
 
   it('Scenario: An archived рахунок is not offered', () => {
-    // The one picker rule, from `account-choices.ts` — not a fourth copy of "the unarchived ones".
-    expect(section).toContain('accountChoicesFor(stored.accounts, undefined)');
+    // The one picker rule, through `watchAccountRows` (the unarchived ones of `account-choices.ts`,
+    // without a рахунок-борг) — not a fourth copy of "the unarchived ones".
+    expect(section).toContain('watchAccountRows(stored.accounts)');
+    expect(section).toMatch(/<Picker\s+label="Рахунок"/);
   });
 
   it('Every watch mutation goes through the capture port, never straight to storage', () => {

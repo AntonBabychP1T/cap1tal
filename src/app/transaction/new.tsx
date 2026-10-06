@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import { Alert, StyleSheet } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, StyleSheet, View, useWindowDimensions, type TextInput } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Action, Choices, DateField, Field, Picker } from '@/components/form';
 import { Card, Screen, ScreenHeader } from '@/components/surfaces';
@@ -15,6 +16,7 @@ import {
   transactions as transactionsRepo,
 } from '@/db/repos';
 
+import { namesById } from '@/domain/category';
 import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transaction';
 import { useHaptics } from '@/hooks/haptics-ports';
 import { ALERT_PORTS, attended } from '@/hooks/use-alerting';
@@ -28,10 +30,13 @@ import {
   entryFromRoute,
   buildEntry,
   defaultAccountId,
+  draftAfterStore,
   entryDateCheck,
   entryHoldsEdits,
   normaliseDescription,
   proposedCategoryId,
+  recordedConfirmation,
+  tapAfterStore,
   type EntryDraft,
   type EntryType,
 } from '@/ui/entry-form';
@@ -40,6 +45,7 @@ import { judgeProgressLater } from '@/hooks/progress-ports';
 import { newId } from '@/ui/id';
 import { accountChoiceLabel, transactionTypeLabel } from '@/ui/labels';
 import { PICKER_SIZE } from '@/ui/shortlist';
+import { accountsById } from '@/ui/transaction-line';
 
 import { Spacing } from '@/constants/theme';
 
@@ -53,6 +59,12 @@ import { Spacing } from '@/constants/theme';
  * A successful «Записати» leaves the screen for wherever the owner came from (Головний, as a
  * rule), whose стрічка now opens on what was just recorded. It used to clear the form and stay,
  * which the owner reported (2026-09-23) as the form refusing to let go after every витрата.
+ * «Записати і ще одну» is the staying kind, asked for by name: it stores the same thing, confirms
+ * it above the two actions and leaves the form ready for the next one (quick-entry design D3).
+ *
+ * The сума comes first and is focused on opening, because it is the one thing always typed; the
+ * rest follow in the order the owner decides them, and the опис stands right above the категорія
+ * it proposes (design D1). Both actions are pinned in `Screen`'s footer, above the keyboard (D2).
  */
 
 /**
@@ -67,6 +79,13 @@ const RECENT_WINDOW = 50;
  * as many as a picker draws, since a sixth would be read and never shown.
  */
 const RECENT_SIZE = PICKER_SIZE;
+
+/**
+ * How wide each of the two actions wants to be at the default text size. Two of them side by side
+ * fit a phone's column; at a larger text size the basis grows with it and they wrap onto two rows
+ * rather than shrinking «Записати і ще одну» to unreadable (design D2).
+ */
+const ACTION_BASIS = 160;
 
 /** Which picker has its full list open, if any — the one thing «назад» closes before the screen. */
 type OpenPicker = 'from' | 'to' | 'category' | 'source';
@@ -87,7 +106,7 @@ export default function NewTransactionScreen() {
     [router],
   );
 
-  const [stored] = useReloadOnFocus(
+  const [stored, reload] = useReloadOnFocus(
     useCallback(() => {
       const accounts = accountsRepo.list();
       return {
@@ -163,6 +182,14 @@ export default function NewTransactionScreen() {
   const [toId, setToId] = useState<string | undefined>(() =>
     stored.accounts.some((one) => one.id === asked.to) ? asked.to : undefined,
   );
+  /**
+   * What the route named has been read into the fields above, once. The route forgets it, so this
+   * form answers `entrySingularId` like one opened from nothing: the launcher shortcut then brings
+   * it forward with what it holds instead of opening a second (design D6).
+   */
+  useEffect(() => {
+    router.setParams({ type: undefined, to: undefined, account: undefined });
+  }, [router]);
   const [amount, setAmount] = useState('');
   const [arrived, setArrived] = useState('');
   const [date, setDate] = useState(() => todayIso(new Date()));
@@ -193,18 +220,23 @@ export default function NewTransactionScreen() {
    * would have (app-shell). Registered after the picker's hook and only while no picker is open,
    * so an open list still closes first and asks nothing.
    */
-  const fields: EntryDraft = {
-    type: entry,
-    accountId: fromId,
-    toAccountId: toId,
-    amount,
-    arrived,
-    date,
-    categoryId,
-    sourceId,
-    description,
-  };
-  const [opened] = useState(fields);
+  const fields: EntryDraft = useMemo(
+    () => ({
+      type: entry,
+      accountId: fromId,
+      toAccountId: toId,
+      amount,
+      arrived,
+      date,
+      categoryId,
+      sourceId,
+      description,
+    }),
+    [amount, arrived, categoryId, date, description, entry, fromId, sourceId, toId],
+  );
+  // Settable: a store by «Записати і ще одну» makes the form it leaves the new "as opened", so
+  // «назад» right after it asks nothing.
+  const [opened, setOpened] = useState(fields);
   const dirty = entryHoldsEdits(fields, opened);
   const leave = useCallback(() => router.back(), [router]);
   useCloseOnBack(false, leave, open === undefined && dirty);
@@ -275,8 +307,40 @@ export default function NewTransactionScreen() {
     setCategoryId(picked);
   }, []);
 
+  /**
+   * The last store by «Записати і ще одну»: what it said, and the form exactly as it left it. It is
+   * shown only while the form still equals that draft, so any change to any field ends it without
+   * every setter having to clear it (design D4).
+   */
+  const [confirmation, setConfirmation] = useState<{ text: string; draft: EntryDraft }>();
+  const confirmed = confirmation && !entryHoldsEdits(fields, confirmation.draft);
+
+  /**
+   * A tap is being handled — set by `record` itself, before anything is built or asked, so a second
+   * tap that lands before the screen redraws stores nothing and opens no second question (design
+   * D3). Cleared on a refusal, on «Скасувати», and after a stay-open store once the cleared form
+   * has been committed — by the effect below, never in the handler that calls the setters, whose
+   * closure is the one a fast second tap still sees. Never cleared on leaving: the screen goes.
+   */
+  const storing = useRef(false);
+  useEffect(() => {
+    storing.current = false;
+  }, [confirmation]);
+
+  /** The сума, focused again for the next транзакція after «Записати і ще одну». */
+  const amountRef = useRef<TextInput>(null);
+
+  const names = useMemo(
+    () => ({
+      accounts: accountsById(stored.accounts),
+      categoryNames: namesById(stored.categories),
+      sourceNames: namesById(stored.sources),
+    }),
+    [stored.accounts, stored.categories, stored.sources],
+  );
+
   const store = useCallback(
-    (...written: Transaction[]) => {
+    (then: 'leave' | 'stay', ...written: Transaction[]) => {
       const now = new Date();
       for (const t of written) {
         transactionsRepo.save(t, now);
@@ -293,12 +357,63 @@ export default function NewTransactionScreen() {
       // Felt, not only seen: a store made while looking away is confirmed too (motion, "Storing a
       // транзакція is felt").
       haptics.play('stored');
-      router.back();
+      if (then === 'leave') {
+        router.back();
+        return;
+      }
+      // Ready for the next one: the тип, the рахунки and the дата stay, everything typed goes, and
+      // the категорія follows the next опис again.
+      const next = draftAfterStore(fields);
+      setAmount('');
+      setArrived('');
+      setDescription('');
+      setCategoryId(undefined);
+      setSourceId(undefined);
+      setPickedByOwner(false);
+      setOpen(undefined);
+      setOpened(next);
+      setConfirmation({ text: recordedConfirmation(written, names) ?? '', draft: next });
+      // The recently used rows now include what was just recorded.
+      reload();
+      amountRef.current?.focus();
     },
-    [fromId, haptics, router],
+    [fields, fromId, haptics, names, reload, router],
   );
 
-  const record = useCallback(() => {
+  const record = useCallback((then: 'leave' | 'stay') => {
+    if (storing.current) {
+      return;
+    }
+    // Nothing changed since the last «Записати і ще одну»: there is nothing new to store.
+    const tap = tapAfterStore(fields, confirmation, then === 'leave' ? 'record' : 'recordAndNext');
+    if (tap === 'nothing') {
+      return;
+    }
+    if (tap === 'leave') {
+      router.back();
+      return;
+    }
+    storing.current = true;
+    /** A question answered «Скасувати» stored nothing: the next tap is a tap again. */
+    const release = () => {
+      storing.current = false;
+    };
+    /**
+     * The one refusal site: `buildEntry`'s refusal lands here, and so does a store that throws from
+     * the переказ question's buttons, which run outside the attempt below — so a refusal plays once
+     * and the next tap is a tap again.
+     */
+    const refuse = (error: unknown) => {
+      release();
+      haptics.play('refused');
+      Alert.alert(
+        ...failureAlert({ title: 'Не записано', where: 'transaction-record', error, report: reportBug }),
+      );
+      // The Alert above is the report, and it is on the screen the owner is standing on — so this
+      // almost always answers «attended» and posts nothing. It is here for the case that is not:
+      // a store that fails as they leave (design D5).
+      void raiseAlert('local-save', { attended: attended() }, ALERT_PORTS);
+    };
     /**
      * One attempt at the form as it stands. The date question's «Записати все одно» runs it again
      * with the answer, from the top — the same form rebuilt, through the same catch — rather than
@@ -327,7 +442,7 @@ export default function NewTransactionScreen() {
         const verdict = entryDateCheck(built.date, new Date());
         if (verdict.kind === 'confirm' && !dateConfirmed) {
           Alert.alert(verdict.title, verdict.message, [
-            { text: 'Скасувати', style: 'cancel' },
+            { text: 'Скасувати', style: 'cancel', onPress: release },
             { text: 'Записати все одно', onPress: () => attempt(true) },
           ]);
           return;
@@ -342,42 +457,77 @@ export default function NewTransactionScreen() {
               accounts: offered,
               sourceTransactions: transactionsRepo.listByAccount(built.fromAccountId),
             },
-            store,
+            // Both proposals, «Так» and «Ні» alike, store through this one callback — so they stay
+            // or leave exactly as the tapped action does.
+            (...written) => {
+              try {
+                store(then, ...written);
+              } catch (error) {
+                refuse(error);
+              }
+            },
           );
           return;
         }
-        store(built);
+        store(then, built);
       } catch (error) {
-        // The one refusal site: `buildEntry`'s refusal lands here too, so a refusal plays once.
-        haptics.play('refused');
-        Alert.alert(
-          ...failureAlert({ title: 'Не записано', where: 'transaction-record', error, report: reportBug }),
-        );
-        // The Alert above is the report, and it is on the screen the owner is standing on — so this
-        // almost always answers «attended» and posts nothing. It is here for the case that is not:
-        // a store that fails as they leave (design D5).
-        void raiseAlert('local-save', { attended: attended() }, ALERT_PORTS);
+        refuse(error);
       }
     };
     attempt(false);
   }, [
     amount,
     arrived,
+    confirmation,
     date,
     description,
     displayedCategoryId,
     entry,
+    fields,
     fromId,
     haptics,
     offered,
     reportBug,
+    router,
     sourceId,
     store,
     toId,
   ]);
 
+  const insets = useSafeAreaInsets();
+  const { fontScale } = useWindowDimensions();
+  const actionStyle = [styles.action, { flexBasis: ACTION_BASIS * fontScale }];
+
   return (
-    <Screen>
+    <Screen
+      // Pinned under the fields, above the keyboard: the confirmation, then both actions (design
+      // D2, D4). No рахунок, nothing to record, so no actions at all.
+      footer={
+        offered.length === 0 ? undefined : (
+          <View style={[styles.footer, { paddingBottom: Spacing.two + insets.bottom }]}>
+            {confirmed ? (
+              <ThemedText
+                type="small"
+                themeColor="textSecondary"
+                accessibilityLiveRegion="polite">
+                {confirmation.text}
+              </ThemedText>
+            ) : null}
+            <View style={styles.actions}>
+              <View style={actionStyle}>
+                <Action title="Записати" onPress={() => record('leave')} />
+              </View>
+              <View style={actionStyle}>
+                <Action
+                  variant="secondary"
+                  title="Записати і ще одну"
+                  onPress={() => record('stay')}
+                />
+              </View>
+            </View>
+          </View>
+        )
+      }>
       <ScreenHeader title="Нова транзакція" back={() => router.back()} />
 
       {offered.length === 0 ? (
@@ -387,6 +537,20 @@ export default function NewTransactionScreen() {
         </Card>
       ) : (
         <Card style={styles.form}>
+          {/* The сума first and focused: the one thing every recording types (design D1). */}
+          <Field
+            ref={amountRef}
+            label={entry === 'transfer' ? 'Скільки пішло' : 'Сума'}
+            value={amount}
+            onChangeText={setAmount}
+            keyboardType="decimal-pad"
+            autoFocus
+            placeholder="0,00"
+            hint={from ? from.currency : undefined}
+            // The currency arrives with the рахунок; its line is held until then so the form
+            // does not jump by a line under the owner's thumb when it does.
+            reserveHint
+          />
           <Choices label="Тип" choices={ENTRY_CHOICES} selected={entry} onSelect={chooseEntry} />
           <Picker
             label={entry === 'transfer' ? 'Звідки' : 'Рахунок'}
@@ -410,17 +574,6 @@ export default function NewTransactionScreen() {
               onExpandedChange={opening('to')}
             />
           ) : null}
-          <Field
-            label={entry === 'transfer' ? 'Скільки пішло' : 'Сума'}
-            value={amount}
-            onChangeText={setAmount}
-            keyboardType="decimal-pad"
-            placeholder="0,00"
-            hint={from ? from.currency : undefined}
-            // The currency arrives with the рахунок; its line is held until then so the form
-            // does not jump by a line under the owner's thumb when it does.
-            reserveHint
-          />
           {entry === 'transfer' && from && to ? (
             <Field
               label="Скільки прийшло"
@@ -433,7 +586,16 @@ export default function NewTransactionScreen() {
               }
             />
           ) : null}
-          <DateField value={date} onChange={setDate} now={new Date()} />
+          {/* The опис: optional for every type, and information only — it moves no total, no
+              balance and no classification. Left empty, nothing is stored and the feed shows no
+              empty row for it. It stands right above the категорія it proposes. */}
+          <Field
+            label="Опис"
+            value={description}
+            onChangeText={setDescription}
+            placeholder="напр. шини на зиму"
+            hint="необовʼязково"
+          />
           {/* A витрата arrives carrying «Без категорії» and the owner may pick another; a
               повернення has no default and is not stored until one is picked. */}
           {entry === 'expense' || entry === 'refund' ? (
@@ -464,17 +626,7 @@ export default function NewTransactionScreen() {
               onExpandedChange={opening('source')}
             />
           ) : null}
-          {/* The опис: optional for every type, and information only — it moves no total, no
-              balance and no classification. Left empty, nothing is stored and the feed shows no
-              empty row for it. */}
-          <Field
-            label="Опис"
-            value={description}
-            onChangeText={setDescription}
-            placeholder="напр. шини на зиму"
-            hint="необовʼязково"
-          />
-          <Action title="Записати" onPress={record} />
+          <DateField value={date} onChange={setDate} now={new Date()} />
         </Card>
       )}
     </Screen>
@@ -483,4 +635,8 @@ export default function NewTransactionScreen() {
 
 const styles = StyleSheet.create({
   form: { gap: Spacing.three },
+  footer: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two, gap: Spacing.two },
+  // Side by side while both fit, one under the other once the text size makes them not fit.
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  action: { flexGrow: 1 },
 });

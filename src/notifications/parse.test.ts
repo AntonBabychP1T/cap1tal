@@ -7,11 +7,13 @@ import {
   parseGeneric,
   parseInputOf,
   parseNotification,
+  parseOtp,
   type NotificationParser,
   type ParseOutcome,
 } from './parse';
 
 const POSTED_AT = Date.UTC(2026, 7, 26, 9, 30, 0);
+const OTP_PACKAGE = 'ua.otpbank.android';
 
 const capture = (over: Partial<CapturedNotification> = {}): CapturedNotification => ({
   packageName: 'ua.privatbank.ap24',
@@ -155,6 +157,76 @@ describe('the generic parser', () => {
   });
 });
 
+/** OTP writes the whole payload in the title, the operation's name in the text. */
+const otp = (title: string, text = 'Картковий переказ'): CapturedNotification =>
+  capture({ packageName: OTP_PACKAGE, title, text });
+
+describe('the OTP Bank UA parser', () => {
+  it('reads the sign before the amount as money out — the sample from the owner\'s phone', () => {
+    expect(movement(parseOtp(otp('💸 -1 000,00 ₴')))).toEqual({
+      direction: 'out',
+      amount: money(100000, 'UAH'),
+    });
+  });
+
+  it('reads the sign before the amount as money in — what the generic parser gets wrong', () => {
+    const notification = otp('💰 +1 000,00 ₴');
+    expect(movement(parseOtp(notification))).toEqual({
+      direction: 'in',
+      amount: money(100000, 'UAH'),
+    });
+    // The reason this parser exists: no money-in mark stands in that text, so the generic parser
+    // calls the same notification money out.
+    expect(movement(parseGeneric(notification)).direction).toBe('out');
+  });
+
+  it('reads the typographic minus as well as the hyphen', () => {
+    expect(movement(parseOtp(otp('💸 −250,00 ₴'))).direction).toBe('out');
+  });
+
+  it('reads the sign through a currency mark standing before the amount', () => {
+    expect(movement(parseOtp(otp('-$10.00'))).direction).toBe('out');
+    expect(movement(parseOtp(otp('+$10.00'))).direction).toBe('in');
+  });
+
+  it('takes the sign of the first amount a currency stands next to, not an earlier number', () => {
+    // The masked card number carries no currency, so it is not the amount — and its "-" is not
+    // the sign either.
+    expect(movement(parseOtp(otp('Картка 5168**1234', 'Зарахування +500,00 ₴')))).toEqual({
+      direction: 'in',
+      amount: money(50000, 'UAH'),
+    });
+  });
+
+  it('falls back to the generic parser when no sign stands before the amount', () => {
+    expect(movement(parseOtp(otp('Зарахування 500,00 ₴')))).toEqual({
+      direction: 'in',
+      amount: money(50000, 'UAH'),
+    });
+    expect(movement(parseOtp(otp('Оплата 250,00 ₴')))).toEqual({
+      direction: 'out',
+      amount: money(25000, 'UAH'),
+    });
+  });
+
+  it('is total: hostile text is unparsed, not a crash', () => {
+    expect(parseOtp(otp('', ''))).toEqual({ kind: 'unparsed' });
+    expect(parseOtp(otp('💸 -1 000,00'))).toEqual({ kind: 'unparsed' });
+    expect(parseOtp(otp('+0,00 ₴'))).toEqual({ kind: 'unparsed' });
+    expect(parseOtp(otp('Вхід у застосунок'))).toEqual({ kind: 'unparsed' });
+    fc.assert(
+      fc.property(hostile, hostile, (title, text) => {
+        const outcome = parseOtp(capture({ packageName: OTP_PACKAGE, title, text }));
+        if (outcome.kind === 'movement') {
+          expect(Number.isSafeInteger(outcome.movement.amount.amount)).toBe(true);
+          expect(outcome.movement.amount.amount).toBeGreaterThan(0);
+        }
+      }),
+      { numRuns: 2000 },
+    );
+  });
+});
+
 describe('parseNotification', () => {
   it('Scenario: A registered parser takes precedence over the generic one', () => {
     const registered: NotificationParser = () => ({
@@ -183,9 +255,20 @@ describe('parseNotification', () => {
     });
   });
 
+  it('routes the OTP Bank UA package to its own parser through the shipped registry', () => {
+    const notification = capture({
+      packageName: OTP_PACKAGE,
+      title: '💰 +1 000,00 ₴',
+      text: 'Картковий переказ',
+    });
+    expect(parseNotification(notification)).toEqual({
+      kind: 'movement',
+      movement: { direction: 'in', amount: money(100000, 'UAH') },
+    });
+  });
+
   it('has no parser registered for a package that could shadow the generic one today', () => {
-    // The registry ships empty (design D2); a package name that is an Object property is not a
-    // parser either.
+    // A package name that is an Object property is not a parser, however the registry grows.
     expect(parseNotification(capture({ packageName: 'constructor', text: 'Списання 250 грн' }))).toEqual(
       { kind: 'movement', movement: { direction: 'out', amount: money(25000, 'UAH') } },
     );

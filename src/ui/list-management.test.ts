@@ -19,17 +19,22 @@ import {
   manageCategories,
   manageSources,
   mccText,
+  ruleAccountRows,
+  ruleCategoryRows,
   ruleFromDraft,
   ruleLine,
   ruleDraftFromOffer,
   ruleOffer,
   ruleOfferView,
   ruleSourceChoices,
+  ruleSourceRows,
   savedRuleTarget,
   storeRule,
   sweepSaid,
   type ManagedRow,
 } from './list-management';
+import { account } from '../domain/account';
+import { allOffer, narrow, shortlist } from './shortlist';
 
 const category = (id: string, name: string, archived = false): Category => ({ id, name, archived });
 const source = (id: string, name: string, archived = false): Source => ({ id, name, archived });
@@ -1011,5 +1016,67 @@ describe('the «Правила» section and a правило-джерело', (
     expect(() =>
       ruleFromDraft({ merchant: 'відсотки', mcc: '', target: 'source' }, { id: 'r1', createdAt: new Date(0) }),
     ).toThrow('Правило потребує джерела');
+  });
+});
+
+describe('app-shell — the правило form uses the entry form\'s picker', () => {
+  it('Scenario: A правило-переказ finds its рахунок through the search', () => {
+    const names = [
+      'Банка на відпустку',
+      'банка на ремонт',
+      ...Array.from({ length: 27 }, (_, i) => `Рахунок ${String(i + 1).padStart(2, '0')}`),
+    ];
+    const accounts = names.map((name, i) =>
+      account({ id: `a${i}`, name, kind: i < 2 ? 'savings' : 'spending', currency: 'UAH' }),
+    );
+    const rows = ruleAccountRows(accounts, undefined);
+    expect(rows).toHaveLength(29);
+    expect(allOffer(rows, 'accounts')).toBe('Всі рахунки (29)');
+    // Any letter case: «банка» finds «Банка на відпустку» too.
+    const found = narrow(rows, 'банка');
+    expect(found.map((r) => r.name)).toEqual(['Банка на відпустку · UAH', 'банка на ремонт · UAH']);
+    const picked = found[0]!.id;
+    // Chosen through the full list, it stands among the shown few…
+    expect(shortlist(rows, { recentIds: [], chosenIds: [picked], selectedId: picked }).map((r) => r.id)).toContain(
+      picked,
+    );
+    // …and the saved правило sends that опис as a переказ to it.
+    const rule = ruleFromDraft(
+      { merchant: 'відкладаю', mcc: '', target: 'transfer', toAccountId: picked },
+      { id: 'r-bank', createdAt: new Date(1) },
+    );
+    expect(rule.target).toEqual({ kind: 'transfer', toAccountId: 'a0' });
+  });
+
+  it('«Категорія» offers what a витрата is offered, and keeps a stored archived one', () => {
+    const rows = ruleCategoryRows(
+      [...RESERVED, category('food', 'Продукти'), category('old', 'Стара', true)],
+      'old',
+    );
+    expect(rows.map((r) => r.id)).toEqual([UNCATEGORISED_CATEGORY_ID, FEES_CATEGORY_ID, 'food', 'old']);
+    expect(ruleCategoryRows([...RESERVED, category('old', 'Стара', true)], undefined).map((r) => r.id)).not.toContain(
+      'old',
+    );
+  });
+
+  it('Scenario: The джерело picker offers no «Без джерела» — through the same picker', () => {
+    // settings-screen's offer, drawn the app-shell way: the unarchived джерела as picker rows, never
+    // «Без джерела», and an archived one an edited правило already names kept so it is not retargeted.
+    const many = Array.from({ length: 7 }, (_, i) => source(`s${i}`, `Джерело ${i + 1}`));
+    const all = [source(UNSOURCED_SOURCE_ID, 'Без джерела'), source('old', 'Старе', true), ...many];
+    const rows = ruleSourceRows(all, undefined);
+    expect(rows.map((r) => r.id)).not.toContain(UNSOURCED_SOURCE_ID);
+    expect(rows.map((r) => r.id)).not.toContain('old');
+    expect(rows).toHaveLength(7);
+    expect(allOffer(rows, 'sources')).toBe('Всі джерела (7)');
+    expect(shortlist(rows, { recentIds: [], chosenIds: [], selectedId: undefined })).toHaveLength(5);
+    expect(ruleSourceRows(all, 'old').map((r) => r.id)).toContain('old');
+    // A джерело reached through the full list is stored exactly as one shown directly.
+    const picked = narrow(rows, 'джерело 7')[0]!.id;
+    const rule = ruleFromDraft(
+      { merchant: 'відсотки', mcc: '', target: 'source', sourceId: picked },
+      { id: 'r-source', createdAt: new Date(2) },
+    );
+    expect(rule.target).toEqual({ kind: 'source', sourceId: 's6' });
   });
 });

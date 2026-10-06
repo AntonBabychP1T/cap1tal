@@ -40,7 +40,8 @@ While access is granted it SHALL show the watched apps management.
 
 The section SHALL let the owner add a watch by choosing a known bank app by name or by naming
 an app package by hand, mapped to exactly one existing unarchived рахунок; archived рахунки
-SHALL NOT be offered. The watch SHALL be stored only after the capture layer accepts the
+SHALL NOT be offered, and neither SHALL a рахунок-борг — a bank's сповіщення never lands on a
+person. The watch SHALL be stored only after the capture layer accepts the
 resulting watched set; a refused or unavailable answer SHALL leave the stored watches and the
 list unchanged, with the answer shown. The monobank app SHALL never be offered among the known
 apps, and a hand-named monobank package SHALL be refused — mono is synced by its API, and a
@@ -111,6 +112,12 @@ before the form has ever been opened, and after the form has been opened and aba
 - **THEN** that рахунок is not among the offered рахунки, while an existing watch mapped to it
   stays listed
 
+#### Scenario: A watched bank app is not mapped to a person
+
+- **WHEN** the owner adds a watch while holding «Приват» (spending, UAH), «військові облігації»
+  (investment, UAH) and «Оля» (debt, UAH)
+- **THEN** «Приват» and «військові облігації» are offered and «Оля» is not
+
 ### Requirement: Removing a watch stops capture and keeps everything recorded
 
 Removing a watch SHALL tell the capture layer the reduced watched set and SHALL remove the
@@ -126,7 +133,16 @@ stored watch, so that app's notifications are no longer captured; every existing
 ### Requirement: Waiting captures are collected, decided and stored atomically
 
 WHEN the app opens or returns to the foreground while notification access is granted, the
-system SHALL collect the waiting captured notifications and decide each one against the stored
+system SHALL first tell the capture layer the packages of the stored відстежувані застосунки,
+the monobank family excepted, so the set the capture layer applies is the set of відстежувані
+застосунки storage holds — on the first collection after a відновлення replaced them, and again
+on every collection after it, never once per run of the app. A package of the monobank family
+SHALL be left out of what is told rather than making the whole set refused: monobank is never
+watched, and one such stored watch must not stop every other відстежуваний застосунок from being
+applied. A build where capture cannot work SHALL leave everything as it was and SHALL NOT stop
+the collection: it proceeds and reports exactly what it would have reported without it.
+
+It SHALL then collect the waiting captured notifications and decide each one against the stored
 watches, the remembered fingerprints and the owner's правила. Each decided outcome SHALL be
 stored atomically — the fingerprint together with the чернетка it drafted, or together with
 the транзакція it auto-confirmed — and a collected notification SHALL be acknowledged to the
@@ -134,6 +150,42 @@ capture layer only after its outcome is safely stored; an outcome that stores no
 unwatched package, an already-seen fingerprint) SHALL be acknowledged without storing. A
 redelivered capture SHALL yield nothing the second time, so a crash between collecting and
 storing loses nothing and doubles nothing.
+
+#### Scenario: A collection after a відновлення reads the restored watches
+
+- **WHEN** a відновлення replaced the stored відстежувані застосунки with a бекап's, telling the
+  capture layer nothing, and the app then collects
+- **THEN** the capture layer has been told exactly the packages those restored watches name,
+  before anything was collected
+
+#### Scenario: A collection tells the capture layer the stored watches
+
+- **WHEN** two apps are watched and the app collects
+- **THEN** the capture layer was told exactly those two packages before anything was collected
+
+#### Scenario: No watches tells the capture layer to watch nothing
+
+- **WHEN** no app is watched and the app collects, with nothing waiting on the device
+- **THEN** the capture layer was told the empty set all the same
+
+#### Scenario: Watches changed between two collections are told again
+
+- **WHEN** the app collects, the stored відстежувані застосунки then change without the capture
+  layer being told, and the app collects a second time
+- **THEN** the second collection told the capture layer the new set, not only the first one
+
+#### Scenario: A stored monobank watch does not disable the others
+
+- **WHEN** the stored відстежувані застосунки name a package of the monobank family alongside
+  another bank's app, and the app collects
+- **THEN** the capture layer was told the other bank's package and not the monobank one, so that
+  app is read and monobank stays uncaptured
+
+#### Scenario: A build that cannot capture still collects
+
+- **WHEN** the app collects on a build where telling the capture layer a watched set answers that
+  capture cannot work here
+- **THEN** the collection carries on and reports what it always would, and nothing crashes
 
 #### Scenario: A notification captured while the app was closed becomes a чернетка
 
@@ -161,49 +213,16 @@ storing loses nothing and doubles nothing.
 - **THEN** nothing new is stored, the capture is acknowledged, and the next collection hands
   over nothing for it
 
-### Requirement: Pending чернетки are visible on Головний
-
-Головний SHALL make every pending чернетка reachable, newest first, collapsed by default to one
-compact count row among the operational alerts the main-screen capability defines, expandable in
-place to show each чернетка with its рахунок, its date, the notification text, and what it
-proposes: a витрата of its сума with currency, a дохід «Без джерела» of its сума with currency, or
-a raw чернетка with no сума — showing its original-currency reference as information when it
-carries one. Expanding or collapsing the row changes no stored data. While no чернетка is pending,
-Головний SHALL show no draft row and no empty placeholder.
-
-#### Scenario: A drafted витрата shows its proposal
-- **WHEN** the owner expands a pending чернетка proposing a витрата of 25000 minor units UAH dated
-  2026-08-26 with text "Оплата 250.00UAH. Сільпо" on the рахунок «Приват»
-- **THEN** it shows «Приват», the date, the text and 25000 minor units UAH as a proposed витрата
-
-#### Scenario: A raw чернетка shows its text and the missing сума
-- **WHEN** the owner expands a raw чернетка carrying only notification text
-- **THEN** Головний shows the text and that no сума was read, and a raw чернетка holding 1000
-  minor units USD as its original-currency reference shows that amount as information
-
-#### Scenario: The newest чернетка stands first
-- **WHEN** a чернетка was drafted yesterday and another is drafted today, and both are expanded
-- **THEN** today's чернетка stands above yesterday's
-
-#### Scenario: Many drafts collapse to one count
-- **WHEN** fifty чернетки are pending
-- **THEN** Головний shows one compact row naming the count, with no draft body rendered before
-  expansion
-
-#### Scenario: No pending чернетки, no surface
-- **WHEN** every чернетка has been confirmed or dismissed
-- **THEN** Головний shows no draft row and no empty placeholder, and the month's status, the
-  latest транзакції and Статок stand as before
-
 ### Requirement: Confirming a чернетка creates its транзакція in the feed
 
 Confirming a pending чернетка SHALL create exactly the транзакція it proposes — the категорія
 decided by the owner's правила — or, when none matches, by the шаблон категоризації — at the moment
-of confirmation with «Без категорії» when neither matches, a дохід keeping «Без джерела», the чернетка's text carried as the опис, dated the
-чернетка's date — and the транзакція SHALL be stored as an ordinary транзакція, editable and
-retypeable like any other, taking the place its date gives it among the latest transactions and
-reachable in «Транзакції» whatever that place is. The confirmed чернетка SHALL leave the pending
-surface and SHALL never return.
+of confirmation with «Без категорії» when neither matches, a дохід taking the джерело the best
+правило-джерело gives its text at that moment and keeping «Без джерела» when none matches, the
+чернетка's text carried as the опис, dated the чернетка's date — and the транзакція SHALL be stored
+as an ordinary транзакція, editable and retypeable like any other, taking the place its date gives
+it among the latest transactions and reachable in «Транзакції» whatever that place is. The
+confirmed чернетка SHALL leave the queue and SHALL never return.
 
 #### Scenario: An unmatched витрата confirms into «Без категорії»
 
@@ -228,9 +247,16 @@ surface and SHALL never return.
 
 #### Scenario: A confirmed дохід keeps «Без джерела»
 
-- **WHEN** the owner confirms a чернетка proposing a дохід of 50000 minor units UAH
+- **WHEN** the owner confirms a чернетка proposing a дохід of 50000 minor units UAH whose text no
+  правило-джерело matches
 - **THEN** a дохід of 50000 minor units UAH with the джерело «Без джерела» is stored, retypeable
   by the owner as ever
+
+#### Scenario: A confirmed дохід takes the джерело of its правило-джерело
+
+- **WHEN** the правило-джерело "зарплата → Зарплата" exists and the owner confirms a чернетка
+  proposing a дохід of 3000000 minor units UAH with text "Зарахування: Зарплата ТОВ Ромашка"
+- **THEN** a дохід of 3000000 minor units UAH with the джерело «Зарплата» is stored
 
 ### Requirement: A raw чернетка confirms only with the owner's сума
 
@@ -274,3 +300,38 @@ returns — not after a restart, and not when the same notification is captured 
 
 - **WHEN** a чернетка was dismissed and the capture layer redelivers the same notification
 - **THEN** no new чернетка appears
+
+### Requirement: Pending чернетки are named on Головний and shown in the queue
+
+Головний SHALL make every pending чернетка reachable: the rail row «Що потребує відповіді» names
+how many чернетки are pending, and its tap opens the queue, whose «Чернетки» group shows every
+pending чернетка, newest first, each with its рахунок, its date, the notification text, and what it
+proposes: a витрата of its сума with currency, a дохід «Без джерела» of its сума with currency, or
+a raw чернетка with no сума — showing its original-currency reference as information when it
+carries one. Showing the queue changes no stored data. While no чернетка is pending, Головний SHALL
+name none and the queue SHALL show no «Чернетки» group and no empty placeholder.
+
+#### Scenario: A drafted витрата shows its proposal
+- **WHEN** the owner opens the queue while a чернетка proposing a витрата of 25000 minor units UAH
+  dated 2026-08-26 with text "Оплата 250.00UAH. Сільпо" on the рахунок «Приват» is pending
+- **THEN** «Чернетки» shows «Приват», the date, the text and 25000 minor units UAH as a proposed
+  витрата
+
+#### Scenario: A raw чернетка shows its text and the missing сума
+- **WHEN** the owner opens the queue while a raw чернетка carrying only notification text is pending
+- **THEN** the queue shows the text and that no сума was read, and a raw чернетка holding 1000
+  minor units USD as its original-currency reference shows that amount as information
+
+#### Scenario: The newest чернетка stands first
+- **WHEN** a чернетка was drafted yesterday and another is drafted today
+- **THEN** in «Чернетки» today's чернетка stands above yesterday's
+
+#### Scenario: Many drafts are one number on Головний
+- **WHEN** fifty чернетки are pending
+- **THEN** Головний names fifty чернеток in the rail row «Що потребує відповіді» and renders no
+  draft body
+
+#### Scenario: No pending чернетки, no surface
+- **WHEN** every чернетка has been confirmed or dismissed
+- **THEN** Головний names no чернетка, the queue shows no «Чернетки» group, and the month's status,
+  the latest транзакції and Статок stand as before

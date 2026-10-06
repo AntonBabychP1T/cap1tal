@@ -154,11 +154,24 @@ that holds it.
 
 ## 7. Emulator
 
-- [ ] 7.1 Smoke on the emulator with the `smoke-runner` subagent (`.claude/rules/android.md`):
+- [x] 7.1 Smoke on the emulator with the `smoke-runner` subagent (`.claude/rules/android.md`):
       Головний's rail row and its count; the queue with all groups on seeded data, each answer in
       place, the month line and narrowing; the підсумок and «Закрий» entry points; a правило-джерело
       created from the offer sweeping the other доходи; 360 × 640 dp and 200 % text on the queue.
       Record the verdict in this task.
+      **Verdict (2026-10-06, two rounds on Pixel_10_Pro, seeded copy of the owner's DB, restored after):**
+      round 1 PASS for the rail row, group order and counts, month chips, the month line narrowing,
+      paging, two currencies, a категорія pick and its offer, «Це переказ», the повернення picker,
+      the джерело picker and offer text, чернетка confirm/dismiss, and the sole дубль's «Не дубль» →
+      «Скасувати». It found D1 чернетки order, D2 no re-read after an accepted правило-джерело, D3 the
+      розбір's sentence dropped, D4 a повернення without its рахунок — fixed in 23696c6 with tests.
+      Round 2 PASS for all four fixes on the device («2 доходи отримали джерело.», «Без джерела»
+      12→9 at once), the підсумок's three lines and «Закрий вересень 2026» opening the queue narrowed,
+      «Правила» → «Джерело» without «Без джерела», and 360 × 640 dp. At 200 % text the row titles were
+      cut («Без кате…»): fixed by two title lines with a test; **not re-run on the device**.
+      Backlog, not in this change's spec: the sweep sentence's agreement for 1 («1 витрата стали
+      переказами»), чернетки dated as ISO, «Без категорії» offered in category pickers, the
+      «Правила» subtitle not naming джерело, the «Можливі дублі» heading at 0 beside «Скасувати».
 
 ## 8. Done
 

@@ -69,9 +69,9 @@ Choosing a part SHALL lead to the screen that holds its records:
 | the зміна статку | the «Статок» screen |
 | a ціль-накопичення | its breakdown screen |
 | a ліміт | its категорія's month |
-| the «Без категорії» count | the month's транзакції, narrowed to «Без категорії» |
-| the «Без джерела» count | the month's транзакції, narrowed to «Без джерела» |
-| the waiting чернетки | Головний, where чернетки are answered |
+| the «Без категорії» count | the queue «Що потребує відповіді», narrowed to the month |
+| the «Без джерела» count | the queue «Що потребує відповіді», narrowed to the month |
+| the waiting чернетки | the queue «Що потребує відповіді», narrowed to the month |
 | the коригування | the month's list of коригування |
 
 Every such part SHALL be a control with a label a screen reader announces. A mark — at or above
@@ -84,13 +84,15 @@ the 2 % of коригування — SHALL be stated in words, not by colour al
 
 #### Scenario: Unanswered records open narrowed
 
-- **WHEN** September holds витрати «Без категорії» and the owner chooses that line
-- **THEN** the транзакції of September open, narrowed to «Без категорії»
+- **WHEN** September holds three витрати «Без категорії» of 45000 minor units UAH in total and the
+  owner chooses that line
+- **THEN** the queue opens narrowed to вересень 2026, holding «Без категорії» with those three, each
+  answerable in place
 
 #### Scenario: Unsourced records open narrowed too
 
-- **WHEN** September holds доходи «Без джерела» and the owner chooses that line
-- **THEN** the транзакції of September open, narrowed to «Без джерела»
+- **WHEN** September holds nine доходи «Без джерела» and the owner chooses that line
+- **THEN** the queue opens narrowed to вересень 2026, holding «Без джерела» with those nine
 
 #### Scenario: «Не дубль» is answered in place
 

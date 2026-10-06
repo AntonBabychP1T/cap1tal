@@ -114,6 +114,12 @@ function directionOf(input: string): MovementDirection {
   return MONEY_IN_MARKS.some((mark) => folded.includes(mark)) ? 'in' : 'out';
 }
 
+/** A сума read out of the text, and where its digits started — what a sign is read against. */
+interface FoundAmount {
+  readonly amount: Money;
+  readonly start: number;
+}
+
 /**
  * The first amount the text names that a currency stands next to.
  *
@@ -123,7 +129,7 @@ function directionOf(input: string): MovementDirection {
  * is guessing a currency for an amount that names none (D5) — the pairing is what makes an amount
  * a сума.
  */
-function firstAmount(input: string): Money | undefined {
+function firstAmount(input: string): FoundAmount | undefined {
   AMOUNT.lastIndex = 0;
   for (let match = AMOUNT.exec(input); match !== null; match = AMOUNT.exec(input)) {
     const end = match.index + match[0].length;
@@ -139,7 +145,7 @@ function firstAmount(input: string): Money | undefined {
     const currency = currencyAfter(input, end) ?? currencyBefore(input, match.index);
     if (currency === undefined) continue;
     // A сума of zero is not money moving (design D11); the raw чернетка path takes it from here.
-    return minor === 0 ? undefined : money(minor, currency);
+    return minor === 0 ? undefined : { amount: money(minor, currency), start: match.index };
   }
   return undefined;
 }
@@ -150,17 +156,54 @@ function firstAmount(input: string): Money | undefined {
  */
 export function parseGeneric(capture: CapturedNotification): ParseOutcome {
   const input = parseInputOf(capture);
-  const amount = firstAmount(input);
-  if (amount === undefined) return UNPARSED;
-  return { kind: 'movement', movement: { direction: directionOf(input), amount } };
+  const found = firstAmount(input);
+  if (found === undefined) return UNPARSED;
+  return { kind: 'movement', movement: { direction: directionOf(input), amount: found.amount } };
+}
+
+/** The signs a bank writes a direction with: the ASCII hyphen and the typographic minus. */
+const MINUS_SIGNS = ['-', '\u2212'];
+
+/**
+ * The direction the sign standing before the amount states, or nothing when no sign stands there.
+ * A currency mark between the sign and the digits is stepped over, so "-$10.00" reads the same as
+ * "-10.00 $".
+ */
+function signedDirectionAt(input: string, start: number): MovementDirection | undefined {
+  const head = input.slice(0, start).replace(MARK_BEFORE, '').trimEnd();
+  const sign = head.charAt(head.length - 1);
+  if (sign === '+') return 'in';
+  return MINUS_SIGNS.includes(sign) ? 'out' : undefined;
 }
 
 /**
- * Parsers by app package. Empty today on purpose: a bank's real notification format is the owner's
- * own data on the owner's own phone, and a format guessed without samples is untested code. Adding
- * one is an entry here plus its tests — no requirement changes (design D2, proposal non-goals).
+ * OTP Bank UA (`ua.otpbank.android`): the direction is a sign in front of the сума.
+ *
+ * A real notification from the owner's phone reads «💸 -1 000,00 ₴» / «Картковий переказ» — the
+ * word says only what kind of operation it was, and the sign alone says which way the money went.
+ * The generic parser reads direction from the money-in marks only (D6), so it calls a «+…» transfer
+ * money out; that is the one thing this parser fixes. Everything else — which amount, in what
+ * currency, in minor units — is the generic parser's own reading, unchanged.
  */
-export const PARSERS: ReadonlyMap<string, NotificationParser> = new Map();
+export function parseOtp(capture: CapturedNotification): ParseOutcome {
+  const input = parseInputOf(capture);
+  const found = firstAmount(input);
+  if (found === undefined) return UNPARSED;
+  const direction = signedDirectionAt(input, found.start);
+  // No sign is not a failure: the operation words OTP uses are the ones the generic parser reads.
+  if (direction === undefined) return parseGeneric(capture);
+  return { kind: 'movement', movement: { direction, amount: found.amount } };
+}
+
+/**
+ * Parsers by app package. A bank earns an entry here only once a real notification from the owner's
+ * phone shows the generic parser reading it wrong — a format guessed without samples is untested
+ * code. Adding one is an entry here plus its tests, no requirement changes (design D2, proposal
+ * non-goals); the spec already says a registered parser is the one consulted.
+ */
+export const PARSERS: ReadonlyMap<string, NotificationParser> = new Map([
+  ['ua.otpbank.android', parseOtp],
+]);
 
 /**
  * The registered parser for the posting app, or the generic one. The registry is an argument so

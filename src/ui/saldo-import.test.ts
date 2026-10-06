@@ -34,6 +34,7 @@ import {
   receivesLine,
   planLine,
   planSummary,
+  previousImportWarning,
   redirectAccount,
   redirectName,
   setAccountKind,
@@ -557,6 +558,15 @@ describe('the import flow — the commit gate', () => {
     );
 
     expect(state.previouslyCommittedAt).toEqual(first);
+  });
+
+  it('Scenario: A past import is an instant in words', () => {
+    const first = new Date(2026, 9, 6, 14, 3, 27);
+    const warning = previousImportWarning(first, new Date(2026, 9, 7, 9, 0));
+    expect(warning).toBe('Імпорт уже виконано вчора о 14:03. Ще один подвоїть усю історію.');
+    expect(warning).not.toContain('06.10.2026');
+    expect(warning).not.toContain(':27');
+    expect(previousImportWarning(first, new Date(2026, 9, 20, 9, 0))).toContain('6 жовтня о 14:03.');
   });
 
   it('Scenario: Declining the extra confirmation writes nothing', () => {
