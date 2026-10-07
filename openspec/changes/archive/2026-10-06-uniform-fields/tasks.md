@@ -123,3 +123,12 @@ the tree that holds it.
       as not run. "Typing keeps the matches in sight" is therefore unverified on a device. The merge
       onto answer-queue (2db8683) also put a правило's «Джерело» on `Picker` and moved the чернетка
       day label to the answer queue; a later smoke should cover both.
+      2026-10-07, partial smoke after the fact: "Typing keeps the matches in sight" **failed** on
+      the розстрочка form — after «Всі рахунки (19)» and «mono» the field stood on the keyboard and
+      the matches under it (the правило form passed, its picker sits high enough). Fixed: `Screen`
+      offers `useShowAtTop()` and a form picker's search field asks it on focus, so the field is
+      brought to the top of the column once the keyboard is up (`src/components/surfaces.tsx`,
+      `src/components/form.tsx`; the стрічка's `searchBelow` pickers are unchanged). Re-checked on
+      `Pixel_10_Pro`: «mono black», «mono white» and both «Monobank UAH …» stand above the keyboard
+      under «РАХУНОК СПИСАННЯ». The зобов'язання form uses the same `Picker` in the same `Screen`
+      and was not driven separately.

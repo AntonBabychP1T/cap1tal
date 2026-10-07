@@ -366,7 +366,7 @@ function MainScreen() {
    * Only while Головний is in sight. A cold start from the launcher shortcut mounts Головний
    * beneath the entry form; redirecting from under it would replace the form, which has its own
    * «Спершу створіть рахунок» to say. Back on Головний the redirect fires as before (quick-entry
-   * design D6).
+   * design D6) — on what storage holds then, not on what Головний read under the form.
    */
   const focused = useIsFocused();
   const setupNeeded = firstRun({
@@ -375,6 +375,13 @@ function MainScreen() {
   });
   useEffect(() => {
     if (landedOnSetup || !setupNeeded || !focused) {
+      return;
+    }
+    // `stored` may be the read Головний made under the shortcut's form, before the owner went to
+    // Рахунки and made a first рахунок; this focus's own read only lands on the next render. So
+    // storage is asked again — remembered under its change stamp, so this costs nothing new.
+    const now = storedHistory.read();
+    if (!firstRun({ accounts: now.accounts.length, transactions: now.transactions.length })) {
       return;
     }
     landedOnSetup = true;

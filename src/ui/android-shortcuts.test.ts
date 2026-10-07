@@ -157,8 +157,19 @@ describe('app-shell: the stack under a form the shortcut opened', () => {
   it('Scenario: The shortcut on a device with no рахунок', () => {
     // «Перші кроки» replaces only a Головний in sight — never the form standing over it.
     expect(main).toContain('const focused = useIsFocused();');
-    expect(main).toMatch(
-      /if \(landedOnSetup \|\| !setupNeeded \|\| !focused\) \{\s*return;\s*\}\s*landedOnSetup = true;\s*router\.replace\('\/onboarding'\);\s*\}, \[focused, router, setupNeeded\]\);/,
+    expect(main).toMatch(/if \(landedOnSetup \|\| !setupNeeded \|\| !focused\) \{\s*return;\s*\}/);
+    expect(main).toContain("router.replace('/onboarding');");
+  });
+
+  it('Scenario: The shortcut on a device with no рахунок — the first рахунок ends it', () => {
+    // Emulator, quick-entry smoke: after `reset`, the shortcut's form, «До Рахунків» and a first
+    // рахунок, coming back to Головний still sent the owner to «Перші кроки». The redirect ran on
+    // the read Головний made under the form, before its focus read landed. It asks storage again.
+    const effect = main.slice(main.indexOf('if (landedOnSetup || !setupNeeded || !focused)'));
+    const body = effect.slice(0, effect.indexOf("router.replace('/onboarding');"));
+    expect(body).toContain('const now = storedHistory.read();');
+    expect(body).toMatch(
+      /if \(\s*!firstRun\(\{ accounts: now\.accounts\.length, transactions: now\.transactions\.length \}\)\s*\) \{\s*return;\s*\}/,
     );
   });
 });

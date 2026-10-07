@@ -98,7 +98,9 @@ mechanism two screens already use, so no new layout code is needed.
 - `Screen` takes only the top safe area, so the footer adds the bottom inset itself
   (`useSafeAreaInsets().bottom` as bottom padding). Edge to edge, the actions would otherwise sit
   under the navigation bar while the keyboard is down. The smoke checks them with the keyboard
-  hidden.
+  hidden. The inset is dropped while the keyboard is up (`useKeyboardShown`,
+  `src/hooks/use-keyboard-shown.ts`): the keys cover the navigation bar, and the same padding was a
+  bar-high gap above them (smoke 2026-10-07: ~96 px between «Записати» and the keyboard).
 
 Considered and rejected:
 
@@ -287,7 +289,13 @@ already validate against what exists.
   mount Головний beneath the form, and its redirect would replace the form. With the gate, the entry
   screen shows «Спершу створіть рахунок» (spec "The shortcut on a device with no рахунок"). Going
   back to Головний then still lands on «Перші кроки» as before, because the redirect fires when
-  Головний comes into focus.
+  Головний comes into focus — judged on a fresh `storedHistory.read()`, not on the `stored` Головний
+  read under the form: that read is from before the owner made a рахунок, and the focus read only
+  lands on the next render (smoke 2026-10-07: a first рахунок still sent Головний to «Перші
+  кроки»).
+- **«До Рахунків» dismisses the form.** The refusal's way out is `router.dismissTo('/accounts')`,
+  not a push: the form that could record nothing is popped back to `(tabs)` and the Рахунки tab is
+  shown, rather than left in the stack under Рахунки and under everything after it.
 
 ### D7. Autofocus and `voice-entry`
 

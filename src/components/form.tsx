@@ -16,6 +16,7 @@ import { DateTimePicker } from '@expo/ui/community/datetime-picker';
 
 import { Icon } from './icon';
 import { Appear, Tap } from './motion';
+import { useShowAtTop } from './surfaces';
 import { ThemedText } from './themed-text';
 
 import { Radius, Spacing, TouchTarget } from '@/constants/theme';
@@ -759,6 +760,8 @@ export function Picker({
   searchBelow?: boolean;
 }) {
   const [query, setQuery] = useState('');
+  const searchRef = useRef<TextInput>(null);
+  const showAtTop = useShowAtTop();
   /**
    * Every row this picker has had chosen: the one it opened on, and each one picked since. The
    * chips only ever grow, so a рахунок found through «Всі рахунки» is still there afterwards and
@@ -805,6 +808,11 @@ export function Picker({
   const narrowed = narrow(rows, query);
   const search = (
     <Field
+      ref={searchRef}
+      // On a form the matches are drawn under the field, so the field goes to the top of the
+      // column and they fill the room down to the keyboard. In a стрічка it already rests on the
+      // keyboard with them above it (`searchBelow`).
+      onFocus={searchBelow ? undefined : () => showAtTop(searchRef.current)}
       label={label}
       value={query}
       onChangeText={setQuery}

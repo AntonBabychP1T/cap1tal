@@ -1063,8 +1063,10 @@ describe('the entry screen after a store', () => {
     // Only there: not in the scrolling column.
     expect(entryScreen.match(/title="Записати"/g)).toHaveLength(1);
     expect(entryScreen.match(/title="Записати і ще одну"/g)).toHaveLength(1);
-    // Clear of the navigation bar while the keyboard is down.
-    expect(footer()).toContain('insets.bottom');
+    // Clear of the navigation bar while the keyboard is down, and no navigation-bar gap above the
+    // keyboard while it is up (emulator, quick-entry smoke: 96 px between «Записати» and the keys).
+    expect(footer()).toContain('paddingBottom: Spacing.two + (keyboardShown ? 0 : insets.bottom)');
+    expect(entryScreen).toContain('const keyboardShown = useKeyboardShown();');
   });
 
   it('Scenario: No рахунок, no actions', () => {
@@ -1102,7 +1104,10 @@ describe('the entry screen after a store', () => {
     const refusal = guard.slice(0, guard.indexOf(') : ('));
     expect(refusal).toContain('Спершу створіть рахунок');
     expect(refusal).toContain('title="До Рахунків"');
-    expect(refusal).toContain("router.push('/accounts')");
+    // Dismissed, not pushed over: a form that can record nothing is not left in the stack under
+    // Рахунки (emulator, quick-entry smoke after `reset`).
+    expect(refusal).toContain("router.dismissTo('/accounts')");
+    expect(refusal).not.toContain("router.push('/accounts')");
     expect(refusal).not.toContain('title="Записати"');
     // And `offered` is the unarchived рахунки, so «every one archived» is the same case. It comes
     // from `accountChoicesFor`, whose own tests prove it offers exactly those — passing no current

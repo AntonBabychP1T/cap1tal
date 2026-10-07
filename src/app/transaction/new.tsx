@@ -21,6 +21,7 @@ import { UNCATEGORISED_CATEGORY_ID, type Transaction } from '@/domain/transactio
 import { useHaptics } from '@/hooks/haptics-ports';
 import { ALERT_PORTS, attended } from '@/hooks/use-alerting';
 import { useCloseOnBack } from '@/hooks/use-close-on-back';
+import { useKeyboardShown } from '@/hooks/use-keyboard-shown';
 import { useReloadOnFocus } from '@/hooks/use-reload-on-focus';
 import { accountChoicesFor } from '@/ui/account-choices';
 import { clear as clearAlert, raise as raiseAlert } from '@/ui/alerting';
@@ -495,6 +496,7 @@ export default function NewTransactionScreen() {
   ]);
 
   const insets = useSafeAreaInsets();
+  const keyboardShown = useKeyboardShown();
   const { fontScale } = useWindowDimensions();
   const actionStyle = [styles.action, { flexBasis: ACTION_BASIS * fontScale }];
 
@@ -504,7 +506,13 @@ export default function NewTransactionScreen() {
       // D2, D4). No рахунок, nothing to record, so no actions at all.
       footer={
         offered.length === 0 ? undefined : (
-          <View style={[styles.footer, { paddingBottom: Spacing.two + insets.bottom }]}>
+          // Clear of the navigation bar while the keyboard is down; while it is up the keys cover
+          // that bar, and the same padding would be a bar-high gap above them.
+          <View
+            style={[
+              styles.footer,
+              { paddingBottom: Spacing.two + (keyboardShown ? 0 : insets.bottom) },
+            ]}>
             {confirmed ? (
               <ThemedText
                 type="small"
@@ -533,7 +541,7 @@ export default function NewTransactionScreen() {
       {offered.length === 0 ? (
         <Card>
           <ThemedText>Спершу створіть рахунок — без нього нічого записати.</ThemedText>
-          <Action title="До Рахунків" onPress={() => router.push('/accounts')} />
+          <Action title="До Рахунків" onPress={() => router.dismissTo('/accounts')} />
         </Card>
       ) : (
         <Card style={styles.form}>

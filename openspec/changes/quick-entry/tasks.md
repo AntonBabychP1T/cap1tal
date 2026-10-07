@@ -66,6 +66,21 @@ existing entry-form tests do. Nothing goes under `src/app/`.
 
   Attach the screenshots and fix the defects found, each with a failing test first where the logic is pure.
 
+  2026-10-07, first pass (owner-side smoke): two defects, fixed with failing structural tests first
+  and re-checked on `Pixel_10_Pro` (API 37):
+  - **Gap above the keyboard** — ~96 px between «Записати» and the keys (24 px padding + the
+    72 px navigation-bar inset, applied while the keyboard was up). Fixed: the footer drops
+    `insets.bottom` while `useKeyboardShown()` (design D2). Re-checked: ~30 px with the digit
+    keyboard up; with it hidden, both actions stand clear above the navigation bar.
+  - **After `reset` and a first рахунок, Головний went to «Перші кроки»**, with the dead form left in
+    the stack under it. Fixed: the redirect re-reads storage before firing, and «До Рахунків»
+    dismisses the form (design D6). Re-checked: `reset` → cold shortcut → «До Рахунків» → Рахунки
+    tab → new рахунок «wallet» → its «+» → «Записати» → Головний shows the витрата, no redirect;
+    «назад» on Головний leaves the app (no form underneath).
+  Still open for the box: the rest of the list above (field order per тип, the largest text size,
+  three in a row, double tap, launcher long press, warm/cold `VIEW`, the shortcut over an open form,
+  the bug-report handle).
+
 ## 7. Close
 
 - [x] 7.1 Run `npm run verify` and paste the final lines

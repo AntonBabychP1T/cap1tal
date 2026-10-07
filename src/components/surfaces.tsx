@@ -1,4 +1,6 @@
+import { createContext, useContext, useMemo, useRef } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -42,6 +44,27 @@ const HANDLE_SIZE = TouchTarget;
  *
  * There are no shadows anywhere: the surface's own tone is what says which layer it is on.
  */
+
+/**
+ * What a control inside a `Screen` may ask of the column it scrolls in: to be brought to the top of
+ * what is in sight once the keyboard is up. A picker's search field asks it, because the matches it
+ * narrows to are drawn under it — Android scrolls only far enough to put the focused field on the
+ * keyboard, which left every match beneath the keys (app-shell, "Typing keeps the matches in
+ * sight"). Outside a `Screen` — a sheet — there is no column to scroll, and asking does nothing.
+ */
+type Column = { showAtTop: (node: Pick<View, 'measureLayout'> | null) => void };
+const ColumnContext = createContext<Column>({ showAtTop: () => {} });
+
+/** The `showAtTop` of the `Screen` this control is drawn in. */
+export function useShowAtTop(): Column['showAtTop'] {
+  return useContext(ColumnContext).showAtTop;
+}
+
+/**
+ * Room left above a raised input: the label over it, and a little air above that, so the label is
+ * not cut by the screen's top edge (emulator: with less, «РАХУНОК СПИСАННЯ» was half off-screen).
+ */
+const RAISED_GAP = Spacing.six;
 
 /**
  * Every screen's frame: the app's background, the safe area at the top, and one scrolling column
@@ -91,36 +114,69 @@ export function Screen({
     fabSize: FAB_SIZE,
     handleSize: HANDLE_SIZE,
   });
+  const ownScroll = useRef<ScrollView>(null);
+  const scroll = scrollRef ?? ownScroll;
+  // Typed as never empty because `ScrollView` asks for that; `raise` still checks it is attached.
+  const content = useRef<View>(null as unknown as View);
+  const column = useMemo<Column>(
+    () => ({
+      showAtTop: (node) => {
+        const raise = () => {
+          const view = scroll.current;
+          if (!node || !view || !content.current) {
+            return;
+          }
+          node.measureLayout(content.current, (_x, y) =>
+            view.scrollTo({ y: Math.max(0, y - RAISED_GAP), animated: true }),
+          );
+        };
+        // Focus comes before the keyboard. Raised while it is still down, the column could not
+        // scroll that far yet — it is only as short as the keyboard leaves it once it is up.
+        if (Keyboard.isVisible()) {
+          raise();
+          return;
+        }
+        const shown = Keyboard.addListener('keyboardDidShow', () => {
+          shown.remove();
+          raise();
+        });
+      },
+    }),
+    [scroll],
+  );
   return (
-    <ThemedView style={styles.screen}>
-      <SafeAreaView style={styles.screen} edges={['top']}>
-        {/* The keyboard takes its height out of the column. Edge to edge — enforced from Android
-            15 — the window is no longer resized for it, so without this the field being typed
-            into sat under the keyboard and the column could not be scrolled to it (app-shell, "A
-            field being typed into is never under the keyboard"). The ScrollView shrinks, and
-            Android's own ScrollView brings the focused field back into view as it does. */}
-        <KeyboardAvoidingView style={styles.screen} behavior="padding">
-          <ScrollView
-            ref={scrollRef}
-            refreshControl={refreshControl}
-            // A screen with something floating over its corner ends its column above it, so the
-            // last row can always be read and tapped rather than sitting under the «+» — and clear
-            // of the report handle above it too, since that one floats over this screen regardless.
-            contentContainerStyle={[
-              styles.content,
-              overlay ? { paddingBottom: layout.scrollBottomPadding } : null,
-            ]}
-            keyboardShouldPersistTaps="handled">
-            {/* What the screen holds when it is first drawn is simply there; only what appears
-                after it fades in (motion, "What opens, closes or leaves moves its neighbours
-                smoothly"). */}
-            <SettleFirst>{children}</SettleFirst>
-          </ScrollView>
-          {footer}
-        </KeyboardAvoidingView>
-        {overlay}
-      </SafeAreaView>
-    </ThemedView>
+    <ColumnContext value={column}>
+      <ThemedView style={styles.screen}>
+        <SafeAreaView style={styles.screen} edges={['top']}>
+          {/* The keyboard takes its height out of the column. Edge to edge — enforced from Android
+              15 — the window is no longer resized for it, so without this the field being typed
+              into sat under the keyboard and the column could not be scrolled to it (app-shell, "A
+              field being typed into is never under the keyboard"). The ScrollView shrinks, and
+              Android's own ScrollView brings the focused field back into view as it does. */}
+          <KeyboardAvoidingView style={styles.screen} behavior="padding">
+            <ScrollView
+              ref={scroll}
+              innerViewRef={content}
+              refreshControl={refreshControl}
+              // A screen with something floating over its corner ends its column above it, so the
+              // last row can always be read and tapped rather than sitting under the «+» — and clear
+              // of the report handle above it too, since that one floats over this screen regardless.
+              contentContainerStyle={[
+                styles.content,
+                overlay ? { paddingBottom: layout.scrollBottomPadding } : null,
+              ]}
+              keyboardShouldPersistTaps="handled">
+              {/* What the screen holds when it is first drawn is simply there; only what appears
+                  after it fades in (motion, "What opens, closes or leaves moves its neighbours
+                  smoothly"). */}
+              <SettleFirst>{children}</SettleFirst>
+            </ScrollView>
+            {footer}
+          </KeyboardAvoidingView>
+          {overlay}
+        </SafeAreaView>
+      </ThemedView>
+    </ColumnContext>
   );
 }
 

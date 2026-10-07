@@ -533,4 +533,22 @@ describe('the full list of a picker', () => {
       }
     }
   });
+
+  it('Scenario: Typing keeps the matches in sight — on a form, the search field rises to the top', () => {
+    // Emulator, uniform-fields smoke: on the розстрочка form the search sits mid-column, Android
+    // scrolled only far enough to put the field on the keyboard, and «mono» narrowed to chips
+    // under it. Focusing the field brings it to the top of the column once the keyboard is up.
+    const form = readFileSync(new URL('../components/form.tsx', import.meta.url), 'utf8');
+    const picker = form.slice(form.indexOf('export function Picker('), form.length);
+    expect(picker).toContain('const showAtTop = useShowAtTop();');
+    const search = picker.slice(picker.indexOf('const search = ('), picker.indexOf('const list ='));
+    expect(search).toContain('ref={searchRef}');
+    // Not in a стрічка, where the field already rests on the keyboard under its chips.
+    expect(search).toContain('onFocus={searchBelow ? undefined : () => showAtTop(searchRef.current)}');
+    const surfaces = readFileSync(new URL('../components/surfaces.tsx', import.meta.url), 'utf8');
+    const screen = surfaces.slice(surfaces.indexOf('export function Screen('));
+    expect(screen).toContain('<ColumnContext value={column}>');
+    expect(surfaces).toContain("Keyboard.addListener('keyboardDidShow'");
+    expect(surfaces).toContain('measureLayout(');
+  });
 });
