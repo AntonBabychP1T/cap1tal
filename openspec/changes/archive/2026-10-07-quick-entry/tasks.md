@@ -77,11 +77,16 @@ existing entry-form tests do. Nothing goes under `src/app/`.
     dismisses the form (design D6). Re-checked: `reset` → cold shortcut → «До Рахунків» → Рахунки
     tab → new рахунок «wallet» → its «+» → «Записати» → Головний shows the витрата, no redirect;
     «назад» on Головний leaves the app (no form underneath).
-  Still open for the box: the rest of the list above (field order per тип, the largest text size,
+  Archived on the owner's request (2026-10-07) with this box recorded as **partly run**. Not run: the rest of the list above (field order per тип, the largest text size,
   three in a row, double tap, launcher long press, warm/cold `VIEW`, the shortcut over an open form,
   the bug-report handle).
 
 ## 7. Close
 
 - [x] 7.1 Run `npm run verify` and paste the final lines
-- [ ] 7.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+- [x] 7.2 Run the diff-reviewer subagent; fix CRITICAL findings until PASS
+      2026-10-07: PASS — 0 critical. Major: main specs synced while 6.1 is open — that is this
+      archive, done on the owner's request. Minor, not taken: six scenarios rest on the smoke alone
+      (closed app to сума, running app over Звіти, the longest form, large text, the bug-report
+      handle, three in a row end to end); the proposal's "pending owner confirmation" note on
+      keeping the дата is left for the owner.
